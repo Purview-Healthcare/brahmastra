@@ -1,0 +1,7 @@
+# Never commit claim data. Patient information must not enter this repo.
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*data*.json
+shared-data.json
