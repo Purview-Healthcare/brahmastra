@@ -9,14 +9,13 @@
 <body>
 <div id="root"></div>
 <script>
-/* =============== BRAHMASTRA CONFIG (edit these two lines to go live) ===============
+/* =============== BRAHMASTRA CONFIG (edit this one line to go live) ===============
    API_BASE: your Cloudflare Worker URL, e.g. "https://brahmastra-api.yourname.workers.dev"
-   API_KEY : the ACCESS_KEY secret you set on that Worker
-   Leave both empty to run in demo mode (data stays in this browser session only).
-   =================================================================================== */
+   Leave it empty to run in demo mode (data stays in this browser session only).
+   There is no key here. People sign in on the server, which checks every request.
+   ================================================================================ */
 window.BRAHMASTRA_CONFIG = {
-  API_BASE: "https://brahmastra-api.purviewautomate.workers.dev",
-  API_KEY: "PurviewBrahmastra-rIqKgkn3FUO6esSZnypXS772GCuT"
+  API_BASE: "https://brahmastra-api.purviewautomate.workers.dev"
 };
 </script>
 <script>/**
@@ -403,7 +402,8 @@ const MUT = "#5a7183";
 
 /* ---------- storage layer ----------
    SHARED, MULTI-USER, PERSISTENT MODE (production):
-     Set API_BASE to your Brahmastra Worker URL (and API_KEY to its access code).
+     Set API_BASE to your Brahmastra Worker URL. No key is stored in the page;
+     people sign in on the server and it issues each of them a pass.
      Every shared key (users, clients, shares, dates, per-date boards) then reads
      and writes to that one server, so whoever uploads a date, everyone opening
      that client + date sees the same data, and it stays saved for later review.
@@ -415,8 +415,66 @@ const MUT = "#5a7183";
 // so you can point the app at your server by editing one small file, never this code.
 const CFG = typeof window !== "undefined" && window.BRAHMASTRA_CONFIG || {};
 const API_BASE = CFG.API_BASE || null; // e.g. "https://brahmastra-api.<you>.workers.dev"
-const API_KEY = CFG.API_KEY || ""; // access code your Worker checks (x-access-key header)
-
+// No key lives in this page. When a server is configured, signing in happens on
+// the server and it hands back a pass for this person, kept on this device only.
+const SERVER = !!API_BASE;
+const TOKEN_KEY = "brahmastra:pass";
+let TOKEN = null;
+try {
+  TOKEN = localStorage.getItem(TOKEN_KEY);
+} catch (e) {
+  TOKEN = null;
+}
+function setToken(t) {
+  TOKEN = t || null;
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);else localStorage.removeItem(TOKEN_KEY);
+  } catch (e) {/* private window */}
+}
+const passHeader = () => TOKEN ? {
+  Authorization: "Bearer " + TOKEN
+} : {};
+function sessionEnded() {
+  if (!TOKEN) return;
+  setToken(null);
+  try {
+    window.dispatchEvent(new CustomEvent("brahmastra:signedout"));
+  } catch (e) {/* fine */}
+}
+// talk to the sign in endpoints; always resolves, never throws
+async function authCall(path, body, method) {
+  try {
+    const r = await fetch(API_BASE + path, {
+      method: method || "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...passHeader()
+      },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    let j = null;
+    try {
+      j = await r.json();
+    } catch (e) {
+      j = null;
+    }
+    if (r.ok) return {
+      ok: true,
+      data: j || {}
+    };
+    return {
+      ok: false,
+      status: r.status,
+      error: j && j.error || "Something went wrong. Please try again."
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 0,
+      error: "Could not reach the server. Check your connection and try again."
+    };
+  }
+}
 const mem = {};
 const localGet = k => {
   try {
@@ -434,27 +492,46 @@ const localSet = (k, v) => {
   }
 };
 async function apiGet(key) {
+  if (key === "brahmastra:users") {
+    // the people list comes without passwords or answers, shaped like the old record
+    const r = await fetch(`${API_BASE}/users`, {
+      headers: passHeader()
+    });
+    if (r.status === 401) sessionEnded();
+    if (!r.ok) throw new Error("GET " + r.status);
+    const j = await r.json();
+    const out = {};
+    (j && j.users || []).forEach(u => {
+      out[u.email] = {
+        role: u.role,
+        disabled: !!u.disabled,
+        createdAt: u.createdAt
+      };
+    });
+    return out;
+  }
   const r = await fetch(`${API_BASE}/kv?key=${encodeURIComponent(key)}`, {
-    headers: {
-      "x-access-key": API_KEY
-    }
+    headers: passHeader()
   });
+  if (r.status === 401) sessionEnded();
   if (!r.ok) throw new Error("GET " + r.status);
   const j = await r.json();
   return j && j.found ? j.value : null;
 }
 async function apiSet(key, value) {
+  if (key === "brahmastra:users") return true; // accounts only change on the server
   const r = await fetch(`${API_BASE}/kv`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-access-key": API_KEY
+      ...passHeader()
     },
     body: JSON.stringify({
       key,
       value
     })
   });
+  if (r.status === 401) sessionEnded();
   if (!r.ok) throw new Error("SET " + r.status);
   return true;
 }
@@ -492,6 +569,17 @@ async function sha(s) {
   return [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, "0")).join("");
 }
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+// "sasha.hayes@purviewservices.com" greets as "Sasha"
+function firstNameOf(login) {
+  const local = String(login || "").split("@")[0].split(/[._\-+]/)[0] || "";
+  return local ? local.charAt(0).toUpperCase() + local.slice(1).toLowerCase() : "there";
+}
+// who may create an account. The server enforces this; the page repeats it so
+// the message is immediate and the offline preview behaves the same way.
+const ALLOWED_DOMAINS = ["purview-healthcare.com", "purviewservices.com"];
+const domainOk = email => ALLOWED_DOMAINS.includes(String(email).slice(String(email).lastIndexOf("@") + 1).toLowerCase());
+const DOMAIN_MSG = "Accounts are limited to Purview email addresses (" + ALLOWED_DOMAINS.join(", ") + ").";
 
 /* ---------- feedback ---------- */
 const FB_KINDS = [{
@@ -598,14 +686,17 @@ function exportFeedbackCSV(list) {
 /* ---------- seeded default admin (always available) ----------
    Password & security answer are stored as SHA-256 hashes, not plain text. */
 const DEFAULT_ADMIN = {
-  username: "Swasslays@0790",
+  username: "sasha.hayes@purviewservices.com",
   role: "Admin",
-  pass: "9992fc00501afefb3de2ee8668f29b36144875fc4a8664beca37796b8b348195",
-  secQ: "Does anyone at PV get on her nerves?",
-  secA: "4728b110db6e8f14cffed77260dbdeb0376398ee64e322706f4d848dac09f958",
+  // Offline preview only. The live site keeps accounts on the server, so no real
+  // password hash is ever shipped in this page. Preview password: brahmastra-demo
+  pass: "12fcfc97b682e18284dd61350ff1ffeeb42c3acae0830fcf4c9802de9be8ce78",
+  secQ: "Preview account. Answer: demo",
+  secA: "2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea",
   createdAt: 0
 };
 async function ensureDefaultAdmin() {
+  if (SERVER) return {}; // the server owns accounts; nothing to seed from the page
   const u = (await store.get(K.users)) || {};
   if (!u[DEFAULT_ADMIN.username]) {
     u[DEFAULT_ADMIN.username] = {
@@ -717,7 +808,10 @@ async function classifyBatch(claims) {
   const system = `You are the routing engine for a medical-billing AR coordination tool. AR is the source; task claims to downstream departments by READING all fields (action, sub_status, status, bucket, comments), never keyword-match alone. For each claim decide ONE route and whether it is an open TASK.
 
 ROUTING (check Action/Sub Status first, then Comments fallback):
-- SUBMISSION: needs submit/resubmit/corrected-and-submit/reprocess AND not already done. If already submitted/reprocessed ("Submitted claim","Submitted corrected claim") => NOT a task => route "ar_only", task=false.
+- SUBMISSION is a separate department from AR. Task it ONLY when the claim is still WAITING to be sent, and nobody has sent it yet. Decide by tense and by who acted:
+   * STILL TO BE SENT => route "submission", task=true. Wording like "Need to submit", "Submit the claim", "To be submitted", "Needs resubmission", "Send corrected claim", "Claim not submitted yet", or a fresh first-time submission.
+   * ALREADY SENT BY THE AR USER => route "ar_only", task=false. AR users do their own corrections and resubmissions, so past-tense wording means the work is DONE and Submission must NOT be given it: "Corrected and resubmitted", "Corrected & resubmitted", "Resubmitted", "Submitted claim", "Submitted corrected claim", "Claim resubmitted on <date>", "Reprocessed".
+   * If the wording is past tense, it is done, even if it also contains the word submit. Never task Submission for work the comment says has already happened.
 - PAYMENT_POSTING: needs payment posted AND not already posted. "Posted"/"Already Posted"/"Already Payment Posted" => already done => route "ar_only", task=false.
 - EV: ONLY eligibility denials — policy inactive / patient not active on DOS / coverage terminated / non-covered (NC) service / covered by another payer / COB. Route to EV ONLY IF documented eligibility steps are INCOMPLETE. Required steps:
    * Policy inactive/not active: eligibility checked for payer? effective+termination dates noted? if inactive, checked client software for alternate insurance AND called patient for alternate coverage?
@@ -770,6 +864,9 @@ function localClassify(c) {
   const has = re => re.test(all);
   const rej = /reject/.test(st + " " + T) && /(corrected and resubmit|corrected & resubmit|resubmitt|re-submitt|resubmit)/.test(A + " " + T) && !/denied|denial/.test(st);
   const doneAlready = /\b(posted|already posted|already payment posted|submitted claim|submitted corrected claim|no action required|resolved|closed|paid in full)\b/.test(A + " " + S);
+  // AR users correct and resubmit themselves, so past-tense wording means Submission
+  // has nothing to do. This is checked before the submission test and overrides it.
+  const alreadySent = /(corrected (and|&) re-?submitted|re-?submitted|submitted (the )?(corrected )?claim|claim (was )?submitted|reprocessed|sent to payer|refiled|re-?filed)\b/.test(A + " " + S + " " + T) && !/(need|needs|to be|not yet|pending|awaiting|yet to) (be )?(re-?)?submit/.test(A + " " + S + " " + T);
   let route = "ar_only",
     task = false,
     why = "",
@@ -779,10 +876,10 @@ function localClassify(c) {
     route = "client_assistance";
     task = true;
     why = "needs client input";
-  } else if (!doneAlready && has(/need to submit|need to resubmit|needs? to be submitted|corrected claim ready|submit to correct payer|submit as a fresh claim|needs to be submitted|need to submit corrected/)) {
+  } else if (!doneAlready && !alreadySent && has(/\bsubmit (the |this )?claim\b|\bre-?submit (the |this )?claim\b|\bsubmit\b(?!ted)|need to submit|need to resubmit|needs? to be submitted|to be submitted|yet to be submitted|not submitted|corrected claim ready|send corrected claim|submit to correct payer|submit as a fresh claim|fresh submission|first time submission|needs resubmission|need to submit corrected/)) {
     route = "submission";
     task = true;
-    why = "needs submission";
+    why = "waiting to be submitted";
   } else if (!doneAlready && has(/post payment|need to post|payment (received|identified)|era |eft|check received|remit/) && !/already/.test(A + " " + S)) {
     route = "payment_posting";
     task = true;
@@ -819,6 +916,20 @@ function App() {
   const [activeClient, setActiveClient] = useState(null);
   useEffect(() => {
     (async () => {
+      if (SERVER) {
+        if (TOKEN) {
+          const r = await authCall("/auth/me", null, "GET");
+          if (r.ok && r.data.user) {
+            setSession(r.data.user.email);
+            setMe({
+              username: r.data.user.email,
+              role: r.data.user.role
+            });
+          } else if (r.status === 401) setToken(null);
+        }
+        setReady(true);
+        return;
+      }
       const u = await ensureDefaultAdmin();
       setUsers(u);
       const sess = await store.get(K.session, false);
@@ -840,7 +951,16 @@ function App() {
     setUsers(u);
     return u;
   }
-  async function signIn(username) {
+  async function signIn(username, serverUser) {
+    if (serverUser) {
+      // the server already checked the password and issued the pass
+      setSession(serverUser.email);
+      setMe({
+        username: serverUser.email,
+        role: serverUser.role
+      });
+      return;
+    }
     const u = await refreshUsers();
     await store.set(K.session, {
       username
@@ -851,7 +971,18 @@ function App() {
       ...u[username]
     });
   }
+  useEffect(() => {
+    const h = () => {
+      setSession(null);
+      setMe(null);
+      setActiveClient(null);
+      toast("Your session ended. Please sign in again.");
+    };
+    window.addEventListener("brahmastra:signedout", h);
+    return () => window.removeEventListener("brahmastra:signedout", h);
+  }, []);
   async function signOut() {
+    setToken(null);
     await store.set(K.session, null, false);
     setSession(null);
     setMe(null);
@@ -1137,7 +1268,7 @@ function AuthGate({
   onAuthed,
   refreshUsers
 }) {
-  const hasAdmin = Object.values(users).some(u => u.role === "Admin");
+  const hasAdmin = SERVER || Object.values(users).some(u => u.role === "Admin");
   const [mode, setMode] = useState(hasAdmin ? "signin" : "setup"); // setup | signin | signup | forgot
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1183,8 +1314,22 @@ function AuthGate({
     const email = cleanEmail(username);
     if (!email || !password) return setErr("Enter your Purview email and a password.");
     if (!isEmail(email)) return setErr("Use your full Purview email address, for example firstname.lastname@yourdomain.com");
+    if (!domainOk(email)) return setErr(DOMAIN_MSG);
     if (!secQ.trim() || !secA.trim()) return setErr("Set a security question for password recovery.");
     setBusy(true);
+    if (SERVER) {
+      const r = await authCall("/auth/signup", {
+        email,
+        password,
+        role,
+        secQ: secQ.trim(),
+        secA: secA.trim()
+      });
+      setBusy(false);
+      if (!r.ok) return setErr(r.error);
+      setToken(r.data.token);
+      return onAuthed(r.data.user.email, r.data.user);
+    }
     const u = (await refreshUsers()) || {};
     if (resolveUser(u, email)) {
       setBusy(false);
@@ -1218,12 +1363,27 @@ function AuthGate({
   async function doSignin() {
     setErr("");
     setBusy(true);
+    if (SERVER) {
+      const r = await authCall("/auth/login", {
+        email: cleanEmail(username),
+        password
+      });
+      setBusy(false);
+      if (!r.ok) return setErr(r.error);
+      if (loginKind === "admin" && r.data.user.role !== "Admin") return setErr("This isn't an admin account. Use the User login instead.");
+      setToken(r.data.token);
+      return onAuthed(r.data.user.email, r.data.user);
+    }
     const u = (await refreshUsers()) || {};
     const key = resolveUser(u, username);
     const rec = key ? u[key] : null;
     if (!rec || rec.pass !== (await sha(password))) {
       setBusy(false);
       return setErr("That email or password doesn't match.");
+    }
+    if (rec.disabled) {
+      setBusy(false);
+      return setErr("This account has been switched off. Ask your admin.");
     }
     if (loginKind === "admin" && rec.role !== "Admin") {
       setBusy(false);
@@ -1234,6 +1394,28 @@ function AuthGate({
   }
   async function doForgot() {
     setErr("");
+    if (SERVER) {
+      const email = cleanEmail(username);
+      if (!secQ) {
+        // step 1: fetch the question
+        const q = await authCall("/auth/question", {
+          email
+        });
+        if (!q.ok) return setErr(q.error);
+        return setSecQ(q.data.secQ || "Your security question");
+      }
+      if (!newPass) return setErr("Enter a new password.");
+      setBusy(true);
+      const r = await authCall("/auth/reset", {
+        email,
+        secA: secA.trim(),
+        password: newPass
+      });
+      setBusy(false);
+      if (!r.ok) return setErr(r.error);
+      setToken(r.data.token);
+      return onAuthed(r.data.user.email, r.data.user);
+    }
     const u = (await refreshUsers()) || {};
     const key = resolveUser(u, username);
     const rec = key ? u[key] : null;
@@ -1362,7 +1544,7 @@ function AuthGate({
     style: S.authTitle
   }, "Create your account"), /*#__PURE__*/React.createElement("p", {
     style: S.authSub
-  }, "No approval needed. Sign up with your Purview email, the same one you use for the other Purview apps, and start working right away."), /*#__PURE__*/React.createElement(Field, {
+  }, "No approval needed. Sign up with your Purview email (purview-healthcare.com or purviewservices.com), the same one you use for the other Purview apps, and start working right away."), /*#__PURE__*/React.createElement(Field, {
     label: "Purview email",
     value: username,
     onChange: setUsername,
@@ -1507,7 +1689,9 @@ function ClientPicker({
   }, []);
   useEffect(() => {
     load();
-    const t = setInterval(load, 12000);
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 45000);
     return () => clearInterval(t);
   }, [load]);
   useEffect(() => {
@@ -1518,6 +1702,25 @@ function ClientPicker({
   const myClients = Object.entries(clients).filter(([, c]) => c.members.includes(me.username));
   const incoming = Object.entries(shares).filter(([, s]) => s.to === me.username && s.status === "pending");
   const fbShown = fbFilter === "all" ? fb : fb.filter(e => e.kindId === fbFilter);
+  const [peopleMsg, setPeopleMsg] = useState("");
+  async function setAccountOff(email, off) {
+    setPeopleMsg("");
+    if (SERVER) {
+      const r = await authCall("/admin/user", {
+        email,
+        disabled: off
+      });
+      if (!r.ok) return setPeopleMsg(r.error);
+    } else {
+      if (email === me.username) return setPeopleMsg("You cannot switch off your own admin account.");
+      const u = (await store.get(K.users)) || {};
+      if (u[email]) {
+        u[email].disabled = off;
+        await store.set(K.users, u);
+      }
+    }
+    load();
+  }
   async function createClient() {
     const name = newName.trim();
     if (!name) {
@@ -1709,6 +1912,45 @@ function ClientPicker({
   }, "They get a request to accept or reject. On accept, you both upload & edit the same data."), shareMsg && /*#__PURE__*/React.createElement("div", {
     style: S.shareMsg
   }, shareMsg))))), me.role === "Admin" && /*#__PURE__*/React.createElement("div", {
+    style: S.fbCard,
+    "data-testid": "people-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.fbCardHead
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: S.fbCardTitle
+  }, "People"), /*#__PURE__*/React.createElement("div", {
+    style: S.pageSub
+  }, "Everyone with an account. Switching one off stops that person signing in; their past work stays on the boards."))), peopleMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.errBox,
+      marginBottom: 10
+    }
+  }, peopleMsg), Object.keys(users).length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: S.emptyRow
+  }, "No accounts yet.") : Object.keys(users).sort().map(email => {
+    const u = users[email];
+    const self = email === me.username;
+    return /*#__PURE__*/React.createElement("div", {
+      key: email,
+      style: {
+        ...S.personRow,
+        ...(u.disabled ? {
+          opacity: 0.6
+        } : {})
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: S.personEmail
+    }, email, self ? " (you)" : ""), /*#__PURE__*/React.createElement("div", {
+      style: S.fbEntryMeta
+    }, u.role, u.disabled ? " · switched off" : "")), !self && /*#__PURE__*/React.createElement("button", {
+      style: u.disabled ? S.acceptBtn : S.rejectBtn,
+      onClick: () => setAccountOff(email, !u.disabled)
+    }, u.disabled ? "Switch on" : "Switch off"));
+  })), me.role === "Admin" && /*#__PURE__*/React.createElement("div", {
     style: S.fbCard
   }, /*#__PURE__*/React.createElement("div", {
     style: S.fbCardHead
@@ -1921,10 +2163,22 @@ function Console({
     setBatch(undefined);
     load();
   }, [dateKey, load]);
+  // multi-user sync: every 45 seconds, paused while the tab is in the background,
+  // and once straight away when the person comes back to it
   useEffect(() => {
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
-  }, [load]); // light multi-user sync
+    const tick = () => {
+      if (!document.hidden) load();
+    };
+    const t = setInterval(tick, 45000);
+    const back = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [load]);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -2202,7 +2456,7 @@ function Console({
     style: {
       color: "#5fe3b8"
     }
-  }, me.username), "."), /*#__PURE__*/React.createElement("div", {
+  }, firstNameOf(me.username)), "."), /*#__PURE__*/React.createElement("div", {
     style: S.heroSub
   }, niceDate(dateKey), " \xB7 ", batch.claims.length, " claims read \xB7 ", buckets.submission.length + buckets.payment_posting.length + buckets.ev.length + buckets.client_assistance.length, " tasked to departments \xB7 ", buckets.rejection.length, " rejection follow ups"), /*#__PURE__*/React.createElement("div", {
     className: "goldline",
@@ -2231,7 +2485,12 @@ function Console({
     style: S.dowNone
   }, "No dates uploaded yet")), batch && batch !== undefined && /*#__PURE__*/React.createElement("div", {
     style: S.fileMeta
-  }, batch.fileName, " \xB7 uploaded by ", batch.uploadedBy), /*#__PURE__*/React.createElement("div", {
+  }, batch.fileName, " \xB7 uploaded by ", batch.uploadedBy), batch && /*#__PURE__*/React.createElement("button", {
+    style: S.dayXlsBtn,
+    "data-testid": "day-export",
+    onClick: () => exportDayWorkbook(batch, client.name, dateKey, Date.now()),
+    title: "One Excel file with the whole day: summary, every claim and its status, and the rejection follow-up list"
+  }, "\u2913 Download full day (Excel)"), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1
     }
@@ -2653,6 +2912,339 @@ function downloadSectionCSV(claims, label) {
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   } catch (e) {
     toast("Could not generate the CSV here: " + e.message);
+  }
+}
+
+/* Whole day in one Excel file: a summary tab, every claim with its department and
+   status, and the next-day rejection list. This is the file a supervisor attaches
+   to a report, so it carries the TAT outcome as plain words, not a live clock. */
+function exportDayWorkbook(batch, clientName, dateKey, now) {
+  try {
+    const claims = batch && batch.claims || [];
+    const dep = c => c.task && DEPTS[c.route] ? DEPTS[c.route].label : "Not tasked";
+    const hasClock = c => !!(c.task && (DEPTS[c.route] ? DEPTS[c.route].tat : false || c.forceTat) || c.task && c.forceTat);
+    function tat(c) {
+      if (!c.task) return {
+        label: "",
+        detail: ""
+      };
+      if (!(DEPTS[c.route] && DEPTS[c.route].tat || c.forceTat)) return {
+        label: "No TAT",
+        detail: ""
+      };
+      if (c.workStatus === "Completed") return {
+        label: "Met",
+        detail: "completed"
+      };
+      const anchor = c.reissuedAt || c.taskedAt || now;
+      const remain = anchor + TWENTY_FOUR_H - now;
+      const hrs = Math.floor(Math.abs(remain) / 3600000);
+      const mins = Math.floor(Math.abs(remain) % 3600000 / 60000);
+      return remain < 0 ? {
+        label: "Breached",
+        detail: "overdue by " + hrs + "h " + mins + "m"
+      } : {
+        label: "Running",
+        detail: hrs + "h " + mins + "m left"
+      };
+    }
+    const when = ms => ms ? new Date(ms).toLocaleString() : "";
+    const rows = claims.map(c => {
+      const t = tat(c);
+      return {
+        "Brahmastra ID": c.matchKey || "",
+        "Patient": c.label || "",
+        "Claim ID": c.claimId || "",
+        "Payer": c.payer || "",
+        "DOS": c.dos || "",
+        "CPT": c.cpt || "",
+        "Provider": c.provider || "",
+        "Balance": c.balance || "",
+        "Bucket": c.bucket || "",
+        "Status": c.status || "",
+        "Sub Status": c.subStatus || "",
+        "AR Action": c.action || "",
+        "Department": dep(c),
+        "Open task": c.task ? "Yes" : "No",
+        "Work Status": c.task ? c.workStatus || "Pending" : "",
+        "Reason If Not Completed": c.incompleteReason || "",
+        "Reason flagged": c.reasonFlag ? "Yes" : "",
+        "TAT": t.label,
+        "TAT detail": t.detail,
+        "Tasked at": when(c.taskedAt),
+        "Clock restarted at": when(c.reissuedAt),
+        "Moved from": c.originDept && DEPTS[c.originDept] ? DEPTS[c.originDept].label : "",
+        "Rejection follow-up": c.rej ? "Yes" : "",
+        "Rejection outcome": c.rejOutcome || "",
+        "Why routed": c.why || "",
+        "Comments": c.comments || ""
+      };
+    });
+    const order = ["submission", "payment_posting", "ev", "client_assistance"];
+    const summary = [{
+      Item: "Client",
+      Value: clientName
+    }, {
+      Item: "Date of work",
+      Value: niceDate(dateKey)
+    }, {
+      Item: "Source file",
+      Value: batch && batch.fileName || ""
+    }, {
+      Item: "Uploaded by",
+      Value: batch && batch.uploadedBy || ""
+    }, {
+      Item: "Uploaded at",
+      Value: when(batch && batch.uploadedAt)
+    }, {
+      Item: "Report generated",
+      Value: new Date(now).toLocaleString()
+    }, {
+      Item: "",
+      Value: ""
+    }, {
+      Item: "Claims read",
+      Value: claims.length
+    }, {
+      Item: "Tasked to departments",
+      Value: claims.filter(c => c.task).length
+    }, {
+      Item: "Rejection follow-ups",
+      Value: claims.filter(c => c.rej).length
+    }, {
+      Item: "",
+      Value: ""
+    }];
+    order.forEach(k => {
+      const list = claims.filter(c => c.task && c.route === k);
+      if (!list.length) return;
+      const n = s => list.filter(c => (c.workStatus || "Pending") === s).length;
+      summary.push({
+        Item: DEPTS[k].label + " tasked",
+        Value: list.length
+      });
+      summary.push({
+        Item: DEPTS[k].label + " completed",
+        Value: n("Completed")
+      });
+      summary.push({
+        Item: DEPTS[k].label + " not completed",
+        Value: n("Not Completed")
+      });
+      summary.push({
+        Item: DEPTS[k].label + " pending",
+        Value: n("Pending")
+      });
+      const br = list.filter(c => tat(c).label === "Breached").length;
+      summary.push({
+        Item: DEPTS[k].label + " completion rate",
+        Value: list.length ? Math.round(n("Completed") / list.length * 100) + "%" : "n/a"
+      });
+      summary.push({
+        Item: DEPTS[k].label + " TAT breached",
+        Value: br
+      });
+      summary.push({
+        Item: "",
+        Value: ""
+      });
+    });
+    const rejRows = claims.filter(c => c.rej).map(c => ({
+      "Brahmastra ID": c.matchKey || "",
+      "Patient": c.label || "",
+      "Claim ID": c.claimId || "",
+      "Payer": c.payer || "",
+      "DOS": c.dos || "",
+      "Balance": c.balance || "",
+      "AR Action": c.action || "",
+      "Verified next day": c.rejOutcome ? c.rejOutcome === "rejected" ? "Rejected again" : "Went through" : "Not verified yet",
+      "Comments": c.comments || ""
+    }));
+
+    // one tab per department: the numbers first, then that department's claims
+    const deptCols = ["Brahmastra ID", "Patient", "Claim ID", "Payer", "DOS", "CPT", "Provider", "Balance", "Sub Status", "AR Action", "Work Status", "Reason If Not Completed", "Reason flagged", "TAT", "TAT detail", "Tasked at", "Clock restarted at", "Moved from", "Why routed", "Comments"];
+    const deptWidths = [16, 24, 14, 18, 12, 10, 18, 11, 20, 24, 14, 44, 13, 11, 20, 20, 20, 17, 30, 60].map(w => ({
+      wch: w
+    }));
+    function addDeptSheet(wb, key) {
+      const list = claims.filter(c => c.task && c.route === key);
+      const label = DEPTS[key].label;
+      const n = s => list.filter(c => (c.workStatus || "Pending") === s).length;
+      const done = n("Completed"),
+        notDone = n("Not Completed"),
+        pend = n("Pending");
+      const breached = list.filter(c => tat(c).label === "Breached").length;
+      const flagged = list.filter(c => c.reasonFlag).length;
+      const rate = list.length ? Math.round(done / list.length * 100) + "%" : "n/a";
+      const head = [[label + "  ·  " + clientName + "  ·  " + niceDate(dateKey)], [], ["Assigned to this department", list.length], ["Completed", done], ["Not completed", notDone], ["Still pending", pend], ["Completion rate", rate], ["TAT breached", breached], ["Reasons flagged as not valid", flagged], []];
+      const ws = XLSX.utils.aoa_to_sheet(head);
+      const body = list.map(c => {
+        const t = tat(c);
+        return {
+          "Brahmastra ID": c.matchKey || "",
+          "Patient": c.label || "",
+          "Claim ID": c.claimId || "",
+          "Payer": c.payer || "",
+          "DOS": c.dos || "",
+          "CPT": c.cpt || "",
+          "Provider": c.provider || "",
+          "Balance": c.balance || "",
+          "Sub Status": c.subStatus || "",
+          "AR Action": c.action || "",
+          "Work Status": c.workStatus || "Pending",
+          "Reason If Not Completed": c.incompleteReason || "",
+          "Reason flagged": c.reasonFlag ? "Yes" : "",
+          "TAT": t.label,
+          "TAT detail": t.detail,
+          "Tasked at": when(c.taskedAt),
+          "Clock restarted at": when(c.reissuedAt),
+          "Moved from": c.originDept && DEPTS[c.originDept] ? DEPTS[c.originDept].label : "",
+          "Why routed": c.why || "",
+          "Comments": c.comments || ""
+        };
+      });
+      if (body.length) {
+        // where the table header lands depends on how the stat block was measured,
+        // so read it off the sheet rather than assuming
+        const before = XLSX.utils.decode_range(ws["!ref"]);
+        XLSX.utils.sheet_add_json(ws, body, {
+          origin: -1,
+          header: deptCols
+        });
+        const hdrRow = before.e.r + 1;
+        ws["!autofilter"] = {
+          ref: XLSX.utils.encode_range({
+            s: {
+              r: hdrRow,
+              c: 0
+            },
+            e: {
+              r: hdrRow + body.length,
+              c: deptCols.length - 1
+            }
+          })
+        };
+      } else {
+        XLSX.utils.sheet_add_aoa(ws, [["Nothing was assigned to " + label + " on this date."]], {
+          origin: -1
+        });
+      }
+      ws["!cols"] = deptWidths;
+      XLSX.utils.book_append_sheet(wb, ws, label.slice(0, 31));
+    }
+    const wb = XLSX.utils.book_new();
+    const s1 = XLSX.utils.json_to_sheet(summary, {
+      header: ["Item", "Value"]
+    });
+    s1["!cols"] = [{
+      wch: 34
+    }, {
+      wch: 40
+    }];
+    XLSX.utils.book_append_sheet(wb, s1, "Day summary");
+    order.forEach(k => addDeptSheet(wb, k));
+    const s2 = XLSX.utils.json_to_sheet(rows);
+    s2["!cols"] = [{
+      wch: 16
+    }, {
+      wch: 22
+    }, {
+      wch: 14
+    }, {
+      wch: 18
+    }, {
+      wch: 12
+    }, {
+      wch: 10
+    }, {
+      wch: 18
+    }, {
+      wch: 11
+    }, {
+      wch: 16
+    }, {
+      wch: 16
+    }, {
+      wch: 20
+    }, {
+      wch: 22
+    }, {
+      wch: 17
+    }, {
+      wch: 10
+    }, {
+      wch: 14
+    }, {
+      wch: 40
+    }, {
+      wch: 13
+    }, {
+      wch: 10
+    }, {
+      wch: 20
+    }, {
+      wch: 20
+    }, {
+      wch: 20
+    }, {
+      wch: 16
+    }, {
+      wch: 17
+    }, {
+      wch: 17
+    }, {
+      wch: 30
+    }, {
+      wch: 60
+    }];
+    if (rows.length) s2["!autofilter"] = {
+      ref: XLSX.utils.encode_range({
+        s: {
+          r: 0,
+          c: 0
+        },
+        e: {
+          r: rows.length,
+          c: 25
+        }
+      })
+    };
+    XLSX.utils.book_append_sheet(wb, s2, "All claims");
+    const s3 = XLSX.utils.json_to_sheet(rejRows.length ? rejRows : [{
+      "Brahmastra ID": "",
+      "Patient": "No rejections to verify for this date"
+    }]);
+    s3["!cols"] = [{
+      wch: 16
+    }, {
+      wch: 30
+    }, {
+      wch: 14
+    }, {
+      wch: 18
+    }, {
+      wch: 12
+    }, {
+      wch: 11
+    }, {
+      wch: 22
+    }, {
+      wch: 18
+    }, {
+      wch: 60
+    }];
+    XLSX.utils.book_append_sheet(wb, s3, "Rejection follow-up");
+    const safe = String(clientName || "client").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    XLSX.writeFile(wb, "Brahmastra_" + safe + "_" + dateKey + ".xlsx");
+    return {
+      ok: true,
+      rows: rows.length
+    };
+  } catch (e) {
+    toast("Could not build the day file here: " + (e && e.message ? e.message : e));
+    return {
+      ok: false
+    };
   }
 }
 
@@ -3285,6 +3877,37 @@ const S = {
     fontSize: 13,
     color: "#b9cdd9",
     marginTop: 8
+  },
+  dayXlsBtn: {
+    marginLeft: 14,
+    background: "#fff",
+    color: NAVY,
+    border: "1px solid #dbe4ea",
+    borderRadius: 9,
+    padding: "8px 14px",
+    fontWeight: 700,
+    fontSize: 12.5,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    whiteSpace: "nowrap"
+  },
+  personRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "10px 14px",
+    border: "1px solid " + LINE,
+    borderRadius: 10,
+    marginBottom: 8,
+    background: "#fbfdfe"
+  },
+  personEmail: {
+    fontSize: 13.5,
+    fontWeight: 600,
+    color: NAVY,
+    overflow: "hidden",
+    textOverflow: "ellipsis"
   },
   fbTab: {
     position: "fixed",
