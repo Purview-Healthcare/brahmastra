@@ -727,9 +727,24 @@ function fingerprintOf(o) {
   return [o.patient, o.dos, o.payer, o.cpt, o.provider, o.balance].map(norm).join("|");
 }
 // The value written into the exported CSV's locked "Brahmastra ID" column.
+// Always starts with BR- so Excel keeps it as text: a bare number would lose its
+// leading zeros, and a long one would turn into 7.70006E+15, the moment someone
+// opens and saves the worklist.
 function matchKeyOf(o) {
-  if (o.claimId && /\d/.test(o.claimId)) return String(o.claimId).trim();
+  if (o.claimId && /\d/.test(o.claimId)) return "BR-" + String(o.claimId).trim();
   return "BR-" + fingerprintOf(o);
+}
+// A claim with two or three service lines shares one claim ID. Give each line its
+// own Brahmastra ID (BR-123, BR-123-L2, BR-123-L3) so a returned worklist updates
+// every line, not just the last one. Order is the upload order, so it is stable.
+function uniqueMatchKeys(claims) {
+  const seen = {};
+  claims.forEach(c => {
+    const base = String(c.matchKey || matchKeyOf(c)).replace(/-L\d+$/, "");
+    seen[base] = (seen[base] || 0) + 1;
+    c.matchKey = seen[base] === 1 ? base : base + "-L" + seen[base];
+  });
+  return claims;
 }
 
 /* ---------- date-of-work helpers ---------- */
@@ -822,7 +837,7 @@ ROUTING (check Action/Sub Status first, then Comments fallback):
 - Otherwise route "ar_only", task=false.
 
 REJECTION FOLLOW-UP (independent flag):
-- rej=true ONLY when it was a REJECTION (status/comments show rejected) AND corrected & resubmitted. A DENIAL corrected/resubmitted => rej=false.
+- rej=true ONLY when it was a REJECTION (status/comments show rejected) AND the AR user has ALREADY corrected and resubmitted it (past tense). A rejection still WAITING to be sent ("need to resubmit", "to be resubmitted", "needs resubmission") => rej=false, it goes to Submission instead. A DENIAL corrected/resubmitted => rej=false.
 
 Return STRICT JSON only, no prose/markdown:
 {"r":[{"i":<int>,"route":"submission|payment_posting|ev|client_assistance|ar_only","task":true|false,"rej":true|false,"ev_missing":["..."],"why":"<max 14 words>"}]}
@@ -862,11 +877,13 @@ function localClassify(c) {
   const st = (c.status || "").toLowerCase();
   const all = `${A} ${S} ${T} ${st}`;
   const has = re => re.test(all);
-  const rej = /reject/.test(st + " " + T) && /(corrected and resubmit|corrected & resubmit|resubmitt|re-submitt|resubmit)/.test(A + " " + T) && !/denied|denial/.test(st);
   const doneAlready = /\b(posted|already posted|already payment posted|submitted claim|submitted corrected claim|no action required|resolved|closed|paid in full)\b/.test(A + " " + S);
   // AR users correct and resubmit themselves, so past-tense wording means Submission
   // has nothing to do. This is checked before the submission test and overrides it.
   const alreadySent = /(corrected (and|&) re-?submitted|re-?submitted|submitted (the )?(corrected )?claim|claim (was )?submitted|reprocessed|sent to payer|refiled|re-?filed)\b/.test(A + " " + S + " " + T) && !/(need|needs|to be|not yet|pending|awaiting|yet to) (be )?(re-?)?submit/.test(A + " " + S + " " + T);
+  // next-day follow-up is only for rejections the AR user has ALREADY corrected and
+  // sent back. A rejection still waiting to go out belongs to Submission, not here.
+  const rej = /reject/.test(st + " " + T) && alreadySent && !/denied|denial/.test(st);
   let route = "ar_only",
     task = false,
     why = "",
@@ -876,7 +893,7 @@ function localClassify(c) {
     route = "client_assistance";
     task = true;
     why = "needs client input";
-  } else if (!doneAlready && !alreadySent && has(/\bsubmit (the |this )?claim\b|\bre-?submit (the |this )?claim\b|\bsubmit\b(?!ted)|need to submit|need to resubmit|needs? to be submitted|to be submitted|yet to be submitted|not submitted|corrected claim ready|send corrected claim|submit to correct payer|submit as a fresh claim|fresh submission|first time submission|needs resubmission|need to submit corrected/)) {
+  } else if (!doneAlready && !alreadySent && has(/to be re-?submitted|needs? to re-?submit|\bsubmit (the |this )?claim\b|\bre-?submit (the |this )?claim\b|\bsubmit\b(?!ted)|need to submit|need to resubmit|needs? to be submitted|to be submitted|yet to be submitted|not submitted|corrected claim ready|send corrected claim|submit to correct payer|submit as a fresh claim|fresh submission|first time submission|needs resubmission|need to submit corrected/)) {
     route = "submission";
     task = true;
     why = "waiting to be submitted";
@@ -2138,15 +2155,15 @@ function Console({
         if (!best[ref] || (e._u || 0) > (best[ref]._u || 0)) best[ref] = e;
       }
     }
-    const claims = base.claims.map(cl => {
+    const claims = uniqueMatchKeys(base.claims.map(cl => {
+      // also repairs boards uploaded before IDs were per line
       const e = best[cl.ref];
-      if (!e) return cl;
       const merged = {
         ...cl
       };
-      for (const f of WORK_FIELDS) if (f in e) merged[f] = e[f];
+      if (e) for (const f of WORK_FIELDS) if (f in e) merged[f] = e[f];
       return merged;
-    });
+    }));
     const deptNotes = {
       ...(base.deptNotes || {})
     };
@@ -2264,7 +2281,7 @@ function Console({
       const rows = XLSX.utils.sheet_to_json(ws, {
         defval: ""
       });
-      const claims = rows.map(extractClaim).filter(c => c.claimId || c.patient || c.comments);
+      const claims = uniqueMatchKeys(rows.map(extractClaim).filter(c => c.claimId || c.patient || c.comments));
       // tally the Date Worked column
       const tally = {};
       claims.forEach(c => {
@@ -2779,13 +2796,14 @@ function ARInventory({
   buckets,
   onNote
 }) {
-  const routed = buckets.submission.length + buckets.payment_posting.length + buckets.ev.length;
+  const routed = buckets.submission.length + buckets.payment_posting.length + buckets.ev.length + buckets.client_assistance.length;
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const rows = batch.claims.filter(c => {
     if (filter === "submission" && !(c.task && c.route === "submission")) return false;
     if (filter === "payment_posting" && !(c.task && c.route === "payment_posting")) return false;
     if (filter === "ev" && !(c.task && c.route === "ev")) return false;
+    if (filter === "client_assistance" && !(c.task && c.route === "client_assistance")) return false;
     if (filter === "rejection" && !c.rej) return false;
     if (filter === "ar_only" && c.task) return false;
     if (q && !`${c.label} ${c.claimId} ${c.patient} ${c.payer} ${c.action} ${c.subStatus}`.toLowerCase().includes(q.toLowerCase())) return false;
@@ -2804,7 +2822,7 @@ function ARInventory({
     placeholder: "Any special instruction for the departments as these claims go out\u2026"
   }), /*#__PURE__*/React.createElement("div", {
     style: S.filterBar
-  }, [["all", "All"], ["submission", "→ Submission"], ["payment_posting", "→ Payment Posting"], ["ev", "→ EV"], ["rejection", "Rejections"], ["ar_only", "Stays in AR"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, [["all", "All"], ["submission", "→ Submission"], ["payment_posting", "→ Payment Posting"], ["ev", "→ EV"], ["client_assistance", "→ Client Assistance"], ["rejection", "Rejections"], ["ar_only", "Stays in AR"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     onClick: () => setFilter(k),
     style: {
@@ -2973,7 +2991,7 @@ function exportDayWorkbook(batch, clientName, dateKey, now) {
         "TAT detail": t.detail,
         "Tasked at": when(c.taskedAt),
         "Clock restarted at": when(c.reissuedAt),
-        "Moved from": c.originDept && DEPTS[c.originDept] ? DEPTS[c.originDept].label : "",
+        "Moved from": c.originDept ? DEPTS[c.originDept] ? DEPTS[c.originDept].label : String(c.originDept) : "",
         "Rejection follow-up": c.rej ? "Yes" : "",
         "Rejection outcome": c.rejOutcome || "",
         "Why routed": c.why || "",
@@ -3098,7 +3116,7 @@ function exportDayWorkbook(batch, clientName, dateKey, now) {
           "TAT detail": t.detail,
           "Tasked at": when(c.taskedAt),
           "Clock restarted at": when(c.reissuedAt),
-          "Moved from": c.originDept && DEPTS[c.originDept] ? DEPTS[c.originDept].label : "",
+          "Moved from": c.originDept ? DEPTS[c.originDept] ? DEPTS[c.originDept].label : String(c.originDept) : "",
           "Why routed": c.why || "",
           "Comments": c.comments || ""
         };
@@ -3334,8 +3352,14 @@ function DeptSection({
         byFp = {};
       claims.forEach(c => {
         byKey[String(c.matchKey)] = c;
-        byFp[c.fp] = c;
+        // two identical lines cannot be told apart by fingerprint, so do not guess
+        byFp[c.fp] = c.fp in byFp ? null : c;
       });
+      const findById = raw => {
+        const id = String(raw || "").trim();
+        if (!id) return null;
+        return byKey[id] || byKey["BR-" + id] || byKey[id.replace(/^BR-/i, "BR-")] || null; // worklists from before the BR- prefix
+      };
       const now = Date.now();
       const patches = {}; // idx -> patch
       let completed = 0,
@@ -3354,7 +3378,7 @@ function DeptSection({
           provider: pick(r, ["Provider"]),
           balance: pick(r, ["Balance", "Balance Amount($)", "Billed Amount($)"])
         };
-        let claim = idCell && byKey[idCell.trim()] || byFp[fingerprintOf(rowObj)] || null;
+        let claim = findById(idCell) || byFp[fingerprintOf(rowObj)] || null;
         if (!claim) {
           unmatched++;
           return;
@@ -3394,6 +3418,13 @@ function DeptSection({
         patches[claim.idx] = patch;
       });
       bulkUpdate(c => patches[c.idx] || null);
+      // count what actually changed on the board, so the summary can never disagree with it
+      const applied = Object.values(patches);
+      completed = applied.filter(p => p.workStatus === "Completed").length;
+      pending = applied.filter(p => p.workStatus === "Pending").length;
+      notDone = applied.filter(p => p.workStatus === "Not Completed").length;
+      missingReason = applied.filter(p => p.reasonFlag === true).length;
+      movedCA = applied.filter(p => p.route === "client_assistance").length;
       setImportSummary({
         fileName: file.name,
         total: rows.length,
