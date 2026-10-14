@@ -37,8 +37,8 @@
    ================================================================================ */
 window.BRAHMASTRA_CONFIG = {
   API_BASE: "https://brahmastra-api.purviewautomate.workers.dev",
-  MS_CLIENT_ID: "06e6d567-d000-4868-ba5a-ddc8c8c3f970",
-  MS_TENANT_ID: "40ad2aa2-27ee-4071-8692-205d6146c583"
+  MS_CLIENT_ID: "66b15331-dd65-4904-9ec1-12f60e8f837c",
+  MS_TENANT_ID: "94be55e5-2194-40e4-9d98-1dcc7e91c268"
 };
 </script>
 <script>/**
@@ -378,6 +378,8 @@ const K = {
   clients: "brahmastra:clients",
   shares: "brahmastra:shares",
   feedback: "brahmastra:feedback",
+  fbfile: id => `brahmastra:fbfile:${id}`,
+  // one feedback attachment (kept apart so the list stays small)
   batch: (cid, dk) => `brahmastra:batch:${cid}:${dk}`,
   // base board (claims as assigned) per client per date
   work: (cid, dk, dep) => `brahmastra:work:${cid}:${dk}:${dep}`,
@@ -707,17 +709,164 @@ function timeAgo(ts) {
   if (h < 24) return h + "h ago";
   return Math.floor(h / 24) + "d ago";
 }
+/* ---------- feedback attachments ----------
+   Up to three per note: screenshots (pasted or picked) and everyday files. Each one
+   is stored under its own key, so the list of notes stays small, and the note only
+   keeps its name, type and size. Screenshots are shrunk before they leave the page. */
+const FB_MAX_FILES = 3;
+const FB_MAX_FILE = 2 * 1024 * 1024; // per attachment, after shrinking
+const FB_MAX_TOTAL = 4 * 1024 * 1024; // per note
+const FB_IMAGE = /^image\/(png|jpe?g|gif|webp|bmp)$/i;
+const FB_EXT = /\.(png|jpe?g|gif|webp|bmp|pdf|xlsx|xls|csv|docx|doc|txt|pptx)$/i;
+const FB_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/bmp,.pdf,.xlsx,.xls,.csv,.docx,.doc,.txt,.pptx";
+function fmtSize(n) {
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+}
+const extOf = name => ((String(name).match(/\.([a-z0-9]+)$/i) || [])[1] || "file").toUpperCase().slice(0, 4);
+function readAsDataURL(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result));
+    r.onerror = () => rej(r.error || new Error("read failed"));
+    r.readAsDataURL(blob);
+  });
+}
+// At most 1600 pixels on the long side. Kept as PNG while small, so text stays sharp;
+// turned into JPEG when the PNG would be heavy.
+async function shrinkImage(file) {
+  try {
+    const url = URL.createObjectURL(file);
+    let img;
+    try {
+      img = await new Promise((res, rej) => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.onerror = () => rej(new Error("not an image"));
+        i.src = url;
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    const w0 = img.naturalWidth || 1,
+      h0 = img.naturalHeight || 1;
+    const scale = Math.min(1, 1600 / Math.max(w0, h0));
+    const w = Math.max(1, Math.round(w0 * scale)),
+      h = Math.max(1, Math.round(h0 * scale));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const toBlob = (type, q) => new Promise(res => c.toBlob(b => res(b), type, q));
+    let out = await toBlob("image/png");
+    if (!out || out.size > 900 * 1024) out = (await toBlob("image/jpeg", 0.85)) || out;
+    if (!out) return file;
+    return scale < 1 || out.size < file.size ? out : file;
+  } catch (e) {
+    return file;
+  }
+}
+// returns { file } ready to send, or { err } in plain words
+async function prepareAttachment(file, nameOverride) {
+  const original = String(nameOverride || file.name || "attachment");
+  const isImage = FB_IMAGE.test(file.type || "");
+  if (!isImage && !FB_EXT.test(original)) return {
+    err: '"' + original + '" cannot be attached. Use a picture, PDF, Excel, Word, PowerPoint or text file.'
+  };
+  let blob = file,
+    type = file.type || "application/octet-stream",
+    name = original;
+  if (isImage) {
+    blob = await shrinkImage(file);
+    type = blob.type || type;
+    if (blob !== file) name = original.replace(/\.[a-z0-9]+$/i, "") + (type === "image/jpeg" ? ".jpg" : ".png");
+  }
+  if (blob.size > FB_MAX_FILE) return {
+    err: '"' + original + '" is ' + fmtSize(blob.size) + ". Each attachment can be up to " + fmtSize(FB_MAX_FILE) + "."
+  };
+  const data = await readAsDataURL(blob);
+  return {
+    file: {
+      id: uid(),
+      name: maskSensitive(name).slice(0, 120),
+      type,
+      size: blob.size,
+      data,
+      isImage
+    }
+  };
+}
+async function saveAttachment(f, by) {
+  const key = K.fbfile(f.id);
+  const value = {
+    name: f.name,
+    type: f.type,
+    size: f.size,
+    data: f.data,
+    when: Date.now(),
+    by
+  };
+  if (SERVER) await apiSet(key, value); // straight to the server, so a failed upload is reported
+  else mem[key] = value;
+  return {
+    id: f.id,
+    name: f.name,
+    type: f.type,
+    size: f.size,
+    key
+  };
+}
+// notes past the 500 kept are dropped together with their attachments
+function dropAttachments(entries) {
+  (entries || []).forEach(e => (e.files || []).forEach(f => {
+    if (SERVER) apiSet(f.key, null).catch(() => {});else delete mem[f.key];
+  }));
+}
+async function loadAttachment(f) {
+  const v = await store.get(f.key);
+  if (!v || !v.data) throw new Error("This attachment is no longer stored.");
+  return v;
+}
+function downloadDataURL(dataURL, name) {
+  try {
+    const comma = dataURL.indexOf(",");
+    const type = (dataURL.slice(0, comma).match(/data:([^;]+)/) || [])[1] || "application/octet-stream";
+    const bin = atob(dataURL.slice(comma + 1));
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([u8], {
+      type
+    }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name || "attachment";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (e) {
+    toast("Could not download this attachment here.");
+  }
+}
 let FB_LAST_SEND = 0;
-async function submitFeedback(entry) {
+async function submitFeedback(entry, files) {
   const now = Date.now();
   if (now - FB_LAST_SEND < 8000) return {
     ok: false,
     err: "Please wait a few seconds before sending another note."
   };
   try {
+    const saved = [];
+    for (const f of files || []) saved.push(await saveAttachment(f, entry.name));
+    if (saved.length) entry = {
+      ...entry,
+      files: saved
+    };
     const arr = (await store.get(K.feedback)) || [];
     arr.unshift(entry);
-    if (arr.length > 500) arr.length = 500;
+    if (arr.length > 500) dropAttachments(arr.splice(500));
     await store.set(K.feedback, arr);
     FB_LAST_SEND = now;
     // let an open admin card pick the note up at once instead of waiting for its poll
@@ -730,15 +879,15 @@ async function submitFeedback(entry) {
   } catch (e) {
     return {
       ok: false,
-      err: "Could not send right now. Please try again in a moment."
+      err: files && files.length ? "Could not upload the attachments right now. Try again, or send the note without them." : "Could not send right now. Please try again in a moment."
     };
   }
 }
 function exportFeedbackCSV(list) {
   try {
     const esc = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
-    const lines = [["When", "Kind", "Message", "Where", "Name", "Role"].join(",")];
-    list.forEach(e => lines.push([new Date(e.when).toLocaleString(), e.kind, e.message, e.where, e.name, e.role].map(esc).join(",")));
+    const lines = [["When", "Kind", "Message", "Where", "Name", "Role", "Attachments"].join(",")];
+    list.forEach(e => lines.push([new Date(e.when).toLocaleString(), e.kind, e.message, e.where, e.name, e.role, (e.files || []).map(f => f.name).join("; ")].map(esc).join(",")));
     const blob = new Blob(["\ufeff" + lines.join("\r\n")], {
       type: "text/csv;charset=utf-8;"
     });
@@ -1420,8 +1569,8 @@ function planDateSync({
    so every Fetch and Push is done as, and recorded against, the person who clicked.
    ========================================================================= */
 const MS_CFG = {
-  clientId: CFG.MS_CLIENT_ID || "06e6d567-d000-4868-ba5a-ddc8c8c3f970",
-  tenantId: CFG.MS_TENANT_ID || "40ad2aa2-27ee-4071-8692-205d6146c583",
+  clientId: CFG.MS_CLIENT_ID || "66b15331-dd65-4904-9ec1-12f60e8f837c",
+  tenantId: CFG.MS_TENANT_ID || "94be55e5-2194-40e4-9d98-1dcc7e91c268",
   redirectUri: CFG.MS_REDIRECT_URI || "https://purview-healthcare.github.io/brahmastra/",
   scopes: ["User.Read", "Files.ReadWrite.All"]
 };
@@ -1786,13 +1935,33 @@ function App() {
 }
 
 /* ---------- feedback widget ---------- */
+function PaperclipIcon({
+  size = 14,
+  color = "currentColor"
+}) {
+  return /*#__PURE__*/React.createElement("svg", {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    "aria-hidden": "true",
+    style: {
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M20.5 11.5 12.4 19.6a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8",
+    stroke: color,
+    strokeWidth: "1.9",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }));
+}
 function FeedbackWidget({
   me
 }) {
   const TAB_W = 32,
     TAB_H = 112,
-    PANEL_W = 320,
-    PANEL_H = 380;
+    PANEL_W = 320;
   const [pos, setPos] = useState(null); // null = docked at the right edge, middle
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState(FB_KINDS[0].id);
@@ -1800,7 +1969,20 @@ function FeedbackWidget({
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [files, setFiles] = useState([]); // attachments ready to send
+  const [adding, setAdding] = useState(false);
+  const [noPhi, setNoPhi] = useState(false); // the sender confirms no patient details show
+  const [dragOver, setDragOver] = useState(false);
+  const [sentFiles, setSentFiles] = useState(0);
   const drag = useRef(null);
+  const fileInput = useRef(null);
+  // the panel grows with attachments, so its real height keeps it on screen
+  const panelRef = useRef(null);
+  const [PANEL_H, setPanelH] = useState(400);
+  React.useLayoutEffect(() => {
+    const h = open && panelRef.current ? panelRef.current.offsetHeight : 0;
+    if (h && Math.abs(h - PANEL_H) > 2) setPanelH(h);
+  });
   const vw = () => window.innerWidth,
     vh = () => window.innerHeight;
   const p = pos || {
@@ -1841,14 +2023,74 @@ function FeedbackWidget({
     setSent(false);
     setErr("");
     setKind(FB_KINDS[0].id);
+    setFiles([]);
+    setNoPhi(false);
+    setDragOver(false);
+  }
+  // pictures and files from the Attach button, a paste or a drop all come through here
+  async function addFiles(list, names) {
+    const incoming = [...(list || [])];
+    if (!incoming.length) return;
+    setErr("");
+    const room = FB_MAX_FILES - files.length;
+    if (room <= 0) {
+      setErr("Up to " + FB_MAX_FILES + " attachments per note.");
+      return;
+    }
+    setAdding(true);
+    const ready = [],
+      problems = [];
+    let total = files.reduce((t, f) => t + f.size, 0);
+    for (let i = 0; i < incoming.length; i++) {
+      if (ready.length >= room) {
+        problems.push("Up to " + FB_MAX_FILES + " attachments per note.");
+        break;
+      }
+      try {
+        const r = await prepareAttachment(incoming[i], names && names[i]);
+        if (r.err) {
+          problems.push(r.err);
+          continue;
+        }
+        if (total + r.file.size > FB_MAX_TOTAL) {
+          problems.push("All attachments together can be up to " + fmtSize(FB_MAX_TOTAL) + ".");
+          continue;
+        }
+        total += r.file.size;
+        ready.push(r.file);
+      } catch (e) {
+        problems.push("Could not read one of the files. Try saving it first, then attach it.");
+      }
+    }
+    setAdding(false);
+    if (ready.length) {
+      setFiles(cur => [...cur, ...ready].slice(0, FB_MAX_FILES));
+      setNoPhi(false);
+    }
+    if (problems.length) setErr(problems[0]);
+  }
+  function onPaste(e) {
+    const items = [...(e.clipboardData && e.clipboardData.items || [])];
+    const pics = items.filter(it => it.kind === "file" && /^image\//.test(it.type)).map(it => it.getAsFile()).filter(Boolean);
+    if (!pics.length) return; // ordinary text pastes as usual
+    e.preventDefault();
+    const d = new Date();
+    const stamp = String(d.getDate()).padStart(2, "0") + " " + MONTHS[d.getMonth()] + " " + String(d.getHours()).padStart(2, "0") + "." + String(d.getMinutes()).padStart(2, "0");
+    addFiles(pics, pics.map((f, i) => "Screenshot " + stamp + (pics.length > 1 ? " (" + (i + 1) + ")" : "") + ".png"));
+  }
+  function onDrop(e) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   }
   async function send() {
     if (busy) return;
     const k = FB_KINDS.find(x => x.id === kind) || FB_KINDS[0];
     setBusy(true);
     setErr("");
+    const noteId = uid();
     const r = await submitFeedback({
-      id: uid(),
+      id: noteId,
       when: Date.now(),
       kind: k.label,
       kindId: k.id,
@@ -1856,15 +2098,23 @@ function FeedbackWidget({
       name: me && me.username || "Not signed in",
       role: me && me.role || "",
       where: CURRENT_SCREEN
-    });
+    }, files);
     setBusy(false);
     if (r.ok) {
+      setSentFiles(files.length);
       setSent(true);
       setText("");
+      setFiles([]);
+      setNoPhi(false);
+      // the server emails the note to the feedback list; the note is saved either way
+      if (SERVER) authCall("/notify/feedback", {
+        id: noteId
+      });
     } else {
       setErr(r.err);
     }
   }
+  const canSend = text.trim().length >= 3 && !busy && !adding && (!files.length || noPhi);
 
   // Panel opens on whichever side of the tab has room, and stays on screen.
   const px = Math.min(Math.max(8, p.x > vw() / 2 ? p.x - PANEL_W - 10 : p.x + TAB_W + 10), Math.max(8, vw() - PANEL_W - 8));
@@ -1884,10 +2134,26 @@ function FeedbackWidget({
     style: S.fbTabText
   }, "Feedback")), open && /*#__PURE__*/React.createElement("div", {
     "data-testid": "fb-panel",
+    ref: panelRef,
     style: {
       ...S.fbPanel,
       left: px,
-      top: py
+      top: py,
+      maxHeight: "calc(100vh - 16px)",
+      overflowY: "auto",
+      ...(dragOver ? S.fbPanelDrop : {})
+    },
+    onDragOver: e => {
+      if (!sent) {
+        e.preventDefault();
+        setDragOver(true);
+      }
+    },
+    onDragLeave: e => {
+      if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false);
+    },
+    onDrop: e => {
+      if (!sent) onDrop(e);
     }
   }, !sent ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: S.fbTitle
@@ -1911,10 +2177,76 @@ function FeedbackWidget({
     style: S.fbTextarea,
     placeholder: "What happened, or what would help?",
     value: text,
-    onChange: e => setText(e.target.value.slice(0, 1000))
+    onChange: e => setText(e.target.value.slice(0, 1000)),
+    onPaste: onPaste
   }), /*#__PURE__*/React.createElement("div", {
     style: S.fbCounter
-  }, 1000 - text.length, " left"), err && /*#__PURE__*/React.createElement("div", {
+  }, 1000 - text.length, " left"), /*#__PURE__*/React.createElement("div", {
+    style: S.fbAttachRow
+  }, /*#__PURE__*/React.createElement("button", {
+    "data-testid": "fb-attach",
+    style: {
+      ...S.fbAttachBtn,
+      ...(files.length >= FB_MAX_FILES || adding ? {
+        opacity: 0.5,
+        cursor: "default"
+      } : {})
+    },
+    disabled: files.length >= FB_MAX_FILES || adding,
+    onClick: () => fileInput.current && fileInput.current.click()
+  }, /*#__PURE__*/React.createElement(PaperclipIcon, {
+    size: 13
+  }), " Attach"), /*#__PURE__*/React.createElement("span", {
+    style: S.fbAttachHint
+  }, adding ? "Adding…" : files.length >= FB_MAX_FILES ? "That's the most for one note" : "or paste a screenshot (Ctrl + V)"), /*#__PURE__*/React.createElement("input", {
+    ref: fileInput,
+    type: "file",
+    multiple: true,
+    accept: FB_ACCEPT,
+    style: {
+      display: "none"
+    },
+    "data-testid": "fb-file",
+    onChange: e => {
+      const l = [...(e.target.files || [])];
+      e.target.value = "";
+      addFiles(l);
+    }
+  })), files.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: S.fbFiles,
+    "data-testid": "fb-files"
+  }, files.map(f => /*#__PURE__*/React.createElement("div", {
+    key: f.id,
+    style: S.fbFileChip,
+    "data-testid": "fb-file-chip"
+  }, f.isImage ? /*#__PURE__*/React.createElement("img", {
+    src: f.data,
+    alt: "",
+    style: S.fbThumb
+  }) : /*#__PURE__*/React.createElement("span", {
+    style: S.fbFileIcon
+  }, extOf(f.name)), /*#__PURE__*/React.createElement("span", {
+    style: S.fbFileName,
+    title: f.name
+  }, f.name), /*#__PURE__*/React.createElement("span", {
+    style: S.fbFileSize
+  }, fmtSize(f.size)), /*#__PURE__*/React.createElement("button", {
+    style: S.fbFileX,
+    onClick: () => setFiles(cur => cur.filter(x => x.id !== f.id)),
+    "aria-label": "Remove " + f.name,
+    title: "Remove"
+  }, "\xD7")))), files.length > 0 && /*#__PURE__*/React.createElement("label", {
+    style: S.fbPhi
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: noPhi,
+    onChange: e => setNoPhi(e.target.checked),
+    "data-testid": "fb-nophi",
+    style: {
+      marginTop: 2,
+      flexShrink: 0
+    }
+  }), /*#__PURE__*/React.createElement("span", null, "No patient names, IDs or dates of birth show in these attachments. Crop or cover them first.")), err && /*#__PURE__*/React.createElement("div", {
     style: S.fbErr
   }, err), /*#__PURE__*/React.createElement("div", {
     style: S.fbNote
@@ -1928,21 +2260,21 @@ function FeedbackWidget({
     "data-testid": "fb-send",
     style: {
       ...S.fbSend,
-      ...(text.trim().length < 3 || busy ? {
+      ...(!canSend ? {
         opacity: 0.45,
         cursor: "default"
       } : {})
     },
-    disabled: text.trim().length < 3 || busy,
+    disabled: !canSend,
     onClick: send
-  }, busy ? "Sending…" : "Send"), /*#__PURE__*/React.createElement("button", {
+  }, busy ? files.length ? "Uploading…" : "Sending…" : "Send"), /*#__PURE__*/React.createElement("button", {
     style: S.fbClose,
     onClick: closePanel
   }, "Close"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: S.fbThanksBig
   }, "Thank you."), /*#__PURE__*/React.createElement("div", {
     style: S.fbThanks
-  }, "Your note went straight to the team. It helps more than you know."), /*#__PURE__*/React.createElement("button", {
+  }, "Your note", sentFiles ? " and " + (sentFiles === 1 ? "its attachment" : "its " + sentFiles + " attachments") : "", " went straight to the team. It helps more than you know."), /*#__PURE__*/React.createElement("button", {
     style: {
       ...S.fbClose,
       marginTop: 12
@@ -2455,6 +2787,181 @@ function ClientPicker({
   const [shareMsg, setShareMsg] = useState("");
   const [fb, setFb] = useState([]);
   const [fbFilter, setFbFilter] = useState("all");
+  const [viewFile, setViewFile] = useState(null); // { f, by, data, err } for the attachment viewer
+  const [mail, setMail] = useState(null); // email alert settings from the server
+  const [recips, setRecips] = useState([]); // the list being edited
+  const [recipsDirty, setRecipsDirty] = useState(false);
+  const [recipInput, setRecipInput] = useState("");
+  const [mailBusy, setMailBusy] = useState(null);
+  const [mailMsg, setMailMsg] = useState("");
+  const [mailLink, setMailLink] = useState(""); // Microsoft sign in address, if the new tab was blocked
+  const [focusId, setFocusId] = useState(null); // a note opened from an email link
+  const fbCardRef = useRef(null);
+  const handledHash = useRef(false);
+  const loadMail = useCallback(async () => {
+    if (!SERVER) return null;
+    const r = await authCall("/mail/settings", null, "GET");
+    const m = r.ok ? r.data : {
+      unavailable: true,
+      recipients: []
+    };
+    setMail(m);
+    return m;
+  }, []);
+  useEffect(() => {
+    loadMail();
+    const t = setInterval(() => {
+      if (!document.hidden) loadMail();
+    }, 45000);
+    return () => clearInterval(t);
+  }, [loadMail]);
+  useEffect(() => {
+    if (mail && !recipsDirty) setRecips(mail.recipients || []);
+  }, [mail, recipsDirty]);
+  const onMailList = !!(mail && (mail.recipients || []).some(e => String(e).toLowerCase() === String(me.username).toLowerCase()));
+  const canSeeFeedback = me.role === "Admin" || onMailList;
+  // "Open in Brahmastra" in a feedback email lands here with #feedback=<note id>
+  useEffect(() => {
+    if (handledHash.current || loading) return;
+    const m = (window.location.hash || "").match(/^#feedback(?:=([A-Za-z0-9_-]+))?/);
+    if (!m) return;
+    if (SERVER && !mail) return; // wait for the list that decides who can see the card
+    handledHash.current = true;
+    try {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch (e) {/* fine */}
+    if (!canSeeFeedback) {
+      toast("That link opens the Team feedback box, which admins and the people on the feedback email list can see.");
+      return;
+    }
+    setFbFilter("all");
+    setFocusId(m[1] || null);
+    setTimeout(() => {
+      const el = m[1] && document.querySelector('[data-fbid="' + m[1] + '"]') || fbCardRef.current;
+      if (el && el.scrollIntoView) el.scrollIntoView({
+        behavior: "smooth",
+        block: m[1] ? "center" : "start"
+      });
+    }, 200);
+  }, [loading, mail, canSeeFeedback]);
+  async function connectMailbox() {
+    let w = null;
+    try {
+      w = window.open("about:blank", "_blank");
+    } catch (e) {
+      w = null;
+    } // opened from the click itself, so it is not blocked
+    setMailBusy("connect");
+    setMailMsg("");
+    setMailLink("");
+    const r = await authCall("/admin/mail/connect");
+    setMailBusy(null);
+    if (!r.ok) {
+      try {
+        if (w) w.close();
+      } catch (e) {/* fine */}
+      setMailMsg(r.error);
+      return;
+    }
+    if (w) {
+      try {
+        w.location.href = r.data.url;
+      } catch (e) {
+        setMailLink(r.data.url);
+      }
+    } else setMailLink(r.data.url);
+    setMailMsg("Sign in as " + (r.data.from || "the mailbox") + " in the Microsoft tab. This box updates once it is connected.");
+    const started = Date.now();
+    const poll = setInterval(async () => {
+      const m = await loadMail();
+      if (m && m.connected && m.connectedAt && m.connectedAt >= started - 60000 || Date.now() - started > 180000) {
+        clearInterval(poll);
+        if (m && m.connected) {
+          setMailMsg("");
+          setMailLink("");
+          toast("Mailbox connected: " + m.account);
+        }
+      }
+    }, 4000);
+  }
+  async function sendTestMail() {
+    setMailBusy("test");
+    setMailMsg("");
+    const r = await authCall("/admin/mail/test");
+    setMailBusy(null);
+    if (r.ok) toast("Test email sent to " + ((r.data.to || []).length || "the") + " people on the list.");else setMailMsg(r.error);
+    loadMail();
+  }
+  async function disconnectMailbox() {
+    setMailBusy("disconnect");
+    setMailMsg("");
+    const r = await authCall("/admin/mail/disconnect");
+    setMailBusy(null);
+    if (!r.ok) setMailMsg(r.error);
+    loadMail();
+  }
+  function addRecipient() {
+    const e = recipInput.trim().replace(/^mailto:/i, "").toLowerCase();
+    if (!e) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) {
+      setMailMsg(e + " is not an email address.");
+      return;
+    }
+    if (!recips.includes(e)) {
+      setRecips([...recips, e]);
+      setRecipsDirty(true);
+    }
+    setRecipInput("");
+    setMailMsg("");
+  }
+  async function saveRecipients() {
+    setMailBusy("save");
+    setMailMsg("");
+    const r = await authCall("/admin/mail/recipients", {
+      recipients: recips
+    });
+    setMailBusy(null);
+    if (!r.ok) {
+      setMailMsg(r.error);
+      return;
+    }
+    setRecipsDirty(false);
+    setMail(m => ({
+      ...(m || {}),
+      recipients: r.data.recipients
+    }));
+    toast("Saved. New notes will be emailed to " + r.data.recipients.length + " people.");
+  }
+  // pictures open in a viewer; other files download straight away
+  async function openAttachment(f, by) {
+    if (FB_IMAGE.test(f.type || "")) {
+      setViewFile({
+        f,
+        by,
+        data: null,
+        err: ""
+      });
+      try {
+        const v = await loadAttachment(f);
+        setViewFile(cur => cur && cur.f.id === f.id ? {
+          ...cur,
+          data: v.data
+        } : cur);
+      } catch (e) {
+        setViewFile(cur => cur && cur.f.id === f.id ? {
+          ...cur,
+          err: e.message || "Could not open this attachment."
+        } : cur);
+      }
+      return;
+    }
+    try {
+      const v = await loadAttachment(f);
+      downloadDataURL(v.data, f.name);
+    } catch (e) {
+      toast(e.message || "Could not open this attachment.");
+    }
+  }
   const load = useCallback(async () => {
     const [c, s, u, f] = await Promise.all([store.get(K.clients), store.get(K.shares), store.get(K.users), store.get(K.feedback)]);
     setClients(c || {});
@@ -2726,8 +3233,10 @@ function ClientPicker({
       style: u.disabled ? S.acceptBtn : S.rejectBtn,
       onClick: () => setAccountOff(email, !u.disabled)
     }, u.disabled ? "Switch on" : "Switch off"));
-  })), me.role === "Admin" && /*#__PURE__*/React.createElement("div", {
-    style: S.fbCard
+  })), canSeeFeedback && /*#__PURE__*/React.createElement("div", {
+    style: S.fbCard,
+    ref: fbCardRef,
+    "data-testid": "fb-card"
   }, /*#__PURE__*/React.createElement("div", {
     style: S.fbCardHead
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -2737,7 +3246,108 @@ function ClientPicker({
   }, "Notes sent from the Feedback tab, newest first.")), fb.length > 0 && /*#__PURE__*/React.createElement("button", {
     style: S.csvBtn,
     onClick: () => exportFeedbackCSV(fbShown)
-  }, "\u2913 Export CSV")), /*#__PURE__*/React.createElement("div", {
+  }, "\u2913 Export CSV")), me.role === "Admin" ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailBox,
+    "data-testid": "mail-box"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.mailHead
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.mailTitle
+  }, "Email alerts"), SERVER && mail && mail.connected && /*#__PURE__*/React.createElement("span", {
+    style: S.mailOn
+  }, "On"), SERVER && mail && !mail.unavailable && !mail.connected && /*#__PURE__*/React.createElement("span", {
+    style: S.mailOff
+  }, "Off")), !SERVER ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine
+  }, "Every new note can be emailed with its attachments. This works on the team site, where the server sends the emails.") : !mail ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine
+  }, "Checking\u2026") : mail.unavailable ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine
+  }, "The server does not have email alerts yet. Deploy the version 3 Worker code in Cloudflare.") : !mail.configured ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine,
+    "data-testid": "mail-status"
+  }, "Not set up on the server yet: the Worker in Cloudflare needs the secret ", /*#__PURE__*/React.createElement("b", null, "MAIL_CLIENT_SECRET"), " from the Purview Brahmastra app in Entra.") : !mail.connected ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine,
+    "data-testid": "mail-status"
+  }, "No mailbox connected. Click ", /*#__PURE__*/React.createElement("b", null, "Connect mailbox"), " and sign in as ", /*#__PURE__*/React.createElement("b", null, mail.from), ".") : /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine,
+    "data-testid": "mail-status"
+  }, "Every new note is emailed from ", /*#__PURE__*/React.createElement("b", null, mail.account), mail.connectedBy ? /*#__PURE__*/React.createElement(React.Fragment, null, ", connected by ", firstNameOf(mail.connectedBy), " ", mail.connectedAt ? timeAgo(mail.connectedAt) : "") : null, ".", mail.lastError ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailBad
+  }, "Last email failed ", mail.lastErrorAt ? timeAgo(mail.lastErrorAt) : "", ": ", mail.lastError) : mail.lastOkAt ? /*#__PURE__*/React.createElement("div", {
+    style: S.mailGood
+  }, "Last email sent ", timeAgo(mail.lastOkAt), ".") : null), SERVER && mail && !mail.unavailable && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: S.mailLabel
+  }, "Sent to"), /*#__PURE__*/React.createElement("div", {
+    style: S.recipRow,
+    "data-testid": "mail-recipients"
+  }, recips.map(e => /*#__PURE__*/React.createElement("span", {
+    key: e,
+    style: S.recipChip
+  }, e, /*#__PURE__*/React.createElement("button", {
+    style: S.recipX,
+    "aria-label": "Remove " + e,
+    onClick: () => {
+      setRecips(recips.filter(x => x !== e));
+      setRecipsDirty(true);
+    }
+  }, "\xD7"))), /*#__PURE__*/React.createElement("input", {
+    style: S.recipInput,
+    placeholder: "add a Purview email",
+    value: recipInput,
+    "data-testid": "mail-add-input",
+    onChange: e => setRecipInput(e.target.value),
+    onKeyDown: e => e.key === "Enter" && addRecipient()
+  }), /*#__PURE__*/React.createElement("button", {
+    style: S.odGhost,
+    onClick: addRecipient,
+    "data-testid": "mail-add"
+  }, "Add"), recipsDirty && /*#__PURE__*/React.createElement("button", {
+    className: "gbtn",
+    style: S.odPrimary,
+    onClick: saveRecipients,
+    disabled: !!mailBusy || !recips.length,
+    "data-testid": "mail-save"
+  }, mailBusy === "save" ? "Saving…" : "Save list")), /*#__PURE__*/React.createElement("div", {
+    style: S.mailBtns
+  }, mail.configured && /*#__PURE__*/React.createElement("button", {
+    className: "gbtn",
+    style: S.odPrimary,
+    onClick: connectMailbox,
+    disabled: !!mailBusy,
+    "data-testid": "mail-connect"
+  }, mailBusy === "connect" ? "Opening…" : mail.connected ? "Reconnect mailbox" : "Connect mailbox"), mail.connected && /*#__PURE__*/React.createElement("button", {
+    style: S.odSecondary,
+    onClick: sendTestMail,
+    disabled: !!mailBusy,
+    "data-testid": "mail-test"
+  }, mailBusy === "test" ? "Sending…" : "Send a test email"), mail.connected && /*#__PURE__*/React.createElement("button", {
+    style: S.odGhost,
+    onClick: disconnectMailbox,
+    disabled: !!mailBusy,
+    "data-testid": "mail-disconnect"
+  }, "Disconnect")), mailLink && /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine
+  }, "Your browser blocked the new tab. ", /*#__PURE__*/React.createElement("a", {
+    href: mailLink,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: S.odLink,
+    "data-testid": "mail-link"
+  }, "Open the Microsoft sign in")), mailMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.mailLine,
+      color: /^Sign in as/.test(mailMsg) ? "#0369a1" : "#b91c1c"
+    },
+    "data-testid": "mail-msg"
+  }, mailMsg))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.mailBox,
+      padding: "9px 14px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.mailLine
+  }, "You are on the feedback email list, so every new note also reaches your inbox.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 8,
@@ -2757,9 +3367,11 @@ function ClientPicker({
     const k = FB_KINDS.find(x => x.id === e.kindId) || FB_KINDS[0];
     return /*#__PURE__*/React.createElement("div", {
       key: e.id,
+      "data-fbid": e.id,
       style: {
         ...S.fbEntry,
-        borderLeft: "3px solid " + k.color
+        borderLeft: "3px solid " + k.color,
+        ...(focusId === e.id ? S.fbEntryFocus : {})
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: S.fbEntryTop
@@ -2773,10 +3385,102 @@ function ClientPicker({
       style: S.fbWhen
     }, timeAgo(e.when))), /*#__PURE__*/React.createElement("div", {
       style: S.fbMsg
-    }, e.message), /*#__PURE__*/React.createElement("div", {
+    }, e.message), (e.files || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: S.fbEntryFiles
+    }, e.files.map(f => /*#__PURE__*/React.createElement("button", {
+      key: f.id,
+      style: S.fbEntryFile,
+      onClick: () => openAttachment(f, e.name),
+      "data-testid": "fb-entry-file",
+      title: FB_IMAGE.test(f.type || "") ? "Open" : "Download"
+    }, /*#__PURE__*/React.createElement(PaperclipIcon, {
+      size: 12,
+      color: "#0369a1"
+    }), " ", /*#__PURE__*/React.createElement("span", {
+      style: S.fbEntryFileName
+    }, f.name), " ", /*#__PURE__*/React.createElement("span", {
+      style: S.fbFileSize
+    }, fmtSize(f.size))))), /*#__PURE__*/React.createElement("div", {
       style: S.fbEntryMeta
     }, e.name, e.role ? " · " + e.role : "", " \xB7 ", e.where));
-  }))));
+  }))), viewFile && /*#__PURE__*/React.createElement("div", {
+    style: S.odOverlay,
+    onClick: () => setViewFile(null)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.modal,
+      maxWidth: 980,
+      margin: "auto"
+    },
+    onClick: e => e.stopPropagation(),
+    "data-testid": "fb-viewer"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.modalHead,
+      background: "#f8fbfc",
+      borderBottom: "1px solid " + LINE
+    }
+  }, /*#__PURE__*/React.createElement(PaperclipIcon, {
+    size: 18,
+    color: NAVY
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.modalTitle,
+      color: NAVY,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap"
+    }
+  }, viewFile.f.name), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.modalSub,
+      color: MUT
+    }
+  }, fmtSize(viewFile.f.size), viewFile.by ? " · sent by " + viewFile.by : ""))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 16,
+      textAlign: "center",
+      maxHeight: "70vh",
+      overflow: "auto",
+      background: "#f4f7f9"
+    }
+  }, viewFile.err ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.errBox,
+      marginBottom: 0
+    }
+  }, viewFile.err) : viewFile.data ? /*#__PURE__*/React.createElement("img", {
+    src: viewFile.data,
+    alt: viewFile.f.name,
+    style: {
+      maxWidth: "100%",
+      borderRadius: 8,
+      boxShadow: "0 4px 18px rgba(15,42,71,.12)"
+    },
+    "data-testid": "fb-viewer-img"
+  }) : /*#__PURE__*/React.createElement("div", {
+    style: S.busySub
+  }, "Opening\u2026")), /*#__PURE__*/React.createElement("div", {
+    style: S.modalFoot
+  }, /*#__PURE__*/React.createElement("button", {
+    style: S.modalDismiss,
+    onClick: () => setViewFile(null)
+  }, "Close"), /*#__PURE__*/React.createElement("button", {
+    style: {
+      ...S.modalPrimary,
+      background: NAVY,
+      ...(!viewFile.data ? {
+        opacity: 0.5
+      } : {})
+    },
+    disabled: !viewFile.data,
+    onClick: () => downloadDataURL(viewFile.data, viewFile.f.name),
+    "data-testid": "fb-viewer-download"
+  }, "\u2913 Download")))));
 }
 function TopBar({
   me,
@@ -5923,6 +6627,110 @@ const S = {
     color: "#dc2626",
     marginTop: 6
   },
+  fbPanelDrop: {
+    borderColor: "#2CC9B0",
+    boxShadow: "0 0 0 3px rgba(44,201,176,.25), 0 20px 50px rgba(15,42,71,.18)"
+  },
+  fbAttachRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8
+  },
+  fbAttachBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    background: "#fff",
+    border: "1px solid #dbe4ea",
+    borderRadius: 8,
+    padding: "5px 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    color: NAVY,
+    cursor: "pointer",
+    fontFamily: "inherit"
+  },
+  fbAttachHint: {
+    fontSize: 11,
+    color: MUT
+  },
+  fbFiles: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    marginTop: 8
+  },
+  fbFileChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    background: "#f8fbfc",
+    border: "1px solid " + LINE,
+    borderRadius: 9,
+    padding: "5px 6px 5px 6px"
+  },
+  fbThumb: {
+    width: 34,
+    height: 34,
+    objectFit: "cover",
+    borderRadius: 6,
+    border: "1px solid " + LINE,
+    background: "#fff",
+    flexShrink: 0
+  },
+  fbFileIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 6,
+    background: "#e0f2fe",
+    color: "#0369a1",
+    fontSize: 9.5,
+    fontWeight: 800,
+    display: "grid",
+    placeItems: "center",
+    flexShrink: 0,
+    letterSpacing: 0.3
+  },
+  fbFileName: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    fontWeight: 600,
+    color: ink,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap"
+  },
+  fbFileSize: {
+    fontSize: 10.5,
+    color: MUT,
+    whiteSpace: "nowrap"
+  },
+  fbFileX: {
+    background: "none",
+    border: "none",
+    color: "#94a3b8",
+    fontSize: 18,
+    lineHeight: 1,
+    cursor: "pointer",
+    padding: "0 4px",
+    fontFamily: "inherit"
+  },
+  fbPhi: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 7,
+    marginTop: 8,
+    fontSize: 11.5,
+    color: "#92400e",
+    background: "#fffbeb",
+    border: "1px solid #fde68a",
+    borderRadius: 8,
+    padding: "7px 9px",
+    lineHeight: 1.45,
+    cursor: "pointer"
+  },
   fbThanksBig: {
     fontSize: 18,
     fontWeight: 800,
@@ -5987,6 +6795,141 @@ const S = {
     fontSize: 11.5,
     color: MUT,
     marginTop: 6
+  },
+  fbEntryFiles: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8
+  },
+  fbEntryFocus: {
+    boxShadow: "0 0 0 2px #0284c7, 0 8px 24px rgba(2,132,199,.18)",
+    background: "#f0f9ff"
+  },
+  mailBox: {
+    background: "#f5fbff",
+    border: "1px solid #cfe8f7",
+    borderRadius: 12,
+    padding: "12px 14px",
+    marginBottom: 14
+  },
+  mailHead: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8
+  },
+  mailTitle: {
+    fontSize: 13.5,
+    fontWeight: 700,
+    color: NAVY
+  },
+  mailOn: {
+    fontSize: 10.5,
+    fontWeight: 800,
+    color: "#15803d",
+    background: "#dcfce7",
+    borderRadius: 6,
+    padding: "2px 7px",
+    textTransform: "uppercase",
+    letterSpacing: 0.4
+  },
+  mailOff: {
+    fontSize: 10.5,
+    fontWeight: 800,
+    color: "#64748b",
+    background: "#eef2f6",
+    borderRadius: 6,
+    padding: "2px 7px",
+    textTransform: "uppercase",
+    letterSpacing: 0.4
+  },
+  mailLine: {
+    fontSize: 12.5,
+    color: "#334155",
+    marginTop: 6,
+    lineHeight: 1.55
+  },
+  mailGood: {
+    fontSize: 12,
+    color: "#15803d",
+    marginTop: 3
+  },
+  mailBad: {
+    fontSize: 12,
+    color: "#b91c1c",
+    marginTop: 3
+  },
+  mailLabel: {
+    fontSize: 10.5,
+    fontWeight: 700,
+    color: MUT,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 12,
+    marginBottom: 6
+  },
+  recipRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    alignItems: "center"
+  },
+  recipChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    background: "#fff",
+    border: "1px solid #dbe4ea",
+    borderRadius: 20,
+    padding: "4px 6px 4px 11px",
+    fontSize: 12,
+    fontWeight: 600,
+    color: NAVY
+  },
+  recipX: {
+    background: "none",
+    border: "none",
+    color: "#94a3b8",
+    fontSize: 15,
+    lineHeight: 1,
+    cursor: "pointer",
+    padding: "0 3px",
+    fontFamily: "inherit"
+  },
+  recipInput: {
+    border: "1px solid #dbe4ea",
+    borderRadius: 20,
+    padding: "6px 12px",
+    fontSize: 12,
+    fontFamily: "inherit",
+    minWidth: 200,
+    background: "#fff"
+  },
+  mailBtns: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    marginTop: 12
+  },
+  fbEntryFile: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    maxWidth: 300,
+    background: "#f0f9ff",
+    border: "1px solid #bae6fd",
+    borderRadius: 8,
+    padding: "4px 9px",
+    fontSize: 11.5,
+    fontWeight: 600,
+    color: "#0369a1",
+    cursor: "pointer",
+    fontFamily: "inherit"
+  },
+  fbEntryFileName: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap"
   },
   app: {
     minHeight: "100vh",
