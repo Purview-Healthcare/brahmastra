@@ -459,7 +459,7 @@ const STATUS = ["Pending", "Completed", "Not Completed"];
 // every "page" a claim's work state can be written under (one per department, plus rejection follow-up and the AR note)
 const OVERLAY_KEYS = ["submission", "payment_posting", "ev", "client_assistance", "rejection", "ar"];
 // fields that live in a department's work page (everything mutable); everything else is the immutable base claim
-const WORK_FIELDS = ["workStatus", "incompleteReason", "reasonFlag", "reissuedAt", "taskedAt", "forceTat", "notCompletedOnce", "originDept", "route", "task", "rejOutcome", "claimNote", "noClock", "changedInFile", "closedInFile", "fileNote"];
+const WORK_FIELDS = ["workStatus", "incompleteReason", "reasonFlag", "reissuedAt", "taskedAt", "forceTat", "notCompletedOnce", "originDept", "route", "task", "rejOutcome", "claimNote", "noClock", "changedInFile", "closedInFile", "fileNote", "statusBy", "statusAt", "statusVia"];
 // Merge the base board with every department's work page. Each FIELD takes the most
 // recent value written by anyone, so two teams touching the same claim both stick:
 // Submission moving a claim to Client Assistance, then Client Assistance completing
@@ -734,6 +734,7 @@ function maskSensitive(t) {
 // failure tells the person what happened without freezing the page.
 function toast(msg) {
   try {
+    document.querySelectorAll('[data-testid="toast"]').forEach(x => x.remove());
     const d = document.createElement("div");
     d.textContent = msg;
     d.setAttribute("data-testid", "toast");
@@ -950,7 +951,7 @@ function exportFeedbackCSV(list) {
 /* ---------- seeded default admin (always available) ----------
    Password & security answer are stored as SHA-256 hashes, not plain text. */
 const DEFAULT_ADMIN = {
-  username: "sasha.hayes@purviewservices.com",
+  username: "purviewautomate@purview-healthcare.com",
   role: "Admin",
   // Offline preview only. The live site keeps accounts on the server, so no real
   // password hash is ever shipped in this page. Preview password: brahmastra-demo
@@ -1871,6 +1872,937 @@ async function msUploadStatus(ms, folderId, fileName, bytes) {
 /* =========================================================================
    ROOT
    ========================================================================= */
+const POSITIONS = ["Vice President", "Senior Manager", "Manager", "Assistant Manager", "Senior Team Lead", "Team Lead", "Subject Matter Expert"];
+const posRank = (p) => {
+  const i = POSITIONS.indexOf(p);
+  return i < 0 ? POSITIONS.length : i;
+};
+const isAdminMe = (me) => !!me && me.role === "Admin";
+const seesAllClients = (me) => !!me && (me.role === "Admin" || me.role === "Vice President" || me.position === "Vice President");
+const mailClean = (t) => String(t || "").trim().replace(/^mailto:/i, "").trim().toLowerCase();
+const mailOk = (t) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(t);
+const uniqList = (a) => [...new Set((a || []).filter(Boolean))];
+const canManageAccess = (c, me) => !!c && !!me && (c.createdBy === me.username || seesAllClients(me));
+K.roster = "brahmastra:roster";
+function meFromServer(u) {
+  return { username: u.email, role: u.role, name: u.name || "", position: u.position || "", empId: u.empId || "" };
+}
+function visibleClients(clients, me) {
+  return Object.entries(clients || {}).filter(([, c]) => c && (seesAllClients(me) || (c.members || []).includes(me.username)));
+}
+function maskMail(e) {
+  const [a, b] = String(e || "").split("@");
+  if (!b) return e;
+  return (a.length <= 2 ? a.charAt(0) + "*" : a.slice(0, 2) + "*".repeat(Math.min(6, a.length - 2))) + "@" + b;
+}
+function whenText(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  return d.toLocaleDateString(void 0, { day: "numeric", month: "short" }) + ", " + d.toLocaleTimeString(void 0, { hour: "numeric", minute: "2-digit" });
+}
+async function saveSharedOrThrow(key, value) {
+  if (!SERVER) {
+    await store.set(key, value);
+    return;
+  }
+  const r = await authCall("/kv", { key, value });
+  if (!r.ok) {
+    if (r.status === 401) sessionEnded();
+    throw new Error(r.error || "Could not save. Please try again.");
+  }
+  mem[key] = value;
+}
+const DEMO_CODES = {};
+async function demoRoster() {
+  const people = await store.get(K.roster) || [];
+  const users = await store.get(K.users) || {};
+  return people.map((p) => ({ ...p, status: p.off ? "off" : users[p.email] && users[p.email].pass ? "active" : "new" }));
+}
+const localAuth = {
+  async login(email, password) {
+    const users = await store.get(K.users) || {};
+    const rec = users[email];
+    if (!rec || rec.pass !== await sha(password)) throw new Error("That email or password doesn't match.");
+    if (email !== DEFAULT_ADMIN.username) {
+      const p = (await demoRoster()).find((x) => x.email === email);
+      if (!p) throw new Error("This email isn't on the Brahmastra team list. Ask your admin to add you.");
+      if (p.status === "off") throw new Error("This account is switched off. Ask your admin.");
+    }
+    return email;
+  },
+  async sendCode(email, purpose) {
+    const users = await store.get(K.users) || {};
+    const isAdmin = email === DEFAULT_ADMIN.username;
+    const p = (await demoRoster()).find((x) => x.email === email);
+    if (!isAdmin && !p) throw new Error("This email isn't on the Brahmastra team list. Ask your admin to add you.");
+    if (p && p.status === "off") throw new Error("This account is switched off. Ask your admin.");
+    const has = !!(users[email] && users[email].pass);
+    if (purpose === "setup" && has) throw new Error("You've already set a password. Use Sign in, or Forgot password if you can't remember it.");
+    if (purpose === "reset" && !has) throw new Error("You haven't set a password yet. Use the First time tab.");
+    const code = String(Math.floor(1e5 + Math.random() * 9e5));
+    DEMO_CODES[email] = { code, exp: Date.now() + 15 * 6e4, tries: 0 };
+    return { demoCode: code };
+  },
+  async setPass(email, code, password) {
+    const c = DEMO_CODES[email];
+    if (!c || c.exp < Date.now()) throw new Error("That code has expired. Send a new one.");
+    if (c.code !== String(code).replace(/\s/g, "")) {
+      c.tries++;
+      if (c.tries >= 5) delete DEMO_CODES[email];
+      throw new Error("That code doesn't match. Check the latest email and try again.");
+    }
+    delete DEMO_CODES[email];
+    const users = await store.get(K.users) || {};
+    const p = (await demoRoster()).find((x) => x.email === email);
+    users[email] = { ...users[email] || {}, role: email === DEFAULT_ADMIN.username ? "Admin" : p ? p.position : "Member", name: p ? p.name : "", position: p ? p.position : "", empId: p ? p.empId : "", pass: await sha(password), createdAt: users[email] && users[email].createdAt || Date.now() };
+    await store.set(K.users, users);
+    return email;
+  }
+};
+async function loadRoster() {
+  if (SERVER) {
+    const r = await authCall("/roster", null, "GET");
+    if (r.ok) return { people: r.data.people || [], admins: r.data.admins || [] };
+    if (r.status === 401) sessionEnded();
+    return { people: [], admins: [], error: r.error };
+  }
+  return { people: await demoRoster(), admins: [DEFAULT_ADMIN.username] };
+}
+async function adminRoster(op, body) {
+  if (SERVER) {
+    const r = await authCall("/admin/roster", { op, ...body });
+    if (!r.ok) throw new Error(r.error);
+    return r.data;
+  }
+  const list = await store.get(K.roster) || [];
+  const email = mailClean(body.email || body.person && body.person.email);
+  const i = list.findIndex((p) => p.email === (op === "update" ? mailClean(body.email) : email));
+  if (op === "add") {
+    if (i >= 0) throw new Error(email + " is already on the list.");
+    list.push({ ...body.person, email, addedAt: Date.now() });
+  } else if (i < 0) throw new Error("That person isn't on the list.");
+  else if (op === "update") list[i] = { ...list[i], ...body.person, email: mailClean(body.person.email) };
+  else if (op === "off" || op === "on") list[i] = { ...list[i], off: op === "off" };
+  else if (op === "remove") list.splice(i, 1);
+  await store.set(K.roster, list);
+  return { ok: true };
+}
+async function adminCode(email) {
+  if (SERVER) {
+    const r = await authCall("/admin/code", { email });
+    if (!r.ok) throw new Error(r.error);
+    return r.data;
+  }
+  const code = String(Math.floor(1e5 + Math.random() * 9e5));
+  DEMO_CODES[email] = { code, exp: Date.now() + 24 * 36e5, tries: 0 };
+  return { code, expiresAt: DEMO_CODES[email].exp };
+}
+function AuthGate({ onAuthed }) {
+  const [tab, setTab] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [step, setStep] = useState(1);
+  const [code, setCode] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [newPass2, setNewPass2] = useState("");
+  const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sentAt, setSentAt] = useState(0);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!sentAt) return;
+    const t = setInterval(() => setTick((x) => x + 1), 1e3);
+    return () => clearInterval(t);
+  }, [sentAt]);
+  const purpose = tab === "forgot" ? "reset" : "setup";
+  const wait = sentAt ? Math.max(0, 60 - Math.floor((Date.now() - sentAt) / 1e3)) : 0;
+  function go(t) {
+    setTab(t);
+    setStep(1);
+    setCode("");
+    setNewPass("");
+    setNewPass2("");
+    setErr("");
+    setInfo("");
+    setSentAt(0);
+  }
+  async function doSignin() {
+    setErr("");
+    const e = mailClean(email);
+    if (!e || !password) return setErr("Enter your Purview email and your password.");
+    setBusy(true);
+    if (SERVER) {
+      const r = await authCall("/auth/login", { email: e, password });
+      setBusy(false);
+      if (!r.ok) return setErr(r.error);
+      setToken(r.data.token);
+      return onAuthed(r.data.user.email, r.data.user);
+    }
+    try {
+      const key = await localAuth.login(e, password);
+      setBusy(false);
+      onAuthed(key);
+    } catch (x) {
+      setBusy(false);
+      setErr(x.message);
+    }
+  }
+  async function sendCode() {
+    setErr("");
+    setInfo("");
+    const e = mailClean(email);
+    if (!mailOk(e)) return setErr("Enter your full Purview email address.");
+    setBusy(true);
+    if (SERVER) {
+      const r = await authCall("/auth/code", { email: e, purpose });
+      setBusy(false);
+      if (!r.ok) return setErr(r.error);
+      setInfo("We emailed a 6-digit code to " + (r.data.sentTo || maskMail(e)) + ". It can take a minute to arrive, and it may land in your Junk folder.");
+    } else {
+      try {
+        const r = await localAuth.sendCode(e, purpose);
+        setBusy(false);
+        setInfo("Offline preview, so nothing is emailed. Your code is " + r.demoCode + ".");
+      } catch (x) {
+        setBusy(false);
+        return setErr(x.message);
+      }
+    }
+    setEmail(e);
+    setSentAt(Date.now());
+    setStep(2);
+  }
+  async function setPass() {
+    setErr("");
+    const e = mailClean(email);
+    const c = String(code).replace(/\s/g, "");
+    if (!mailOk(e)) return setErr("Enter your full Purview email address.");
+    if (!/^\d{6}$/.test(c)) return setErr("Enter the 6-digit code.");
+    if (newPass.length < 8) return setErr("Use at least 8 characters for your password.");
+    if (newPass !== newPass2) return setErr("The two passwords don't match.");
+    setBusy(true);
+    if (SERVER) {
+      const r = await authCall("/auth/setpass", { email: e, code: c, password: newPass, purpose });
+      setBusy(false);
+      if (!r.ok) return setErr(r.error);
+      setToken(r.data.token);
+      return onAuthed(r.data.user.email, r.data.user);
+    }
+    try {
+      const key = await localAuth.setPass(e, c, newPass);
+      setBusy(false);
+      onAuthed(key);
+    } catch (x) {
+      setBusy(false);
+      setErr(x.message);
+    }
+  }
+  const tabs = [["signin", "Sign in"], ["first", "First time"], ["forgot", "Forgot password"]];
+  return /* @__PURE__ */ React.createElement("div", { style: S.authWrap }, /* @__PURE__ */ React.createElement("div", { style: S.authCard }, /* @__PURE__ */ React.createElement("div", { className: "goldline", style: { position: "absolute", top: 0, left: 0, right: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement(Wordmark, { size: 26 })), /* @__PURE__ */ React.createElement("div", { style: S.loginToggle, role: "tablist" }, tabs.map(([id, label]) => /* @__PURE__ */ React.createElement("button", { key: id, role: "tab", "aria-selected": tab === id, style: { ...S.loginTab, ...tab === id ? S.loginTabOn : {}, padding: "9px 4px", fontSize: 12, whiteSpace: "nowrap" }, onClick: () => go(id), "data-testid": "auth-tab-" + id }, label))), tab === "signin" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h1", { style: S.authTitle }, "Sign in"), /* @__PURE__ */ React.createElement("p", { style: S.authSub }, "Use your Purview email and the password you set."), /* @__PURE__ */ React.createElement(Field, { label: "Purview email", value: email, onChange: setEmail, placeholder: "your Purview email address", onEnter: doSignin }), /* @__PURE__ */ React.createElement(Field, { label: "Password", type: "password", value: password, onChange: setPassword, onEnter: doSignin }), err && /* @__PURE__ */ React.createElement(Err, null, err), /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.primaryBtn, onClick: doSignin, disabled: busy, "data-testid": "auth-signin" }, busy ? "Checking…" : "Sign in"), /* @__PURE__ */ React.createElement("div", { style: XS.authFoot }, "First time here? Your admin adds you to the team list, then you set your password on the", " ", /* @__PURE__ */ React.createElement("button", { style: S.linkBtn, onClick: () => go("first") }, "First time"), " ", "tab.")), tab !== "signin" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h1", { style: S.authTitle }, tab === "first" ? "Set your password" : "Reset your password"), /* @__PURE__ */ React.createElement("p", { style: S.authSub }, step === 1 ? tab === "first" ? "Enter the Purview email your admin added to the team list. We'll email you a 6-digit code so you can set your password." : "Enter your Purview email. We'll email you a 6-digit code so you can choose a new password." : "Enter the code and choose a password. The code works once and stays valid for 15 minutes."), step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Purview email", value: email, onChange: setEmail, placeholder: "your Purview email address", onEnter: sendCode }), err && /* @__PURE__ */ React.createElement(Err, null, err), /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.primaryBtn, onClick: sendCode, disabled: busy, "data-testid": "auth-send-code" }, busy ? "Sending…" : "Email me a code"), /* @__PURE__ */ React.createElement("div", { style: XS.authFoot }, "Got a code from your admin instead?", " ", /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      style: S.linkBtn,
+      onClick: () => {
+        setErr("");
+        setInfo("Enter the code your admin gave you.");
+        setStep(2);
+      },
+      "data-testid": "auth-have-code"
+    },
+    "Enter it here"
+  ))), step === 2 && /* @__PURE__ */ React.createElement(React.Fragment, null, info && /* @__PURE__ */ React.createElement("div", { style: XS.infoBox, "data-testid": "auth-info" }, info), /* @__PURE__ */ React.createElement(Field, { label: "Purview email", value: email, onChange: setEmail, placeholder: "your Purview email address" }), /* @__PURE__ */ React.createElement(Field, { label: "6-digit code", value: code, onChange: (v) => setCode(v.replace(/[^\d ]/g, "").slice(0, 7)), placeholder: "123456" }), /* @__PURE__ */ React.createElement(Field, { label: "New password", type: "password", value: newPass, onChange: setNewPass, placeholder: "at least 8 characters" }), /* @__PURE__ */ React.createElement(Field, { label: "Confirm new password", type: "password", value: newPass2, onChange: setNewPass2, onEnter: setPass }), err && /* @__PURE__ */ React.createElement(Err, null, err), /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.primaryBtn, onClick: setPass, disabled: busy, "data-testid": "auth-set-pass" }, busy ? "Saving…" : tab === "first" ? "Set password and sign in" : "Save new password and sign in"), /* @__PURE__ */ React.createElement("div", { style: S.authLinks }, /* @__PURE__ */ React.createElement("button", { style: { ...S.linkBtn, ...wait ? { color: "#94a3b8", cursor: "default" } : {} }, disabled: !!wait || busy, onClick: sendCode, "data-testid": "auth-resend" }, wait ? "Send a new code in " + wait + "s" : "Send a new code"), /* @__PURE__ */ React.createElement("button", { style: S.linkBtn, onClick: () => go(tab) }, "Use a different email"))))));
+}
+function ClientsArea({ me, clients, setClients, roster, loading, onOpen }) {
+  const [newName, setNewName] = useState("");
+  const [err, setErr] = useState("");
+  const [dialog, setDialog] = useState(null);
+  const byEmail = useMemo(() => {
+    const m = {};
+    (roster.people || []).forEach((p) => {
+      m[p.email] = p;
+    });
+    return m;
+  }, [roster]);
+  const nameOf = (e) => byEmail[e] && byEmail[e].name || ((roster.admins || []).includes(e) ? "Purview Automate (admin)" : e);
+  const list = visibleClients(clients, me).sort(([, a], [, b]) => String(a.name).localeCompare(String(b.name)));
+  function startCreate() {
+    const name = newName.trim().replace(/\s+/g, " ");
+    if (!name) return setErr("Type a client name first, then click Create client.");
+    if (Object.values(clients || {}).some((c) => c && String(c.name).trim().toLowerCase() === name.toLowerCase())) return setErr("A client called " + name + " already exists. Open it from the list below, or ask its creator for access.");
+    setErr("");
+    setDialog({ mode: "create", name });
+  }
+  async function save(members) {
+    const all = await store.get(K.clients) || {};
+    if (dialog.mode === "create") {
+      const id = uid();
+      all[id] = { name: dialog.name, createdBy: me.username, members: uniqList([me.username, ...members]), createdAt: Date.now() };
+      await saveSharedOrThrow(K.clients, all);
+      setNewName("");
+      toast(dialog.name + " created.");
+    } else {
+      const cur = all[dialog.id];
+      if (!cur) throw new Error("This client could not be found. Refresh the page and try again.");
+      all[dialog.id] = { ...cur, members: uniqList([cur.createdBy, ...members]), accessBy: me.username, accessAt: Date.now() };
+      await saveSharedOrThrow(K.clients, all);
+      toast("Access saved for " + cur.name + ".");
+    }
+    setClients({ ...all });
+    setDialog(null);
+  }
+  const editing = dialog && dialog.mode === "edit" ? clients[dialog.id] : null;
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.createRow }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      style: { ...S.createInput, ...err ? { borderColor: "#dc2626" } : {} },
+      placeholder: "New client name (e.g. Mood Health)",
+      value: newName,
+      onChange: (e) => {
+        setNewName(e.target.value);
+        if (err) setErr("");
+      },
+      onKeyDown: (e) => e.key === "Enter" && startCreate(),
+      "data-testid": "new-client-name"
+    }
+  ), /* @__PURE__ */ React.createElement("button", { style: S.primaryBtnInline, onClick: startCreate, "data-testid": "create-client" }, "Create client")), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: -12, marginBottom: 22 } }, err), loading ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "Loading your clients…") : list.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "No clients yet. Create one above, or ask a team lead to give you access to theirs.") : /* @__PURE__ */ React.createElement("div", { style: S.clientGrid }, list.map(([id, c]) => /* @__PURE__ */ React.createElement(ClientCard, { key: id, id, c, me, nameOf, onOpen, onAccess: () => setDialog({ mode: "edit", id }) }))), dialog && dialog.mode === "create" && /* @__PURE__ */ React.createElement(
+    AccessDialog,
+    {
+      title: "Who gets access to " + dialog.name + "?",
+      sub: "Tick the people who should open, view and edit this client. You're included as its creator.",
+      roster,
+      me,
+      initial: [me.username],
+      locked: me.username,
+      lockedTag: "you, the creator",
+      saveLabel: (n) => "Create client · " + n + (n === 1 ? " person" : " people"),
+      onClose: () => setDialog(null),
+      onSave: save
+    }
+  ), editing && /* @__PURE__ */ React.createElement(
+    AccessDialog,
+    {
+      title: "Who has access to " + editing.name,
+      sub: canManageAccess(editing, me) ? "Tick or untick people, then save. Everyone ticked can open, view and edit this client." : "Only " + nameOf(editing.createdBy) + ", the admin or the VP can change who has access.",
+      roster,
+      me,
+      initial: editing.members || [],
+      locked: editing.createdBy,
+      lockedTag: "created this client",
+      readOnly: !canManageAccess(editing, me),
+      saveLabel: (n) => "Save access · " + n + (n === 1 ? " person" : " people"),
+      onClose: () => setDialog(null),
+      onSave: save
+    }
+  ));
+}
+function ClientCard({ id, c, me, nameOf, onOpen, onAccess }) {
+  const members = c.members || [];
+  const mine = members.includes(me.username);
+  return /* @__PURE__ */ React.createElement("div", { className: "lift", style: S.clientCard, "data-testid": "client-card" }, /* @__PURE__ */ React.createElement("div", { style: S.clientTop }, /* @__PURE__ */ React.createElement("div", { style: S.clientAvatar }, String(c.name || "?").slice(0, 1).toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: S.clientName }, c.name), /* @__PURE__ */ React.createElement("div", { style: S.clientMeta }, members.length, " ", members.length === 1 ? "person" : "people", " · ", c.createdBy === me.username ? "created by you" : "created by " + nameOf(c.createdBy), !mine && seesAllClients(me) ? " · you see it as " + (isAdminMe(me) ? "admin" : "VP") : ""))), /* @__PURE__ */ React.createElement("div", { style: S.memberChips }, members.slice(0, 8).map((m) => /* @__PURE__ */ React.createElement("span", { key: m, style: { ...S.memberChip, ...m === me.username ? { background: NAVY, color: "#fff" } : {} }, title: m }, nameOf(m))), members.length > 8 && /* @__PURE__ */ React.createElement("span", { style: S.memberChip }, "+", members.length - 8, " more")), /* @__PURE__ */ React.createElement("div", { style: S.clientActions }, /* @__PURE__ */ React.createElement("button", { style: S.openBtn, onClick: () => onOpen({ id, ...c }), "data-testid": "client-open" }, "Open"), /* @__PURE__ */ React.createElement("button", { style: S.shareBtn, onClick: onAccess, "data-testid": "client-access" }, canManageAccess(c, me) ? "Access" : "Who has access")));
+}
+function AccessDialog({ title, sub, roster, me, initial, locked, lockedTag, readOnly, saveLabel, onClose, onSave }) {
+  const [sel, setSel] = useState(() => new Set(initial || []));
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const admins = roster.admins || [];
+  const autoSee = (p) => p.position === "Vice President";
+  const people = (roster.people || []).filter((p) => p.status !== "off" || sel.has(p.email));
+  const known = new Set(people.map((p) => p.email));
+  const ql = q.trim().toLowerCase();
+  const match = (p) => !ql || [p.name, p.email, p.position, p.empId].some((v) => String(v || "").toLowerCase().includes(ql));
+  const groups = POSITIONS.concat(["Other"]).map((pos) => ({
+    pos,
+    list: people.filter((p) => (POSITIONS.includes(p.position) ? p.position : "Other") === pos).filter(match).sort((a, b) => String(a.name).localeCompare(String(b.name)))
+  })).filter((g) => g.list.length);
+  const others = [...sel].filter((e) => !known.has(e) && !admins.includes(e) && (!ql || e.includes(ql)));
+  const canToggle = (p) => !readOnly && !autoSee(p) && p.email !== locked && p.status !== "off";
+  const toggle = (e) => {
+    if (readOnly || e === locked) return;
+    const n = new Set(sel);
+    if (n.has(e)) n.delete(e);
+    else n.add(e);
+    setSel(n);
+  };
+  const toggleGroup = (list) => {
+    const pick = list.filter(canToggle);
+    const allOn = pick.every((p) => sel.has(p.email));
+    const n = new Set(sel);
+    pick.forEach((p) => allOn ? n.delete(p.email) : n.add(p.email));
+    setSel(n);
+  };
+  const count = sel.size;
+  async function save() {
+    setBusy(true);
+    setErr("");
+    try {
+      await onSave([...sel]);
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 640 }, onClick: (e) => e.stopPropagation(), "data-testid": "access-dialog" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#f4fbfa", borderBottom: "1px solid #cdeee7" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: NAVY } }, title), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: MUT, lineHeight: 1.5 } }, sub))), /* @__PURE__ */ React.createElement("div", { style: { padding: "14px 20px 4px" } }, /* @__PURE__ */ React.createElement("input", { style: { ...S.input, padding: "9px 12px", fontSize: 13 }, placeholder: "Search by name, email, position or Emp ID", value: q, onChange: (e) => setQ(e.target.value), "data-testid": "access-search" }), /* @__PURE__ */ React.createElement("div", { style: XS.accessNote }, "The admin and the VP see every client, so they don't need to be ticked.")), /* @__PURE__ */ React.createElement("div", { style: XS.accessList }, roster.error && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginBottom: 10 } }, "Could not load the team list: ", roster.error), groups.map((g) => /* @__PURE__ */ React.createElement("div", { key: g.pos, style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: XS.groupHead }, /* @__PURE__ */ React.createElement("span", null, g.pos === "Subject Matter Expert" ? "Subject Matter Experts" : g.pos === "Other" ? "Other" : g.pos + (g.list.length > 1 && !/President$/.test(g.pos) ? "s" : "")), g.list.some(canToggle) && /* @__PURE__ */ React.createElement("button", { style: XS.groupAll, onClick: () => toggleGroup(g.list) }, g.list.filter(canToggle).every((p) => sel.has(p.email)) ? "Untick all" : "Tick all")), g.list.map((p) => {
+    const auto = autoSee(p);
+    const on = auto || sel.has(p.email);
+    const fixed = !canToggle(p);
+    return /* @__PURE__ */ React.createElement("label", { key: p.email, style: { ...XS.personPick, ...on ? XS.personPickOn : {}, ...fixed ? { cursor: "default" } : {} }, "data-testid": "access-person" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: on, disabled: fixed, onChange: () => toggle(p.email), "aria-label": p.name }), /* @__PURE__ */ React.createElement("span", { style: { minWidth: 0, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: XS.personName }, p.name, p.email === me.username ? " (you)" : ""), /* @__PURE__ */ React.createElement("span", { style: XS.personSub }, p.email, p.empId ? " · " + p.empId : "")), auto && /* @__PURE__ */ React.createElement("span", { style: XS.autoTag }, "sees every client"), !auto && p.email === locked && /* @__PURE__ */ React.createElement("span", { style: XS.ownerTag }, lockedTag), p.status === "new" && /* @__PURE__ */ React.createElement("span", { style: XS.newTag }, "not set up yet"), p.status === "off" && /* @__PURE__ */ React.createElement("span", { style: XS.offTag }, "switched off"));
+  }))), others.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: XS.groupHead }, /* @__PURE__ */ React.createElement("span", null, "Not on the team list")), others.map((e) => /* @__PURE__ */ React.createElement("label", { key: e, style: { ...XS.personPick, ...XS.personPickOn } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sel.has(e), disabled: readOnly || e === locked, onChange: () => toggle(e) }), /* @__PURE__ */ React.createElement("span", { style: { minWidth: 0, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: XS.personName }, e), /* @__PURE__ */ React.createElement("span", { style: XS.personSub }, "Had access before the team list. Untick to remove.")), e === locked && /* @__PURE__ */ React.createElement("span", { style: XS.ownerTag }, lockedTag)))), groups.length === 0 && others.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { ...S.emptyRow, padding: 24 } }, "No one matches that search.")), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, margin: "0 20px 10px" } }, err), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: onClose }, readOnly ? "Close" : "Cancel"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: { ...S.modalPrimary, background: GRAD }, onClick: save, disabled: busy, "data-testid": "access-save" }, busy ? "Saving…" : saveLabel(count)))));
+}
+const STATUS_TAGS = {
+  active: { label: "Active", bg: "#dcfce7", fg: "#166534" },
+  new: { label: "Not set up yet", bg: "#fef3c7", fg: "#92400e" },
+  off: { label: "Switched off", bg: "#f1f5f9", fg: "#64748b" }
+};
+function TeamListCard({ roster, reload }) {
+  const blank = { empId: "", name: "", position: "Team Lead", email: "" };
+  const [form, setForm] = useState(blank);
+  const [editing, setEditing] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState("");
+  const [codeShown, setCodeShown] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const people = [...roster.people || []].sort((a, b) => posRank(a.position) - posRank(b.position) || String(a.name).localeCompare(String(b.name)));
+  const ql = q.trim().toLowerCase();
+  const shown = people.filter((p) => !ql || [p.name, p.email, p.position, p.empId].some((v) => String(v || "").toLowerCase().includes(ql)));
+  const count = (k) => people.filter((p) => p.status === k).length;
+  const positions = POSITIONS.includes(form.position) || !form.position ? POSITIONS : POSITIONS.concat([form.position]);
+  async function run(op, body, done) {
+    setBusy(true);
+    setErr("");
+    setMsg("");
+    try {
+      await adminRoster(op, body);
+      await reload();
+      if (done) done();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  function submit() {
+    const p = { empId: form.empId.trim().toUpperCase(), name: form.name.trim().replace(/\s+/g, " "), position: form.position, email: mailClean(form.email) };
+    if (!p.name) return setErr("Enter the person's name.");
+    if (!mailOk(p.email)) return setErr("Enter their full email address.");
+    if (!p.position) return setErr("Pick their position.");
+    if ((!editing || editing !== p.email) && people.some((x) => x.email === p.email)) return setErr(p.email + " is already on the list.");
+    run(editing ? "update" : "add", editing ? { email: editing, person: p } : { person: p }, () => {
+      setMsg(editing ? "Saved the changes for " + p.name + "." : p.name + " is on the list. They can now set a password on the First time tab.");
+      setForm(blank);
+      setEditing(null);
+    });
+  }
+  function startEdit(p) {
+    setEditing(p.email);
+    setForm({ empId: p.empId || "", name: p.name || "", position: p.position || "Team Lead", email: p.email });
+    setErr("");
+    setMsg("");
+  }
+  async function giveCode(p) {
+    setBusy(true);
+    setErr("");
+    setMsg("");
+    try {
+      const r = await adminCode(p.email);
+      setCodeShown({ ...p, code: r.code, expiresAt: r.expiresAt });
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const f = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  return /* @__PURE__ */ React.createElement("div", { style: S.fbCard, "data-testid": "team-card" }, /* @__PURE__ */ React.createElement("div", { style: S.fbCardHead }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: S.fbCardTitle }, "Team list"), /* @__PURE__ */ React.createElement("div", { style: S.pageSub }, "Only the people here can sign in. Add someone, and they set their own password on the First time tab with a code emailed to them.")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" } }, ["active", "new", "off"].map((k) => /* @__PURE__ */ React.createElement("span", { key: k, style: { ...XS.statusTag, background: STATUS_TAGS[k].bg, color: STATUS_TAGS[k].fg } }, count(k), " ", STATUS_TAGS[k].label.toLowerCase())))), /* @__PURE__ */ React.createElement("div", { style: XS.addGrid }, /* @__PURE__ */ React.createElement("input", { style: XS.addInput, placeholder: "Emp ID", value: form.empId, onChange: f("empId"), "data-testid": "team-empid" }), /* @__PURE__ */ React.createElement("input", { style: XS.addInput, placeholder: "Full name", value: form.name, onChange: f("name"), "data-testid": "team-name" }), /* @__PURE__ */ React.createElement("select", { style: XS.addInput, value: form.position, onChange: f("position"), "data-testid": "team-position" }, positions.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p))), /* @__PURE__ */ React.createElement("input", { style: XS.addInput, placeholder: "Email", value: form.email, onChange: f("email"), onKeyDown: (e) => e.key === "Enter" && submit(), "data-testid": "team-email" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: { ...S.acceptBtn, whiteSpace: "nowrap" }, onClick: submit, disabled: busy, "data-testid": "team-save" }, editing ? "Save" : "Add person"), editing && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      style: S.rejectBtn,
+      onClick: () => {
+        setEditing(null);
+        setForm(blank);
+        setErr("");
+      }
+    },
+    "Cancel"
+  ))), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: 10 } }, err), msg && /* @__PURE__ */ React.createElement("div", { style: XS.okBox }, msg), codeShown && /* @__PURE__ */ React.createElement("div", { style: XS.codeBox, "data-testid": "team-code" }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: NAVY } }, "Setup code for ", codeShown.name), /* @__PURE__ */ React.createElement("div", { style: XS.codeDigits }, String(codeShown.code).replace(/(\d{3})(\d{3})/, "$1 $2")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: MUT, lineHeight: 1.5 } }, "Works once, until ", whenText(codeShown.expiresAt), ". Send it to them directly, for example on Teams. They enter it on the First time tab, or on Forgot password if they already had a password.")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      style: S.csvBtn,
+      onClick: () => {
+        try {
+          navigator.clipboard.writeText(String(codeShown.code));
+          toast("Code copied.");
+        } catch (e) {
+          toast("Copy the code by hand: " + codeShown.code);
+        }
+      }
+    },
+    "Copy"
+  ), /* @__PURE__ */ React.createElement("button", { style: S.rejectBtn, onClick: () => setCodeShown(null) }, "Close"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, margin: "14px 0 10px" } }, /* @__PURE__ */ React.createElement("input", { style: { ...S.search, minWidth: 0, flex: 1, maxWidth: 340 }, placeholder: "Search the list", value: q, onChange: (e) => setQ(e.target.value), "data-testid": "team-search" }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: MUT } }, shown.length, " of ", people.length)), /* @__PURE__ */ React.createElement("div", { style: { ...S.tableWrap, boxShadow: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto" } }, /* @__PURE__ */ React.createElement("table", { style: S.dTable }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { style: S.dTh }, "Person"), /* @__PURE__ */ React.createElement("th", { style: S.dTh }, "Position"), /* @__PURE__ */ React.createElement("th", { style: S.dTh }, "Status"), /* @__PURE__ */ React.createElement("th", { style: { ...S.dTh, textAlign: "right" } }, "Actions"))), /* @__PURE__ */ React.createElement("tbody", null, (roster.admins || []).map((a) => /* @__PURE__ */ React.createElement("tr", { key: "admin-" + a, style: { background: "#f8fbfc" } }, /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("div", { style: XS.tName }, "Purview Automate"), /* @__PURE__ */ React.createElement("div", { style: XS.tSub }, a)), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("div", { style: XS.tPos }, "Admin")), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("span", { style: { ...XS.statusTag, background: "#e0f2fe", color: "#075985" } }, "Admin")), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, textAlign: "right", color: "#94a3b8", fontSize: 12 } }, "Always on"))), shown.map((p) => {
+    const st = STATUS_TAGS[p.status] || STATUS_TAGS.new;
+    return /* @__PURE__ */ React.createElement(React.Fragment, { key: p.email }, /* @__PURE__ */ React.createElement("tr", { className: "rowh", style: { ...p.status === "off" ? { opacity: 0.62 } : {}, ...editing === p.email ? { background: "#f4fbfa" } : {} }, "data-testid": "team-row" }, /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("div", { style: XS.tName }, p.name), /* @__PURE__ */ React.createElement("div", { style: XS.tSub }, p.email)), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("div", { style: XS.tPos }, p.position), p.empId && /* @__PURE__ */ React.createElement("div", { style: { ...XS.tSub, fontFamily: MONO } }, p.empId)), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("span", { style: { ...XS.statusTag, background: st.bg, color: st.fg } }, st.label)), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, textAlign: "right", whiteSpace: "nowrap" } }, /* @__PURE__ */ React.createElement("button", { style: XS.rowBtn, onClick: () => startEdit(p), disabled: busy }, "Edit"), p.status !== "off" && /* @__PURE__ */ React.createElement("button", { style: XS.rowBtn, onClick: () => giveCode(p), disabled: busy, "data-testid": "team-give-code" }, "Setup code"), /* @__PURE__ */ React.createElement("button", { style: XS.rowBtn, onClick: () => run(p.status === "off" ? "on" : "off", { email: p.email }), disabled: busy }, p.status === "off" ? "Switch on" : "Switch off"), /* @__PURE__ */ React.createElement("button", { style: { ...XS.rowBtn, color: "#b91c1c" }, onClick: () => setConfirm(confirm === p.email ? null : p.email), disabled: busy }, "Remove"))), confirm === p.email && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 4, style: { ...S.dTd, background: "#fef2f2" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: "#991b1b", flex: 1 } }, "Remove ", p.name, " from the team list? They won't be able to sign in. Their past work stays on the boards. To pause them instead, use Switch off."), /* @__PURE__ */ React.createElement("button", { style: { ...S.acceptBtn, background: "#dc2626" }, onClick: () => run("remove", { email: p.email }, () => setConfirm(null)), disabled: busy, "data-testid": "team-remove-yes" }, "Remove"), /* @__PURE__ */ React.createElement("button", { style: S.rejectBtn, onClick: () => setConfirm(null) }, "Keep")))));
+  }), shown.length === 0 && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 4, style: { ...S.dTd, textAlign: "center", color: "#94a3b8", padding: 26 } }, people.length ? "No one matches that search." : "No one on the list yet.")))))));
+}
+function statusPatch(dept, st, reason, now, by, via) {
+  const p = { workStatus: st, statusBy: by || "", statusAt: now, statusVia: via || "app" };
+  if (st === "Completed") {
+    p.notCompletedOnce = false;
+    p.forceTat = false;
+    p.reasonFlag = false;
+  } else if (st === "Not Completed") {
+    p.incompleteReason = reason || "";
+    p.reasonFlag = !reasonValid(reason);
+    p.notCompletedOnce = true;
+    p.forceTat = true;
+    p.noClock = false;
+    p.taskedAt = now;
+    p.reissuedAt = now;
+    if (dept !== "client_assistance" && reasonNeedsClient(reason)) {
+      p.route = "client_assistance";
+      p.task = true;
+      p.originDept = DEPTS[dept] ? DEPTS[dept].label : dept;
+    }
+  }
+  return p;
+}
+function StatusCell({ c, onPick }) {
+  const st = c.workStatus || "Pending";
+  const col = STATUS_COLOR[st] || "#64748b";
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: st,
+      onChange: (e) => onPick(e.target.value),
+      style: { ...XS.statusSelect, color: col, backgroundColor: col + "14", borderColor: col + "55" },
+      "data-testid": "claim-status",
+      "aria-label": "Status for " + c.label
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "Pending" }, "Pending"),
+    /* @__PURE__ */ React.createElement("option", { value: "Completed" }, "Completed"),
+    /* @__PURE__ */ React.createElement("option", { value: "Not Completed" }, "Not completed")
+  ), c.statusAt ? /* @__PURE__ */ React.createElement("div", { style: XS.statusBy, title: (c.statusBy || "") + (c.statusVia === "file" ? ", from a worked file" : ", on the board") }, firstNameOf(c.statusBy), c.statusVia === "file" ? " · file" : "", " · ", timeAgo(c.statusAt)) : null);
+}
+function ReasonCell({ c, onEdit }) {
+  const notDone = c.workStatus === "Not Completed";
+  return /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, color: notDone ? "#b91c1c" : "#64748b", fontWeight: notDone ? 600 : 400 } }, c.incompleteReason || (notDone ? "No reason given" : "—"), notDone && c.reasonFlag && /* @__PURE__ */ React.createElement("span", { style: S.reasonFlagChip }, "⚠ needs valid reason"), notDone && /* @__PURE__ */ React.createElement("button", { style: XS.editReason, onClick: onEdit, "data-testid": "edit-reason" }, c.incompleteReason ? "Edit" : "Add reason"));
+}
+function ReasonDialog({ count, dept, initial, onClose, onSave }) {
+  const [text, setText] = useState(initial || "");
+  const [err, setErr] = useState("");
+  const willMove = dept !== "client_assistance" && reasonNeedsClient(text);
+  function save() {
+    if (!reasonValid(text)) return setErr("Write a clear reason in a few words, for example: EOB not on the portal, requested a copy from the payer.");
+    onSave(text.trim().replace(/\s+/g, " "));
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 520 }, onClick: (e) => e.stopPropagation(), "data-testid": "reason-dialog" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#fef2f2", borderBottom: "1px solid #fecaca" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: "#dc2626", animation: "none" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: S.modalTitle }, count === 1 ? "Why wasn't this claim completed?" : "Why weren't these " + count + " claims completed?"), /* @__PURE__ */ React.createElement("div", { style: S.modalSub }, "It turns red and gets a fresh 24-hour clock."))), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px" } }, /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      autoFocus: true,
+      rows: 3,
+      style: { ...S.input, resize: "vertical", lineHeight: 1.5 },
+      value: text,
+      onChange: (e) => {
+        setText(e.target.value);
+        if (err) setErr("");
+      },
+      placeholder: "For example: EOB not on the payer portal, requested a copy",
+      "data-testid": "reason-text"
+    }
+  ), willMove && /* @__PURE__ */ React.createElement("div", { style: XS.moveNote }, "This reason says the client needs to act, so the claim will move to Client Assistance."), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: 10, marginBottom: 0 } }, err)), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: onClose }, "Cancel"), /* @__PURE__ */ React.createElement("button", { style: S.modalPrimary, onClick: save, "data-testid": "reason-save" }, "Save as not completed"))));
+}
+function BulkBar({ n, onPick, onClear }) {
+  return /* @__PURE__ */ React.createElement("div", { style: XS.bulkBar, "data-testid": "bulk-bar" }, /* @__PURE__ */ React.createElement("b", { style: { color: NAVY } }, n, " selected"), /* @__PURE__ */ React.createElement("span", { style: { color: "#94a3b8" } }, "Mark as"), /* @__PURE__ */ React.createElement("button", { style: { ...XS.bulkBtn, color: STATUS_COLOR.Completed, borderColor: "#bbf7d0" }, onClick: () => onPick("Completed"), "data-testid": "bulk-completed" }, "Completed"), /* @__PURE__ */ React.createElement("button", { style: { ...XS.bulkBtn, color: STATUS_COLOR["Not Completed"], borderColor: "#fecaca" }, onClick: () => onPick("Not Completed"), "data-testid": "bulk-notdone" }, "Not completed"), /* @__PURE__ */ React.createElement("button", { style: { ...XS.bulkBtn, color: STATUS_COLOR.Pending, borderColor: "#e2e8f0" }, onClick: () => onPick("Pending"), "data-testid": "bulk-pending" }, "Pending"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("button", { style: XS.bulkClear, onClick: onClear }, "Clear selection"));
+}
+const DEPT_ORDER = ["submission", "payment_posting", "ev", "client_assistance"];
+function tatOf(c, now) {
+  if (!c.task || c.noClock) return null;
+  if (!(DEPTS[c.route] && DEPTS[c.route].tat || c.forceTat)) return null;
+  if (c.workStatus === "Completed") return { done: true, breach: false };
+  const anchor = c.reissuedAt || c.taskedAt || now;
+  const remain = anchor + TWENTY_FOUR_H - now;
+  return { remain, breach: remain < 0 };
+}
+function rangeStats(list, now) {
+  const n = (s) => list.filter((c) => (c.workStatus || "Pending") === s).length;
+  return {
+    tasked: list.length,
+    done: n("Completed"),
+    notDone: n("Not Completed"),
+    pend: n("Pending"),
+    over: list.filter((c) => {
+      const t = tatOf(c, now);
+      return t && t.breach;
+    }).length,
+    rate: list.length ? Math.round(n("Completed") / list.length * 100) : null
+  };
+}
+async function loadBoardFor(clientId, dk) {
+  const base = await store.get(K.batch(clientId, dk));
+  if (!base) return null;
+  const ovs = await Promise.all(OVERLAY_KEYS.map((dep) => store.get(K.work(clientId, dk, dep))));
+  const overlays = {};
+  OVERLAY_KEYS.forEach((dep, i) => {
+    overlays[dep] = ovs[i] || {};
+  });
+  return mergeBoard(base, overlays);
+}
+function ViewToggle({ view, setView }) {
+  return /* @__PURE__ */ React.createElement("div", { style: XS.viewToggle, role: "tablist", "aria-label": "View" }, /* @__PURE__ */ React.createElement("button", { role: "tab", "aria-selected": view === "day", style: { ...XS.viewTab, ...view === "day" ? XS.viewTabOn : {} }, onClick: () => setView("day"), "data-testid": "view-day" }, "One date"), /* @__PURE__ */ React.createElement("button", { role: "tab", "aria-selected": view === "range", style: { ...XS.viewTab, ...view === "range" ? XS.viewTabOn : {} }, onClick: () => setView("range"), "data-testid": "view-range" }, "Several dates"));
+}
+const RANGE_CAP = 31;
+function RangeView({ client, dates, onOpenDate }) {
+  const sorted = useMemo(() => [...new Set((dates || []).map((d) => d.dateKey))].sort(), [dates]);
+  const newest = sorted[sorted.length - 1] || "";
+  const [from, setFrom] = useState(sorted.length ? sorted[Math.max(0, sorted.length - 7)] : "");
+  const [to, setTo] = useState(newest);
+  const [loading, setLoading] = useState(null);
+  const [err, setErr] = useState("");
+  const [ver, setVer] = useState(0);
+  const [refresh, setRefresh] = useState(0);
+  const [deptF, setDeptF] = useState("all");
+  const [statF, setStatF] = useState("all");
+  const [q, setQ] = useState("");
+  const [limit, setLimit] = useState(100);
+  const [now, setNow] = useState(Date.now());
+  const [xlsBusy, setXlsBusy] = useState(false);
+  const cache = useRef({});
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 3e4);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (!from && sorted.length) setFrom(sorted[Math.max(0, sorted.length - 7)]);
+    if (!to && sorted.length) setTo(newest);
+  }, [sorted.join(",")]);
+  const lo = from && to && from > to ? to : from;
+  const hi = from && to && from > to ? from : to;
+  const inRange = sorted.filter((dk) => dk >= lo && dk <= hi);
+  const shownDates = inRange.slice(-RANGE_CAP);
+  const rangeKey = shownDates.join(",");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const missing = shownDates.filter((dk) => !(dk in cache.current));
+      if (!missing.length) {
+        setVer((v) => v + 1);
+        return;
+      }
+      setErr("");
+      setLoading({ done: 0, total: missing.length });
+      let done = 0;
+      const queue = [...missing];
+      const worker = async () => {
+        while (queue.length && alive) {
+          const dk = queue.shift();
+          try {
+            cache.current[dk] = await loadBoardFor(client.id, dk);
+          } catch (e) {
+            setErr("Some dates could not be loaded. Check your connection and click Refresh.");
+          }
+          done++;
+          if (alive) setLoading({ done, total: missing.length });
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      if (alive) {
+        setLoading(null);
+        setVer((v) => v + 1);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [rangeKey, client.id, refresh]);
+  useEffect(() => setLimit(100), [rangeKey, deptF, statF, q]);
+  const rows = shownDates.map((dk) => ({ dk, board: cache.current[dk] })).filter((r) => r.board);
+  const allClaims = [];
+  rows.forEach((r) => r.board.claims.forEach((c) => allClaims.push({ ...c, _dk: r.dk })));
+  const tasked = allClaims.filter((c) => c.task && DEPTS[c.route]);
+  const tot = rangeStats(tasked, now);
+  const byDept = DEPT_ORDER.map((k) => ({ k, label: DEPTS[k].label, accent: DEPTS[k].accent, s: rangeStats(tasked.filter((c) => c.route === k), now) }));
+  const byDate = [...rows].reverse().map((r) => ({ dk: r.dk, claims: r.board.claims.length, s: rangeStats(r.board.claims.filter((c) => c.task && DEPTS[c.route]), now), rej: r.board.claims.filter((c) => c.rej).length }));
+  const ql = q.trim().toLowerCase();
+  const list = tasked.filter((c) => deptF === "all" || c.route === deptF).filter((c) => {
+    if (statF === "all") return true;
+    if (statF === "overdue") {
+      const t = tatOf(c, now);
+      return t && t.breach;
+    }
+    return (c.workStatus || "Pending") === statF;
+  }).filter((c) => !ql || [c.label, c.payer, c.claimId, c.incompleteReason, c.dos].some((v) => String(v || "").toLowerCase().includes(ql))).sort((a, b) => a._dk < b._dk ? 1 : a._dk > b._dk ? -1 : DEPT_ORDER.indexOf(a.route) - DEPT_ORDER.indexOf(b.route));
+  function quick(kind) {
+    if (!sorted.length) return;
+    if (kind === "7" || kind === "30") {
+      const n = Number(kind);
+      setFrom(sorted[Math.max(0, sorted.length - n)]);
+      setTo(newest);
+      return;
+    }
+    if (kind === "all") {
+      setFrom(sorted[0]);
+      setTo(newest);
+      return;
+    }
+    const t = todayKey();
+    let y = Number(t.slice(0, 4)), m = Number(t.slice(5, 7));
+    if (kind === "last") {
+      m -= 1;
+      if (m < 1) {
+        m = 12;
+        y -= 1;
+      }
+    }
+    const pre = y + "-" + String(m).padStart(2, "0");
+    const inMonth = sorted.filter((dk) => dk.startsWith(pre));
+    if (!inMonth.length) {
+      toast("No dates of work in " + new Date(y, m - 1, 1).toLocaleDateString(void 0, { month: "long", year: "numeric" }) + ".");
+      return;
+    }
+    setFrom(inMonth[0]);
+    setTo(inMonth[inMonth.length - 1]);
+  }
+  async function download() {
+    if (!rows.length) return;
+    setXlsBusy(true);
+    try {
+      const XL = await loadExcelJS();
+      const bytes = await buildStyledRangeWorkbook(XL, { clientName: client.name, rows, now, from: shownDates[0], to: shownDates[shownDates.length - 1] });
+      const safe = String(client.name || "client").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+      downloadBytes(bytes, "Brahmastra_" + safe + "_" + shownDates[0] + "_to_" + shownDates[shownDates.length - 1] + ".xlsx");
+    } catch (e) {
+      toast("Could not build the Excel file: " + (e && e.message ? e.message : e));
+    } finally {
+      setXlsBusy(false);
+    }
+  }
+  const pct = (v) => v == null ? "n/a" : v + "%";
+  const numCell = (v, color) => /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, textAlign: "right", fontFamily: MONO, fontWeight: 600, color: v > 0 && color ? color : "#334155" } }, v);
+  if (!sorted.length) {
+    return /* @__PURE__ */ React.createElement("main", { style: S.main }, /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "No dates of work yet for ", client.name, ". Upload or fetch a production file first, in One date."));
+  }
+  return /* @__PURE__ */ React.createElement("main", { style: S.main, "data-testid": "range-view" }, /* @__PURE__ */ React.createElement("div", { style: XS.rangeBar }, /* @__PURE__ */ React.createElement("div", { style: XS.rangeRow }, /* @__PURE__ */ React.createElement("label", { style: XS.rangeLabel }, "From", /* @__PURE__ */ React.createElement("select", { style: S.dowSelect, value: from, onChange: (e) => setFrom(e.target.value), "data-testid": "range-from" }, [...sorted].reverse().map((dk) => /* @__PURE__ */ React.createElement("option", { key: dk, value: dk }, niceDate(dk))))), /* @__PURE__ */ React.createElement("label", { style: XS.rangeLabel }, "To", /* @__PURE__ */ React.createElement("select", { style: S.dowSelect, value: to, onChange: (e) => setTo(e.target.value), "data-testid": "range-to" }, [...sorted].reverse().map((dk) => /* @__PURE__ */ React.createElement("option", { key: dk, value: dk }, niceDate(dk))))), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      style: S.csvBtn,
+      onClick: () => {
+        shownDates.forEach((dk) => delete cache.current[dk]);
+        setRefresh((x) => x + 1);
+      },
+      disabled: !!loading
+    },
+    "↻ Refresh"
+  ), /* @__PURE__ */ React.createElement("button", { style: S.dayXlsBtn, onClick: download, disabled: !rows.length || xlsBusy || !!loading, "data-testid": "range-export" }, xlsBusy ? "Building…" : "⤓ Download these dates (Excel)")), /* @__PURE__ */ React.createElement("div", { style: { ...XS.rangeRow, marginTop: 10 } }, /* @__PURE__ */ React.createElement("span", { style: XS.rangeLabel }, "Quick pick"), [["7", "Last 7 dates"], ["30", "Last 30 dates"], ["month", "This month"], ["last", "Last month"], ["all", "All dates"]].map(([k, l]) => /* @__PURE__ */ React.createElement("button", { key: k, style: XS.quickBtn, onClick: () => quick(k), "data-testid": "range-quick-" + k }, l)), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: "auto", fontSize: 12, color: MUT } }, shownDates.length, " ", shownDates.length === 1 ? "date" : "dates", " of work in this range"))), inRange.length > RANGE_CAP && /* @__PURE__ */ React.createElement("div", { style: XS.capNote }, "Showing the newest ", RANGE_CAP, " of the ", inRange.length, " dates in this range. Pick a shorter range to see the older ones."), loading && /* @__PURE__ */ React.createElement("div", { style: XS.loadNote }, "Loading ", loading.done, " of ", loading.total, " dates…", /* @__PURE__ */ React.createElement("div", { style: { ...S.progressTrack, marginTop: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { ...S.progressFill, width: Math.round(loading.done / Math.max(1, loading.total) * 100) + "%" } }))), err && /* @__PURE__ */ React.createElement("div", { style: S.errBox }, err), /* @__PURE__ */ React.createElement("div", { style: S.tileRow }, [
+    ["Dates", rows.length, NAVY],
+    ["Claims read", allClaims.length, NAVY],
+    ["Tasked", tot.tasked, NAVY],
+    ["Completed", tot.done, STATUS_COLOR.Completed],
+    ["Not completed", tot.notDone, STATUS_COLOR["Not Completed"]],
+    ["Pending", tot.pend, STATUS_COLOR.Pending],
+    ["Overdue", tot.over, "#dc2626"],
+    ["Completion", pct(tot.rate), NAVY]
+  ].map(([l, v, c]) => /* @__PURE__ */ React.createElement("div", { key: l, style: { ...S.tile, cursor: "default" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.tileVal, color: c } }, v), /* @__PURE__ */ React.createElement("span", { style: S.tileLabel }, l)))), /* @__PURE__ */ React.createElement("div", { style: XS.stack }, /* @__PURE__ */ React.createElement("div", { style: XS.panel }, /* @__PURE__ */ React.createElement("div", { style: XS.panelTitle }, "By date"), /* @__PURE__ */ React.createElement("div", { style: { maxHeight: 360, overflowY: "auto" } }, /* @__PURE__ */ React.createElement("table", { style: S.dTable }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, ["Date of work", "Claims", "Tasked", "Done", "Not done", "Overdue", "Done %", ""].map((h, i) => /* @__PURE__ */ React.createElement("th", { key: h + i, style: { ...S.dTh, ...i && i < 7 ? { textAlign: "right" } : {} } }, h)))), /* @__PURE__ */ React.createElement("tbody", null, byDate.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.dk, className: "rowh", "data-testid": "range-date-row" }, /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, fontWeight: 700, color: NAVY, whiteSpace: "nowrap" } }, niceDate(r.dk)), numCell(r.claims), numCell(r.s.tasked), numCell(r.s.done, STATUS_COLOR.Completed), numCell(r.s.notDone, STATUS_COLOR["Not Completed"]), numCell(r.s.over, "#dc2626"), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, textAlign: "right", minWidth: 92 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement("div", { style: XS.miniTrack }, /* @__PURE__ */ React.createElement("div", { style: { ...XS.miniFill, width: (r.s.rate || 0) + "%" } })), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: MONO, fontWeight: 700, color: NAVY, fontSize: 12 } }, pct(r.s.rate)))), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, textAlign: "right" } }, /* @__PURE__ */ React.createElement("button", { style: XS.openDay, onClick: () => onOpenDate(r.dk), "data-testid": "range-open-date" }, "Open")))), !byDate.length && !loading && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 8, style: { ...S.dTd, textAlign: "center", color: "#94a3b8" } }, "No boards in this range.")))))), /* @__PURE__ */ React.createElement("div", { style: XS.panel }, /* @__PURE__ */ React.createElement("div", { style: XS.panelTitle }, "By department"), /* @__PURE__ */ React.createElement("table", { style: S.dTable }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, ["Department", "Tasked", "Done", "Not done", "Pending", "Overdue", "Done %"].map((h, i) => /* @__PURE__ */ React.createElement("th", { key: h, style: { ...S.dTh, ...i ? { textAlign: "right" } : {} } }, h)))), /* @__PURE__ */ React.createElement("tbody", null, byDept.map((d) => /* @__PURE__ */ React.createElement("tr", { key: d.k, className: "rowh", style: { cursor: "pointer" }, onClick: () => setDeptF(deptF === d.k ? "all" : d.k), title: "Show only this department's claims below" }, /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, fontWeight: 700, color: d.accent, whiteSpace: "nowrap" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.statusDot, background: d.accent, display: "inline-block", marginRight: 8, verticalAlign: "middle" } }), d.label), numCell(d.s.tasked), numCell(d.s.done, STATUS_COLOR.Completed), numCell(d.s.notDone, STATUS_COLOR["Not Completed"]), numCell(d.s.pend), numCell(d.s.over, "#dc2626"), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, textAlign: "right", fontWeight: 700, color: NAVY } }, pct(d.s.rate)))), /* @__PURE__ */ React.createElement("tr", { style: { background: "#f8fbfc" } }, /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, fontWeight: 800, color: NAVY } }, "Total"), numCell(tot.tasked), numCell(tot.done, STATUS_COLOR.Completed), numCell(tot.notDone, STATUS_COLOR["Not Completed"]), numCell(tot.pend), numCell(tot.over, "#dc2626"), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, textAlign: "right", fontWeight: 800, color: NAVY } }, pct(tot.rate))))))), /* @__PURE__ */ React.createElement("div", { style: { ...XS.panel, marginTop: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { ...XS.panelTitle, marginBottom: 0, marginRight: 6 } }, "Claims across these dates"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, [["all", "All departments"]].concat(DEPT_ORDER.map((k) => [k, DEPTS[k].label])).map(([k, l]) => /* @__PURE__ */ React.createElement("button", { key: k, style: { ...S.chip, padding: "5px 11px", fontSize: 12, ...deptF === k ? S.chipActive : {} }, onClick: () => setDeptF(k) }, l))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, [["all", "Any status"], ["Pending", "Pending"], ["Completed", "Completed"], ["Not Completed", "Not completed"], ["overdue", "Overdue"]].map(([k, l]) => /* @__PURE__ */ React.createElement("button", { key: k, style: { ...S.chip, padding: "5px 11px", fontSize: 12, ...statF === k ? S.chipActive : {} }, onClick: () => setStatF(k), "data-testid": "range-status-" + k }, l))), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("input", { style: { ...S.search, minWidth: 0, width: 220 }, placeholder: "Search patient, payer, claim", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React.createElement("div", { style: { ...S.tableWrap, boxShadow: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto" } }, /* @__PURE__ */ React.createElement("table", { style: S.dTable }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, ["Date of work", "Department", "Patient / Claim", "Payer", "Status", "Time left", "Reason if not completed"].map((h) => /* @__PURE__ */ React.createElement("th", { key: h, style: S.dTh }, h)))), /* @__PURE__ */ React.createElement("tbody", null, list.slice(0, limit).map((c) => {
+    const st = c.workStatus || "Pending";
+    const col = STATUS_COLOR[st];
+    const t = tatOf(c, now);
+    return /* @__PURE__ */ React.createElement("tr", { key: c._dk + ":" + c.ref + ":" + c.idx, className: "rowh", "data-testid": "range-claim-row" }, /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, whiteSpace: "nowrap", color: "#475569" } }, niceDate(c._dk)), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("span", { style: { ...S.routeBadge, background: DEPTS[c.route].accent + "1a", color: DEPTS[c.route].accent } }, DEPTS[c.route].label)), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: st === "Not Completed" ? "#b91c1c" : NAVY } }, c.label), /* @__PURE__ */ React.createElement("div", { style: S.dMeta }, c.dos && "DOS " + c.dos, c.claimId && " · #" + c.claimId)), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, color: "#475569" } }, c.payer || "—"), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("span", { style: { ...S.statusPill, background: col + "1f", color: col } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.statusDot, background: col } }), st === "Not Completed" ? "Not completed" : st)), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, t && t.done ? /* @__PURE__ */ React.createElement("span", { style: { ...S.miniTimer, background: "#dcfce7", color: "#16a34a" } }, "✓ done") : t ? /* @__PURE__ */ React.createElement("span", { style: { ...S.miniTimer, ...t.breach ? { background: "#dc2626", color: "#fff" } : { background: "#f1f5f9", color: "#475569" } } }, t.breach ? "overdue " : "", Math.floor(Math.abs(t.remain) / 36e5), "h ", Math.floor(Math.abs(t.remain) % 36e5 / 6e4), "m") : /* @__PURE__ */ React.createElement("span", { style: { color: "#c3d0d8" } }, "—")), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, color: st === "Not Completed" ? "#b91c1c" : "#64748b" } }, c.incompleteReason || "—"));
+  }), !list.length && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 7, style: { ...S.dTd, textAlign: "center", color: "#94a3b8", padding: 26 } }, loading ? "Loading…" : "No claims match these filters.")))))), list.length > limit && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: 12 } }, /* @__PURE__ */ React.createElement("button", { style: S.csvBtn, onClick: () => setLimit(list.length) }, "Show all ", list.length, " claims"))));
+}
+async function buildStyledRangeWorkbook(XL, { clientName, rows, now, from, to }) {
+  const NAVY_X = "FF0F2A47", WHITE = "FFFFFFFF", LINE_X = "FFE2E8F0", ZEBRA = "FFF8FAFC";
+  const fill = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+  const thin = { style: "thin", color: { argb: LINE_X } };
+  const box = { top: thin, left: thin, bottom: thin, right: thin };
+  const hexArgb = (h) => "FF" + String(h).replace("#", "").toUpperCase();
+  const tint = (hex, amt) => {
+    const h = String(hex).replace("#", "");
+    const ch = (i) => Math.round(parseInt(h.substr(i, 2), 16) * amt + 255 * (1 - amt)).toString(16).padStart(2, "0");
+    return ("FF" + ch(0) + ch(2) + ch(4)).toUpperCase();
+  };
+  const LOOK = { Completed: ["FFDCFCE7", "FF166534"], "Not Completed": ["FFFEE2E2", "FF991B1B"], Pending: ["FFF1F5F9", "FF475569"] };
+  const money = (v) => {
+    const s = String(v == null ? "" : v).replace(/[$,\s]/g, "");
+    return s !== "" && /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : v == null ? "" : String(v);
+  };
+  const stamp = (ms) => ms ? whenText(ms) : "";
+  const wb = new XL.Workbook();
+  wb.creator = "Purview Brahmastra";
+  const range = niceDate(from) + " to " + niceDate(to);
+  function band(ws2, last, title, sub) {
+    ws2.mergeCells(1, 1, 1, last);
+    ws2.mergeCells(2, 1, 2, last);
+    const t = ws2.getCell(1, 1);
+    t.value = title;
+    t.font = { name: "Calibri", size: 16, bold: true, color: { argb: WHITE } };
+    t.fill = fill(NAVY_X);
+    t.alignment = { vertical: "middle", indent: 1 };
+    const s = ws2.getCell(2, 1);
+    s.value = sub;
+    s.font = { name: "Calibri", size: 10, color: { argb: WHITE } };
+    s.fill = fill("FF0C223A");
+    s.alignment = { vertical: "middle", indent: 1 };
+    ws2.getRow(1).height = 30;
+    ws2.getRow(2).height = 20;
+  }
+  function head(ws2, r, labels) {
+    labels.forEach((h, i) => {
+      const c = ws2.getCell(r, i + 1);
+      c.value = h;
+      c.font = { name: "Calibri", size: 10, bold: true, color: { argb: WHITE } };
+      c.fill = fill(NAVY_X);
+      c.alignment = { vertical: "middle", horizontal: i ? "center" : "left", wrapText: true, indent: i ? 0 : 1 };
+      c.border = box;
+    });
+    ws2.getRow(r).height = 28;
+  }
+  const allClaims = [];
+  rows.forEach((r) => r.board.claims.forEach((c) => allClaims.push({ ...c, _dk: r.dk })));
+  const tasked = allClaims.filter((c) => c.task && DEPTS[c.route]);
+  const ws = wb.addWorksheet("Summary", { properties: { tabColor: { argb: NAVY_X } }, pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  [26, 12, 12, 13, 12, 12, 13].forEach((w, i) => ws.getColumn(i + 1).width = w);
+  band(ws, 7, (clientName || "Client") + "  ·  Several dates", range + "     ·     " + rows.length + " dates of work     ·     Report generated " + stamp(now));
+  ws.getCell(4, 1).value = "BY DEPARTMENT";
+  ws.getCell(4, 1).font = { bold: true, color: { argb: NAVY_X } };
+  head(ws, 5, ["Department", "Tasked", "Completed", "Not completed", "Pending", "Overdue", "Completion"]);
+  const lines = DEPT_ORDER.map((k) => [DEPTS[k].label, rangeStats(tasked.filter((c) => c.route === k), now), DEPTS[k].accent]).concat([["Total", rangeStats(tasked, now), null]]);
+  lines.forEach(([label, s, accent], i) => {
+    const r = 6 + i;
+    [label, s.tasked, s.done, s.notDone, s.pend, s.over, s.rate == null ? "n/a" : s.rate / 100].forEach((v, j) => {
+      const c = ws.getCell(r, j + 1);
+      c.value = v;
+      c.border = box;
+      c.alignment = { vertical: "middle", horizontal: j ? "center" : "left", indent: j ? 0 : 1 };
+      c.font = { name: "Calibri", size: 10.5, bold: !accent || j === 0 || j === 6, color: { argb: j === 0 && accent ? hexArgb(accent) : "FF1E293B" } };
+      if (j === 6 && typeof v === "number") c.numFmt = "0%";
+      if (!accent) c.fill = fill("FFF1F5F9");
+      else if (j === 0) c.fill = fill(tint(accent, 0.12));
+    });
+    ws.getRow(r).height = 21;
+  });
+  const r0 = 6 + lines.length + 2;
+  ws.getCell(r0, 1).value = "BY DATE OF WORK";
+  ws.getCell(r0, 1).font = { bold: true, color: { argb: NAVY_X } };
+  head(ws, r0 + 1, ["Date of work", "Claims read", "Tasked", "Completed", "Not completed", "Overdue", "Completion"]);
+  [...rows].reverse().forEach((row, i) => {
+    const s = rangeStats(row.board.claims.filter((c) => c.task && DEPTS[c.route]), now);
+    const r = r0 + 2 + i;
+    [niceDate(row.dk), row.board.claims.length, s.tasked, s.done, s.notDone, s.over, s.rate == null ? "n/a" : s.rate / 100].forEach((v, j) => {
+      const c = ws.getCell(r, j + 1);
+      c.value = v;
+      c.border = box;
+      c.alignment = { vertical: "middle", horizontal: j ? "center" : "left", indent: j ? 0 : 1 };
+      c.font = { name: "Calibri", size: 10, bold: j === 0 || j === 6, color: { argb: j === 4 && v > 0 ? "FF991B1B" : j === 5 && v > 0 ? "FF991B1B" : "FF1E293B" } };
+      if (j === 6 && typeof v === "number") c.numFmt = "0%";
+      if (i % 2 === 1) c.fill = fill(ZEBRA);
+    });
+  });
+  ws.views = [{ state: "frozen", ySplit: 2, showGridLines: false }];
+  const wc = wb.addWorksheet("Claims", { properties: { tabColor: { argb: "FF2CC9B0" } }, pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  const cols = [
+    ["Date of work", 15, (c) => niceDate(c._dk)],
+    ["Department", 17, (c) => DEPTS[c.route].label],
+    ["Patient", 24, (c) => c.label || ""],
+    ["Payer", 22, (c) => c.payer || ""],
+    ["DOS", 12, (c) => c.dos || ""],
+    ["Balance", 12, (c) => money(c.balance)],
+    ["Work Status", 15, (c) => c.workStatus || "Pending"],
+    ["TAT", 11, (c) => {
+      const t = tatOf(c, now);
+      return !t ? "No TAT" : t.done ? "Met" : t.breach ? "Breached" : "Running";
+    }],
+    ["Reason If Not Completed", 44, (c) => c.incompleteReason || ""],
+    ["Reason flagged", 11, (c) => c.reasonFlag && c.workStatus === "Not Completed" ? "Yes" : ""],
+    ["Moved from", 17, (c) => c.originDept ? DEPTS[c.originDept] ? DEPTS[c.originDept].label : String(c.originDept) : ""],
+    ["Updated by", 26, (c) => c.statusBy ? c.statusBy + (c.statusAt ? ", " + stamp(c.statusAt) : "") : ""],
+    ["Claim ID", 16, (c) => c.claimId || ""],
+    ["AR Action", 26, (c) => c.action || ""],
+    ["Brahmastra ID", 28, (c) => c.matchKey || ""]
+  ];
+  band(wc, cols.length, "Claims  ·  " + (clientName || "Client"), range + "     ·     " + tasked.length + " claims tasked to departments");
+  head(wc, 4, cols.map((c) => c[0]));
+  cols.forEach((c, i) => wc.getColumn(i + 1).width = c[1]);
+  const sorted = tasked.sort((a, b) => a._dk < b._dk ? 1 : a._dk > b._dk ? -1 : DEPT_ORDER.indexOf(a.route) - DEPT_ORDER.indexOf(b.route));
+  sorted.forEach((c, i) => {
+    const r = 5 + i;
+    cols.forEach((col, j) => {
+      const cell = wc.getCell(r, j + 1);
+      const v = col[2](c);
+      cell.value = v;
+      cell.border = box;
+      cell.font = { name: "Calibri", size: 10, color: { argb: "FF1E293B" } };
+      cell.alignment = { vertical: "top", wrapText: j === 8, horizontal: j === 5 ? "right" : j === 6 || j === 7 || j === 9 ? "center" : "left" };
+      if (i % 2 === 1) cell.fill = fill(ZEBRA);
+      if (j === 5 && typeof v === "number") cell.numFmt = '"$"#,##0.00';
+      if (j === 1) {
+        cell.fill = fill(tint(DEPTS[c.route].accent, 0.12));
+        cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: hexArgb(DEPTS[c.route].accent) } };
+      }
+      if (j === 6 && LOOK[v]) {
+        cell.fill = fill(LOOK[v][0]);
+        cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: LOOK[v][1] } };
+      }
+      if (j === 7 && v === "Breached") {
+        cell.fill = fill("FFFEE2E2");
+        cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: "FF991B1B" } };
+      }
+    });
+  });
+  if (sorted.length) wc.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + sorted.length, column: cols.length } };
+  wc.views = [{ state: "frozen", ySplit: 4, xSplit: 3, showGridLines: false }];
+  return new Uint8Array(await wb.xlsx.writeBuffer());
+}
+const XS = {
+  authFoot: { fontSize: 12.5, color: "#64748b", marginTop: 16, lineHeight: 1.6, textAlign: "center" },
+  infoBox: { background: "#f0f9ff", border: "1px solid #bae6fd", color: "#075985", fontSize: 12.5, padding: "10px 12px", borderRadius: 10, marginBottom: 14, lineHeight: 1.5 },
+  okBox: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", fontSize: 12.5, padding: "9px 12px", borderRadius: 9, marginTop: 10, fontWeight: 500 },
+  accessNote: { fontSize: 11.5, color: MUT, marginTop: 8 },
+  accessList: { maxHeight: "52vh", overflowY: "auto", padding: "8px 20px 10px" },
+  groupHead: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10.5, fontWeight: 700, color: MUT, textTransform: "uppercase", letterSpacing: 0.6, margin: "4px 2px 6px" },
+  groupAll: { background: "none", border: "none", color: "#0369a1", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", textTransform: "none", letterSpacing: 0 },
+  personPick: { display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "1px solid " + LINE, borderRadius: 10, marginBottom: 6, cursor: "pointer", background: "#fff" },
+  personPickOn: { borderColor: "#9fe3cf", background: "#f4fbf8" },
+  personName: { display: "block", fontSize: 13, fontWeight: 700, color: NAVY },
+  personSub: { display: "block", fontSize: 11.5, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  autoTag: { fontSize: 10.5, fontWeight: 700, background: "#e0f2fe", color: "#075985", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" },
+  ownerTag: { fontSize: 10.5, fontWeight: 700, background: "#eef3f6", color: "#475569", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" },
+  newTag: { fontSize: 10.5, fontWeight: 700, background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" },
+  offTag: { fontSize: 10.5, fontWeight: 700, background: "#f1f5f9", color: "#64748b", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" },
+  statusTag: { display: "inline-block", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, whiteSpace: "nowrap" },
+  addGrid: { display: "grid", gridTemplateColumns: "minmax(80px,0.6fr) minmax(140px,1.4fr) minmax(150px,1.2fr) minmax(170px,1.6fr) auto", gap: 8, alignItems: "center" },
+  addInput: { border: "1px solid #dbe4ea", borderRadius: 9, padding: "9px 11px", fontSize: 13, fontFamily: "inherit", minWidth: 0, color: NAVY, background: "#fff" },
+  rowBtn: { background: "none", border: "1px solid #dbe4ea", borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 600, color: "#475569", cursor: "pointer", fontFamily: "inherit", marginLeft: 5 },
+  codeBox: { display: "flex", gap: 14, alignItems: "flex-start", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 12, padding: "12px 14px", marginTop: 12 },
+  codeDigits: { fontFamily: MONO, fontSize: 26, fontWeight: 700, color: "#0369a1", letterSpacing: 3, margin: "4px 0" },
+  statusSelect: { border: "1px solid", borderRadius: 20, padding: "5px 26px 5px 11px", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", appearance: "none", WebkitAppearance: "none", backgroundImage: "linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%)", backgroundPosition: "calc(100% - 13px) 50%, calc(100% - 9px) 50%", backgroundSize: "4px 4px, 4px 4px", backgroundRepeat: "no-repeat" },
+  statusBy: { fontSize: 10.5, color: "#94a3b8", marginTop: 4, whiteSpace: "nowrap" },
+  editReason: { marginLeft: 8, background: "none", border: "none", color: "#0369a1", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", padding: 0 },
+  moveNote: { marginTop: 10, background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412", fontSize: 12.5, padding: "8px 11px", borderRadius: 9 },
+  bulkBar: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #cdeee7", borderRadius: 12, padding: "9px 14px", marginBottom: 12, boxShadow: "0 6px 20px rgba(44,201,176,.12)", fontSize: 13, position: "sticky", top: 8, zIndex: 3 },
+  bulkBtn: { background: "#fff", border: "1px solid", borderRadius: 20, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
+  bulkClear: { background: "none", border: "none", color: "#64748b", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
+  viewToggle: { display: "inline-flex", gap: 4, background: "#eef3f6", borderRadius: 11, padding: 4 },
+  viewTab: { border: "none", background: "transparent", borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 12.5, color: "#64748b", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" },
+  viewTabOn: { background: "#fff", color: NAVY, boxShadow: "0 1px 3px rgba(15,42,71,.10)" },
+  rangeBar: { background: "#fff", border: "1px solid " + LINE, borderRadius: 14, padding: "10px 14px", marginBottom: 14, boxShadow: "0 1px 2px rgba(15,42,71,.08)" },
+  rangeLabel: { display: "flex", alignItems: "center", gap: 8, fontSize: 10.5, fontWeight: 700, color: MUT, textTransform: "uppercase", letterSpacing: 0.5 },
+  quickBtn: { background: "#f4f7f9", border: "1px solid " + LINE, borderRadius: 20, padding: "6px 11px", fontSize: 12, fontWeight: 600, color: "#475569", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" },
+  capNote: { background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412", fontSize: 12.5, padding: "8px 12px", borderRadius: 10, marginBottom: 12 },
+  loadNote: { background: "#fff", border: "1px solid " + LINE, borderRadius: 12, padding: "10px 14px", fontSize: 12.5, color: MUT, marginBottom: 12 },
+  stack: { display: "grid", gridTemplateColumns: "1fr", gap: 16 },
+  rangeRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  tName: { fontWeight: 700, color: NAVY, fontSize: 13.5 },
+  tSub: { fontSize: 11.5, color: "#94a3b8", marginTop: 2 },
+  tPos: { color: "#475569", fontSize: 13 },
+  panel: { background: "#fff", border: "1px solid " + LINE, borderRadius: 16, padding: "14px 16px", boxShadow: "0 4px 24px rgba(15,42,71,.06)", minWidth: 0 },
+  panelTitle: { fontSize: 15, fontWeight: 800, color: NAVY, marginBottom: 10 },
+  miniTrack: { width: 46, height: 6, background: "#eef3f6", borderRadius: 6, overflow: "hidden" },
+  miniFill: { height: "100%", background: GRAD, borderRadius: 6 },
+  openDay: { background: "#fff", border: "1px solid #dbe4ea", borderRadius: 8, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, color: NAVY, cursor: "pointer", fontFamily: "inherit" }
+};
+
 function App() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null); // username
@@ -1884,10 +2816,7 @@ function App() {
           const r = await authCall("/auth/me", null, "GET");
           if (r.ok && r.data.user) {
             setSession(r.data.user.email);
-            setMe({
-              username: r.data.user.email,
-              role: r.data.user.role
-            });
+            setMe(meFromServer(r.data.user));
           } else if (r.status === 401) setToken(null);
         }
         setReady(true);
@@ -1918,10 +2847,7 @@ function App() {
     if (serverUser) {
       // the server already checked the password and issued the pass
       setSession(serverUser.email);
-      setMe({
-        username: serverUser.email,
-        role: serverUser.role
-      });
+      setMe(meFromServer(serverUser));
       return;
     }
     const u = await refreshUsers();
@@ -2416,374 +3342,6 @@ function Wordmark({
 /* =========================================================================
    AUTH
    ========================================================================= */
-function AuthGate({
-  users,
-  onAuthed,
-  refreshUsers
-}) {
-  const hasAdmin = SERVER || Object.values(users).some(u => u.role === "Admin");
-  const [mode, setMode] = useState(hasAdmin ? "signin" : "setup"); // setup | signin | signup | forgot
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  // shared fields
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState("Supervisor");
-  const [secQ, setSecQ] = useState("");
-  const [secA, setSecA] = useState("");
-  const [newPass, setNewPass] = useState("");
-  const [loginKind, setLoginKind] = useState("user"); // user | admin (sign-in screen only)
-
-  function reset() {
-    setErr("");
-    setUsername("");
-    setPassword("");
-    setSecQ("");
-    setSecA("");
-    setNewPass("");
-  }
-  async function doSetup() {
-    setErr("");
-    const email = cleanEmail(username);
-    if (!email || !password) return setErr("Enter your Purview email and a password.");
-    if (!isEmail(email)) return setErr("Use your full Purview email address, for example firstname.lastname@yourdomain.com");
-    if (!secQ.trim() || !secA.trim()) return setErr("Set a security question so you can recover access.");
-    setBusy(true);
-    const u = (await refreshUsers()) || {};
-    u[email] = {
-      role: "Admin",
-      pass: await sha(password),
-      secQ: secQ.trim(),
-      secA: await sha(secA.trim().toLowerCase()),
-      createdAt: Date.now()
-    };
-    await store.set(K.users, u);
-    setBusy(false);
-    onAuthed(email);
-  }
-  async function doSignup() {
-    setErr("");
-    const email = cleanEmail(username);
-    if (!email || !password) return setErr("Enter your Purview email and a password.");
-    if (!isEmail(email)) return setErr("Use your full Purview email address, for example firstname.lastname@yourdomain.com");
-    if (!domainOk(email)) return setErr(DOMAIN_MSG);
-    if (!secQ.trim() || !secA.trim()) return setErr("Set a security question for password recovery.");
-    setBusy(true);
-    if (SERVER) {
-      const r = await authCall("/auth/signup", {
-        email,
-        password,
-        role,
-        secQ: secQ.trim(),
-        secA: secA.trim()
-      });
-      setBusy(false);
-      if (!r.ok) return setErr(r.error);
-      setToken(r.data.token);
-      return onAuthed(r.data.user.email, r.data.user);
-    }
-    const u = (await refreshUsers()) || {};
-    if (resolveUser(u, email)) {
-      setBusy(false);
-      return setErr("An account already exists for that email. Sign in instead, or use Forgot password.");
-    }
-    u[email] = {
-      role,
-      pass: await sha(password),
-      secQ: secQ.trim(),
-      secA: await sha(secA.trim().toLowerCase()),
-      createdAt: Date.now()
-    };
-    await store.set(K.users, u);
-    setBusy(false);
-    onAuthed(email);
-  }
-  function resolveUser(u, typed) {
-    const raw = typed.trim().replace(/^mailto:/i, "").trim();
-    if (u[raw]) return raw;
-    const hit = Object.keys(u).find(k => k.toLowerCase() === raw.toLowerCase());
-    return hit || null;
-  }
-  // Accounts are keyed on the person's Purview email, the same sign in they use
-  // for every other Purview app. Stored lower case so one person is one account.
-  function cleanEmail(t) {
-    return String(t || "").trim().replace(/^mailto:/i, "").trim().toLowerCase();
-  }
-  function isEmail(t) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(t);
-  }
-  async function doSignin() {
-    setErr("");
-    setBusy(true);
-    if (SERVER) {
-      const r = await authCall("/auth/login", {
-        email: cleanEmail(username),
-        password
-      });
-      setBusy(false);
-      if (!r.ok) return setErr(r.error);
-      if (loginKind === "admin" && r.data.user.role !== "Admin") return setErr("This isn't an admin account. Use the User login instead.");
-      setToken(r.data.token);
-      return onAuthed(r.data.user.email, r.data.user);
-    }
-    const u = (await refreshUsers()) || {};
-    const key = resolveUser(u, username);
-    const rec = key ? u[key] : null;
-    if (!rec || rec.pass !== (await sha(password))) {
-      setBusy(false);
-      return setErr("That email or password doesn't match.");
-    }
-    if (rec.disabled) {
-      setBusy(false);
-      return setErr("This account has been switched off. Ask your admin.");
-    }
-    if (loginKind === "admin" && rec.role !== "Admin") {
-      setBusy(false);
-      return setErr("This isn't an admin account. Use the User login instead.");
-    }
-    setBusy(false);
-    onAuthed(key);
-  }
-  async function doForgot() {
-    setErr("");
-    if (SERVER) {
-      const email = cleanEmail(username);
-      if (!secQ) {
-        // step 1: fetch the question
-        const q = await authCall("/auth/question", {
-          email
-        });
-        if (!q.ok) return setErr(q.error);
-        return setSecQ(q.data.secQ || "Your security question");
-      }
-      if (!newPass) return setErr("Enter a new password.");
-      setBusy(true);
-      const r = await authCall("/auth/reset", {
-        email,
-        secA: secA.trim(),
-        password: newPass
-      });
-      setBusy(false);
-      if (!r.ok) return setErr(r.error);
-      setToken(r.data.token);
-      return onAuthed(r.data.user.email, r.data.user);
-    }
-    const u = (await refreshUsers()) || {};
-    const key = resolveUser(u, username);
-    const rec = key ? u[key] : null;
-    if (!rec) return setErr("No account with that email yet.");
-    if (!secQ) {
-      setSecQ(rec.secQ);
-      return;
-    } // step 1: reveal question
-    setBusy(true);
-    if (rec.secA !== (await sha(secA.trim().toLowerCase()))) {
-      setBusy(false);
-      return setErr("That answer doesn't match.");
-    }
-    if (!newPass) {
-      setBusy(false);
-      return setErr("Enter a new password.");
-    }
-    rec.pass = await sha(newPass);
-    u[key] = rec;
-    await store.set(K.users, u);
-    setBusy(false);
-    onAuthed(key);
-  }
-  return /*#__PURE__*/React.createElement("div", {
-    style: S.authWrap
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.authCard
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "goldline",
-    style: {
-      position: "absolute",
-      top: 0,
-      left: 0,
-      right: 0
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 22
-    }
-  }, /*#__PURE__*/React.createElement(Wordmark, {
-    size: 26
-  })), mode === "setup" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h1", {
-    style: S.authTitle
-  }, "Set up the admin account"), /*#__PURE__*/React.createElement("p", {
-    style: S.authSub
-  }, "You're the first person here. This account is the admin, so only you can grant admin to others later."), /*#__PURE__*/React.createElement(Field, {
-    label: "Purview email",
-    value: username,
-    onChange: setUsername,
-    placeholder: "your Purview email address"
-  }), /*#__PURE__*/React.createElement(Field, {
-    label: "Password",
-    type: "password",
-    value: password,
-    onChange: setPassword
-  }), /*#__PURE__*/React.createElement(Field, {
-    label: "Security question",
-    value: secQ,
-    onChange: setSecQ,
-    placeholder: "e.g. Your first team's name?"
-  }), /*#__PURE__*/React.createElement(Field, {
-    label: "Answer",
-    value: secA,
-    onChange: setSecA
-  }), err && /*#__PURE__*/React.createElement(Err, null, err), /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.primaryBtn,
-    onClick: doSetup,
-    disabled: busy
-  }, busy ? "Creating…" : "Create admin & continue")), mode === "signin" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: S.loginToggle
-  }, /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.loginTab,
-      ...(loginKind === "user" ? S.loginTabOn : {})
-    },
-    onClick: () => {
-      setLoginKind("user");
-      setErr("");
-    }
-  }, "User login"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.loginTab,
-      ...(loginKind === "admin" ? S.loginTabOn : {})
-    },
-    onClick: () => {
-      setLoginKind("admin");
-      setErr("");
-    }
-  }, "Admin login")), /*#__PURE__*/React.createElement("h1", {
-    style: S.authTitle
-  }, loginKind === "admin" ? "Admin sign in" : "Sign in"), /*#__PURE__*/React.createElement("p", {
-    style: S.authSub
-  }, loginKind === "admin" ? "Enter your admin credentials to manage users and every client." : "Sign in with your Purview email to reach your clients. New here? Create an account first."), /*#__PURE__*/React.createElement(Field, {
-    label: "Purview email",
-    value: username,
-    onChange: setUsername,
-    placeholder: "your Purview email address",
-    onEnter: doSignin
-  }), /*#__PURE__*/React.createElement(Field, {
-    label: "Password",
-    type: "password",
-    value: password,
-    onChange: setPassword,
-    onEnter: doSignin
-  }), err && /*#__PURE__*/React.createElement(Err, null, err), /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.primaryBtn,
-    onClick: doSignin,
-    disabled: busy
-  }, busy ? "Checking…" : loginKind === "admin" ? "Sign in as admin" : "Sign in"), /*#__PURE__*/React.createElement("div", {
-    style: S.authLinks
-  }, loginKind === "user" ? /*#__PURE__*/React.createElement("button", {
-    style: S.linkBtn,
-    onClick: () => {
-      reset();
-      setMode("signup");
-    }
-  }, "Create an account") : /*#__PURE__*/React.createElement("span", null), /*#__PURE__*/React.createElement("button", {
-    style: S.linkBtn,
-    onClick: () => {
-      reset();
-      setMode("forgot");
-    }
-  }, "Forgot password"))), mode === "signup" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h1", {
-    style: S.authTitle
-  }, "Create your account"), /*#__PURE__*/React.createElement("p", {
-    style: S.authSub
-  }, "No approval needed. Sign up with your Purview email (purview-healthcare.com or purviewservices.com), the same one you use for the other Purview apps, and start working right away."), /*#__PURE__*/React.createElement(Field, {
-    label: "Purview email",
-    value: username,
-    onChange: setUsername,
-    placeholder: "your Purview email address"
-  }), /*#__PURE__*/React.createElement(Field, {
-    label: "Password",
-    type: "password",
-    value: password,
-    onChange: setPassword
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 14
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: S.fieldLabel
-  }, "Role"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8
-    }
-  }, ["Supervisor", "Manager"].map(r => /*#__PURE__*/React.createElement("button", {
-    key: r,
-    onClick: () => setRole(r),
-    style: {
-      ...S.roleBtn,
-      ...(role === r ? S.roleBtnOn : {})
-    }
-  }, r))), /*#__PURE__*/React.createElement("div", {
-    style: S.hint
-  }, "Admin is granted by your admin, so it cannot be self-selected.")), /*#__PURE__*/React.createElement(Field, {
-    label: "Security question",
-    value: secQ,
-    onChange: setSecQ,
-    placeholder: "e.g. Your first team's name?"
-  }), /*#__PURE__*/React.createElement(Field, {
-    label: "Answer",
-    value: secA,
-    onChange: setSecA
-  }), err && /*#__PURE__*/React.createElement(Err, null, err), /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.primaryBtn,
-    onClick: doSignup,
-    disabled: busy
-  }, busy ? "Creating…" : "Create account & continue"), /*#__PURE__*/React.createElement("div", {
-    style: S.authLinks
-  }, /*#__PURE__*/React.createElement("button", {
-    style: S.linkBtn,
-    onClick: () => {
-      reset();
-      setMode("signin");
-    }
-  }, "\u2190 Back to sign in"))), mode === "forgot" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h1", {
-    style: S.authTitle
-  }, "Reset your password"), /*#__PURE__*/React.createElement("p", {
-    style: S.authSub
-  }, "Answer your security question to set a new password."), /*#__PURE__*/React.createElement(Field, {
-    label: "Purview email",
-    value: username,
-    onChange: setUsername,
-    placeholder: "your Purview email address"
-  }), secQ && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: S.secQ
-  }, secQ), /*#__PURE__*/React.createElement(Field, {
-    label: "Answer",
-    value: secA,
-    onChange: setSecA
-  }), /*#__PURE__*/React.createElement(Field, {
-    label: "New password",
-    type: "password",
-    value: newPass,
-    onChange: setNewPass
-  })), err && /*#__PURE__*/React.createElement(Err, null, err), /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.primaryBtn,
-    onClick: doForgot,
-    disabled: busy
-  }, secQ ? busy ? "Saving…" : "Reset password" : "Find my question"), /*#__PURE__*/React.createElement("div", {
-    style: S.authLinks
-  }, /*#__PURE__*/React.createElement("button", {
-    style: S.linkBtn,
-    onClick: () => {
-      reset();
-      setMode("signin");
-    }
-  }, "\u2190 Back to sign in")))));
-}
 function Field({
   label,
   value,
@@ -2830,6 +3388,10 @@ function ClientPicker({
   const [shareFor, setShareFor] = useState(null); // clientId
   const [shareTo, setShareTo] = useState("");
   const [shareMsg, setShareMsg] = useState("");
+  const [roster, setRoster] = useState({
+    people: [],
+    admins: []
+  });
   const [fb, setFb] = useState([]);
   const [fbFilter, setFbFilter] = useState("all");
   const [viewFile, setViewFile] = useState(null); // { f, by, data, err } for the attachment viewer
@@ -3008,7 +3570,8 @@ function ClientPicker({
     }
   }
   const load = useCallback(async () => {
-    const [c, s, u, f] = await Promise.all([store.get(K.clients), store.get(K.shares), store.get(K.users), store.get(K.feedback)]);
+    const [c, s, u, f, ro] = await Promise.all([store.get(K.clients), store.get(K.shares), store.get(K.users), store.get(K.feedback), loadRoster()]);
+    setRoster(ro);
     setClients(c || {});
     setShares(s || {});
     setUsers(u || {});
@@ -3119,166 +3682,19 @@ function ClientPicker({
     style: S.pickerHead
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
     style: S.pageTitle
-  }, "Your clients"), /*#__PURE__*/React.createElement("p", {
+  }, seesAllClients(me) ? "All clients" : "Your clients"), /*#__PURE__*/React.createElement("p", {
     style: S.pageSub
-  }, "Each client has its own AR routing, TAT clocks and rejection follow-up. Open one to work it."))), incoming.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: S.reqStrip
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.reqTitle
-  }, "Access requests waiting for you"), incoming.map(([id, s]) => {
-    var _clients$s$clientId;
-    return /*#__PURE__*/React.createElement("div", {
-      key: id,
-      style: S.reqRow
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, s.from), " wants to share the client ", /*#__PURE__*/React.createElement("b", null, ((_clients$s$clientId = clients[s.clientId]) === null || _clients$s$clientId === void 0 ? void 0 : _clients$s$clientId.name) || "—"), " with you.", /*#__PURE__*/React.createElement("div", {
-      style: S.reqSub
-    }, "Accepting gives you full upload & edit access to the same data.")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: "flex",
-        gap: 8
-      }
-    }, /*#__PURE__*/React.createElement("button", {
-      style: S.acceptBtn,
-      onClick: () => respond(id, true)
-    }, "Accept"), /*#__PURE__*/React.createElement("button", {
-      style: S.rejectBtn,
-      onClick: () => respond(id, false)
-    }, "Reject")));
-  })), /*#__PURE__*/React.createElement("div", {
-    style: S.createRow
-  }, /*#__PURE__*/React.createElement("input", {
-    style: {
-      ...S.createInput,
-      ...(createErr ? {
-        borderColor: "#dc2626"
-      } : {})
-    },
-    placeholder: "New client name (e.g. Mood Health)",
-    value: newName,
-    onChange: e => {
-      setNewName(e.target.value);
-      if (createErr) setCreateErr("");
-    },
-    onKeyDown: e => e.key === "Enter" && createClient()
-  }), /*#__PURE__*/React.createElement("button", {
-    style: S.primaryBtnInline,
-    onClick: createClient
-  }, "Create client")), createErr && /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.errBox,
-      marginTop: -12,
-      marginBottom: 22
-    }
-  }, createErr), loading ? /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "Loading your clients\u2026") : myClients.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "No clients yet. Create one above to get started.") : /*#__PURE__*/React.createElement("div", {
-    style: S.clientGrid
-  }, myClients.map(([id, c]) => /*#__PURE__*/React.createElement("div", {
-    key: id,
-    className: "lift",
-    style: S.clientCard
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.clientTop
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.clientAvatar
-  }, c.name.slice(0, 1).toUpperCase()), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.clientName
-  }, c.name), /*#__PURE__*/React.createElement("div", {
-    style: S.clientMeta
-  }, c.members.length, " member", c.members.length > 1 ? "s" : "", c.createdBy === me.username ? " · owner" : " · shared with you"))), /*#__PURE__*/React.createElement("div", {
-    style: S.memberChips
-  }, c.members.map(m => /*#__PURE__*/React.createElement("span", {
-    key: m,
-    style: {
-      ...S.memberChip,
-      ...(m === me.username ? {
-        background: NAVY,
-        color: "#fff"
-      } : {})
-    }
-  }, m))), /*#__PURE__*/React.createElement("div", {
-    style: S.clientActions
-  }, /*#__PURE__*/React.createElement("button", {
-    style: S.openBtn,
-    onClick: () => onOpen({
-      id,
-      ...c
-    })
-  }, "Open"), /*#__PURE__*/React.createElement("button", {
-    style: S.shareBtn,
-    onClick: () => {
-      setShareFor(shareFor === id ? null : id);
-      setShareMsg("");
-      setShareTo("");
-    }
-  }, shareFor === id ? "Close" : "Share")), shareFor === id && /*#__PURE__*/React.createElement("div", {
-    style: S.shareBox
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.shareLabel
-  }, "Share with a supervisor or manager (by their Purview email)"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    style: S.shareInput,
-    placeholder: "their Purview email",
-    value: shareTo,
-    onChange: e => setShareTo(e.target.value),
-    onKeyDown: e => e.key === "Enter" && sendShare(id)
-  }), /*#__PURE__*/React.createElement("button", {
-    style: S.sendBtn,
-    onClick: () => sendShare(id)
-  }, "Send request")), /*#__PURE__*/React.createElement("div", {
-    style: S.shareHelp
-  }, "They get a request to accept or reject. On accept, you both upload & edit the same data."), shareMsg && /*#__PURE__*/React.createElement("div", {
-    style: S.shareMsg
-  }, shareMsg))))), me.role === "Admin" && /*#__PURE__*/React.createElement("div", {
-    style: S.fbCard,
-    "data-testid": "people-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.fbCardHead
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: S.fbCardTitle
-  }, "People"), /*#__PURE__*/React.createElement("div", {
-    style: S.pageSub
-  }, "Everyone with an account. Switching one off stops that person signing in; their past work stays on the boards."))), peopleMsg && /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.errBox,
-      marginBottom: 10
-    }
-  }, peopleMsg), Object.keys(users).length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "No accounts yet.") : Object.keys(users).sort().map(email => {
-    const u = users[email];
-    const self = email === me.username;
-    return /*#__PURE__*/React.createElement("div", {
-      key: email,
-      style: {
-        ...S.personRow,
-        ...(u.disabled ? {
-          opacity: 0.6
-        } : {})
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        minWidth: 0
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: S.personEmail
-    }, email, self ? " (you)" : ""), /*#__PURE__*/React.createElement("div", {
-      style: S.fbEntryMeta
-    }, u.role, u.disabled ? " · switched off" : "")), !self && /*#__PURE__*/React.createElement("button", {
-      style: u.disabled ? S.acceptBtn : S.rejectBtn,
-      onClick: () => setAccountOff(email, !u.disabled)
-    }, u.disabled ? "Switch on" : "Switch off"));
-  })), canSeeFeedback && /*#__PURE__*/React.createElement("div", {
+  }, seesAllClients(me) ? "As " + (isAdminMe(me) ? "the admin" : "the VP") + ", you see every client. Each has its own AR routing, TAT clocks and rejection follow-up." : "Each client has its own AR routing, TAT clocks and rejection follow-up. Open one to work it."))), React.createElement(ClientsArea, {
+    me: me,
+    clients: clients,
+    setClients: setClients,
+    roster: roster,
+    loading: loading,
+    onOpen: onOpen
+  }), me.role === "Admin" && React.createElement(TeamListCard, {
+    roster: roster,
+    reload: load
+  }), canSeeFeedback && /*#__PURE__*/React.createElement("div", {
     style: S.fbCard,
     ref: fbCardRef,
     "data-testid": "fb-card"
@@ -3568,11 +3984,12 @@ function TopBar({
     style: S.userChip
   }, /*#__PURE__*/React.createElement("span", {
     style: S.userDot
-  }, me.username.slice(0, 1).toUpperCase()), /*#__PURE__*/React.createElement("span", {
+  }, (me.name || me.username).slice(0, 1).toUpperCase()), /*#__PURE__*/React.createElement("span", {
     style: {
       fontWeight: 600
-    }
-  }, me.username), /*#__PURE__*/React.createElement("span", {
+    },
+    title: me.username
+  }, me.name || me.username), /*#__PURE__*/React.createElement("span", {
     style: S.roleTag
   }, me.role)), /*#__PURE__*/React.createElement("button", {
     style: S.signOut,
@@ -3616,6 +4033,11 @@ function Console({
   const [fx, setFx] = useState(null); // fetch / whole-file dialog state
   const [odBusy, setOdBusy] = useState(null); // "fetch" | "push" | null
   const msOk = msSupported();
+  const [view, setView] = useState("day"); // day | range
+  const viewRef = useRef("day");
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
   const wholeRef = useRef(null);
   const fileRef = useRef(null);
   const seenBreaches = useRef(new Set());
@@ -3670,15 +4092,24 @@ function Console({
     setBatch(undefined);
     load();
   }, [dateKey, load]);
+  // coming back from Several dates shows the latest state of the open date
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) {
+      firstView.current = false;
+      return;
+    }
+    if (view === "day") load();else loadDates();
+  }, [view]);
   // multi-user sync: every 45 seconds, paused while the tab is in the background,
   // and once straight away when the person comes back to it
   useEffect(() => {
     const tick = () => {
-      if (!document.hidden) load();
+      if (!document.hidden && viewRef.current === "day") load();
     };
     const t = setInterval(tick, 45000);
     const back = () => {
-      if (!document.hidden) load();
+      if (!document.hidden && viewRef.current === "day") load();
     };
     document.addEventListener("visibilitychange", back);
     return () => {
@@ -4358,7 +4789,7 @@ function Console({
     onSignOut: onSignOut,
     onBack: onBack,
     clientName: client.name
-  }), batch && !busy && /*#__PURE__*/React.createElement("div", {
+  }), view === "day" && batch && !busy && /*#__PURE__*/React.createElement("div", {
     style: S.heroWrap
   }, /*#__PURE__*/React.createElement("div", {
     style: S.hero
@@ -4380,7 +4811,10 @@ function Console({
     }
   }))), /*#__PURE__*/React.createElement("div", {
     style: S.consoleActions
-  }, /*#__PURE__*/React.createElement("div", {
+  }, React.createElement(ViewToggle, {
+    view: view,
+    setView: setView
+  }), view === "day" && /*#__PURE__*/React.createElement("div", {
     style: S.dowGroup
   }, /*#__PURE__*/React.createElement("span", {
     style: S.dowLabel
@@ -4395,9 +4829,9 @@ function Console({
     value: d.dateKey
   }, niceDate(d.dateKey), " \xB7 ", d.count, " claims"))) : /*#__PURE__*/React.createElement("span", {
     style: S.dowNone
-  }, "No dates uploaded yet")), batch && batch !== undefined && /*#__PURE__*/React.createElement("div", {
+  }, "No dates uploaded yet")), view === "day" && batch && batch !== undefined && /*#__PURE__*/React.createElement("div", {
     style: S.fileMeta
-  }, batch.fileName, " \xB7 ", batch.source === "onedrive" ? "from OneDrive, first fetched by" : batch.source === "file" ? "whole file brought in by" : "uploaded by", " ", batch.uploadedBy), batch && /*#__PURE__*/React.createElement("button", {
+  }, batch.fileName, " \xB7 ", batch.source === "onedrive" ? "from OneDrive, first fetched by" : batch.source === "file" ? "whole file brought in by" : "uploaded by", " ", batch.uploadedBy), view === "day" && batch && /*#__PURE__*/React.createElement("button", {
     style: S.dayXlsBtn,
     "data-testid": "day-export",
     onClick: () => exportDayWorkbook(batch, client.name, dateKey, Date.now()),
@@ -4406,7 +4840,7 @@ function Console({
     style: {
       flex: 1
     }
-  }), /*#__PURE__*/React.createElement("div", {
+  }), view === "day" && /*#__PURE__*/React.createElement("div", {
     style: S.uploadGroup
   }, /*#__PURE__*/React.createElement("label", {
     style: S.uploadDateLabel
@@ -4440,7 +4874,7 @@ function Console({
       display: "none"
     },
     "data-testid": "od-whole-input"
-  })), /*#__PURE__*/React.createElement(OneDriveStrip, {
+  })), view === "day" && /*#__PURE__*/React.createElement(OneDriveStrip, {
     ms: ms,
     msOk: msOk,
     acct: msAcct,
@@ -4457,7 +4891,7 @@ function Console({
       var _wholeRef$current;
       return (_wholeRef$current = wholeRef.current) === null || _wholeRef$current === void 0 ? void 0 : _wholeRef$current.click();
     }
-  }), batch && /*#__PURE__*/React.createElement("div", {
+  }), view === "day" && batch && /*#__PURE__*/React.createElement("div", {
     style: S.pipeline
   }, /*#__PURE__*/React.createElement(PipeStat, {
     label: "AR inventory",
@@ -4500,7 +4934,15 @@ function Console({
     onClick: () => setTab("rejection"),
     active: tab === "rejection",
     tag: "next day"
-  })), /*#__PURE__*/React.createElement("main", {
+  })), view === "range" && React.createElement(RangeView, {
+    client: client,
+    dates: dates,
+    onOpenDate: dk => {
+      setView("day");
+      setTab("ar");
+      if (dk === dateKeyRef.current) load();else setDateKey(dk);
+    }
+  }), view === "day" && /*#__PURE__*/React.createElement("main", {
     style: S.main
   }, batch === undefined && /*#__PURE__*/React.createElement("div", {
     style: S.emptyRow
@@ -4520,6 +4962,7 @@ function Console({
     buckets: buckets,
     onNote: v => setDeptNote("ar", v)
   }), (tab === "submission" || tab === "payment_posting" || tab === "ev" || tab === "client_assistance") && /*#__PURE__*/React.createElement(DeptSection, {
+    me: me,
     dept: tab,
     claims: buckets[tab],
     note: batch.deptNotes[tab],
@@ -5738,7 +6181,7 @@ async function buildStyledDayWorkbook(XL, batch, clientName, dateKey, now) {
   const tatCol = { h: "TAT", w: 11, align: "center", group: "DEPARTMENT WORK", v: c => tat(c).label, look: (c, v) => TAT_LOOK[v] };
   const tatDetailCol = { h: "TAT detail", w: 19, group: "DEPARTMENT WORK", v: c => tat(c).detail };
   const reasonCol = { h: "Reason If Not Completed", w: 44, wrap: true, group: "DEPARTMENT WORK", v: c => c.incompleteReason || "" };
-  const flaggedCol = { h: "Reason flagged", w: 11, align: "center", group: "DEPARTMENT WORK", v: c => (c.reasonFlag ? "Yes" : ""), look: (c, v) => (v === "Yes" ? { fill: "FFFEF3C7", font: "FF92400E" } : null) };
+  const flaggedCol = { h: "Reason flagged", w: 11, align: "center", group: "DEPARTMENT WORK", v: c => (c.reasonFlag && ws_(c.workStatus) === "Not Completed" ? "Yes" : ""), look: (c, v) => (v === "Yes" ? { fill: "FFFEF3C7", font: "FF92400E" } : null) };
   const srCol = { h: "Sr No", w: 7, align: "center", group: "", v: (c, i) => i + 1 };
   const claimCols = [
     { h: "Patient", w: 24, group: "CLAIM", v: c => c.label || "" },
@@ -5755,6 +6198,7 @@ async function buildStyledDayWorkbook(XL, batch, clientName, dateKey, now) {
   ];
   const movedCol = { h: "Moved from", w: 17, group: "TRACKING", v: c => (c.originDept ? (DEPTS[c.originDept] ? DEPTS[c.originDept].label : String(c.originDept)) : "") };
   const trackCols = [
+    { h: "Status set by", w: 30, group: "TRACKING", v: c => (c.statusBy ? c.statusBy + (c.statusAt ? ", " + stamp(c.statusAt) : "") + (c.statusVia === "file" ? " (worked file)" : "") : "") },
     { h: "Tasked at", w: 20, group: "TRACKING", v: c => stamp(c.taskedAt) },
     { h: "Clock restarted at", w: 20, group: "TRACKING", v: c => stamp(c.reissuedAt) },
     { h: "Why routed", w: 36, group: "TRACKING", v: c => c.why || "" },
@@ -5769,7 +6213,7 @@ async function buildStyledDayWorkbook(XL, batch, clientName, dateKey, now) {
     const why = [];
     if (ws_(c.workStatus) === "Not Completed") why.push("Not completed");
     if (tat(c).label === "Breached") why.push("TAT breached");
-    if (c.reasonFlag) why.push("Reason flagged");
+    if (c.reasonFlag && ws_(c.workStatus) === "Not Completed") why.push("Reason flagged");
     return why.join(", ");
   };
   const attention = claims.filter(c => attentionWhy(c));
@@ -5783,7 +6227,7 @@ async function buildStyledDayWorkbook(XL, batch, clientName, dateKey, now) {
       pend: n("Pending"),
       rate: list.length ? n("Completed") / list.length : null,
       breached: list.filter(c => tat(c).label === "Breached").length,
-      flagged: list.filter(c => c.reasonFlag).length,
+      flagged: list.filter(c => c.reasonFlag && ws_(c.workStatus) === "Not Completed").length,
       closed: list.filter(c => c.closedInFile).length
     };
   }
@@ -6384,6 +6828,7 @@ function normStatus(v) {
   return "";
 }
 function DeptSection({
+  me,
   dept,
   claims,
   note,
@@ -6437,6 +6882,52 @@ function DeptSection({
     val: breached,
     color: "#dc2626"
   });
+
+  // ---- status right on the board: one claim, or every ticked claim at once ----
+  const [sel, setSel] = useState(() => new Set());
+  const [reasonFor, setReasonFor] = useState(null);
+  const selectedShown = filtered.filter(c => sel.has(c.idx));
+  const allShownSelected = filtered.length > 0 && filtered.every(c => sel.has(c.idx));
+  function toggleSel(idx) {
+    setSel(s => {
+      const n = new Set(s);
+      if (n.has(idx)) n.delete(idx);else n.add(idx);
+      return n;
+    });
+  }
+  function toggleAllShown() {
+    setSel(s => {
+      const n = new Set(s);
+      if (allShownSelected) filtered.forEach(c => n.delete(c.idx));else filtered.forEach(c => n.add(c.idx));
+      return n;
+    });
+  }
+  // one save for the whole change, however many claims it covers
+  function applyStatus(list, st, reason) {
+    const now = Date.now();
+    const patches = {};
+    let moved = 0;
+    list.forEach(c => {
+      const p = statusPatch(dept, st, reason, now, me && me.username || "", "app");
+      if (p.route === "client_assistance") moved++;
+      patches[c.idx] = p;
+    });
+    bulkUpdate(c => patches[c.idx] || null);
+    setSel(new Set());
+    const word = st === "Not Completed" ? "not completed" : st.toLowerCase();
+    toast((list.length === 1 ? list[0].label : list.length + " claims") + " marked " + word + "." + (moved ? (moved === 1 ? " It moved" : " " + moved + " moved") + " to Client Assistance, since the client needs to act." : ""));
+  }
+  function pickStatus(list, st) {
+    if (!list.length) return;
+    if (st === "Not Completed") {
+      setReasonFor({
+        list,
+        initial: list.length === 1 ? list[0].incompleteReason || "" : ""
+      });
+      return;
+    }
+    applyStatus(list, st, "");
+  }
 
   // ---- CSV round-trip import ----
   async function handleWorkedFile(e) {
@@ -6493,35 +6984,8 @@ function DeptSection({
           return;
         } // no status given → leave as is
         const reason = pick(r, ["Reason If Not Completed", "Reason if not completed", "Reason", "Incomplete reason"]);
-        const patch = {
-          workStatus: st
-        };
-        if (st === "Completed") {
-          completed++;
-          patch.notCompletedOnce = false;
-          patch.forceTat = false;
-        } else if (st === "Pending") {
-          pending++;
-        } else if (st === "Not Completed") {
-          notDone++;
-          patch.incompleteReason = reason || "";
-          const okReason = reasonValid(reason); // must be a real sentence, not blank / gibberish
-          patch.reasonFlag = !okReason;
-          if (!okReason) missingReason++;
-          patch.notCompletedOnce = true; // red highlight
-          patch.forceTat = true; // gets a clock even in EV / Client Assistance
-          patch.noClock = false; // a past-date claim that comes back not done is live again
-          patch.taskedAt = now;
-          patch.reissuedAt = now; // fresh 24h TAT
-          // reason indicates the client must act → move to Client Assistance, keep origin
-          if (dept !== "client_assistance" && reasonNeedsClient(reason)) {
-            patch.route = "client_assistance";
-            patch.task = true;
-            patch.originDept = meta.label;
-            movedCA++;
-          }
-        }
-        patches[claim.idx] = patch;
+        patches[claim.idx] = statusPatch(dept, st, reason, now, me && me.username || "", "file");
+        
       });
       bulkUpdate(c => patches[c.idx] || null);
       // count what actually changed on the board, so the summary can never disagree with it
@@ -6614,7 +7078,7 @@ function DeptSection({
     }
   })), /*#__PURE__*/React.createElement("div", {
     style: S.howStrip
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "How it works:"), " Download the worklist \u2192 fill the ", /*#__PURE__*/React.createElement("b", null, "Work Status"), " and ", /*#__PURE__*/React.createElement("b", null, "Reason If Not Completed"), " columns \u2192 Upload it back. The board maps every claim automatically. Not-completed claims turn red and restart a fresh 24-hour clock."), filter !== "all" && /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "Two ways to update:"), " change a claim's status right here (tick several to update them together), or download the worklist, fill the ", /*#__PURE__*/React.createElement("b", null, "Work Status"), " and ", /*#__PURE__*/React.createElement("b", null, "Reason If Not Completed"), " columns and upload it back. Not completed claims turn red and get a fresh 24-hour clock."), filter !== "all" && /*#__PURE__*/React.createElement("button", {
     style: {
       ...S.clearFilter,
       marginLeft: "auto",
@@ -6626,13 +7090,29 @@ function DeptSection({
     value: note,
     onChange: onNote,
     placeholder: `Special instruction for the ${meta.label} team…`
+  }), selectedShown.length > 0 && React.createElement(BulkBar, {
+    n: selectedShown.length,
+    onPick: st => pickStatus(selectedShown, st),
+    onClear: () => setSel(new Set())
   }), claims.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: S.emptyRow
   }, "No claims tasked to ", meta.label, " from this file.") : /*#__PURE__*/React.createElement("div", {
     style: S.tableWrap
   }, /*#__PURE__*/React.createElement("table", {
     style: S.dTable
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, React.createElement("th", {
+    style: {
+      ...S.dTh,
+      width: 34,
+      paddingRight: 0
+    }
+  }, React.createElement("input", {
+    type: "checkbox",
+    checked: allShownSelected,
+    onChange: toggleAllShown,
+    "aria-label": "Select every claim shown",
+    "data-testid": "claim-select-all"
+  })), /*#__PURE__*/React.createElement("th", {
     style: {
       ...S.dTh,
       width: 30
@@ -6673,7 +7153,19 @@ function DeptSection({
           boxShadow: "inset 3px 0 0 #dc2626"
         } : {})
       }
-    }, /*#__PURE__*/React.createElement("td", {
+    }, React.createElement("td", {
+      style: {
+        ...S.dTd,
+        paddingRight: 0,
+        width: 34
+      }
+    }, React.createElement("input", {
+      type: "checkbox",
+      checked: sel.has(c.idx),
+      onChange: () => toggleSel(c.idx),
+      "aria-label": "Select " + c.label,
+      "data-testid": "claim-select"
+    })), /*#__PURE__*/React.createElement("td", {
       style: S.dTd
     }, /*#__PURE__*/React.createElement("button", {
       style: S.expandBtn,
@@ -6704,20 +7196,12 @@ function DeptSection({
         ...S.dTd,
         color: "#475569"
       }
-    }, c.payer || "—"), /*#__PURE__*/React.createElement("td", {
+    }, c.payer || "—"), React.createElement("td", {
       style: S.dTd
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        ...S.statusPill,
-        background: stColor + "1f",
-        color: stColor
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        ...S.statusDot,
-        background: stColor
-      }
-    }), c.workStatus || "Pending")), /*#__PURE__*/React.createElement("td", {
+    }, React.createElement(StatusCell, {
+      c: c,
+      onPick: st => pickStatus([c], st)
+    })), /*#__PURE__*/React.createElement("td", {
       style: S.dTd
     }, done ? /*#__PURE__*/React.createElement("span", {
       style: {
@@ -6743,19 +7227,17 @@ function DeptSection({
       style: {
         color: "#c3d0d8"
       }
-    }, "\u2014")), /*#__PURE__*/React.createElement("td", {
-      style: {
-        ...S.dTd,
-        color: notDone ? "#b91c1c" : "#64748b",
-        fontWeight: notDone ? 600 : 400
-      }
-    }, c.incompleteReason || (notDone ? "— (no reason given)" : "—"), notDone && c.reasonFlag && /*#__PURE__*/React.createElement("span", {
-      style: S.reasonFlagChip
-    }, "\u26A0 needs valid reason"))), open && /*#__PURE__*/React.createElement("tr", {
+    }, "\u2014")), React.createElement(ReasonCell, {
+      c: c,
+      onEdit: () => setReasonFor({
+        list: [c],
+        initial: c.incompleteReason || ""
+      })
+    })), open && /*#__PURE__*/React.createElement("tr", {
       style: {
         background: rowBg
       }
-    }, /*#__PURE__*/React.createElement("td", null), /*#__PURE__*/React.createElement("td", {
+    }, React.createElement("td", null), /*#__PURE__*/React.createElement("td", null), /*#__PURE__*/React.createElement("td", {
       colSpan: 5,
       style: S.expandCell
     }, /*#__PURE__*/React.createElement("div", {
@@ -6798,7 +7280,17 @@ function DeptSection({
     }, c.comments || "—"))));
   }))), filtered.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: S.emptyRow
-  }, "No claims match this filter.")), importSummary && /*#__PURE__*/React.createElement("div", {
+  }, "No claims match this filter.")), reasonFor && React.createElement(ReasonDialog, {
+    count: reasonFor.list.length,
+    dept: dept,
+    initial: reasonFor.initial,
+    onClose: () => setReasonFor(null),
+    onSave: text => {
+      const l = reasonFor.list;
+      setReasonFor(null);
+      applyStatus(l, "Not Completed", text);
+    }
+  }), importSummary && /*#__PURE__*/React.createElement("div", {
     style: S.modalOverlay,
     onClick: () => setImportSummary(null)
   }, /*#__PURE__*/React.createElement("div", {
