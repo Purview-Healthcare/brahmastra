@@ -2918,29 +2918,32 @@ function dkOfMs(ms) {
   const d = new Date(ms);
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
-async function stopTrackingBefore(clientId, cutoffDk, by, onProgress) {
+async function openBefore(clientId, cutoffDk, onProgress) {
   const list = await store.get(K.dates(clientId)) || [];
   const want = list.filter((d) => d && d.dateKey < cutoffDk && d.allDone !== true).map((d) => d.dateKey);
-  const at = Date.now();
-  let n = 0, done = 0;
-  const states = {};
+  const boards = {};
+  let done = 0;
   await pool(want, 3, async (dk) => {
     const b = await loadBoardFor(clientId, dk);
-    if (b) {
-      const p = {};
-      b.claims.forEach((c) => {
-        if (isOpenItem(c)) p[c.ref] = { untracked: { at, by } };
-      });
-      if (Object.keys(p).length) {
-        await commitWorkOn(clientId, dk, "ar", p);
-        n += Object.keys(p).length;
-      }
-      states[dk] = false;
-    }
+    if (b) boards[dk] = b;
     if (onProgress) onProgress(++done, want.length);
   });
+  return { boards, items: openItemsOf(boards) };
+}
+async function stopTracking(clientId, boards, items, by, why) {
+  const at = Date.now();
+  const byDate = {};
+  items.forEach((it) => {
+    (byDate[it.dk] = byDate[it.dk] || {})[it.c.ref] = { untracked: { at, by, why } };
+  });
+  const states = {};
+  await pool(Object.keys(byDate), 3, async (dk) => {
+    await commitWorkOn(clientId, dk, "ar", byDate[dk]);
+    const b = boards[dk];
+    if (b) states[dk] = b.claims.some((c) => isOpenItem(byDate[dk][c.ref] ? { ...c, ...byDate[dk][c.ref] } : c));
+  });
   const changed = await markOpenState(clientId, states);
-  return { n, dates: Object.keys(states).length, list: changed };
+  return { n: items.length, dates: Object.keys(byDate).length, list: changed };
 }
 function closedBadge(c) {
   const w = c.closedWhy;
@@ -3082,7 +3085,7 @@ function brStatusVals(t, now) {
   const fileClosed = t.closedInFile && t.closedAt && (!t.statusAt || t.closedAt >= t.statusAt) && t.workStatus === "Completed";
   const notTracked = !isTracked(t) && t.workStatus !== "Completed";
   const st = fileClosed ? closedWords(t) : notTracked ? untrackedWords(t) : t.workStatus || "Pending";
-  const reason = t.workStatus === "Not Completed" ? safeCell(t.incompleteReason || "No reason given") : "";
+  const reason = notTracked && t.untracked ? safeCell("Stopped by " + firstNameOf(t.untracked.by) + (t.untracked.why ? ": " + t.untracked.why : "")) : t.workStatus === "Not Completed" ? safeCell(t.incompleteReason || "No reason given") : "";
   const fileWins = t.closedInFile && t.closedAt && (!t.statusAt || t.closedAt >= t.statusAt);
   const by = fileWins ? "AR note" : t.statusAt && t.statusBy ? firstNameOf(t.statusBy) : "";
   const on = fileWins ? stampLong(t.closedAt) : t.statusAt ? stampLong(t.statusAt) : "";
@@ -3446,6 +3449,9 @@ const XS2 = {
   bar: { height: 6, background: "#eef3f6", borderRadius: 6, overflow: "hidden", marginTop: 12 },
   carryBar: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412", fontSize: 12.5, padding: "9px 14px", borderRadius: 12, margin: "0 0 14px" },
   carryBarBtn: { marginLeft: "auto", background: "#fff", border: "1px solid #fdba74", color: "#9a3412", borderRadius: 8, padding: "5px 11px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" },
+  stopList: { marginTop: 10, maxHeight: "38vh", overflowY: "auto", border: "1px solid " + LINE, borderRadius: 10, padding: "6px 10px" },
+  stopGroup: { fontSize: 10.5, fontWeight: 700, color: MUT, textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" },
+  stopRow: { display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", fontSize: 12.5, cursor: "pointer" },
   barFill: { height: "100%", background: GRAD, borderRadius: 6, transition: "width .3s" }
 };
 function AgeChip({ dk }) {
@@ -3525,24 +3531,58 @@ function CarryBar({ count, oldest, onStop }) {
 }
 function StopTrackingDialog({ clientId, viewDk, me, onClose, onDone }) {
   const [cut, setCut] = useState(addDaysKey(viewDk, -7));
-  const [run, setRun] = useState(null);
+  const [phase, setPhase] = useState("pick");
+  const [prog, setProg] = useState(null);
+  const [found, setFound] = useState(null);
+  const [keep, setKeep] = useState(() => /* @__PURE__ */ new Set());
+  const [checked, setChecked] = useState(false);
+  const [why, setWhy] = useState("");
   const [res, setRes] = useState(null);
   const [err, setErr] = useState("");
-  async function go() {
+  const keyOf = (it) => it.dk + ":" + it.c.ref;
+  async function look() {
     if (!cut || cut > viewDk) return setErr("Pick a date on or before " + dayLabel(viewDk) + ".");
     setErr("");
-    setRun({ done: 0, total: 0 });
+    setPhase("loading");
     try {
-      const r = await stopTrackingBefore(clientId, cut, me && me.username || "", (done, total) => setRun({ done, total }));
+      const f = await openBefore(clientId, cut, (done, total) => setProg({ done, total }));
+      setFound(f);
+      setKeep(/* @__PURE__ */ new Set());
+      setPhase("review");
+    } catch (e) {
+      setErr("Could not load the claims: " + (e && e.message || e) + ". Try again.");
+      setPhase("pick");
+    }
+  }
+  const chosen = found ? found.items.filter((it) => !keep.has(keyOf(it))) : [];
+  const ready = chosen.length > 0 && checked && why.trim().length >= 4;
+  async function go() {
+    if (!ready) return;
+    setPhase("saving");
+    try {
+      const r = await stopTracking(clientId, found.boards, chosen, me && me.username || "", why.trim().replace(/\s+/g, " "));
       setRes(r);
+      setPhase("done");
       onDone(r.list);
     } catch (e) {
       setErr("Could not finish: " + (e && e.message || e) + ". Try again.");
-    } finally {
-      setRun(null);
+      setPhase("review");
     }
   }
-  return /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: run ? void 0 : onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 540 }, onClick: (e) => e.stopPropagation(), "data-testid": "stop-dialog" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#fff7ed", borderBottom: "1px solid #fed7aa" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: "#d97706", animation: "none" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: "#9a3412" } }, "Stop tracking older claims"), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: "#9a3412" } }, "For leftovers nobody is going to work, like history loaded by mistake."))), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px", fontSize: 13.5, color: "#334155", lineHeight: 1.6 } }, res ? /* @__PURE__ */ React.createElement("div", { "data-testid": "stop-done" }, "Done. ", res.n, " ", res.n === 1 ? "claim" : "claims", " on ", res.dates, " ", res.dates === 1 ? "date" : "dates", ' will no longer show on later days. In the production file they read "Not tracked after ', shortDay(todayKey()), '".') : /* @__PURE__ */ React.createElement(React.Fragment, null, "Claims still open on dates ", /* @__PURE__ */ React.createElement("b", null, "before"), /* @__PURE__ */ React.createElement("input", { type: "date", value: cut, max: viewDk, onChange: (e) => setCut(e.target.value), style: { ...S.dateInput, margin: "0 8px" }, "data-testid": "stop-date" }), "stop showing on later days and stop counting as open.", /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, color: "#64748b" } }, "Nothing is deleted. Each claim stays on its own date with its department and status, and anyone can still update it there."), run && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, "Working… ", run.total ? run.done + " / " + run.total + " dates" : ""), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: 10, marginBottom: 0 } }, err))), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, res ? /* @__PURE__ */ React.createElement("button", { style: S.modalPrimary, onClick: onClose, "data-testid": "stop-close" }, "Close") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: onClose, disabled: !!run }, "Cancel"), /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#d97706" }, onClick: go, disabled: !!run, "data-testid": "stop-go" }, "Stop tracking before ", cut ? shortDay(cut) : "…")))));
+  const toggle = (k) => setKeep((s) => {
+    const n = new Set(s);
+    if (n.has(k)) n.delete(k);
+    else n.add(k);
+    return n;
+  });
+  const what = (c) => isOpenTask(c) ? DEPTS[c.route].label + " · " + (c.workStatus || "Pending") : "Rejection follow-up · not checked";
+  const groups = {};
+  (found ? found.items : []).forEach((it) => {
+    const g = isOpenTask(it.c) ? DEPTS[it.c.route].label : "Rejection follow-up";
+    (groups[g] = groups[g] || []).push(it);
+  });
+  const busy = phase === "loading" || phase === "saving";
+  return /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: busy ? void 0 : onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 680 }, onClick: (e) => e.stopPropagation(), "data-testid": "stop-dialog" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#fff7ed", borderBottom: "1px solid #fed7aa" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: "#d97706", animation: "none" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: "#9a3412" } }, "Stop tracking older claims"), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: "#9a3412" } }, "Only for claims that need no more work, like history loaded by mistake."))), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px", fontSize: 13.5, color: "#334155", lineHeight: 1.6 } }, phase === "done" && res ? /* @__PURE__ */ React.createElement("div", { "data-testid": "stop-done" }, "Done. ", res.n, " ", res.n === 1 ? "claim" : "claims", " on ", res.dates, " ", res.dates === 1 ? "date" : "dates", ' will no longer show on later days. In the production file they read "Not tracked after ', shortDay(todayKey()), '", with your name and reason.') : phase === "pick" || phase === "loading" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("b", null, "Step 1."), " Claims still open on dates ", /* @__PURE__ */ React.createElement("b", null, "before"), /* @__PURE__ */ React.createElement("input", { type: "date", value: cut, max: viewDk, onChange: (e) => setCut(e.target.value), style: { ...S.dateInput, margin: "0 8px" }, "data-testid": "stop-date" }), "will be listed for you to check. Nothing changes yet.", phase === "loading" && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, "Loading… ", prog && prog.total ? prog.done + " / " + prog.total + " dates" : "")) : /* @__PURE__ */ React.createElement(React.Fragment, null, found.items.length === 0 ? /* @__PURE__ */ React.createElement("div", { "data-testid": "stop-none" }, "Nothing is open before ", dayLabel(cut), ". There is nothing to stop tracking.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("b", null, "Step 2."), " Check each claim. ", /* @__PURE__ */ React.createElement("b", null, "Untick any that still need work"), "; those stay tracked."), /* @__PURE__ */ React.createElement("div", { style: XS2.stopList, "data-testid": "stop-list" }, Object.keys(groups).map((g) => /* @__PURE__ */ React.createElement("div", { key: g }, /* @__PURE__ */ React.createElement("div", { style: XS2.stopGroup }, g, " · ", groups[g].length), groups[g].map((it) => /* @__PURE__ */ React.createElement("label", { key: keyOf(it), style: XS2.stopRow }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !keep.has(keyOf(it)), onChange: () => toggle(keyOf(it)), "data-testid": "stop-item" }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("b", { style: { color: NAVY } }, it.c.label), /* @__PURE__ */ React.createElement("span", { style: { color: "#64748b" } }, " · ", dayLabel(it.dk), " · ", what(it.c), it.c.incompleteReason ? " · " + it.c.incompleteReason : ""))))))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("b", null, "Step 3."), " Confirm."), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", gap: 8, alignItems: "flex-start", marginTop: 6 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked, onChange: (e) => setChecked(e.target.checked), style: { marginTop: 4 }, "data-testid": "stop-checked" }), /* @__PURE__ */ React.createElement("span", null, chosen.length === 1 ? "I checked this claim. It needs no more work." : "I checked these " + chosen.length + " claims. None of them need any more work.")), /* @__PURE__ */ React.createElement("input", { style: { ...S.input, marginTop: 8 }, value: why, onChange: (e) => setWhy(e.target.value), placeholder: "Why? For example: September test data, loaded by mistake", "data-testid": "stop-why" }))), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: 10, marginBottom: 0 } }, err)), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, phase === "done" || phase === "review" && found.items.length === 0 ? /* @__PURE__ */ React.createElement("button", { style: S.modalPrimary, onClick: onClose, "data-testid": "stop-close" }, "Close") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: onClose, disabled: busy }, "Cancel"), phase === "pick" || phase === "loading" ? /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#d97706" }, onClick: look, disabled: busy, "data-testid": "stop-look" }, "Show the claims") : /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#d97706", ...ready ? {} : { opacity: 0.5 } }, onClick: go, disabled: !ready || busy, "data-testid": "stop-go" }, phase === "saving" ? "Saving…" : "Stop tracking " + chosen.length + (chosen.length === 1 ? " claim" : " claims"))))));
 }
 
 
