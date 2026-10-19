@@ -3220,7 +3220,7 @@ function wbError(status, body) {
   if (status === 401) return msError("auth", "Microsoft asked you to sign in again. Click Sign in on the OneDrive bar and try once more.", status);
   if (/protect/i.test(code + " " + msg)) return msError("protected", "A sheet in the production file is protected, so Brahmastra could not write its columns there. Ask the file owner to unprotect it, then click Update production file again.", status);
   if (status === 403) return msError("denied", "You can open this production file but not edit it. Ask whoever shares this client's folder to give you Can edit access, then try again.", status);
-  if (status === 404) return msError("missing", "OneDrive could not find the production file. It may have been moved, renamed into another folder, or deleted. Link it again.", status);
+  if (status === 404) return msError("missing", "OneDrive could not find the production file. It may have been moved, renamed into another folder, or deleted. Click Change file and choose it again.", status);
   if (status === 409 || status === 423) return msError("locked", "The production file is busy right now (it may be open in the Excel desktop app, or someone is saving it). Wait a minute and click Update production file again. Brahmastra rewrites its own columns each time, so trying again is safe.", status);
   if (status === 429 || status >= 500) return msError("busy", "Microsoft is busy right now. Wait a minute and click Update production file again.", status);
   if (status === 400 && /unsupported|not supported|invalid ?file|corrupt/i.test(code + " " + msg)) return msError("type", "Excel in OneDrive could not open this file for editing. Make sure it is an .xlsx workbook, then try again.", status);
@@ -3452,6 +3452,14 @@ const XS2 = {
   stopList: { marginTop: 10, maxHeight: "38vh", overflowY: "auto", border: "1px solid " + LINE, borderRadius: 10, padding: "6px 10px" },
   stopGroup: { fontSize: 10.5, fontWeight: 700, color: MUT, textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" },
   stopRow: { display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", fontSize: 12.5, cursor: "pointer" },
+  odBox: { border: "1px solid " + LINE, borderRadius: 12, padding: "8px 10px", maxHeight: "46vh", overflowY: "auto" },
+  odSec: { fontSize: 10.5, fontWeight: 700, color: MUT, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 2px 6px" },
+  odRow: { display: "flex", alignItems: "center", gap: 10, width: "100%", background: "#fff", border: "1px solid " + LINE, borderRadius: 10, padding: "8px 10px", marginBottom: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 13 },
+  odIco: { width: 28, height: 28, borderRadius: 7, background: "#e7f6ee", color: "#15803d", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, flex: "none" },
+  odIcoFolder: { background: "#fef3c7", color: "#b45309" },
+  odEmpty: { fontSize: 12.5, color: "#94a3b8", padding: "6px 4px" },
+  odTrail: { fontSize: 12.5, color: "#64748b", marginBottom: 8 },
+  odCrumb: { background: "none", border: "none", color: "#0369a1", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, padding: 0 },
   barFill: { height: "100%", background: GRAD, borderRadius: 6, transition: "width .3s" }
 };
 function AgeChip({ dk }) {
@@ -3584,6 +3592,14 @@ function StopTrackingDialog({ clientId, viewDk, me, onClose, onDone }) {
   const busy = phase === "loading" || phase === "saving";
   return /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: busy ? void 0 : onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 680 }, onClick: (e) => e.stopPropagation(), "data-testid": "stop-dialog" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#fff7ed", borderBottom: "1px solid #fed7aa" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: "#d97706", animation: "none" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: "#9a3412" } }, "Stop tracking older claims"), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: "#9a3412" } }, "Only for claims that need no more work, like history loaded by mistake."))), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px", fontSize: 13.5, color: "#334155", lineHeight: 1.6 } }, phase === "done" && res ? /* @__PURE__ */ React.createElement("div", { "data-testid": "stop-done" }, "Done. ", res.n, " ", res.n === 1 ? "claim" : "claims", " on ", res.dates, " ", res.dates === 1 ? "date" : "dates", ' will no longer show on later days. In the production file they read "Not tracked after ', shortDay(todayKey()), '", with your name and reason.') : phase === "pick" || phase === "loading" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("b", null, "Step 1."), " Claims still open on dates ", /* @__PURE__ */ React.createElement("b", null, "before"), /* @__PURE__ */ React.createElement("input", { type: "date", value: cut, max: viewDk, onChange: (e) => setCut(e.target.value), style: { ...S.dateInput, margin: "0 8px" }, "data-testid": "stop-date" }), "will be listed for you to check. Nothing changes yet.", phase === "loading" && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, "Loading… ", prog && prog.total ? prog.done + " / " + prog.total + " dates" : "")) : /* @__PURE__ */ React.createElement(React.Fragment, null, found.items.length === 0 ? /* @__PURE__ */ React.createElement("div", { "data-testid": "stop-none" }, "Nothing is open before ", dayLabel(cut), ". There is nothing to stop tracking.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("b", null, "Step 2."), " Check each claim. ", /* @__PURE__ */ React.createElement("b", null, "Untick any that still need work"), "; those stay tracked."), /* @__PURE__ */ React.createElement("div", { style: XS2.stopList, "data-testid": "stop-list" }, Object.keys(groups).map((g) => /* @__PURE__ */ React.createElement("div", { key: g }, /* @__PURE__ */ React.createElement("div", { style: XS2.stopGroup }, g, " · ", groups[g].length), groups[g].map((it) => /* @__PURE__ */ React.createElement("label", { key: keyOf(it), style: XS2.stopRow }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !keep.has(keyOf(it)), onChange: () => toggle(keyOf(it)), "data-testid": "stop-item" }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("b", { style: { color: NAVY } }, it.c.label), /* @__PURE__ */ React.createElement("span", { style: { color: "#64748b" } }, " · ", dayLabel(it.dk), " · ", what(it.c), it.c.incompleteReason ? " · " + it.c.incompleteReason : ""))))))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("b", null, "Step 3."), " Confirm."), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", gap: 8, alignItems: "flex-start", marginTop: 6 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked, onChange: (e) => setChecked(e.target.checked), style: { marginTop: 4 }, "data-testid": "stop-checked" }), /* @__PURE__ */ React.createElement("span", null, chosen.length === 1 ? "I checked this claim. It needs no more work." : "I checked these " + chosen.length + " claims. None of them need any more work.")), /* @__PURE__ */ React.createElement("input", { style: { ...S.input, marginTop: 8 }, value: why, onChange: (e) => setWhy(e.target.value), placeholder: "Why? For example: September test data, loaded by mistake", "data-testid": "stop-why" }))), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: 10, marginBottom: 0 } }, err)), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, phase === "done" || phase === "review" && found.items.length === 0 ? /* @__PURE__ */ React.createElement("button", { style: S.modalPrimary, onClick: onClose, "data-testid": "stop-close" }, "Close") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: onClose, disabled: busy }, "Cancel"), phase === "pick" || phase === "loading" ? /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#d97706" }, onClick: look, disabled: busy, "data-testid": "stop-look" }, "Show the claims") : /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#d97706", ...ready ? {} : { opacity: 0.5 } }, onClick: go, disabled: !ready || busy, "data-testid": "stop-go" }, phase === "saving" ? "Saving…" : "Stop tracking " + chosen.length + (chosen.length === 1 ? " claim" : " claims"))))));
 }
+const XLS_RE = /\.xls[xm]?$/i;
+function odEntry(it) {
+  const r = it.remoteItem || it;
+  const pr = r.parentReference || it.parentReference || {};
+  const who = (r.lastModifiedBy || it.lastModifiedBy || {}).user || {};
+  return { name: it.name || r.name || "", folder: !!(r.folder || it.folder), driveId: pr.driveId, id: r.id || it.id, at: r.lastModifiedDateTime || it.lastModifiedDateTime, by: who.displayName || "" };
+}
+
 
 
 function App() {
@@ -5464,7 +5480,7 @@ function Console({
     return;
   }
   if (!/\.xlsx$/i.test(link.name || "")) {
-    setUpd({ phase: "error", error: "Brahmastra can write status only into an .xlsx workbook, and " + (link.name || "this file") + " is a different kind of Excel file. In Excel, save it as an Excel Workbook (.xlsx) in the same OneDrive folder, then click Change link and link the new file." });
+    setUpd({ phase: "error", error: "Brahmastra can write status only into an .xlsx workbook, and " + (link.name || "this file") + " is a different kind of Excel file. In Excel, save it as an Excel Workbook (.xlsx) in the same OneDrive folder, then click Change file and choose the new file." });
     return;
   }
   let acct;
@@ -5619,7 +5635,19 @@ function Console({
     },
     "Use ",
     niceDate(dateWarn.selectedDate)
-  )))), linkOpen && /* @__PURE__ */ React.createElement(LinkDialog, { clientName: client.name, onClose: () => setLinkOpen(false), onResolve: resolveLink, onSave: saveLink }), fx && /* @__PURE__ */ React.createElement(
+  )))), linkOpen && /* @__PURE__ */ React.createElement(
+    LinkDialog,
+    {
+      clientName: client.name,
+      onClose: () => setLinkOpen(false),
+      onResolve: resolveLink,
+      onSave: saveLink,
+      onGraph: async (p) => {
+        await ensureMs();
+        return msx.graph(p);
+      }
+    }
+  ), fx && /* @__PURE__ */ React.createElement(
     FetchDialog,
     {
       st: fx,
@@ -5671,18 +5699,53 @@ function OneDriveStrip({ ms, msOk, acct, me, entry, busy, hasDates, fileInfo, on
   const mismatch = acct && acct.username && me && String(acct.username).toLowerCase() !== String(me.username).toLowerCase();
   const who = (email) => /* @__PURE__ */ React.createElement("span", { title: email }, firstNameOf(email || ""));
   const fetched = entry && entry.lastSyncAt;
-  return /* @__PURE__ */ React.createElement("div", { style: S.odOuter }, /* @__PURE__ */ React.createElement("div", { style: S.odWrap, "data-testid": "od-strip" }, /* @__PURE__ */ React.createElement("div", { style: S.odIcon }, /* @__PURE__ */ React.createElement(CloudIcon, null)), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, ms ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.odTitle, "data-testid": "od-file" }, ms.name), /* @__PURE__ */ React.createElement("div", { style: S.odMeta }, "OneDrive", ms.folderPath ? " · " + ms.folderPath : "", " · linked by ", who(ms.linkedBy)), fetched || fileInfo ? /* @__PURE__ */ React.createElement("div", { style: S.odMeta, "data-testid": "od-activity" }, fetched ? /* @__PURE__ */ React.createElement(React.Fragment, null, "This date: fetched ", timeAgo(entry.lastSyncAt), " by ", who(entry.lastSyncBy)) : null, fileInfo ? /* @__PURE__ */ React.createElement(React.Fragment, null, fetched ? " · " : "", "Status written into the file ", timeAgo(fileInfo.at), " by ", who(fileInfo.by), fileInfo.webUrl ? /* @__PURE__ */ React.createElement(React.Fragment, null, " · ", /* @__PURE__ */ React.createElement("a", { href: fileInfo.webUrl, target: "_blank", rel: "noopener noreferrer", style: S.odLink }, "open the file")) : null) : null) : null) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.odTitle }, "OneDrive production file"), /* @__PURE__ */ React.createElement("div", { style: S.odMeta }, "Not linked yet. Link this client's production file once, and everyone on the client can fetch claims from it and write each claim's status back into it.")), msOk ? /* @__PURE__ */ React.createElement("div", { style: S.odAcct, "data-testid": "od-acct" }, acct ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Microsoft: ", /* @__PURE__ */ React.createElement("b", null, acct.username), " ", /* @__PURE__ */ React.createElement("button", { style: S.odTextBtn, onClick: onSwitch }, "Switch account")) : /* @__PURE__ */ React.createElement(React.Fragment, null, "Not signed in to Microsoft. ", /* @__PURE__ */ React.createElement("button", { style: S.odTextBtn, onClick: onSignIn, "data-testid": "od-signin" }, "Sign in")), mismatch && /* @__PURE__ */ React.createElement("div", { style: S.odWarn }, "That is not your Brahmastra login (", me.username, "), so Fetch and Update will be done as ", acct.username, ".")) : /* @__PURE__ */ React.createElement("div", { style: S.odAcct }, "Fetch and Update need Microsoft sign in, which works on the team site. Here, Upload whole production file runs the fetch steps from a file on your computer.")), /* @__PURE__ */ React.createElement("div", { style: S.odBtns }, ms ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.odPrimary, disabled: !!busy || !msOk, onClick: onFetch, "data-testid": "od-fetch" }, busy === "fetch" ? "Fetching…" : "⤓ Fetch claims"), /* @__PURE__ */ React.createElement("button", { style: S.odSecondary, disabled: !!busy || !msOk || !hasDates, onClick: onUpdate, "data-testid": "od-update", title: hasDates ? "Write each claim's department and status into Brahmastra's own columns in the production file, and refresh the Brahmastra summary tab" : "Fetch claims first" }, busy === "update" ? "Updating…" : "⤒ Update production file"), /* @__PURE__ */ React.createElement("button", { style: S.odGhost, onClick: onLink, disabled: !!busy || !msOk }, "Change link")) : /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.odPrimary, onClick: onLink, disabled: !!busy || !msOk, "data-testid": "od-link" }, "Link production file"), /* @__PURE__ */ React.createElement("button", { style: S.odGhost, onClick: onUploadWhole, disabled: !!busy, "data-testid": "od-upload-whole" }, "Upload whole production file"))));
+  return /* @__PURE__ */ React.createElement("div", { style: S.odOuter }, /* @__PURE__ */ React.createElement("div", { style: S.odWrap, "data-testid": "od-strip" }, /* @__PURE__ */ React.createElement("div", { style: S.odIcon }, /* @__PURE__ */ React.createElement(CloudIcon, null)), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, ms ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.odTitle, "data-testid": "od-file" }, ms.name), /* @__PURE__ */ React.createElement("div", { style: S.odMeta }, "OneDrive", ms.folderPath ? " · " + ms.folderPath : "", " · linked by ", who(ms.linkedBy)), fetched || fileInfo ? /* @__PURE__ */ React.createElement("div", { style: S.odMeta, "data-testid": "od-activity" }, fetched ? /* @__PURE__ */ React.createElement(React.Fragment, null, "This date: fetched ", timeAgo(entry.lastSyncAt), " by ", who(entry.lastSyncBy)) : null, fileInfo ? /* @__PURE__ */ React.createElement(React.Fragment, null, fetched ? " · " : "", "Status written into the file ", timeAgo(fileInfo.at), " by ", who(fileInfo.by), fileInfo.webUrl ? /* @__PURE__ */ React.createElement(React.Fragment, null, " · ", /* @__PURE__ */ React.createElement("a", { href: fileInfo.webUrl, target: "_blank", rel: "noopener noreferrer", style: S.odLink }, "open the file")) : null) : null) : null) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.odTitle }, "OneDrive production file"), /* @__PURE__ */ React.createElement("div", { style: S.odMeta }, "Not connected yet. Choose this client's production file from OneDrive once, and everyone on the client can fetch claims from it and write each claim's status back into it.")), msOk ? /* @__PURE__ */ React.createElement("div", { style: S.odAcct, "data-testid": "od-acct" }, acct ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Microsoft: ", /* @__PURE__ */ React.createElement("b", null, acct.username), " ", /* @__PURE__ */ React.createElement("button", { style: S.odTextBtn, onClick: onSwitch }, "Switch account")) : /* @__PURE__ */ React.createElement(React.Fragment, null, "Not signed in to Microsoft. ", /* @__PURE__ */ React.createElement("button", { style: S.odTextBtn, onClick: onSignIn, "data-testid": "od-signin" }, "Sign in")), mismatch && /* @__PURE__ */ React.createElement("div", { style: S.odWarn }, "That is not your Brahmastra login (", me.username, "), so Fetch and Update will be done as ", acct.username, ".")) : /* @__PURE__ */ React.createElement("div", { style: S.odAcct }, "Fetch and Update need Microsoft sign in, which works on the team site. Here, Upload whole production file runs the fetch steps from a file on your computer.")), /* @__PURE__ */ React.createElement("div", { style: S.odBtns }, ms ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.odPrimary, disabled: !!busy || !msOk, onClick: onFetch, "data-testid": "od-fetch" }, busy === "fetch" ? "Fetching…" : "⤓ Fetch claims"), /* @__PURE__ */ React.createElement("button", { style: S.odSecondary, disabled: !!busy || !msOk || !hasDates, onClick: onUpdate, "data-testid": "od-update", title: hasDates ? "Write each claim's department and status into Brahmastra's own columns in the production file, and refresh the Brahmastra summary tab" : "Fetch claims first" }, busy === "update" ? "Updating…" : "⤒ Update production file"), /* @__PURE__ */ React.createElement("button", { style: S.odGhost, onClick: onLink, disabled: !!busy || !msOk }, "Change file")) : /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.odPrimary, onClick: onLink, disabled: !!busy || !msOk, "data-testid": "od-link" }, "Choose production file"), /* @__PURE__ */ React.createElement("button", { style: S.odGhost, onClick: onUploadWhole, disabled: !!busy, "data-testid": "od-upload-whole" }, "Upload whole production file"))));
 }
-function LinkDialog({
-  clientName,
-  onClose,
-  onResolve,
-  onSave
-}) {
+function LinkDialog({ clientName, onClose, onResolve, onSave, onGraph }) {
+  const [tab, setTab] = useState(onGraph ? "browse" : "paste");
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [found, setFound] = useState(null);
+  const [trail, setTrail] = useState([]);
+  const [lists, setLists] = useState(null);
+  const sel = (list) => (list || []).map(odEntry).filter((e) => e.folder || XLS_RE.test(e.name));
+  async function load(t) {
+    setErr("");
+    setBusy(true);
+    try {
+      if (!t.length) {
+        const [rec, sh] = await Promise.all([onGraph("/me/drive/recent?$top=40").catch(() => ({ value: [] })), onGraph("/me/drive/sharedWithMe").catch(() => ({ value: [] }))]);
+        setLists({ recent: sel(rec.value).filter((e) => !e.folder).slice(0, 8), shared: sel(sh.value) });
+      } else {
+        const f = t[t.length - 1];
+        const path = f.mine ? "/me/drive/root/children?$top=200" : "/drives/" + encodeURIComponent(f.driveId) + "/items/" + encodeURIComponent(f.id) + "/children?$top=200";
+        const r = await onGraph(path);
+        setLists({ items: sel(r.value).sort((a, b) => a.folder === b.folder ? a.name.localeCompare(b.name) : a.folder ? -1 : 1) });
+      }
+    } catch (e) {
+      setErr(msalMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    if (tab === "browse") load(trail);
+  }, [tab, trail]);
+  async function pickFile(e) {
+    setErr("");
+    setBusy(true);
+    try {
+      const it = await onGraph("/drives/" + encodeURIComponent(e.driveId) + "/items/" + encodeURIComponent(e.id));
+      const pr = it.parentReference || {};
+      const folderPath = String(pr.path || "").split("root:")[1] || "";
+      setFound({ driveId: pr.driveId || e.driveId, itemId: it.id, parentId: pr.id, folderPath: decodeURIComponent(folderPath).replace(/^\//, ""), ...itemSummary(it) });
+    } catch (x) {
+      setErr(msalMessage(x));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function check() {
     if (!link.trim() || busy) return;
     setErr("");
@@ -5696,100 +5759,12 @@ function LinkDialog({
       setBusy(false);
     }
   }
-  return /*#__PURE__*/React.createElement("div", {
-    style: S.odOverlay,
-    onClick: onClose
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modal,
-      maxWidth: 560,
-      margin: "auto"
-    },
-    onClick: e => e.stopPropagation(),
-    "data-testid": "od-link-dialog"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalHead,
-      background: "#f0f9ff",
-      borderBottom: "1px solid #bae6fd"
-    }
-  }, /*#__PURE__*/React.createElement(CloudIcon, null), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalTitle,
-      color: "#075985"
-    }
-  }, "Link ", clientName, "'s production file"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalSub,
-      color: "#0369a1"
-    }
-  }, "The Excel file in OneDrive with a sheet per month"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: "16px 20px",
-      fontSize: 13.5,
-      color: "#334155",
-      lineHeight: 1.6
-    }
-  }, /*#__PURE__*/React.createElement("ol", {
-    style: S.odSteps
-  }, /*#__PURE__*/React.createElement("li", null, "In OneDrive, open ", /*#__PURE__*/React.createElement("b", null, "Brahmastra"), ", then ", /*#__PURE__*/React.createElement("b", null, clientName), "."), /*#__PURE__*/React.createElement("li", null, "Click the three dots next to the production file and choose ", /*#__PURE__*/React.createElement("b", null, "Copy link"), "."), /*#__PURE__*/React.createElement("li", null, "Paste it below and click ", /*#__PURE__*/React.createElement("b", null, "Check link"), ".")), /*#__PURE__*/React.createElement("input", {
-    style: S.input,
-    placeholder: "Paste the OneDrive link to the production file here",
-    value: link,
-    autoFocus: true,
-    onChange: e => {
-      setLink(e.target.value);
-      setFound(null);
-      setErr("");
-    },
-    onKeyDown: e => e.key === "Enter" && check(),
-    "data-testid": "od-link-input"
-  }), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.errBox,
-      marginTop: 10,
-      marginBottom: 0
-    },
-    "data-testid": "od-link-err"
-  }, err), found && /*#__PURE__*/React.createElement("div", {
-    style: S.odFound,
-    "data-testid": "od-found"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 700,
-      color: NAVY
-    }
-  }, found.name), /*#__PURE__*/React.createElement("div", {
-    style: S.odMeta
-  }, found.folderPath ? found.folderPath + " · " : "", "last changed ", found.modifiedAt ? new Date(found.modifiedAt).toLocaleString() : "at an unknown time", found.modifiedBy ? " by " + found.modifiedBy : ""), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.odMeta,
-      marginTop: 6
-    }
-  }, "Brahmastra reads the claims from this file, and writes each claim's department and status into six columns of its own at the end of each sheet, plus a Brahmastra summary tab. Your team's own columns are never changed."))), /*#__PURE__*/React.createElement("div", {
-    style: S.modalFoot
-  }, /*#__PURE__*/React.createElement("button", {
-    style: S.modalDismiss,
-    onClick: onClose
-  }, "Cancel"), found ? /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.modalPrimary,
-      background: "#0284c7"
-    },
-    onClick: () => onSave(found, link),
-    "data-testid": "od-use"
-  }, "Use this file") : /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.modalPrimary,
-      background: "#0284c7",
-      ...(busy || !link.trim() ? {
-        opacity: 0.55
-      } : {})
-    },
-    disabled: busy || !link.trim(),
-    onClick: check,
-    "data-testid": "od-check"
-  }, busy ? "Checking…" : "Check link"))));
+  const row = (e, i) => /* @__PURE__ */ React.createElement("button", { key: i, style: XS2.odRow, onClick: () => e.folder ? setTrail([...trail, { name: e.name, driveId: e.driveId, id: e.id, mine: e.id === "root" && !e.driveId }]) : pickFile(e), disabled: busy, "data-testid": e.folder ? "od-pick-folder" : "od-pick-file" }, /* @__PURE__ */ React.createElement("span", { style: { ...XS2.odIco, ...e.folder ? XS2.odIcoFolder : {} } }, e.folder ? "▤" : "X"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, minWidth: 0, textAlign: "left" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "block", fontWeight: 700, color: NAVY, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, e.name), !e.folder && e.at && /* @__PURE__ */ React.createElement("span", { style: { display: "block", fontSize: 11.5, color: "#94a3b8" } }, "changed ", timeAgo(Date.parse(e.at)), e.by ? " by " + e.by : "")), /* @__PURE__ */ React.createElement("span", { style: { color: "#94a3b8" } }, e.folder ? "›" : "Choose"));
+  const section = (title, list, empty) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: XS2.odSec }, title), list.length ? list.map(row) : /* @__PURE__ */ React.createElement("div", { style: XS2.odEmpty }, empty));
+  return /* @__PURE__ */ React.createElement("div", { style: S.odOverlay, onClick: onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 600, margin: "auto" }, onClick: (e) => e.stopPropagation(), "data-testid": "od-link-dialog" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#f0f9ff", borderBottom: "1px solid #bae6fd" } }, /* @__PURE__ */ React.createElement(CloudIcon, null), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: "#075985" } }, "Connect ", clientName, "'s production file"), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: "#0369a1" } }, "The Excel file in OneDrive that AR keeps up to date"))), /* @__PURE__ */ React.createElement("div", { style: { padding: "14px 20px", fontSize: 13.5, color: "#334155", lineHeight: 1.6 } }, !found && onGraph && /* @__PURE__ */ React.createElement("div", { style: XS.viewToggle }, /* @__PURE__ */ React.createElement("button", { style: { ...XS.viewTab, ...tab === "browse" ? XS.viewTabOn : {} }, onClick: () => setTab("browse"), "data-testid": "od-tab-browse" }, "Choose from OneDrive"), /* @__PURE__ */ React.createElement("button", { style: { ...XS.viewTab, ...tab === "paste" ? XS.viewTabOn : {} }, onClick: () => setTab("paste"), "data-testid": "od-tab-paste" }, "Paste a link")), !found && tab === "browse" && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, trail.length > 0 && /* @__PURE__ */ React.createElement("div", { style: XS2.odTrail }, /* @__PURE__ */ React.createElement("button", { style: XS2.odCrumb, onClick: () => setTrail([]) }, "OneDrive"), trail.map((f, i) => /* @__PURE__ */ React.createElement("span", { key: i }, " › ", /* @__PURE__ */ React.createElement("button", { style: XS2.odCrumb, onClick: () => setTrail(trail.slice(0, i + 1)) }, f.name)))), /* @__PURE__ */ React.createElement("div", { style: XS2.odBox, "data-testid": "od-browser" }, busy && !lists ? /* @__PURE__ */ React.createElement("div", { style: XS2.odEmpty }, "Opening your OneDrive…") : null, lists && !trail.length && /* @__PURE__ */ React.createElement(React.Fragment, null, section("Recent Excel files", lists.recent || [], "No Excel files opened recently."), section("Shared with me", lists.shared || [], "Nothing shared with you yet. Ask whoever keeps the client folders to share this client's folder with you (Can edit)."), /* @__PURE__ */ React.createElement("div", { style: XS2.odSec }, "Browse"), row({ name: "My files", folder: true, id: "root", driveId: "" }, "mine")), lists && trail.length > 0 && (lists.items || []).length === 0 && /* @__PURE__ */ React.createElement("div", { style: XS2.odEmpty }, "No folders or Excel files here."), lists && trail.length > 0 && (lists.items || []).map(row))), !found && tab === "paste" && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("ol", { style: S.odSteps }, /* @__PURE__ */ React.createElement("li", null, "In OneDrive, click the three dots next to the production file and choose ", /* @__PURE__ */ React.createElement("b", null, "Copy link"), "."), /* @__PURE__ */ React.createElement("li", null, "Paste it below and click ", /* @__PURE__ */ React.createElement("b", null, "Check link"), ".")), /* @__PURE__ */ React.createElement("input", { style: S.input, placeholder: "Paste the OneDrive link to the production file here", value: link, autoFocus: true, onChange: (e) => {
+    setLink(e.target.value);
+    setErr("");
+  }, onKeyDown: (e) => e.key === "Enter" && check(), "data-testid": "od-link-input" })), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: 10, marginBottom: 0 }, "data-testid": "od-link-err" }, err), found && /* @__PURE__ */ React.createElement("div", { style: S.odFound, "data-testid": "od-found" }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: NAVY } }, found.name), /* @__PURE__ */ React.createElement("div", { style: S.odMeta }, found.folderPath ? found.folderPath + " · " : "", "last changed ", found.modifiedAt ? new Date(found.modifiedAt).toLocaleString() : "at an unknown time", found.modifiedBy ? " by " + found.modifiedBy : ""), /* @__PURE__ */ React.createElement("div", { style: { ...S.odMeta, marginTop: 6 } }, "Brahmastra reads the claims from this file, and writes each claim's department and status into six columns of its own at the end of each sheet, plus a Brahmastra summary tab. Your team's own columns are never changed."), !/\.xlsx$/i.test(found.name) && /* @__PURE__ */ React.createElement("div", { style: { ...XS2.linkBox, marginTop: 8 } }, "This is not an .xlsx file, so Fetch will work but Update production file will not. Save it as an Excel Workbook (.xlsx) in OneDrive and choose that one instead."))), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: () => found ? setFound(null) : onClose() }, found ? "Back" : "Cancel"), found ? /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#0284c7" }, onClick: () => onSave(found, link || found.webUrl), "data-testid": "od-use" }, "Use this file") : tab === "paste" ? /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#0284c7", ...busy || !link.trim() ? { opacity: 0.55 } : {} }, disabled: busy || !link.trim(), onClick: check, "data-testid": "od-check" }, busy ? "Checking…" : "Check link") : null)));
 }
 const shortDate = dk => {
   const [y, m, d] = dk.split("-").map(Number);
