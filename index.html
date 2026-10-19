@@ -459,7 +459,7 @@ const STATUS = ["Pending", "Completed", "Not Completed"];
 // every "page" a claim's work state can be written under (one per department, plus rejection follow-up and the AR note)
 const OVERLAY_KEYS = ["submission", "payment_posting", "ev", "client_assistance", "rejection", "ar"];
 // fields that live in a department's work page (everything mutable); everything else is the immutable base claim
-const WORK_FIELDS = ["workStatus", "incompleteReason", "reasonFlag", "reissuedAt", "taskedAt", "forceTat", "notCompletedOnce", "originDept", "route", "task", "rejOutcome", "claimNote", "noClock", "changedInFile", "closedInFile", "closedAt", "closedWhy", "fileNote", "statusBy", "statusAt", "statusVia", "linkTo"];
+const WORK_FIELDS = ["workStatus", "incompleteReason", "reasonFlag", "reissuedAt", "taskedAt", "forceTat", "notCompletedOnce", "originDept", "route", "task", "rejOutcome", "claimNote", "noClock", "changedInFile", "closedInFile", "closedAt", "closedWhy", "history", "untracked", "fileNote", "statusBy", "statusAt", "statusVia", "linkTo"];
 // Merge the base board with every department's work page. Each FIELD takes the most
 // recent value written by anyone, so two teams touching the same claim both stick:
 // Submission moving a claim to Client Assistance, then Client Assistance completing
@@ -483,12 +483,14 @@ function mergeBoard(base, overlays) {
       }
     }
   }
+  const oldHistory = base.history === undefined && (base.claims || []).some(c => c.noClock);
   const claims = uniqueMatchKeys((base.claims || []).map(cl => {
     const slot = latest[cl.ref];
     const merged = {
       ...cl
     };
     if (slot) for (const f in slot) merged[f] = slot[f].v;
+    if (merged.history === undefined && oldHistory) merged.history = true;
     return merged;
   }));
   const deptNotes = {
@@ -1427,7 +1429,9 @@ function planDateSync({ dateKey, board, incoming, cls, now, user, fileName, sour
       ref: `BR-${batchTag}-${idx}`,
       forceTat: false,
       notCompletedOnce: false,
-      originDept: null
+      originDept: null,
+      history: !clockOn
+      // fetched with clocks off: kept on this date only, not carried to later days
     };
   };
   const sum = { dateKey, isNew: !board, read: incoming.length, added: 0, tasked: 0, closed: 0, flagged: 0, moved: 0, updated: 0, unchanged: 0, missing: 0 };
@@ -1467,7 +1471,8 @@ function planDateSync({ dateKey, board, incoming, cls, now, user, fileName, sour
     reasonFlag: false,
     closedInFile: false,
     changedInFile: true,
-    linkTo: null
+    linkTo: null,
+    ...clockOn ? { history: false } : {}
   });
   for (const m of matches) {
     if (!m.ex) {
@@ -2746,8 +2751,9 @@ function stampLong(ms) {
   return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear() + ", " + h + ":" + String(d.getMinutes()).padStart(2, "0") + " " + ap;
 }
 const sortDates = (list) => [...list || []].sort((a, b) => a.dateKey < b.dateKey ? 1 : -1);
-const isOpenTask = (c) => !!(c && c.task && DEPTS[c.route] && c.workStatus !== "Completed");
-const isOpenRej = (c) => !!(c && c.rej && !c.rejOutcome);
+const isTracked = (c) => !!c && !c.history && !c.untracked;
+const isOpenTask = (c) => !!(c && c.task && DEPTS[c.route] && c.workStatus !== "Completed" && isTracked(c));
+const isOpenRej = (c) => !!(c && c.rej && !c.rejOutcome && isTracked(c));
 const isOpenItem = (c) => isOpenTask(c) || isOpenRej(c);
 const boardHasOpen = (b) => !!(b && (b.claims || []).some(isOpenItem));
 async function pool(items, n, fn) {
@@ -2904,6 +2910,38 @@ function closedWords(c) {
   if (w && w.kind === "done") return "No longer needed as per AR note on " + shortDay(w.dk);
   return "No longer needed as per AR note";
 }
+function untrackedWords(c) {
+  if (c.untracked) return "Not tracked after " + shortDay(dkOfMs(c.untracked.at));
+  return "Not tracked (history)";
+}
+function dkOfMs(ms) {
+  const d = new Date(ms);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+async function stopTrackingBefore(clientId, cutoffDk, by, onProgress) {
+  const list = await store.get(K.dates(clientId)) || [];
+  const want = list.filter((d) => d && d.dateKey < cutoffDk && d.allDone !== true).map((d) => d.dateKey);
+  const at = Date.now();
+  let n = 0, done = 0;
+  const states = {};
+  await pool(want, 3, async (dk) => {
+    const b = await loadBoardFor(clientId, dk);
+    if (b) {
+      const p = {};
+      b.claims.forEach((c) => {
+        if (isOpenItem(c)) p[c.ref] = { untracked: { at, by } };
+      });
+      if (Object.keys(p).length) {
+        await commitWorkOn(clientId, dk, "ar", p);
+        n += Object.keys(p).length;
+      }
+      states[dk] = false;
+    }
+    if (onProgress) onProgress(++done, want.length);
+  });
+  const changed = await markOpenState(clientId, states);
+  return { n, dates: Object.keys(states).length, list: changed };
+}
 function closedBadge(c) {
   const w = c.closedWhy;
   return w && w.kind === "moved" ? "moved to " + w.to + " per AR note" : "not needed per AR note";
@@ -3042,12 +3080,13 @@ function tatWord(c, now) {
 }
 function brStatusVals(t, now) {
   const fileClosed = t.closedInFile && t.closedAt && (!t.statusAt || t.closedAt >= t.statusAt) && t.workStatus === "Completed";
-  const st = fileClosed ? closedWords(t) : t.workStatus || "Pending";
+  const notTracked = !isTracked(t) && t.workStatus !== "Completed";
+  const st = fileClosed ? closedWords(t) : notTracked ? untrackedWords(t) : t.workStatus || "Pending";
   const reason = t.workStatus === "Not Completed" ? safeCell(t.incompleteReason || "No reason given") : "";
   const fileWins = t.closedInFile && t.closedAt && (!t.statusAt || t.closedAt >= t.statusAt);
   const by = fileWins ? "AR note" : t.statusAt && t.statusBy ? firstNameOf(t.statusBy) : "";
   const on = fileWins ? stampLong(t.closedAt) : t.statusAt ? stampLong(t.statusAt) : "";
-  return [st, reason, fileClosed ? "" : tatWord(t, now), by, on];
+  return [st, reason, fileClosed || notTracked ? "" : tatWord(t, now), by, on];
 }
 function brValuesFor(c, findTask, now) {
   if (c.task && DEPTS[c.route]) return [DEPTS[c.route].label + (c.originDept ? " (moved from " + c.originDept + ")" : ""), ...brStatusVals(c, now)];
@@ -3068,6 +3107,7 @@ function dayStats(claims, now) {
     return w === "Breached" || w === "Done late";
   }).length;
   return {
+    h: tasks.length > 0 && tasks.every((c) => c.history) ? 1 : 0,
     r: (claims || []).length,
     t: tasks.length,
     d: n("Completed"),
@@ -3256,7 +3296,7 @@ async function msWriteProduction({ ms, clientId, clientName, list, user, onProgr
   entries.forEach((d) => {
     const s = perDate[d.dateKey] ? perDate[d.dateKey].stats : d.stats;
     if (!s) return;
-    sumRows.push([dayLabelYear(d.dateKey), s.r, s.t, s.d, s.n, s.p, s.m, s.t ? s.d / s.t : "", ...s.s.map(([dn, tn]) => tn ? dn + " of " + tn + " done" : "")]);
+    sumRows.push([dayLabelYear(d.dateKey) + (s.h ? " (history)" : ""), s.r, s.t, s.d, s.n, s.p, s.m, s.t ? s.d / s.t : "", ...s.s.map(([dn, tn]) => tn ? dn + " of " + tn + " done" : "")]);
   });
   let openNow = 0;
   const openDates = [];
@@ -3404,6 +3444,8 @@ const XS2 = {
   updList: { margin: "8px 0 0", paddingLeft: 18, color: "#475569", fontSize: 12.5, lineHeight: 1.6 },
   updRow: { display: "flex", gap: 10, alignItems: "baseline", fontSize: 13.5, color: "#334155", lineHeight: 1.6 },
   bar: { height: 6, background: "#eef3f6", borderRadius: 6, overflow: "hidden", marginTop: 12 },
+  carryBar: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412", fontSize: 12.5, padding: "9px 14px", borderRadius: 12, margin: "0 0 14px" },
+  carryBarBtn: { marginLeft: "auto", background: "#fff", border: "1px solid #fdba74", color: "#9a3412", borderRadius: 8, padding: "5px 11px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" },
   barFill: { height: "100%", background: GRAD, borderRadius: 6, transition: "width .3s" }
 };
 function AgeChip({ dk }) {
@@ -3477,6 +3519,31 @@ function downloadDeptWorklist(rows, label, viewDk) {
 }
 
 
+function CarryBar({ count, oldest, onStop }) {
+  if (!count) return null;
+  return /* @__PURE__ */ React.createElement("div", { style: XS2.carryBar, "data-testid": "carry-bar" }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("b", null, count), " ", count === 1 ? "claim is" : "claims are", " still open from earlier days", oldest ? ", oldest " + dayLabel(oldest) : "", ". Each department sees them at the top of its list until they are completed."), /* @__PURE__ */ React.createElement("button", { style: XS2.carryBarBtn, onClick: onStop, "data-testid": "stop-tracking" }, "Stop tracking older claims…"));
+}
+function StopTrackingDialog({ clientId, viewDk, me, onClose, onDone }) {
+  const [cut, setCut] = useState(addDaysKey(viewDk, -7));
+  const [run, setRun] = useState(null);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState("");
+  async function go() {
+    if (!cut || cut > viewDk) return setErr("Pick a date on or before " + dayLabel(viewDk) + ".");
+    setErr("");
+    setRun({ done: 0, total: 0 });
+    try {
+      const r = await stopTrackingBefore(clientId, cut, me && me.username || "", (done, total) => setRun({ done, total }));
+      setRes(r);
+      onDone(r.list);
+    } catch (e) {
+      setErr("Could not finish: " + (e && e.message || e) + ". Try again.");
+    } finally {
+      setRun(null);
+    }
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: run ? void 0 : onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 540 }, onClick: (e) => e.stopPropagation(), "data-testid": "stop-dialog" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#fff7ed", borderBottom: "1px solid #fed7aa" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: "#d97706", animation: "none" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: "#9a3412" } }, "Stop tracking older claims"), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: "#9a3412" } }, "For leftovers nobody is going to work, like history loaded by mistake."))), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px", fontSize: 13.5, color: "#334155", lineHeight: 1.6 } }, res ? /* @__PURE__ */ React.createElement("div", { "data-testid": "stop-done" }, "Done. ", res.n, " ", res.n === 1 ? "claim" : "claims", " on ", res.dates, " ", res.dates === 1 ? "date" : "dates", ' will no longer show on later days. In the production file they read "Not tracked after ', shortDay(todayKey()), '".') : /* @__PURE__ */ React.createElement(React.Fragment, null, "Claims still open on dates ", /* @__PURE__ */ React.createElement("b", null, "before"), /* @__PURE__ */ React.createElement("input", { type: "date", value: cut, max: viewDk, onChange: (e) => setCut(e.target.value), style: { ...S.dateInput, margin: "0 8px" }, "data-testid": "stop-date" }), "stop showing on later days and stop counting as open.", /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, color: "#64748b" } }, "Nothing is deleted. Each claim stays on its own date with its department and status, and anyone can still update it there."), run && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, "Working… ", run.total ? run.done + " / " + run.total + " dates" : ""), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: 10, marginBottom: 0 } }, err))), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, res ? /* @__PURE__ */ React.createElement("button", { style: S.modalPrimary, onClick: onClose, "data-testid": "stop-close" }, "Close") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: onClose, disabled: !!run }, "Cancel"), /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#d97706" }, onClick: go, disabled: !!run, "data-testid": "stop-go" }, "Stop tracking before ", cut ? shortDay(cut) : "…")))));
+}
 
 
 function App() {
@@ -4709,6 +4776,7 @@ function Console({
   const [fx, setFx] = useState(null); // fetch / whole-file dialog state
   const [odBusy, setOdBusy] = useState(null); // "fetch" | "update" | null
   const [upd, setUpd] = useState(null); // Update production file dialog
+  const [stopOpen, setStopOpen] = useState(false);
   const msOk = msSupported();
   const [view, setView] = useState("day"); // day | range
   const carry = useCarried({ clientId: client.id, dateKey, active: view === "day", tab, onDates: setDates });
@@ -4919,7 +4987,8 @@ function Console({
         ref: `BR-${batchTag}-${c.idx}`,
         forceTat: false,
         notCompletedOnce: false,
-        originDept: null
+        originDept: null,
+        history: false
       };
     });
     const before = await store.get(K.dates(client.id)) || [];
@@ -5468,7 +5537,7 @@ function Console({
         else setDateKey(dk);
       }
     }
-  ), view === "day" && /* @__PURE__ */ React.createElement("main", { style: S.main }, batch === void 0 && /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "Loading this client's board…"), batch === null && !busy && /* @__PURE__ */ React.createElement(EmptyState, { onUpload: () => fileRef.current && fileRef.current.click(), clientName: client.name, dateLabel: niceDate(dateKey), hasDates: dates.length > 0, onFetch: ms && msOk ? startFetch : null }), busy && /* @__PURE__ */ React.createElement(Busy, { progress }), batch && !busy && /* @__PURE__ */ React.createElement(React.Fragment, null, tab === "ar" && /* @__PURE__ */ React.createElement(ARInventory, { batch, buckets, onNote: (v) => setDeptNote("ar", v) }), (tab === "submission" || tab === "payment_posting" || tab === "ev" || tab === "client_assistance") && /* @__PURE__ */ React.createElement(
+  ), view === "day" && /* @__PURE__ */ React.createElement("main", { style: S.main }, batch && !busy && /* @__PURE__ */ React.createElement(CarryBar, { count: carry.openCount, oldest: carry.items.length ? carry.items[0].dk : "", onStop: () => setStopOpen(true) }), batch === void 0 && /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "Loading this client's board…"), batch === null && !busy && /* @__PURE__ */ React.createElement(EmptyState, { onUpload: () => fileRef.current && fileRef.current.click(), clientName: client.name, dateLabel: niceDate(dateKey), hasDates: dates.length > 0, onFetch: ms && msOk ? startFetch : null }), busy && /* @__PURE__ */ React.createElement(Busy, { progress }), batch && !busy && /* @__PURE__ */ React.createElement(React.Fragment, null, tab === "ar" && /* @__PURE__ */ React.createElement(ARInventory, { batch, buckets, onNote: (v) => setDeptNote("ar", v) }), (tab === "submission" || tab === "payment_posting" || tab === "ev" || tab === "client_assistance") && /* @__PURE__ */ React.createElement(
     DeptSection,
     {
       key: tab,
@@ -5526,7 +5595,20 @@ function Console({
       },
       onOpenDate: openFetchedDate
     }
-  ), upd && /* @__PURE__ */ React.createElement(UpdateDialog, { st: upd, onClose: () => setUpd(null) }));
+  ), upd && /* @__PURE__ */ React.createElement(UpdateDialog, { st: upd, onClose: () => setUpd(null) }), stopOpen && /* @__PURE__ */ React.createElement(
+    StopTrackingDialog,
+    {
+      clientId: client.id,
+      viewDk: dateKey,
+      me,
+      onClose: () => setStopOpen(false),
+      onDone: (l) => {
+        if (l) setDates(sortDates(l));
+        load();
+        carry.refresh(true);
+      }
+    }
+  ));
 }
 
 /* ---------- OneDrive bar: link the production file once, then fetch and push ---------- */
@@ -5977,7 +6059,7 @@ function FetchDialog({
         };
       });
     }
-  }), "24h clocks")))), /*#__PURE__*/React.createElement("tbody", null, inRange.map(dk => /*#__PURE__*/React.createElement("tr", {
+  }), "Track daily")))), /*#__PURE__*/React.createElement("tbody", null, inRange.map(dk => /*#__PURE__*/React.createElement("tr", {
     key: dk,
     "data-testid": "od-date-" + dk
   }, /*#__PURE__*/React.createElement("td", {
@@ -6018,7 +6100,7 @@ function FetchDialog({
       }));
     },
     "data-testid": "od-clock-" + dk
-  }), st.clocks[dk] ? "start clocks" : "no clocks (history)"))))))), /*#__PURE__*/React.createElement("div", {
+  }), st.clocks[dk] ? "track until done, 24h clock" : "history only"))))))), /*#__PURE__*/React.createElement("div", {
     style: {
       ...S.odMeta,
       marginTop: 10,
