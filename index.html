@@ -2276,7 +2276,8 @@ function statusPatch(dept, st, reason, now, by, via) {
   return p;
 }
 function StatusCell({ c, onPick }) {
-  const st = c.workStatus || "Pending";
+  const byNote = c.workStatus === "Completed" && c.closedInFile && c.closedWhy && !(c.statusAt && c.statusAt > c.closedAt);
+  const st = byNote ? "By AR note" : c.workStatus || "Pending";
   const col = STATUS_COLOR[st] || "#64748b";
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
     "select",
@@ -2287,6 +2288,7 @@ function StatusCell({ c, onPick }) {
       "data-testid": "claim-status",
       "aria-label": "Status for " + c.label
     },
+    byNote ? /* @__PURE__ */ React.createElement("option", { value: "By AR note", disabled: true }, c.closedWhy.kind === "moved" ? "Moved by AR note" : "Not needed (AR note)") : null,
     /* @__PURE__ */ React.createElement("option", { value: "Pending" }, "Pending"),
     /* @__PURE__ */ React.createElement("option", { value: "Completed" }, "Completed"),
     /* @__PURE__ */ React.createElement("option", { value: "Not Completed" }, "Not completed")
@@ -2899,12 +2901,12 @@ const linksOf = (claims) => [...new Set((claims || []).filter((c) => !c.task && 
 function closedWords(c) {
   const w = c.closedWhy;
   if (w && w.kind === "moved") return "Moved to " + w.to + " as per AR note on " + shortDay(w.dk);
-  if (w && w.kind === "done") return "Already done as per AR note on " + shortDay(w.dk);
-  return "Already done as per AR note";
+  if (w && w.kind === "done") return "No longer needed as per AR note on " + shortDay(w.dk);
+  return "No longer needed as per AR note";
 }
 function closedBadge(c) {
   const w = c.closedWhy;
-  return w && w.kind === "moved" ? "moved to " + w.to + " per AR note" : "done per AR note";
+  return w && w.kind === "moved" ? "moved to " + w.to + " per AR note" : "not needed per AR note";
 }
 function linkSummaryText(s) {
   const n = s.closed + s.kept + s.moved;
