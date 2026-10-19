@@ -2895,6 +2895,7 @@ function makeLinker(now) {
   }
   return { addBoard, process, patches, stats };
 }
+const linksOf = (claims) => [...new Set((claims || []).filter((c) => !c.task && c.linkTo && c.linkTo.dk).map((c) => c.linkTo.dk))];
 function linkSummaryText(s) {
   const n = s.closed + s.kept + s.moved;
   if (!n) return "";
@@ -3171,7 +3172,11 @@ function wbError(status, body) {
 }
 function datesToWrite(entries) {
   const newest = new Set(entries.slice(0, 7).map((d) => d.dateKey));
-  return entries.filter((d) => newest.has(d.dateKey) || d.allDone !== true || !d.fileAt || (d.stateAt || 0) > d.fileAt || (d.lastSyncAt || 0) > d.fileAt || (d.uploadedAt || 0) > d.fileAt).slice(0, 62).map((d) => d.dateKey);
+  const pick = new Set(entries.filter((d) => newest.has(d.dateKey) || d.allDone !== true || !d.fileAt || (d.stateAt || 0) > d.fileAt || (d.lastSyncAt || 0) > d.fileAt || (d.uploadedAt || 0) > d.fileAt).map((d) => d.dateKey));
+  entries.forEach((d) => {
+    if ((d.linksTo || []).some((k) => pick.has(k))) pick.add(d.dateKey);
+  });
+  return entries.filter((d) => pick.has(d.dateKey)).slice(0, 62).map((d) => d.dateKey);
 }
 async function msWriteProduction({ ms, clientId, clientName, list, user, onProgress }) {
   const step = (label, done, total) => onProgress && onProgress({ label, done: done || 0, total: total || 0 });
@@ -4921,7 +4926,7 @@ function Console({
     if (hadBoard) for (const dep of OVERLAY_KEYS) await store.set(K.work(client.id, dateForKey, dep), {});
     for (const dk of Object.keys(linker.patches)) await commitWorkOn(client.id, dk, "ar", linker.patches[dk]);
     const list = await store.get(K.dates(client.id)) || [];
-    const entry = { dateKey: dateForKey, uploadedAt: ts, uploadedBy: me.username, fileName, count: finalClaims.length, allDone: !finalClaims.some(isOpenItem), stateAt: ts };
+    const entry = { dateKey: dateForKey, uploadedAt: ts, uploadedBy: me.username, fileName, count: finalClaims.length, allDone: !finalClaims.some(isOpenItem), stateAt: ts, linksTo: linksOf(finalClaims) };
     const i = list.findIndex((d) => d.dateKey === dateForKey);
     if (i >= 0) list[i] = entry;
     else list.push(entry);
@@ -5279,7 +5284,7 @@ function Console({
     }
     openState[j.dk] = after(j).some(isOpenItem);
     const kept = linker.stats.items.filter((x) => x.kind === "kept" && x.dk === j.dk).length;
-    results.push({ ...plan.summary, tasked: Math.max(0, plan.summary.tasked - kept), count: plan.base.claims.length });
+    results.push({ ...plan.summary, tasked: Math.max(0, plan.summary.tasked - kept), count: plan.base.claims.length, linksTo: linksOf(after(j)) });
   }
   for (const dk of Object.keys(linker.patches)) {
     if (!pickedSet.has(dk)) await commitWorkOn(client.id, dk, "ar", linker.patches[dk]);
@@ -5294,7 +5299,7 @@ function Console({
   results.forEach((r) => {
     const i = list.findIndex((d) => d.dateKey === r.dateKey);
     const prev = i >= 0 ? list[i] : null;
-    const entry = { ...prev || {}, dateKey: r.dateKey, uploadedAt: prev ? prev.uploadedAt : now, uploadedBy: prev ? prev.uploadedBy : me.username, fileName, count: r.count, source, lastSyncAt: now, lastSyncBy: me.username, lastSyncAccount: account || "" };
+    const entry = { ...prev || {}, dateKey: r.dateKey, uploadedAt: prev ? prev.uploadedAt : now, uploadedBy: prev ? prev.uploadedBy : me.username, fileName, count: r.count, source, lastSyncAt: now, lastSyncBy: me.username, lastSyncAccount: account || "", linksTo: r.linksTo };
     if (i >= 0) list[i] = entry;
     else list.push(entry);
   });
