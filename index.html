@@ -459,7 +459,7 @@ const STATUS = ["Pending", "Completed", "Not Completed"];
 // every "page" a claim's work state can be written under (one per department, plus rejection follow-up and the AR note)
 const OVERLAY_KEYS = ["submission", "payment_posting", "ev", "client_assistance", "rejection", "ar"];
 // fields that live in a department's work page (everything mutable); everything else is the immutable base claim
-const WORK_FIELDS = ["workStatus", "incompleteReason", "reasonFlag", "reissuedAt", "taskedAt", "forceTat", "notCompletedOnce", "originDept", "route", "task", "rejOutcome", "claimNote", "noClock", "changedInFile", "closedInFile", "fileNote", "statusBy", "statusAt", "statusVia"];
+const WORK_FIELDS = ["workStatus", "incompleteReason", "reasonFlag", "reissuedAt", "taskedAt", "forceTat", "notCompletedOnce", "originDept", "route", "task", "rejOutcome", "claimNote", "noClock", "changedInFile", "closedInFile", "closedAt", "fileNote", "statusBy", "statusAt", "statusVia", "linkTo"];
 // Merge the base board with every department's work page. Each FIELD takes the most
 // recent value written by anyone, so two teams touching the same claim both stick:
 // Submission moving a claim to Client Assistance, then Client Assistance completing
@@ -1267,7 +1267,7 @@ function readProductionWorkbook(data) {
     claims = [];
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
-    if (!ws || !ws["!ref"]) {
+    if (!ws || !ws["!ref"] || BR_KEY.test(name)) {
       sheets.push({
         name,
         rows: 0,
@@ -1309,7 +1309,7 @@ function readProductionWorkbook(data) {
       defval: "",
       range: hdr
     }).forEach(row => {
-      const c = extractClaim(row, claims.length);
+      const c = extractClaim(stripOurs(row), claims.length);
       if (!(c.claimId || c.patient || c.comments)) return;
       c.sheet = name;
       c.row = row.__rowNum__ != null ? row.__rowNum__ + 1 : null; // the row number Excel shows
@@ -1349,11 +1349,7 @@ function addDaysKey(dk, n) {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 // "Joyful Health 09 Oct 2026 status.xlsx": one file per date, the same name on every push
-function statusFileName(clientName, dk) {
-  const [y, m, d] = String(dk).split("-");
-  const safe = String(clientName || "").replace(/[^A-Za-z0-9 ._-]+/g, " ").replace(/\s+/g, " ").trim().replace(/^[. ]+|[. ]+$/g, "") || "Client";
-  return safe + " " + d + " " + MONTHS[Number(m) - 1] + " " + y + " status.xlsx";
-}
+
 
 // What the router reads. When one of these changes in the file, the claim is read again.
 const CONTENT_FIELDS = ["action", "subStatus", "status", "comments"];
@@ -1406,25 +1402,9 @@ const briefOf = c => {
 //                            now says the work is done, moved when it is now another
 //                            department's work and nobody finished it yet, otherwise flagged
 //                            for the lead. Rows new to the file are added.
-function planDateSync({
-  dateKey,
-  board,
-  incoming,
-  cls,
-  now,
-  user,
-  fileName,
-  source,
-  clockOn,
-  batchTag
-}) {
-  const when = new Date(now).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  });
-  const deptOf = r => r && r.task && DEPTS[r.route] ? r.route : null;
+function planDateSync({ dateKey, board, incoming, cls, now, user, fileName, source, clockOn, batchTag }) {
+  const when = new Date(now).toLocaleString(void 0, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const deptOf = (r) => r && r.task && DEPTS[r.route] ? r.route : null;
   const fresh = (c, r, idx) => {
     const to = deptOf(r);
     return {
@@ -1450,52 +1430,21 @@ function planDateSync({
       originDept: null
     };
   };
-  const sum = {
-    dateKey,
-    isNew: !board,
-    read: incoming.length,
-    added: 0,
-    tasked: 0,
-    closed: 0,
-    flagged: 0,
-    moved: 0,
-    updated: 0,
-    unchanged: 0,
-    missing: 0
-  };
+  const sum = { dateKey, isNew: !board, read: incoming.length, added: 0, tasked: 0, closed: 0, flagged: 0, moved: 0, updated: 0, unchanged: 0, missing: 0 };
   if (!board) {
     const claims = incoming.map((c, i) => fresh(c, cls(c), i));
     sum.added = claims.length;
-    sum.tasked = claims.filter(c => c.task).length;
+    sum.tasked = claims.filter((c) => c.task).length;
     return {
       isNew: true,
       dirty: true,
       work: {},
       summary: sum,
-      base: {
-        uploadedAt: now,
-        batchTag,
-        uploadedBy: user,
-        fileName,
-        dateKey,
-        source,
-        claims,
-        deptNotes: {
-          submission: "",
-          payment_posting: "",
-          ev: "",
-          client_assistance: "",
-          ar: ""
-        }
-      }
+      readAgain: claims.map((c) => c.ref),
+      base: { uploadedAt: now, batchTag, uploadedBy: user, fileName, dateKey, source, claims, deptNotes: { submission: "", payment_posting: "", ev: "", client_assistance: "", ar: "" } }
     };
   }
-  const base = {
-    ...board.base,
-    claims: board.base.claims.map(c => ({
-      ...c
-    }))
-  };
+  const base = { ...board.base, claims: board.base.claims.map((c) => ({ ...c })) };
   const at = {};
   base.claims.forEach((c, i) => {
     at[c.ref] = i;
@@ -1503,8 +1452,9 @@ function planDateSync({
   let maxIdx = base.claims.reduce((m, c) => Math.max(m, Number(c.idx) || 0), -1);
   const matches = matchIncoming(board.merged.claims, incoming);
   const work = {};
+  const readAgain = [];
   let dirty = false;
-  const restart = to => ({
+  const restart = (to) => ({
     route: to,
     task: true,
     workStatus: "Pending",
@@ -1516,12 +1466,14 @@ function planDateSync({
     incompleteReason: null,
     reasonFlag: false,
     closedInFile: false,
-    changedInFile: true
+    changedInFile: true,
+    linkTo: null
   });
   for (const m of matches) {
     if (!m.ex) {
       const nc = fresh(m.c, cls(m.c), ++maxIdx);
       base.claims.push(nc);
+      readAgain.push(nc.ref);
       dirty = true;
       sum.added++;
       if (nc.task) sum.tasked++;
@@ -1529,9 +1481,8 @@ function planDateSync({
     }
     const b = base.claims[at[m.ex.ref]];
     if (!b) continue;
-    // keep the board's copy in step with the file: where the row sits, and any identity field that moved
     for (const f of ["sheet", "row", "bucket", "patient", "label", "payer", "dos", "cpt", "provider", "balance", "claimId", "dateWorkedRaw", "fp"]) {
-      if (m.c[f] !== undefined && b[f] !== m.c[f]) {
+      if (m.c[f] !== void 0 && b[f] !== m.c[f]) {
         b[f] = m.c[f];
         dirty = true;
       }
@@ -1552,61 +1503,34 @@ function planDateSync({
     const says = briefOf(m.c);
     if (was && !to) {
       if (ex.workStatus !== "Completed") {
-        work[ex.ref] = {
-          workStatus: "Completed",
-          closedInFile: true,
-          changedInFile: false,
-          notCompletedOnce: false,
-          forceTat: false,
-          reasonFlag: false,
-          fileNote: `Closed by the production file on ${when}: it now says "${says}".`
-        };
+        work[ex.ref] = { workStatus: "Completed", closedInFile: true, changedInFile: false, notCompletedOnce: false, forceTat: false, reasonFlag: false, closedAt: now, fileNote: `Closed by the production file on ${when}: it now says "${says}".` };
         sum.closed++;
       } else {
-        work[ex.ref] = {
-          fileNote: `Updated in the production file on ${when}: "${says}". ${DEPTS[was].label} had already completed it.`
-        };
+        work[ex.ref] = { fileNote: `Updated in the production file on ${when}: "${says}". ${DEPTS[was].label} had already completed it.` };
         sum.updated++;
       }
     } else if (was && to === was) {
-      work[ex.ref] = {
-        changedInFile: true,
-        fileNote: `Changed in the production file on ${when}: it now says "${says}". Still ${DEPTS[to].label} work.`
-      };
+      work[ex.ref] = { changedInFile: true, fileNote: `Changed in the production file on ${when}: it now says "${says}". Still ${DEPTS[to].label} work.` };
       sum.flagged++;
     } else if (was && to) {
       if (ex.workStatus === "Completed") {
-        work[ex.ref] = {
-          changedInFile: true,
-          fileNote: `Changed in the production file on ${when}: it now says "${says}", which reads like ${DEPTS[to].label} work. ${DEPTS[was].label} had already completed it, so it stays here for the lead to decide.`
-        };
+        work[ex.ref] = { changedInFile: true, fileNote: `Changed in the production file on ${when}: it now says "${says}", which reads like ${DEPTS[to].label} work. ${DEPTS[was].label} had already completed it, so it stays here for the lead to decide.` };
         sum.flagged++;
       } else {
-        work[ex.ref] = {
-          ...restart(to),
-          originDept: DEPTS[was].label,
-          fileNote: `Moved from ${DEPTS[was].label} to ${DEPTS[to].label} by the production file on ${when}: it now says "${says}".`
-        };
+        work[ex.ref] = { ...restart(to), originDept: DEPTS[was].label, fileNote: `Moved from ${DEPTS[was].label} to ${DEPTS[to].label} by the production file on ${when}: it now says "${says}".` };
         sum.moved++;
       }
     } else if (!was && to) {
-      work[ex.ref] = {
-        ...restart(to),
-        fileNote: `New ${DEPTS[to].label} task from the production file on ${when}: it now says "${says}".`
-      };
+      work[ex.ref] = { ...restart(to), fileNote: `New ${DEPTS[to].label} task from the production file on ${when}: it now says "${says}".` };
+      readAgain.push(ex.ref);
       sum.tasked++;
     } else {
+      if (ex.linkTo) readAgain.push(ex.ref);
       sum.updated++;
     }
   }
-  sum.missing = Math.max(0, board.merged.claims.length - matches.filter(m => m.ex).length);
-  return {
-    isNew: false,
-    dirty,
-    base,
-    work,
-    summary: sum
-  };
+  sum.missing = Math.max(0, board.merged.claims.length - matches.filter((m) => m.ex).length);
+  return { isNew: false, dirty, base, work, summary: sum, readAgain };
 }
 
 /* =========================================================================
@@ -1621,7 +1545,7 @@ const MS_CFG = {
   scopes: ["User.Read", "Files.ReadWrite.All"]
 };
 const GRAPH = "https://graph.microsoft.com/v1.0";
-const STATUS_FOLDER = "Brahmastra status";
+
 const msMock = () => typeof window !== "undefined" && window.__BRAHMASTRA_MS_MOCK || null;
 // Microsoft only sends people back to the address registered for the app, so sign in
 // works on the team site and not in a preview hosted anywhere else.
@@ -1669,7 +1593,7 @@ function graphError(status, body) {
   if (status === 403) return msError("denied", "You do not have access to this in OneDrive yet. Ask whoever looks after the Brahmastra folder to share this client's folder with you (Can edit).", status);
   if (status === 404) return msError("missing", "OneDrive could not find it. The file or folder may have been moved, renamed into another folder, or deleted. Link the production file again.", status);
   if (status === 409) return msError("conflict", "OneDrive reported a name clash. Try again.", status);
-  if (status === 423) return msError("locked", "The status file is open in Excel and locked right now. Close it (or wait a minute) and push again.", status);
+  if (status === 423) return msError("locked", "The file is locked in OneDrive right now (it may be open in the Excel desktop app). Wait a minute and try again.", status);
   if (status === 429 || status >= 500) return msError("busy", "Microsoft is busy right now. Wait a minute and try again.", status);
   return msError("other", "OneDrive turned this down (" + status + (code ? ", " + code : "") + "). Try again, and if it keeps happening send it through Feedback.", status);
 }
@@ -1832,42 +1756,8 @@ async function msReadProduction(ms) {
   };
 }
 // the "Brahmastra status" folder next to the production file, made the first time
-async function msStatusFolder(ms) {
-  const byPath = itemPath(ms, ms.parentId) + ":/" + encodeURIComponent(STATUS_FOLDER);
-  try {
-    const f = await msx.graph(byPath);
-    if (f && f.folder) return f.id;
-    throw msError("conflict", `There is a file named "${STATUS_FOLDER}" where the folder should be. Rename that file in OneDrive and push again.`);
-  } catch (e) {
-    if (e.status !== 404) throw e;
-  }
-  try {
-    const f = await msx.graph(itemPath(ms, ms.parentId) + "/children", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        name: STATUS_FOLDER,
-        folder: {},
-        "@microsoft.graph.conflictBehavior": "fail"
-      })
-    });
-    return f.id;
-  } catch (e) {
-    if (e.status === 409) return (await msx.graph(byPath)).id; // someone made it a moment ago
-    throw e;
-  }
-}
-async function msUploadStatus(ms, folderId, fileName, bytes) {
-  return msx.graph(itemPath(ms, folderId) + ":/" + encodeURIComponent(fileName) + ":/content", {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    },
-    body: bytes
-  });
-}
+
+
 
 /* =========================================================================
    ROOT
@@ -2126,6 +2016,22 @@ function ClientsArea({ me, clients, setClients, roster, loading, onOpen }) {
   }, [roster]);
   const nameOf = (e) => byEmail[e] && byEmail[e].name || ((roster.admins || []).includes(e) ? "Purview Automate (admin)" : e);
   const list = visibleClients(clients, me).sort(([, a], [, b]) => String(a.name).localeCompare(String(b.name)));
+  const [openBy, setOpenBy] = useState({});
+  const ids = list.map(([id]) => id).join(",");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const out = {};
+      await pool(ids ? ids.split(",") : [], 3, async (id) => {
+        const l = await store.get(K.dates(id));
+        out[id] = openSummaryOf(l || []);
+      });
+      if (alive) setOpenBy(out);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [ids]);
   function startCreate() {
     const name = newName.trim().replace(/\s+/g, " ");
     if (!name) return setErr("Type a client name first, then click Create client.");
@@ -2165,7 +2071,7 @@ function ClientsArea({ me, clients, setClients, roster, loading, onOpen }) {
       onKeyDown: (e) => e.key === "Enter" && startCreate(),
       "data-testid": "new-client-name"
     }
-  ), /* @__PURE__ */ React.createElement("button", { style: S.primaryBtnInline, onClick: startCreate, "data-testid": "create-client" }, "Create client")), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: -12, marginBottom: 22 } }, err), loading ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "Loading your clients…") : list.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "No clients yet. Create one above, or ask a team lead to give you access to theirs.") : /* @__PURE__ */ React.createElement("div", { style: S.clientGrid }, list.map(([id, c]) => /* @__PURE__ */ React.createElement(ClientCard, { key: id, id, c, me, nameOf, onOpen, onAccess: () => setDialog({ mode: "edit", id }) }))), dialog && dialog.mode === "create" && /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("button", { style: S.primaryBtnInline, onClick: startCreate, "data-testid": "create-client" }, "Create client")), err && /* @__PURE__ */ React.createElement("div", { style: { ...S.errBox, marginTop: -12, marginBottom: 22 } }, err), loading ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "Loading your clients…") : list.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "No clients yet. Create one above, or ask a team lead to give you access to theirs.") : /* @__PURE__ */ React.createElement("div", { style: S.clientGrid }, list.map(([id, c]) => /* @__PURE__ */ React.createElement(ClientCard, { key: id, id, c, me, nameOf, onOpen, open: openBy[id] || null, onAccess: () => setDialog({ mode: "edit", id }) }))), dialog && dialog.mode === "create" && /* @__PURE__ */ React.createElement(
     AccessDialog,
     {
       title: "Who gets access to " + dialog.name + "?",
@@ -2196,10 +2102,10 @@ function ClientsArea({ me, clients, setClients, roster, loading, onOpen }) {
     }
   ));
 }
-function ClientCard({ id, c, me, nameOf, onOpen, onAccess }) {
+function ClientCard({ id, c, me, nameOf, onOpen, onAccess, open }) {
   const members = c.members || [];
   const mine = members.includes(me.username);
-  return /* @__PURE__ */ React.createElement("div", { className: "lift", style: S.clientCard, "data-testid": "client-card" }, /* @__PURE__ */ React.createElement("div", { style: S.clientTop }, /* @__PURE__ */ React.createElement("div", { style: S.clientAvatar }, String(c.name || "?").slice(0, 1).toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: S.clientName }, c.name), /* @__PURE__ */ React.createElement("div", { style: S.clientMeta }, members.length, " ", members.length === 1 ? "person" : "people", " · ", c.createdBy === me.username ? "created by you" : "created by " + nameOf(c.createdBy), !mine && seesAllClients(me) ? " · you see it as " + (isAdminMe(me) ? "admin" : "VP") : ""))), /* @__PURE__ */ React.createElement("div", { style: S.memberChips }, members.slice(0, 8).map((m) => /* @__PURE__ */ React.createElement("span", { key: m, style: { ...S.memberChip, ...m === me.username ? { background: NAVY, color: "#fff" } : {} }, title: m }, nameOf(m))), members.length > 8 && /* @__PURE__ */ React.createElement("span", { style: S.memberChip }, "+", members.length - 8, " more")), /* @__PURE__ */ React.createElement("div", { style: S.clientActions }, /* @__PURE__ */ React.createElement("button", { style: S.openBtn, onClick: () => onOpen({ id, ...c }), "data-testid": "client-open" }, "Open"), /* @__PURE__ */ React.createElement("button", { style: S.shareBtn, onClick: onAccess, "data-testid": "client-access" }, canManageAccess(c, me) ? "Access" : "Who has access")));
+  return /* @__PURE__ */ React.createElement("div", { className: "lift", style: S.clientCard, "data-testid": "client-card" }, /* @__PURE__ */ React.createElement("div", { style: S.clientTop }, /* @__PURE__ */ React.createElement("div", { style: S.clientAvatar }, String(c.name || "?").slice(0, 1).toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: S.clientName }, c.name), /* @__PURE__ */ React.createElement("div", { style: S.clientMeta }, members.length, " ", members.length === 1 ? "person" : "people", " · ", c.createdBy === me.username ? "created by you" : "created by " + nameOf(c.createdBy), !mine && seesAllClients(me) ? " · you see it as " + (isAdminMe(me) ? "admin" : "VP") : ""), open && open.n > 0 && /* @__PURE__ */ React.createElement("div", { style: XS2.openLine, "data-testid": "client-open-line" }, "Open claims on ", open.n, " ", open.n === 1 ? "date" : "dates", " · oldest ", dayLabel(open.oldest)), open && open.n === 0 && open.allKnown && open.total > 0 && /* @__PURE__ */ React.createElement("div", { style: XS2.doneLine }, "All tasked claims completed"))), /* @__PURE__ */ React.createElement("div", { style: S.memberChips }, members.slice(0, 8).map((m) => /* @__PURE__ */ React.createElement("span", { key: m, style: { ...S.memberChip, ...m === me.username ? { background: NAVY, color: "#fff" } : {} }, title: m }, nameOf(m))), members.length > 8 && /* @__PURE__ */ React.createElement("span", { style: S.memberChip }, "+", members.length - 8, " more")), /* @__PURE__ */ React.createElement("div", { style: S.clientActions }, /* @__PURE__ */ React.createElement("button", { style: S.openBtn, onClick: () => onOpen({ id, ...c }), "data-testid": "client-open" }, "Open"), /* @__PURE__ */ React.createElement("button", { style: S.shareBtn, onClick: onAccess, "data-testid": "client-access" }, canManageAccess(c, me) ? "Access" : "Who has access")));
 }
 function AccessDialog({ title, sub, roster, me, initial, locked, lockedTag, readOnly, saveLabel, onClose, onSave }) {
   const [sel, setSel] = useState(() => new Set(initial || []));
@@ -2802,6 +2708,758 @@ const XS = {
   miniFill: { height: "100%", background: GRAD, borderRadius: 6 },
   openDay: { background: "#fff", border: "1px solid #dbe4ea", borderRadius: 8, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, color: NAVY, cursor: "pointer", fontFamily: "inherit" }
 };
+
+const OPEN_WINDOW = 45;
+const WEEKDAY3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function dkParts(dk) {
+  const [y, m, d] = String(dk || "").split("-").map(Number);
+  return { y, m, d };
+}
+function shortDay(dk) {
+  if (!dk) return "";
+  const { m, d } = dkParts(dk);
+  return d + " " + MONTHS[m - 1];
+}
+function dayLabel(dk) {
+  if (!dk) return "";
+  const { y, m, d } = dkParts(dk);
+  return WEEKDAY3[new Date(y, m - 1, d).getDay()] + ", " + d + " " + MONTHS[m - 1];
+}
+function dayLabelYear(dk) {
+  return dk ? dayLabel(dk) + " " + dkParts(dk).y : "";
+}
+function daysBetween(a, b) {
+  const t = (k) => {
+    const { y, m, d } = dkParts(k);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((t(b) - t(a)) / 864e5);
+}
+function stampLong(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  let h = d.getHours();
+  const ap = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear() + ", " + h + ":" + String(d.getMinutes()).padStart(2, "0") + " " + ap;
+}
+const sortDates = (list) => [...list || []].sort((a, b) => a.dateKey < b.dateKey ? 1 : -1);
+const isOpenTask = (c) => !!(c && c.task && DEPTS[c.route] && c.workStatus !== "Completed");
+const isOpenRej = (c) => !!(c && c.rej && !c.rejOutcome);
+const isOpenItem = (c) => isOpenTask(c) || isOpenRej(c);
+const boardHasOpen = (b) => !!(b && (b.claims || []).some(isOpenItem));
+async function pool(items, n, fn) {
+  const list = [...items || []];
+  let i = 0;
+  const run = async () => {
+    while (i < list.length) {
+      const k = i++;
+      await fn(list[k], k);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(n, list.length) }, run));
+}
+const BR_KEY = /^\s*brahmastra/i;
+function stripOurs(row) {
+  const out = {};
+  for (const k in row) if (!BR_KEY.test(k)) out[k] = row[k];
+  return out;
+}
+async function loadEarlierOpen(clientId, list, beforeDk) {
+  const from = addDaysKey(beforeDk, -OPEN_WINDOW);
+  const want = (list || []).filter((d) => d && d.dateKey < beforeDk && d.dateKey >= from && d.allDone !== true).map((d) => d.dateKey).sort();
+  const boards = {};
+  await pool(want, 3, async (dk) => {
+    const b = await loadBoardFor(clientId, dk);
+    if (b) boards[dk] = b;
+  });
+  return { want, boards };
+}
+function openItemsOf(boards) {
+  const items = [];
+  Object.keys(boards).sort().forEach((dk) => {
+    (boards[dk].claims || []).forEach((c) => {
+      const task = isOpenTask(c), rej = isOpenRej(c);
+      if (task || rej) items.push({ dk, c, task, rej });
+    });
+  });
+  return items;
+}
+async function markOpenState(clientId, states) {
+  const keys = Object.keys(states || {});
+  if (!keys.length) return null;
+  const list = await store.get(K.dates(clientId)) || [];
+  let changed = false;
+  const now = Date.now();
+  list.forEach((d, i) => {
+    if (!d || !(d.dateKey in states)) return;
+    const done = !states[d.dateKey];
+    if (d.allDone !== done) {
+      list[i] = { ...d, allDone: done, stateAt: now };
+      changed = true;
+    }
+  });
+  if (!changed) return null;
+  await store.set(K.dates(clientId), list);
+  return list;
+}
+async function commitWorkOn(clientId, dk, page, patchByRef) {
+  const refs = Object.keys(patchByRef || {});
+  if (!refs.length) return;
+  const key = K.work(clientId, dk, page);
+  const ov = await store.get(key) || {};
+  const now = Date.now();
+  refs.forEach((ref) => {
+    const entry = { ...ov[ref] || {} };
+    const times = { ...entry._t || {} };
+    for (const f in patchByRef[ref]) {
+      entry[f] = patchByRef[ref][f];
+      times[f] = now;
+    }
+    entry._t = times;
+    entry._u = now;
+    ov[ref] = entry;
+  });
+  await store.set(key, ov);
+}
+function claimIdentity(c) {
+  const dos = normDateKey(c.dos) || norm(c.dos);
+  const id = String(c.claimId || "").trim();
+  if (id && /\d/.test(id)) return "id:" + norm(id) + "|" + norm(c.cpt) + "|" + dos;
+  if (!norm(c.patient)) return "";
+  return "pt:" + norm(c.patient) + "|" + dos + "|" + norm(c.payer) + "|" + norm(c.cpt);
+}
+function identitiesOf(claims) {
+  const seen = {}, out = {};
+  (claims || []).forEach((c) => {
+    const b = claimIdentity(c);
+    if (!b) return;
+    seen[b] = (seen[b] || 0) + 1;
+    out[c.ref] = b + "#" + seen[b];
+  });
+  return out;
+}
+function makeLinker(now) {
+  const open = /* @__PURE__ */ new Map();
+  const patches = {};
+  const stats = { closed: 0, kept: 0, moved: 0, items: [] };
+  const put = (dk, ref, p) => {
+    const m = patches[dk] || (patches[dk] = {});
+    m[ref] = { ...m[ref] || {}, ...p };
+  };
+  const close = (t, note) => put(t.dk, t.ref, { workStatus: "Completed", closedInFile: true, changedInFile: false, notCompletedOnce: false, forceTat: false, reasonFlag: false, closedAt: now, fileNote: note });
+  function addBoard(dk, claims) {
+    const ids = identitiesOf(claims);
+    (claims || []).forEach((c) => {
+      if (!isOpenTask(c)) return;
+      const id = ids[c.ref];
+      if (!id) return;
+      const cur = open.get(id);
+      if (!cur || cur.dk <= dk) open.set(id, { dk, ref: c.ref, route: c.route, label: c.label });
+    });
+  }
+  function process(dk, claims, eligible) {
+    const ids = identitiesOf(claims);
+    const self = {};
+    (claims || []).forEach((c) => {
+      if (!eligible(c)) return;
+      const id = ids[c.ref];
+      if (!id) return;
+      const t = open.get(id);
+      if (!t || t.dk >= dk || !DEPTS[t.route]) return;
+      const wasL = DEPTS[t.route].label;
+      const to = c.task && DEPTS[c.route] ? c.route : null;
+      const says = briefOf(c) || "no note";
+      if (!to) {
+        close(t, `Closed by the production file: AR worked this claim again on ${dayLabel(dk)} and the new note says "${says}", so no ${wasL} work is left.`);
+        if (c.linkTo) self[c.ref] = { linkTo: null };
+        open.delete(id);
+        stats.closed++;
+        stats.items.push({ kind: "closed", dk, from: t.dk, label: c.label, dept: wasL });
+      } else if (to === t.route) {
+        self[c.ref] = { task: false, workStatus: null, taskedAt: null, reissuedAt: null, noClock: false, forceTat: false, changedInFile: false, linkTo: { dk: t.dk, ref: t.ref, route: t.route }, fileNote: `Still open in ${wasL} from ${dayLabel(t.dk)}, so no second task was made. AR's new note is on that task.` };
+        put(t.dk, t.ref, { changedInFile: true, fileNote: `AR worked this claim again on ${dayLabel(dk)}: "${says}". It is still ${wasL} work, so it stays on this task.` });
+        stats.kept++;
+        stats.items.push({ kind: "kept", dk, from: t.dk, label: c.label, dept: wasL });
+      } else {
+        const toL = DEPTS[to].label;
+        close(t, `Closed by the production file: AR worked this claim again on ${dayLabel(dk)} and it is now ${toL} work ("${says}").`);
+        self[c.ref] = { originDept: wasL, linkTo: null, fileNote: `Was still open in ${wasL} from ${dayLabel(t.dk)}. That task was closed, since this note makes it ${toL} work.` };
+        open.delete(id);
+        stats.moved++;
+        stats.items.push({ kind: "moved", dk, from: t.dk, label: c.label, dept: wasL, to: toL });
+      }
+    });
+    addBoard(dk, (claims || []).map((c) => self[c.ref] ? { ...c, ...self[c.ref] } : c));
+    return self;
+  }
+  return { addBoard, process, patches, stats };
+}
+function linkSummaryText(s) {
+  const n = s.closed + s.kept + s.moved;
+  if (!n) return "";
+  const bits = [];
+  if (s.closed) bits.push(s.closed + " closed, the new note says the work is done");
+  if (s.kept) bits.push(s.kept + " kept on the earlier task, so no second task was made");
+  if (s.moved) bits.push(s.moved + " moved to another department, the earlier task was closed");
+  return (n === 1 ? "1 claim AR worked again was" : n + " claims AR worked again were") + " still open from an earlier day: " + bits.join("; ") + ".";
+}
+function useCarried({ clientId, dateKey, active, tab, onDates }) {
+  const empty = { dk: null, items: [], boards: {}, known: {}, at: 0, loading: false };
+  const [st, setSt] = useState(empty);
+  const ref = useRef(st);
+  const seq = useRef(0);
+  const refresh = useCallback(async (force) => {
+    if (!active) return;
+    const dk = dateKey;
+    const cur = ref.current;
+    if (!force && cur.dk === dk && Date.now() - cur.at < 12e4) return;
+    const my = ++seq.current;
+    setSt((s) => ({ ...s, loading: true }));
+    try {
+      const list = await store.get(K.dates(clientId)) || [];
+      const { want, boards } = await loadEarlierOpen(clientId, list, dk);
+      if (my !== seq.current) return;
+      const known = {};
+      want.forEach((k) => {
+        if (boards[k]) known[k] = boards[k].claims.some(isOpenItem);
+      });
+      const next = { dk, items: openItemsOf(boards), boards, known, at: Date.now(), loading: false };
+      ref.current = next;
+      setSt(next);
+      const changed = await markOpenState(clientId, known);
+      if (changed && onDates) onDates(changed);
+    } catch (e) {
+      if (my === seq.current) setSt((s) => ({ ...s, loading: false }));
+    }
+  }, [clientId, dateKey, active, onDates]);
+  useEffect(() => {
+    if (active) refresh(true);
+    else {
+      seq.current++;
+      ref.current = empty;
+      setSt(empty);
+    }
+  }, [clientId, dateKey, active]);
+  useEffect(() => {
+    if (active && tab !== "ar") refresh(false);
+  }, [tab]);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!document.hidden && active && tab !== "ar") refresh(true);
+    }, 6e5);
+    const back = () => {
+      if (!document.hidden && active && Date.now() - ref.current.at > 3e5) refresh(true);
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [active, tab, refresh]);
+  const update = useCallback(async (dk, page, patchByRef) => {
+    await commitWorkOn(clientId, dk, page, patchByRef);
+    const cur = ref.current;
+    const b = cur.boards[dk];
+    const boards = b ? { ...cur.boards, [dk]: { ...b, claims: b.claims.map((c) => patchByRef[c.ref] ? { ...c, ...patchByRef[c.ref] } : c) } } : cur.boards;
+    const items = cur.items.map((it) => it.dk === dk && patchByRef[it.c.ref] ? { ...it, c: { ...it.c, ...patchByRef[it.c.ref] } } : it);
+    let known = cur.known;
+    let flip = null;
+    if (boards[dk]) {
+      const open = boards[dk].claims.some(isOpenItem);
+      if (known[dk] !== open) {
+        known = { ...known, [dk]: open };
+        flip = { [dk]: open };
+      }
+    }
+    const next = { ...cur, boards, items, known };
+    ref.current = next;
+    setSt(next);
+    if (flip) {
+      const changed = await markOpenState(clientId, flip);
+      if (changed && onDates) onDates(changed);
+    }
+  }, [clientId, onDates]);
+  const byDept = useMemo(() => {
+    const m = { submission: [], payment_posting: [], ev: [], client_assistance: [], rejection: [] };
+    st.items.forEach((it) => {
+      if (it.task && it.c.task && m[it.c.route]) m[it.c.route].push(it);
+      if (it.rej) m.rejection.push(it);
+    });
+    return m;
+  }, [st.items]);
+  const openCount = useMemo(() => st.items.filter((it) => it.task && isOpenTask(it.c) || it.rej && isOpenRej(it.c)).length, [st.items]);
+  return { items: st.items, byDept, openCount, loading: st.loading, at: st.at, refresh, update };
+}
+
+const BR_COLS = ["Brahmastra Department", "Brahmastra Work Status", "Brahmastra Reason If Not Completed", "Brahmastra TAT", "Brahmastra Updated By", "Brahmastra Updated On"];
+const BR_WIDTHS = [176, 98, 232, 74, 88, 130];
+const SUMMARY_SHEET = "Brahmastra summary";
+const SUMMARY_HEAD = ["Date of work", "Claims read", "Tasked", "Completed", "Not completed", "Pending", "TAT missed", "Completion", "Submission", "Payment Posting", "EV Review", "Client Assistance"];
+const SUMMARY_WIDTHS = [118, 70, 58, 74, 90, 62, 74, 76, 88, 106, 84, 112];
+const SUMMARY_FMT = ["@", "0", "0", "0", "0", "0", "0", "0%", "@", "@", "@", "@"];
+const BR_TEAL = "#0F766E";
+const BR_TINT = "#EEFBF8";
+const WRITE_CHUNK = 1500;
+function colLetter(i) {
+  let s = "";
+  let n = i + 1;
+  while (n > 0) {
+    const m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+const safeCell = (v) => {
+  const s = String(v == null ? "" : v);
+  return /^[=+\-@]/.test(s) ? " " + s : s;
+};
+function tatWord(c, now) {
+  if (!c || !c.task) return "";
+  if (c.noClock) return "No TAT";
+  if (!(DEPTS[c.route] && DEPTS[c.route].tat || c.forceTat)) return "No TAT";
+  const anchor = c.reissuedAt || c.taskedAt;
+  if (c.workStatus === "Completed") {
+    const doneAt = c.closedInFile && c.closedAt && (!c.statusAt || c.closedAt >= c.statusAt) ? c.closedAt : c.statusAt;
+    return anchor && doneAt && doneAt > anchor + TWENTY_FOUR_H ? "Done late" : "Met";
+  }
+  if (!anchor) return "Running";
+  return now > anchor + TWENTY_FOUR_H ? "Breached" : "Running";
+}
+function brStatusVals(t, now) {
+  const st = t.workStatus || "Pending";
+  const reason = st === "Not Completed" ? safeCell(t.incompleteReason || "No reason given") : "";
+  const fileWins = t.closedInFile && t.closedAt && (!t.statusAt || t.closedAt >= t.statusAt);
+  const by = fileWins ? "AR note" : t.statusAt && t.statusBy ? firstNameOf(t.statusBy) : "";
+  const on = fileWins ? stampLong(t.closedAt) : t.statusAt ? stampLong(t.statusAt) : "";
+  return [st, reason, tatWord(t, now), by, on];
+}
+function brValuesFor(c, findTask, now) {
+  if (c.task && DEPTS[c.route]) return [DEPTS[c.route].label + (c.originDept ? " (moved from " + c.originDept + ")" : ""), ...brStatusVals(c, now)];
+  if (c.linkTo && DEPTS[c.linkTo.route]) {
+    const t = findTask(c.linkTo.dk, c.linkTo.ref);
+    const label = t && t.task && DEPTS[t.route] ? DEPTS[t.route].label : DEPTS[c.linkTo.route].label;
+    const dep = label + " (task from " + shortDay(c.linkTo.dk) + ")";
+    return t ? [dep, ...brStatusVals(t, now)] : [dep, "", "", "", "", ""];
+  }
+  if (c.rej) return ["Stays with AR (rejection follow-up)", c.rejOutcome === "passed" ? "Went through" : c.rejOutcome === "rejected" ? "Rejected again" : "Check next day", "", "", "", ""];
+  return ["Stays with AR", "", "", "", "", ""];
+}
+function dayStats(claims, now) {
+  const tasks = (claims || []).filter((c) => c.task && DEPTS[c.route]);
+  const n = (s) => tasks.filter((c) => (c.workStatus || "Pending") === s).length;
+  const missed = tasks.filter((c) => {
+    const w = tatWord(c, now);
+    return w === "Breached" || w === "Done late";
+  }).length;
+  return {
+    r: (claims || []).length,
+    t: tasks.length,
+    d: n("Completed"),
+    n: n("Not Completed"),
+    p: n("Pending"),
+    m: missed,
+    s: DEPT_ORDER.map((dep) => {
+      const l = tasks.filter((c) => c.route === dep);
+      return [l.filter((c) => c.workStatus === "Completed").length, l.length];
+    })
+  };
+}
+function scanForWrite(data) {
+  const wb = XLSX.read(data instanceof Uint8Array ? data : new Uint8Array(data), { type: "array" });
+  const sheets = [];
+  let summaryRows = 0;
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    if (!ws || !ws["!ref"]) continue;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    if (BR_KEY.test(name)) {
+      if (norm(name) === norm(SUMMARY_SHEET)) summaryRows = range.e.r + 1;
+      continue;
+    }
+    const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", blankrows: true, range: { s: { r: 0, c: 0 }, e: range.e } });
+    let h = -1;
+    for (let r = 0; r < Math.min(grid.length, range.s.r + 15) && h < 0; r++) {
+      const cells = (grid[r] || []).map(norm);
+      if (cells.some((x) => DATE_WORKED_KEYS.includes(x)) && cells.some((x) => /claimid|chargeid|patient|action|comments|notes/.test(x))) h = r;
+    }
+    if (h < 0) continue;
+    const head = (grid[h] || []).map((v) => String(v == null ? "" : v).trim());
+    const cols = BR_COLS.map((n) => head.findIndex((x) => norm(x) === norm(n)));
+    const created = cols.map((c) => c < 0);
+    let next = Math.max(range.e.c, head.reduce((m, x, i) => x ? i : m, -1)) + 1;
+    for (let i = 0; i < cols.length; i++) if (cols[i] < 0) cols[i] = next++;
+    const seen = {};
+    const names = head.map((k) => {
+      if (!k || BR_KEY.test(k)) return null;
+      if (seen[k] == null) {
+        seen[k] = 0;
+        return k;
+      }
+      seen[k]++;
+      return k + "_" + seen[k];
+    });
+    const dateCol = head.findIndex((x) => DATE_WORKED_KEYS.includes(norm(x)));
+    const idCol = head.findIndex((x) => /claimid|chargeid/.test(norm(x)));
+    const ptCol = head.findIndex((x) => /^patient/.test(norm(x)));
+    const rows = [];
+    for (let r = h + 1; r < grid.length; r++) {
+      const line = grid[r] || [];
+      const obj = {};
+      names.forEach((k, i) => {
+        if (k != null) obj[k] = line[i] === void 0 ? "" : line[i];
+      });
+      const c = extractClaim(obj, rows.length);
+      if (!(c.claimId || c.patient || c.comments)) continue;
+      rows.push({ r, dateKey: normDateKey(c.dateWorkedRaw), claim: c });
+    }
+    const cell = (r, ci) => {
+      const v = ci < 0 ? "" : (grid[r] || [])[ci];
+      return v == null ? "" : v;
+    };
+    sheets.push({ name, hRow: h, cols, created, rows, cell, checkCols: [dateCol, idCol >= 0 ? idCol : ptCol].filter((x) => x >= 0) });
+  }
+  return { sheets, summaryRows };
+}
+async function wbCall(ms, path, opts, sid) {
+  const m = msMock();
+  const doFetch = m && m.fetch || ((u, o2) => fetch(u, o2));
+  const url = GRAPH + itemPath(ms, ms.itemId) + "/workbook" + path;
+  const o = opts || {};
+  for (let attempt = 0; ; attempt++) {
+    const headers = { Authorization: "Bearer " + await msx.token() };
+    if (o.body !== void 0) headers["Content-Type"] = "application/json";
+    if (sid) headers["workbook-session-id"] = sid;
+    let r;
+    try {
+      r = await doFetch(url, { method: o.method || "GET", headers, body: o.body !== void 0 ? JSON.stringify(o.body) : void 0 });
+    } catch (e) {
+      throw msError("network", "Could not reach Microsoft. Check your connection and click Update production file again.");
+    }
+    if (r.ok) {
+      if (r.status === 204) return null;
+      const t = await r.text();
+      return t ? JSON.parse(t) : null;
+    }
+    let j = null;
+    try {
+      j = await r.json();
+    } catch (e) {
+      j = null;
+    }
+    if ((r.status === 429 || r.status === 503 || r.status === 504) && attempt < 3) {
+      const ra = Number(r.headers && r.headers.get ? r.headers.get("Retry-After") : 0) || 0;
+      await new Promise((res) => setTimeout(res, Math.min(10, ra || 2 * 2 ** attempt) * 1e3));
+      continue;
+    }
+    throw wbError(r.status, j);
+  }
+}
+function wbError(status, body) {
+  const e = body && body.error || {};
+  const code = String(e.code || "") + " " + String(e.innerError && e.innerError.code || "");
+  const msg = String(e.message || "");
+  if (status === 401) return msError("auth", "Microsoft asked you to sign in again. Click Sign in on the OneDrive bar and try once more.", status);
+  if (/protect/i.test(code + " " + msg)) return msError("protected", "A sheet in the production file is protected, so Brahmastra could not write its columns there. Ask the file owner to unprotect it, then click Update production file again.", status);
+  if (status === 403) return msError("denied", "You can open this production file but not edit it. Ask whoever shares this client's folder to give you Can edit access, then try again.", status);
+  if (status === 404) return msError("missing", "OneDrive could not find the production file. It may have been moved, renamed into another folder, or deleted. Link it again.", status);
+  if (status === 409 || status === 423) return msError("locked", "The production file is busy right now (it may be open in the Excel desktop app, or someone is saving it). Wait a minute and click Update production file again. Brahmastra rewrites its own columns each time, so trying again is safe.", status);
+  if (status === 429 || status >= 500) return msError("busy", "Microsoft is busy right now. Wait a minute and click Update production file again.", status);
+  if (status === 400 && /unsupported|not supported|invalid ?file|corrupt/i.test(code + " " + msg)) return msError("type", "Excel in OneDrive could not open this file for editing. Make sure it is an .xlsx workbook, then try again.", status);
+  return msError("other", "OneDrive turned this down (" + status + (code.trim() ? ", " + code.trim() : "") + "). Try again, and if it keeps happening send it through Feedback.", status);
+}
+function datesToWrite(entries) {
+  const newest = new Set(entries.slice(0, 7).map((d) => d.dateKey));
+  return entries.filter((d) => newest.has(d.dateKey) || d.allDone !== true || !d.fileAt || (d.stateAt || 0) > d.fileAt || (d.lastSyncAt || 0) > d.fileAt || (d.uploadedAt || 0) > d.fileAt).slice(0, 62).map((d) => d.dateKey);
+}
+async function msWriteProduction({ ms, clientId, clientName, list, user, onProgress }) {
+  const step = (label, done, total) => onProgress && onProgress({ label, done: done || 0, total: total || 0 });
+  step("Opening the production file");
+  const { bytes, info } = await msReadProduction(ms);
+  const scan = scanForWrite(bytes);
+  const inFile = /* @__PURE__ */ new Set();
+  scan.sheets.forEach((s) => s.rows.forEach((x) => {
+    if (x.dateKey) inFile.add(x.dateKey);
+  }));
+  const fileName = info.name || ms.name;
+  const entries = sortDates((list || []).filter((d) => d && inFile.has(d.dateKey)));
+  if (!entries.length) throw msError("nothing", inFile.size ? "None of the dates in " + fileName + " are on Brahmastra yet. Fetch claims first, then update the file." : "No rows with a Date Worked were found in " + fileName + ", so there is nothing to write next to.");
+  const chosen = datesToWrite(entries);
+  const boards = {};
+  let got = 0;
+  await pool(chosen, 3, async (dk) => {
+    const b = await loadBoardFor(clientId, dk);
+    if (b) boards[dk] = b;
+    step("Reading Brahmastra", ++got, chosen.length);
+  });
+  const extra = /* @__PURE__ */ new Set();
+  Object.values(boards).forEach((b) => b.claims.forEach((c) => {
+    if (c.linkTo && !boards[c.linkTo.dk]) extra.add(c.linkTo.dk);
+  }));
+  await pool([...extra], 3, async (dk) => {
+    const b = await loadBoardFor(clientId, dk);
+    if (b) boards[dk] = b;
+  });
+  const findTask = (dk, ref) => boards[dk] ? boards[dk].claims.find((c) => c.ref === ref) || null : null;
+  const now = Date.now();
+  const writeSet = new Set(chosen.filter((dk) => boards[dk]));
+  const vals = scan.sheets.map(() => ({}));
+  const byDate = {};
+  scan.sheets.forEach((s, si) => s.rows.forEach((x) => {
+    if (writeSet.has(x.dateKey)) (byDate[x.dateKey] = byDate[x.dateKey] || []).push({ si, x });
+  }));
+  const perDate = {};
+  const unmatched = [];
+  let written = 0, notOnBoard = 0;
+  for (const dk of writeSet) {
+    const b = boards[dk];
+    const rows = byDate[dk] || [];
+    const incoming = uniqueMatchKeys(rows.map(({ x }) => ({ ...x.claim, matchKey: matchKeyOf(x.claim) })));
+    const pairs = matchIncoming(b.claims, incoming);
+    const used = /* @__PURE__ */ new Set();
+    pairs.forEach((p, i) => {
+      const { si, x } = rows[i];
+      if (p.ex) {
+        vals[si][x.r] = brValuesFor(p.ex, findTask, now);
+        used.add(p.ex.ref);
+        written++;
+      } else {
+        vals[si][x.r] = ["", "", "", "", "", ""];
+        notOnBoard++;
+      }
+    });
+    b.claims.forEach((c) => {
+      if (!used.has(c.ref)) unmatched.push({ dk, label: c.label, claimId: c.claimId || "" });
+    });
+    perDate[dk] = { stats: dayStats(b.claims, now), open: b.claims.some(isOpenItem) };
+  }
+  const sumRows = [];
+  entries.forEach((d) => {
+    const s = perDate[d.dateKey] ? perDate[d.dateKey].stats : d.stats;
+    if (!s) return;
+    sumRows.push([dayLabelYear(d.dateKey), s.r, s.t, s.d, s.n, s.p, s.m, s.t ? s.d / s.t : "", ...s.s.map(([dn, tn]) => tn ? dn + " of " + tn + " done" : "")]);
+  });
+  let openNow = 0;
+  const openDates = [];
+  Object.keys(boards).sort().forEach((dk) => {
+    const k = boards[dk].claims.filter(isOpenItem).length;
+    if (k) {
+      openNow += k;
+      openDates.push(dk);
+    }
+  });
+  const title = "Brahmastra summary · " + (clientName || "Client");
+  const note = "Filled by Brahmastra. Last updated " + stampLong(now) + " by " + firstNameOf(user) + ". Changes typed here are replaced on the next update.";
+  const openLine = openNow ? "Open right now: " + openNow + (openNow === 1 ? " claim" : " claims") + " on " + openDates.length + (openDates.length === 1 ? " date" : " dates") + ", oldest " + dayLabelYear(openDates[0]) + ". Each department sees them on Brahmastra until they are completed." : "Nothing is open right now. Every tasked claim on these dates is completed.";
+  step("Writing into " + fileName);
+  const sess = await wbCall(ms, "/createSession", { method: "POST", body: { persistChanges: true } });
+  const sid = sess && sess.id;
+  const touched = [];
+  try {
+    const wsList = await wbCall(ms, "/worksheets?$select=id,name", {}, sid) || {};
+    const idOf = {};
+    (wsList.value || []).forEach((w) => {
+      idOf[w.name] = w.id;
+    });
+    const wsPath = (name) => {
+      if (!idOf[name]) throw msError("changed", 'The sheet "' + name + '" was renamed or removed while Brahmastra was writing. Click Update production file again.');
+      return "/worksheets/" + encodeURIComponent(idOf[name]);
+    };
+    const work = scan.sheets.map((s, si) => ({ s, mine: vals[si] })).filter((w) => Object.keys(w.mine).length);
+    let sheetNo = 0;
+    for (const { s, mine } of work) {
+      sheetNo++;
+      const rowsHere = Object.keys(mine).map(Number);
+      const lo = Math.min(...rowsHere), hi = Math.max(...rowsHere);
+      const base = wsPath(s.name);
+      for (const ci of s.checkCols) {
+        const L = colLetter(ci);
+        const live = await wbCall(ms, base + `/range(address='${L}${lo + 1}:${L}${hi + 1}')?$select=values`, {}, sid);
+        const lv = live && live.values || [];
+        for (let r = lo; r <= hi; r++) {
+          if (!mine[r]) continue;
+          const a = squash(s.cell(r, ci)), b = squash(lv[r - lo] ? lv[r - lo][0] : "");
+          if (a !== b) throw msError("changed", 'Rows in "' + s.name + '" moved while Brahmastra was writing (someone may be adding or sorting rows). Nothing more was changed. Wait a minute and click Update production file again.');
+        }
+      }
+      const order = s.cols.map((c, i) => ({ c, i })).sort((a, b) => a.c - b.c);
+      const runs = [];
+      order.forEach((o) => {
+        const last = runs[runs.length - 1];
+        if (last && o.c === last.c1 + 1) {
+          last.c1 = o.c;
+          last.items.push(o.i);
+        } else runs.push({ c0: o.c, c1: o.c, items: [o.i] });
+      });
+      const hdr = s.hRow + 1;
+      for (const run of runs) {
+        const L0 = colLetter(run.c0), L1 = colLetter(run.c1);
+        if (run.items.some((i) => s.created[i])) {
+          const hAddr = `${L0}${hdr}:${L1}${hdr}`;
+          await wbCall(ms, base + `/range(address='${hAddr}')`, { method: "PATCH", body: { values: [run.items.map((i) => BR_COLS[i])] } }, sid);
+          await wbCall(ms, base + `/range(address='${hAddr}')/format/fill`, { method: "PATCH", body: { color: BR_TEAL } }, sid);
+          await wbCall(ms, base + `/range(address='${hAddr}')/format/font`, { method: "PATCH", body: { bold: true, color: "#FFFFFF" } }, sid);
+          for (const i of run.items) {
+            if (!s.created[i]) continue;
+            const L = colLetter(s.cols[i]);
+            await wbCall(ms, base + `/range(address='${L}:${L}')/format`, { method: "PATCH", body: { columnWidth: BR_WIDTHS[i] } }, sid);
+          }
+        }
+        for (let a = lo; a <= hi; a += WRITE_CHUNK) {
+          const z = Math.min(hi, a + WRITE_CHUNK - 1);
+          const values = [], fmt = [];
+          for (let r = a; r <= z; r++) {
+            const v = mine[r];
+            values.push(run.items.map((i) => v ? v[i] : s.cell(r, s.cols[i])));
+            fmt.push(run.items.map(() => "@"));
+          }
+          const addr = `${L0}${a + 1}:${L1}${z + 1}`;
+          step("Writing " + s.name + (work.length > 1 ? " (" + sheetNo + " of " + work.length + ")" : ""), z - lo + 1, hi - lo + 1);
+          await wbCall(ms, base + `/range(address='${addr}')`, { method: "PATCH", body: { numberFormat: fmt } }, sid);
+          await wbCall(ms, base + `/range(address='${addr}')`, { method: "PATCH", body: { values } }, sid);
+        }
+        await wbCall(ms, base + `/range(address='${L0}${lo + 1}:${L1}${hi + 1}')/format/fill`, { method: "PATCH", body: { color: BR_TINT } }, sid);
+      }
+      touched.push({ name: s.name, from: lo + 1, to: hi + 1, created: s.created.some(Boolean) });
+    }
+    step("Writing the summary tab");
+    const sumName = Object.keys(idOf).find((n) => norm(n) === norm(SUMMARY_SHEET));
+    let sp, fresh = false;
+    if (sumName) {
+      sp = "/worksheets/" + encodeURIComponent(idOf[sumName]);
+      const upto = Math.max(scan.summaryRows, 5 + sumRows.length) + 20;
+      await wbCall(ms, sp + `/range(address='A1:L${upto}')/clear`, { method: "POST", body: { applyTo: "Contents" } }, sid);
+    } else {
+      const w = await wbCall(ms, "/worksheets/add", { method: "POST", body: { name: SUMMARY_SHEET } }, sid);
+      sp = "/worksheets/" + encodeURIComponent(w.id);
+      fresh = true;
+    }
+    await wbCall(ms, sp + "/range(address='A1:A3')", { method: "PATCH", body: { numberFormat: [["@"], ["@"], ["@"]] } }, sid);
+    await wbCall(ms, sp + "/range(address='A1:A3')", { method: "PATCH", body: { values: [[title], [note], [openLine]] } }, sid);
+    await wbCall(ms, sp + "/range(address='A5:L5')", { method: "PATCH", body: { values: [SUMMARY_HEAD] } }, sid);
+    if (sumRows.length) {
+      const addr = "A6:L" + (5 + sumRows.length);
+      await wbCall(ms, sp + `/range(address='${addr}')`, { method: "PATCH", body: { numberFormat: sumRows.map(() => SUMMARY_FMT) } }, sid);
+      await wbCall(ms, sp + `/range(address='${addr}')`, { method: "PATCH", body: { values: sumRows } }, sid);
+    }
+    if (fresh) {
+      await wbCall(ms, sp + "/range(address='A1')/format/font", { method: "PATCH", body: { bold: true, size: 14, color: "#0F2A47" } }, sid);
+      await wbCall(ms, sp + "/range(address='A2')/format/font", { method: "PATCH", body: { italic: true, size: 9, color: "#64748B" } }, sid);
+      await wbCall(ms, sp + "/range(address='A3')/format/font", { method: "PATCH", body: { bold: true, color: "#9A3412" } }, sid);
+      await wbCall(ms, sp + "/range(address='A5:L5')/format/fill", { method: "PATCH", body: { color: "#0F2A47" } }, sid);
+      await wbCall(ms, sp + "/range(address='A5:L5')/format/font", { method: "PATCH", body: { bold: true, color: "#FFFFFF" } }, sid);
+      await wbCall(ms, sp + "/range(address='B:H')/format", { method: "PATCH", body: { horizontalAlignment: "Center" } }, sid);
+      for (let i = 0; i < SUMMARY_WIDTHS.length; i++) {
+        const L = colLetter(i);
+        await wbCall(ms, sp + `/range(address='${L}:${L}')/format`, { method: "PATCH", body: { columnWidth: SUMMARY_WIDTHS[i] } }, sid);
+      }
+    }
+  } finally {
+    if (sid) {
+      try {
+        await wbCall(ms, "/closeSession", { method: "POST", body: {} }, sid);
+      } catch (e) {
+      }
+    }
+  }
+  return { at: now, fileName, webUrl: info.webUrl || ms.webUrl || "", perDate, written, notOnBoard, unmatched, touched, dates: [...writeSet].sort().reverse(), openNow };
+}
+
+const XS2 = {
+  carryCard: { background: "#fff", border: "1px solid #fcd9a8", borderRadius: 16, overflow: "hidden", marginBottom: 18, boxShadow: "0 6px 24px rgba(217,119,6,.10)" },
+  carryHead: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "12px 16px", background: "#fff7ed", borderBottom: "1px solid #fde3c1" },
+  carryTitle: { fontWeight: 800, fontSize: 15, color: "#9a3412" },
+  carryCount: { fontSize: 12, fontWeight: 700, borderRadius: 20, padding: "2px 9px", background: "#fed7aa", color: "#9a3412" },
+  carryNote: { fontSize: 12, color: "#9a3412", marginLeft: "auto" },
+  listHead: { display: "flex", alignItems: "center", gap: 10, margin: "4px 2px 10px", fontWeight: 800, fontSize: 15, color: NAVY },
+  listCount: { fontSize: 12, fontWeight: 700, borderRadius: 20, padding: "2px 9px", background: "#eef3f6", color: "#475569" },
+  fromDay: { fontWeight: 600, color: "#334155", whiteSpace: "nowrap", fontSize: 12.5 },
+  age: { display: "inline-block", marginLeft: 6, fontSize: 10.5, fontWeight: 700, borderRadius: 20, padding: "2px 8px", background: "#fef3c7", color: "#92400e", whiteSpace: "nowrap" },
+  ageOld: { background: "#fee2e2", color: "#b91c1c" },
+  more: { fontSize: 11, fontWeight: 700, background: "#fff7ed", color: "#b45309", border: "1px solid #fed7aa", borderRadius: 20, padding: "2px 8px", whiteSpace: "nowrap" },
+  tileCarry: { background: "#fffbf3", borderColor: "#fcd9a8" },
+  linkBadge: { display: "inline-block", fontSize: 11.5, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: "#f8fafc", border: "1px dashed #94a3b8", color: "#475569", whiteSpace: "nowrap" },
+  openLine: { display: "inline-block", marginTop: 10, fontSize: 11.5, fontWeight: 700, borderRadius: 20, padding: "4px 10px", background: "#fff7ed", color: "#9a3412", border: "1px solid #fed7aa" },
+  doneLine: { display: "inline-block", marginTop: 10, fontSize: 11.5, fontWeight: 700, borderRadius: 20, padding: "4px 10px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0" },
+  linkBox: { marginTop: 12, background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412", fontSize: 12.5, padding: "10px 12px", borderRadius: 10, lineHeight: 1.55 },
+  updList: { margin: "8px 0 0", paddingLeft: 18, color: "#475569", fontSize: 12.5, lineHeight: 1.6 },
+  updRow: { display: "flex", gap: 10, alignItems: "baseline", fontSize: 13.5, color: "#334155", lineHeight: 1.6 },
+  bar: { height: 6, background: "#eef3f6", borderRadius: 6, overflow: "hidden", marginTop: 12 },
+  barFill: { height: "100%", background: GRAD, borderRadius: 6, transition: "width .3s" }
+};
+function AgeChip({ dk }) {
+  const n = Math.max(0, daysBetween(dk, todayKey()));
+  if (!n) return null;
+  return /* @__PURE__ */ React.createElement("span", { style: { ...XS2.age, ...n >= 2 ? XS2.ageOld : {} } }, n === 1 ? "1 day" : n + " days");
+}
+
+
+function UpdateDialog({ st, onClose }) {
+  const running = st.phase === "running";
+  const wrap = (head2, body, foot) => /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: running ? void 0 : onClose }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modal, maxWidth: 600 }, onClick: (e) => e.stopPropagation(), "data-testid": "upd-dialog" }, head2, /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px" } }, body), foot && /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, foot)));
+  const head = (color, bg, line, title, sub) => /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: bg, borderBottom: "1px solid " + line } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: color, ...running ? {} : { animation: "none" } } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color } }, sub)));
+  if (running) {
+    const pct = st.total ? Math.round(st.done / st.total * 100) : 8;
+    return wrap(
+      head("#0369a1", "#f0f9ff", "#bae6fd", "Updating the production file", "Please keep this page open until it finishes."),
+      /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, color: "#334155" }, "data-testid": "upd-step" }, st.label || "Starting", st.total ? " · " + st.done + " / " + st.total : ""), /* @__PURE__ */ React.createElement("div", { style: XS2.bar }, /* @__PURE__ */ React.createElement("div", { style: { ...XS2.barFill, width: Math.max(4, Math.min(100, pct)) + "%" } }))),
+      null
+    );
+  }
+  if (st.phase === "error") {
+    return wrap(
+      head("#b91c1c", "#fef2f2", "#fecaca", "The production file was not updated", null),
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, color: "#334155", lineHeight: 1.6 }, "data-testid": "upd-error" }, st.error),
+      /* @__PURE__ */ React.createElement("button", { style: S.modalPrimary, onClick: onClose }, "Close")
+    );
+  }
+  const r = st.res;
+  const dates = r.dates || [];
+  return wrap(
+    head("#16a34a", "#f0fdf4", "#bbf7d0", "Production file updated", r.fileName + " · " + stampLong(r.at)),
+    /* @__PURE__ */ React.createElement("div", { "data-testid": "upd-done" }, /* @__PURE__ */ React.createElement("div", { style: XS2.updRow }, /* @__PURE__ */ React.createElement("b", { style: { color: NAVY, minWidth: 34, fontFamily: MONO } }, r.written), /* @__PURE__ */ React.createElement("span", null, "claims got their department and status, on ", dates.length, " ", dates.length === 1 ? "date" : "dates", " of work (", dates.slice(0, 4).map(shortDay).join(", "), dates.length > 4 ? " and more" : "", ").")), /* @__PURE__ */ React.createElement("div", { style: XS2.updRow }, /* @__PURE__ */ React.createElement("b", { style: { color: NAVY, minWidth: 34, fontFamily: MONO } }, "6"), /* @__PURE__ */ React.createElement("span", null, "Brahmastra columns at the end of ", r.touched.map((t) => t.name).join(", ") || "the sheet", r.touched.some((t) => t.created) ? ", added this time" : "", ". Your team's columns were not touched.")), /* @__PURE__ */ React.createElement("div", { style: XS2.updRow }, /* @__PURE__ */ React.createElement("b", { style: { color: NAVY, minWidth: 34, fontFamily: MONO } }, "1"), /* @__PURE__ */ React.createElement("span", null, '"Brahmastra summary" tab with one row per date of work', r.openNow ? ", and the " + r.openNow + " claims still open" : "", ".")), r.notOnBoard > 0 && /* @__PURE__ */ React.createElement("div", { style: { ...XS2.linkBox, marginTop: 12 } }, r.notOnBoard, " ", r.notOnBoard === 1 ? "row" : "rows", " in the file for these dates ", r.notOnBoard === 1 ? "is" : "are", " not on Brahmastra yet, so ", r.notOnBoard === 1 ? "it was" : "they were", " left blank. Fetch claims to bring ", r.notOnBoard === 1 ? "it" : "them", " in."), r.unmatched.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { ...XS2.linkBox, marginTop: 12 }, "data-testid": "upd-unmatched" }, r.unmatched.length, " ", r.unmatched.length === 1 ? "claim" : "claims", " on Brahmastra could not be found in the file, so ", r.unmatched.length === 1 ? "its row" : "their rows", " could not be filled. The row may have been deleted, or its patient, DOS or claim number changed.", /* @__PURE__ */ React.createElement("ul", { style: XS2.updList }, r.unmatched.slice(0, 8).map((u, i) => /* @__PURE__ */ React.createElement("li", { key: i }, u.label, u.claimId ? " · #" + u.claimId : "", " · ", shortDay(u.dk))), r.unmatched.length > 8 && /* @__PURE__ */ React.createElement("li", null, "and ", r.unmatched.length - 8, " more")))),
+    /* @__PURE__ */ React.createElement(React.Fragment, null, r.webUrl && /* @__PURE__ */ React.createElement("a", { href: r.webUrl, target: "_blank", rel: "noopener noreferrer", style: { ...S.modalDismiss, textDecoration: "none" }, "data-testid": "upd-open" }, "Open the file"), /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: "#16a34a" }, onClick: onClose, "data-testid": "upd-close" }, "Done"))
+  );
+}
+function LinkSummary({ link }) {
+  if (!link || !(link.closed + link.kept + link.moved)) return null;
+  return /* @__PURE__ */ React.createElement("div", { style: XS2.linkBox, "data-testid": "od-link-summary" }, /* @__PURE__ */ React.createElement("b", null, "Claims AR worked again."), " ", linkSummaryText(link), " Each one carries a note on the board.", /* @__PURE__ */ React.createElement("ul", { style: XS2.updList }, link.items.slice(0, 6).map((it, i) => /* @__PURE__ */ React.createElement("li", { key: i }, it.label, ": ", it.kind === "closed" ? it.dept + " task from " + shortDay(it.from) + " closed" : it.kind === "kept" ? "stays on the " + it.dept + " task from " + shortDay(it.from) : it.dept + " task from " + shortDay(it.from) + " closed, now " + it.to)), link.items.length > 6 && /* @__PURE__ */ React.createElement("li", null, "and ", link.items.length - 6, " more")));
+}
+
+
+function openSummaryOf(list) {
+  const l = list || [];
+  const open = l.filter((d) => d && d.allDone === false).map((d) => d.dateKey).sort();
+  return { n: open.length, oldest: open[0] || "", total: l.length, allKnown: l.length > 0 && l.every((d) => d && typeof d.allDone === "boolean") };
+}
+function worklistDay(dk) {
+  if (!dk) return "";
+  const { y, m, d } = dkParts(dk);
+  return dk + " (" + WEEKDAY3[new Date(y, m - 1, d).getDay()] + ")";
+}
+function downloadDeptWorklist(rows, label, viewDk) {
+  const cols = ["Date of Work", "Brahmastra ID", "Patient", "Claim ID", "Payer", "DOS", "CPT", "Provider", "Balance", "Sub Status", "AR Action", "Why Routed", "Comments", "Work Status (Completed/Pending/Not Completed)", "Reason If Not Completed"];
+  const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const lines = [cols.join(",")];
+  rows.forEach(({ dk, c }) => lines.push([worklistDay(dk || viewDk), c.matchKey || matchKeyOf(c), c.label, c.claimId, c.payer, c.dos, c.cpt, c.provider, c.balance, c.subStatus, c.action, c.why, c.comments, c.workStatus || "Pending", c.incompleteReason || ""].map(esc).join(",")));
+  try {
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${label.replace(/\s+/g, "_")}_worklist.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (e) {
+    toast("Could not generate the CSV here: " + e.message);
+  }
+}
+
+
+
 
 function App() {
   const [ready, setReady] = useState(false);
@@ -4031,9 +4689,11 @@ function Console({
   const [msAcct, setMsAcct] = useState(null); // who is signed in to Microsoft on this device
   const [linkOpen, setLinkOpen] = useState(false);
   const [fx, setFx] = useState(null); // fetch / whole-file dialog state
-  const [odBusy, setOdBusy] = useState(null); // "fetch" | "push" | null
+  const [odBusy, setOdBusy] = useState(null); // "fetch" | "update" | null
+  const [upd, setUpd] = useState(null); // Update production file dialog
   const msOk = msSupported();
   const [view, setView] = useState("day"); // day | range
+  const carry = useCarried({ clientId: client.id, dateKey, active: view === "day", tab, onDates: setDates });
   const viewRef = useRef("day");
   useEffect(() => {
     viewRef.current = view;
@@ -4122,14 +4782,7 @@ function Console({
     return () => clearInterval(t);
   }, []); // live 1s tick for the TAT timers
 
-  async function upsertDate(entry) {
-    const list = (await store.get(K.dates(client.id))) || [];
-    const i = list.findIndex(d => d.dateKey === entry.dateKey);
-    if (i >= 0) list[i] = entry;else list.push(entry);
-    list.sort((a, b) => a.dateKey < b.dateKey ? 1 : -1);
-    await store.set(K.dates(client.id), list);
-    setDates(list);
-  }
+  
 
   // Write mutable work state to ONE department's page only (read-modify-write on
   // that page's key), so a save never touches another department's page.
@@ -4174,145 +4827,126 @@ function Console({
   useEffect(() => {
     if (!batch) return;
     const nb = [];
-    for (const c of batch.claims) {
-      var _DEPTS$c$route;
-      if (!c.task || c.noClock || !((_DEPTS$c$route = DEPTS[c.route]) !== null && _DEPTS$c$route !== void 0 && _DEPTS$c$route.tat) || c.workStatus === "Completed") continue;
+    const consider = (c, dk) => {
+      if (!c.task || c.noClock || !(DEPTS[c.route] && DEPTS[c.route].tat) || c.workStatus === "Completed") return;
       const anchor = c.reissuedAt || c.taskedAt;
-      const key = c.idx + ":" + anchor;
-      if (now > anchor + TWENTY_FOUR_H && !seenBreaches.current.has(key)) nb.push(c);
-    }
-    if (nb.length) {
-      nb.forEach(c => seenBreaches.current.add(c.idx + ":" + (c.reissuedAt || c.taskedAt)));
-      setBreachModal({
-        claims: nb
-      });
-    }
-  }, [now, batch]);
+      const key = (dk || "") + ":" + c.idx + ":" + anchor;
+      if (now > anchor + TWENTY_FOUR_H && !seenBreaches.current.has(key)) {
+        seenBreaches.current.add(key);
+        nb.push(dk ? { ...c, _dk: dk } : c);
+      }
+    };
+    for (const c of batch.claims) consider(c, null);
+    for (const it of carry.items) if (it.task) consider(it.c, it.dk);
+    if (nb.length) setBreachModal(m => ({ claims: [...(m ? m.claims : []), ...nb] }));
+  }, [now, batch, carry.items]);
 
   // step 1: read the file, check the selected date against the file's Date Worked, then either warn or proceed
   async function handleFile(e) {
-    var _e$target$files;
-    const file = (_e$target$files = e.target.files) === null || _e$target$files === void 0 ? void 0 : _e$target$files[0];
-    if (e.target) e.target.value = "";
-    if (!file) return;
-    setBusy(true);
-    setProgress({
-      done: 0,
-      total: 0
+  const file = e.target.files && e.target.files[0];
+  if (e.target) e.target.value = "";
+  if (!file) return;
+  setBusy(true);
+  setProgress({ done: 0, total: 0 });
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames.find((n) => !BR_KEY.test(n)) || wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    const claims = uniqueMatchKeys(rows.map((r, i) => extractClaim(stripOurs(r), i)).filter((c) => c.claimId || c.patient || c.comments));
+    const tally = {};
+    claims.forEach((c) => {
+      const dk = normDateKey(c.dateWorkedRaw);
+      if (dk) tally[dk] = (tally[dk] || 0) + 1;
     });
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(new Uint8Array(buf), {
-        type: "array"
-      });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, {
-        defval: ""
-      });
-      const claims = uniqueMatchKeys(rows.map(extractClaim).filter(c => c.claimId || c.patient || c.comments));
-      // tally the Date Worked column
-      const tally = {};
-      claims.forEach(c => {
-        const dk = normDateKey(c.dateWorkedRaw);
-        if (dk) tally[dk] = (tally[dk] || 0) + 1;
-      });
-      const fileDate = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || "";
-      const matches = fileDate ? tally[uploadDate] || 0 : 0;
-      const mismatch = fileDate && fileDate !== uploadDate;
-      if (mismatch) {
-        setBusy(false);
-        setDateWarn({
-          file: file.name,
-          claims,
-          selectedDate: uploadDate,
-          fileDate,
-          fileCount: tally[fileDate],
-          matchCount: matches,
-          total: claims.length
-        });
-        return;
-      }
-      await runClassifyStore(claims, uploadDate, file.name);
-    } catch (err) {
+    const fileDate = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || "";
+    const matches = fileDate ? tally[uploadDate] || 0 : 0;
+    const mismatch = fileDate && fileDate !== uploadDate;
+    if (mismatch) {
       setBusy(false);
-      toast("Could not read this file. Use the AR production .xlsx with the standard columns.\n\n" + err.message);
+      setDateWarn({ file: file.name, claims, selectedDate: uploadDate, fileDate, fileCount: tally[fileDate], matchCount: matches, total: claims.length });
+      return;
     }
+    await runClassifyStore(claims, uploadDate, file.name);
+  } catch (err) {
+    setBusy(false);
+    toast("Could not read this file. Use the AR production .xlsx with the standard columns.\n\n" + err.message);
   }
+}
 
   // step 2: classify + store the board under the chosen date of work
   async function runClassifyStore(claims, dateForKey, fileName) {
-    setBusy(true);
-    setProgress({
-      done: 0,
-      total: claims.length
-    });
-    try {
-      // AI where reachable, offline router otherwise, so routing and timers always work
-      const results = await classifyAll(claims, (done, total) => setProgress({
-        done,
-        total
-      }));
-      const ts = Date.now();
-      const batchTag = ts.toString(36).slice(-5);
-      const enriched = claims.map(c => {
-        var _DEPTS$r$route;
-        const r = results.get(c) || localClassify(c);
-        return {
-          ...c,
-          route: r.route,
-          task: !!r.task,
-          rej: !!r.rej,
-          evMissing: r.ev_missing || [],
-          why: r.why || "",
-          workStatus: r.task ? "Pending" : null,
-          taskedAt: r.task && (_DEPTS$r$route = DEPTS[r.route]) !== null && _DEPTS$r$route !== void 0 && _DEPTS$r$route.tat ? ts : null,
-          reissuedAt: null,
-          claimNote: "",
-          rejOutcome: null,
-          incompleteReason: null,
-          needsReason: false,
-          ref: `BR-${batchTag}-${c.idx}`,
-          forceTat: false,
-          notCompletedOnce: false,
-          originDept: null
-        };
-      });
-      seenBreaches.current = new Set();
-      const next = {
-        uploadedAt: ts,
-        batchTag,
-        uploadedBy: me.username,
-        fileName,
-        dateKey: dateForKey,
-        claims: enriched,
-        deptNotes: {
-          submission: "",
-          payment_posting: "",
-          ev: "",
-          client_assistance: "",
-          ar: ""
-        }
+  setBusy(true);
+  setProgress({ done: 0, total: claims.length });
+  try {
+    const results = await classifyAll(claims, (done, total) => setProgress({ done, total }));
+    const ts = Date.now();
+    const batchTag = ts.toString(36).slice(-5);
+    const enriched = claims.map((c) => {
+      const r = results.get(c) || localClassify(c);
+      return {
+        ...c,
+        route: r.route,
+        task: !!r.task,
+        rej: !!r.rej,
+        evMissing: r.ev_missing || [],
+        why: r.why || "",
+        workStatus: r.task ? "Pending" : null,
+        taskedAt: r.task && DEPTS[r.route] && DEPTS[r.route].tat ? ts : null,
+        reissuedAt: null,
+        claimNote: "",
+        rejOutcome: null,
+        incompleteReason: null,
+        needsReason: false,
+        ref: `BR-${batchTag}-${c.idx}`,
+        forceTat: false,
+        notCompletedOnce: false,
+        originDept: null
       };
-      // write the base board, then wipe any old department pages for this date so a re-upload starts clean
-      dateKeyRef.current = dateForKey;
-      await store.set(K.batch(client.id, dateForKey), next);
-      for (const dep of OVERLAY_KEYS) await store.set(K.work(client.id, dateForKey, dep), {});
-      await upsertDate({
-        dateKey: dateForKey,
-        uploadedAt: ts,
-        uploadedBy: me.username,
-        fileName,
-        count: enriched.length
-      });
-      setBatch(next);
-      setDateKey(dateForKey);
-      setTab("ar");
-    } catch (err) {
-      toast("Could not read this file. Use the AR production .xlsx with the standard columns.\n\n" + err.message);
-    } finally {
-      setBusy(false);
-    }
+    });
+    const before = await store.get(K.dates(client.id)) || [];
+    const { want, boards } = await loadEarlierOpen(client.id, before, dateForKey);
+    const linker = makeLinker(ts);
+    want.forEach((dk) => {
+      if (boards[dk]) linker.addBoard(dk, boards[dk].claims);
+    });
+    const self = linker.process(dateForKey, enriched, () => true);
+    const finalClaims = enriched.map((c) => self[c.ref] ? { ...c, ...self[c.ref] } : c);
+    seenBreaches.current = /* @__PURE__ */ new Set();
+    const next = { uploadedAt: ts, batchTag, uploadedBy: me.username, fileName, dateKey: dateForKey, claims: finalClaims, deptNotes: { submission: "", payment_posting: "", ev: "", client_assistance: "", ar: "" } };
+    const hadBoard = before.some((d) => d.dateKey === dateForKey);
+    const sameDate = dateForKey === dateKeyRef.current;
+    dateKeyRef.current = dateForKey;
+    await store.set(K.batch(client.id, dateForKey), next);
+    if (hadBoard) for (const dep of OVERLAY_KEYS) await store.set(K.work(client.id, dateForKey, dep), {});
+    for (const dk of Object.keys(linker.patches)) await commitWorkOn(client.id, dk, "ar", linker.patches[dk]);
+    const list = await store.get(K.dates(client.id)) || [];
+    const entry = { dateKey: dateForKey, uploadedAt: ts, uploadedBy: me.username, fileName, count: finalClaims.length, allDone: !finalClaims.some(isOpenItem), stateAt: ts };
+    const i = list.findIndex((d) => d.dateKey === dateForKey);
+    if (i >= 0) list[i] = entry;
+    else list.push(entry);
+    want.forEach((dk) => {
+      if (!boards[dk]) return;
+      const p = linker.patches[dk] || {};
+      const open = boards[dk].claims.some((c) => isOpenItem(p[c.ref] ? { ...c, ...p[c.ref] } : c));
+      const j = list.findIndex((d) => d.dateKey === dk);
+      if (j >= 0 && list[j].allDone !== !open) list[j] = { ...list[j], allDone: !open, stateAt: ts };
+    });
+    const sorted = sortDates(list);
+    await store.set(K.dates(client.id), sorted);
+    setDates(sorted);
+    setBatch(next);
+    setDateKey(dateForKey);
+    setTab("ar");
+    if (sameDate) carry.refresh(true);
+    const s = linker.stats;
+    if (s.closed + s.kept + s.moved) toast(linkSummaryText(s) + " Each one carries a note on the board.");
+  } catch (err) {
+    toast("Could not read this file. Use the AR production .xlsx with the standard columns.\n\n" + err.message);
+  } finally {
+    setBusy(false);
   }
+}
 
   // write a per-claim note/status into ONE department's page
   async function setDeptNote(dept, val) {
@@ -4328,14 +4962,16 @@ function Console({
       }
     } : b);
   }
-  function reissue(idx) {
-    var _batchRef$current;
-    const c = (((_batchRef$current = batchRef.current) === null || _batchRef$current === void 0 ? void 0 : _batchRef$current.claims) || []).find(x => x.idx === idx);
-    if (c) commitWork(c.route, x => x.idx === idx ? {
-      reissuedAt: Date.now()
-    } : null);
-    setBreachModal(null);
-  }
+  function reissueAny(c) {
+  const at = Date.now();
+  if (c._dk) carry.update(c._dk, c.route, { [c.ref]: { reissuedAt: at } });
+  else commitWork(c.route, (x) => x.idx === c.idx ? { reissuedAt: at } : null);
+  setBreachModal((m) => {
+    if (!m) return m;
+    const rest = m.claims.filter((x) => !(x.idx === c.idx && (x._dk || "") === (c._dk || "")));
+    return rest.length ? { claims: rest } : null;
+  });
+}
 
   /* ---------- OneDrive: link, fetch, push ---------- */
   // see who is signed in to Microsoft here, which also gets sign in ready before the first click
@@ -4530,217 +5166,209 @@ function Console({
   // Fold the chosen dates into their boards: new dates get a board, dates already on
   // Brahmastra are merged (department work kept). Base boards and the AR page are the
   // only things written, plus one write to the date index for the whole fetch.
-  async function syncDates({
-    claimsByDate,
-    dates: pickDates,
-    clocks,
-    fileName,
-    source,
-    account,
-    onProgress
-  }) {
-    const now = Date.now();
-    const batchTag = now.toString(36).slice(-5);
-    const index = (await store.get(K.dates(client.id))) || [];
-    const indexed = {};
-    index.forEach(d => {
-      indexed[d.dateKey] = d;
-    });
-    const jobs = [];
-    for (const dk of pickDates) {
-      onProgress({
-        done: jobs.length,
-        total: pickDates.length,
-        label: "Opening " + niceDate(dk)
+  async function syncDates({ claimsByDate, dates: pickDates, clocks, fileName, source, account, onProgress }) {
+  const now = Date.now();
+  const batchTag = now.toString(36).slice(-5);
+  const index = await store.get(K.dates(client.id)) || [];
+  const indexed = {};
+  index.forEach((d) => {
+    indexed[d.dateKey] = d;
+  });
+  const picked = [...pickDates].sort();
+  const pickedSet = new Set(picked);
+  const jobs = [];
+  for (const dk of picked) {
+    onProgress({ done: jobs.length, total: picked.length, label: "Opening " + niceDate(dk) });
+    const incoming = uniqueMatchKeys(claimsByDate[dk].map((c) => ({ ...c, matchKey: matchKeyOf(c) })));
+    let board = null;
+    const base = await store.get(K.batch(client.id, dk));
+    if (base) {
+      const pages = await Promise.all(OVERLAY_KEYS.map((dep) => store.get(K.work(client.id, dk, dep))));
+      const overlays = {};
+      OVERLAY_KEYS.forEach((dep, i) => {
+        overlays[dep] = pages[i] || {};
       });
-      const incoming = uniqueMatchKeys(claimsByDate[dk].map(c => ({
-        ...c,
-        matchKey: matchKeyOf(c)
-      })));
-      let board = null;
-      const base = await store.get(K.batch(client.id, dk));
-      if (base) {
-        const overlays = {};
-        for (const dep of OVERLAY_KEYS) overlays[dep] = (await store.get(K.work(client.id, dk, dep))) || {};
-        board = {
-          base,
-          merged: mergeBoard(base, overlays)
-        };
-      } else if (indexed[dk]) {
-        throw new Error("Could not open the board already saved for " + niceDate(dk) + ", so nothing was changed. Check your connection and fetch again.");
-      }
-      jobs.push({
-        dk,
-        incoming,
-        board,
-        matches: board ? matchIncoming(board.merged.claims, incoming) : null
-      });
+      board = { base, overlays, merged: mergeBoard(base, overlays) };
+    } else if (indexed[dk]) {
+      throw new Error("Could not open the board already saved for " + niceDate(dk) + ", so nothing was changed. Check your connection and fetch again.");
     }
-    const need = [];
-    jobs.forEach(j => {
-      if (!j.board) need.push(...j.incoming);else j.matches.forEach(m => {
+    jobs.push({ dk, incoming, board, matches: board ? matchIncoming(board.merged.claims, incoming) : null });
+  }
+  const need = [];
+  jobs.forEach((j) => {
+    if (!j.board) need.push(...j.incoming);
+    else
+      j.matches.forEach((m) => {
         if (!m.ex || m.changed) need.push(m.c);
       });
-    });
-    const cls = await classifyAll(need, (d, t) => onProgress({
-      done: d,
-      total: t,
-      label: "Reading claims"
-    }));
-    const results = [];
-    for (const j of jobs) {
-      onProgress({
-        done: results.length,
-        total: jobs.length,
-        label: "Saving " + niceDate(j.dk)
-      });
-      const plan = planDateSync({
-        dateKey: j.dk,
-        board: j.board,
-        incoming: j.incoming,
-        cls: c => cls.get(c) || localClassify(c),
-        now,
-        user: me.username,
-        fileName,
-        source,
-        clockOn: !!clocks[j.dk],
-        batchTag
-      });
-      if (plan.dirty) await store.set(K.batch(client.id, j.dk), plan.base);
-      const refs = Object.keys(plan.work);
-      if (refs.length) {
-        const key = K.work(client.id, j.dk, "ar");
-        const ov = (await store.get(key)) || {};
-        refs.forEach(ref => {
-          const entry = {
-            ...(ov[ref] || {})
-          };
-          const times = {
-            ...(entry._t || {})
-          };
-          for (const f in plan.work[ref]) {
-            entry[f] = plan.work[ref][f];
-            times[f] = now;
-          }
-          entry._t = times;
-          entry._u = now;
-          ov[ref] = entry;
-        });
-        await store.set(key, ov);
+  });
+  const cls = await classifyAll(need, (d, t) => onProgress({ done: d, total: t, label: "Reading claims" }));
+  const plans = {};
+  jobs.forEach((j) => {
+    plans[j.dk] = planDateSync({ dateKey: j.dk, board: j.board, incoming: j.incoming, cls: (c) => cls.get(c) || localClassify(c), now, user: me.username, fileName, source, clockOn: !!clocks[j.dk], batchTag });
+  });
+  const after = (j) => {
+    const plan = plans[j.dk];
+    if (!j.board) return plan.base.claims.map((c) => plan.work[c.ref] ? { ...c, ...plan.work[c.ref] } : c);
+    const ar = { ...j.board.overlays.ar || {} };
+    for (const ref in plan.work) {
+      const e = { ...ar[ref] || {} };
+      const t = { ...e._t || {} };
+      for (const f in plan.work[ref]) {
+        e[f] = plan.work[ref][f];
+        t[f] = now;
       }
-      results.push({
-        ...plan.summary,
-        count: plan.base.claims.length
-      });
+      e._t = t;
+      e._u = now;
+      ar[ref] = e;
     }
-    const list = (await store.get(K.dates(client.id))) || [];
-    results.forEach(r => {
-      const i = list.findIndex(d => d.dateKey === r.dateKey);
-      const prev = i >= 0 ? list[i] : null;
-      const entry = {
-        ...(prev || {}),
-        dateKey: r.dateKey,
-        uploadedAt: prev ? prev.uploadedAt : now,
-        uploadedBy: prev ? prev.uploadedBy : me.username,
-        fileName,
-        count: r.count,
-        source,
-        lastSyncAt: now,
-        lastSyncBy: me.username,
-        lastSyncAccount: account || ""
-      };
-      if (i >= 0) list[i] = entry;else list.push(entry);
-    });
-    list.sort((a, b) => a.dateKey < b.dateKey ? 1 : -1);
-    await store.set(K.dates(client.id), list);
-    setDates(list);
-    return results;
+    return mergeBoard(plan.base, { ...j.board.overlays, ar }).claims;
+  };
+  onProgress({ done: 0, total: 0, label: "Checking claims still open from earlier days" });
+  const last = picked[picked.length - 1];
+  const from = addDaysKey(picked[0], -OPEN_WINDOW);
+  const others = index.filter((d) => d && !pickedSet.has(d.dateKey) && d.dateKey >= from && d.dateKey < last && d.allDone !== true).map((d) => d.dateKey).sort();
+  const otherBoards = {};
+  await pool(others, 3, async (dk) => {
+    const b = await loadBoardFor(client.id, dk);
+    if (b) otherBoards[dk] = b;
+  });
+  const linker = makeLinker(now);
+  for (const dk of [...others, ...picked].sort()) {
+    if (!pickedSet.has(dk)) {
+      if (otherBoards[dk]) linker.addBoard(dk, otherBoards[dk].claims);
+      continue;
+    }
+    const j = jobs.find((x) => x.dk === dk);
+    const plan = plans[dk];
+    const again = new Set(plan.readAgain || []);
+    const self = linker.process(dk, after(j), (c) => again.has(c.ref));
+    for (const ref in self) plan.work[ref] = { ...plan.work[ref] || {}, ...self[ref] };
   }
+  Object.keys(linker.patches).forEach((dk) => {
+    if (!pickedSet.has(dk)) return;
+    const plan = plans[dk];
+    for (const ref in linker.patches[dk]) plan.work[ref] = { ...plan.work[ref] || {}, ...linker.patches[dk][ref] };
+  });
+  const results = [];
+  const openState = {};
+  for (const j of jobs) {
+    const plan = plans[j.dk];
+    onProgress({ done: results.length, total: jobs.length, label: "Saving " + niceDate(j.dk) });
+    if (!j.board) {
+      plan.base.claims = plan.base.claims.map((c) => plan.work[c.ref] ? { ...c, ...plan.work[c.ref] } : c);
+      plan.work = {};
+    }
+    if (plan.dirty) await store.set(K.batch(client.id, j.dk), plan.base);
+    const refs = Object.keys(plan.work);
+    if (refs.length) {
+      const key = K.work(client.id, j.dk, "ar");
+      const ov = await store.get(key) || {};
+      refs.forEach((ref) => {
+        const entry = { ...ov[ref] || {} };
+        const times = { ...entry._t || {} };
+        for (const f in plan.work[ref]) {
+          entry[f] = plan.work[ref][f];
+          times[f] = now;
+        }
+        entry._t = times;
+        entry._u = now;
+        ov[ref] = entry;
+      });
+      await store.set(key, ov);
+    }
+    openState[j.dk] = after(j).some(isOpenItem);
+    const kept = linker.stats.items.filter((x) => x.kind === "kept" && x.dk === j.dk).length;
+    results.push({ ...plan.summary, tasked: Math.max(0, plan.summary.tasked - kept), count: plan.base.claims.length });
+  }
+  for (const dk of Object.keys(linker.patches)) {
+    if (!pickedSet.has(dk)) await commitWorkOn(client.id, dk, "ar", linker.patches[dk]);
+  }
+  others.forEach((dk) => {
+    const b = otherBoards[dk];
+    if (!b) return;
+    const p = linker.patches[dk] || {};
+    openState[dk] = b.claims.some((c) => isOpenItem(p[c.ref] ? { ...c, ...p[c.ref] } : c));
+  });
+  const list = await store.get(K.dates(client.id)) || [];
+  results.forEach((r) => {
+    const i = list.findIndex((d) => d.dateKey === r.dateKey);
+    const prev = i >= 0 ? list[i] : null;
+    const entry = { ...prev || {}, dateKey: r.dateKey, uploadedAt: prev ? prev.uploadedAt : now, uploadedBy: prev ? prev.uploadedBy : me.username, fileName, count: r.count, source, lastSyncAt: now, lastSyncBy: me.username, lastSyncAccount: account || "" };
+    if (i >= 0) list[i] = entry;
+    else list.push(entry);
+  });
+  list.forEach((d, i) => {
+    if (!d || !(d.dateKey in openState)) return;
+    const done = !openState[d.dateKey];
+    if (d.allDone !== done) list[i] = { ...d, allDone: done, stateAt: now };
+  });
+  const sorted = sortDates(list);
+  await store.set(K.dates(client.id), sorted);
+  setDates(sorted);
+  return { results, link: linker.stats };
+}
   async function runFetch() {
-    const f = fx;
-    if (!f || f.phase !== "pick") return;
-    const pickDates = f.groups.dates.filter(dk => dk >= f.from && dk <= f.to);
-    if (!pickDates.length || pickDates.length > 31) return;
-    setFx({
-      ...f,
-      phase: "running",
-      progress: {
-        done: 0,
-        total: 0,
-        label: "Starting"
-      }
-    });
-    try {
-      const results = await syncDates({
-        claimsByDate: f.groups.by,
-        dates: pickDates,
-        clocks: f.clocks,
-        fileName: f.fileName,
-        source: f.source,
-        account: f.account,
-        onProgress: p => setFx(x => x ? {
-          ...x,
-          progress: p
-        } : x)
-      });
-      seenBreaches.current = new Set();
-      setFx(x => ({
-        ...(x || f),
-        phase: "done",
-        results
-      }));
-    } catch (e) {
-      setFx(x => ({
-        ...(x || f),
-        phase: "error",
-        error: e && e.message || String(e)
-      }));
-    }
+  const f = fx;
+  if (!f || f.phase !== "pick") return;
+  const pickDates = f.groups.dates.filter((dk) => dk >= f.from && dk <= f.to);
+  if (!pickDates.length || pickDates.length > 31) return;
+  setFx({ ...f, phase: "running", progress: { done: 0, total: 0, label: "Starting" } });
+  try {
+    const out = await syncDates({ claimsByDate: f.groups.by, dates: pickDates, clocks: f.clocks, fileName: f.fileName, source: f.source, account: f.account, onProgress: (p) => setFx((x) => x ? { ...x, progress: p } : x) });
+    seenBreaches.current = /* @__PURE__ */ new Set();
+    setFx((x) => ({ ...x || f, phase: "done", results: out.results, link: out.link }));
+  } catch (e) {
+    setFx((x) => ({ ...x || f, phase: "error", error: e && e.message || String(e) }));
   }
+}
   function openFetchedDate(dk) {
-    setFx(null);
-    if (!dk) return;
-    if (dk === dateKeyRef.current) load();else setDateKey(dk);
+  setFx(null);
+  if (!dk) return;
+  if (dk === dateKeyRef.current) {
+    load();
+    carry.refresh(true);
+  } else setDateKey(dk);
+}
+  async function updateProductionFile() {
+  const link = await freshLink() || ms;
+  if (!link) {
+    setLinkOpen(true);
+    return;
   }
-  async function pushDate() {
-    const link = (await freshLink()) || ms;
-    if (!link || !batchRef.current) return;
-    let acct;
-    try {
-      acct = await ensureMs();
-    } catch (e) {
-      toast(msalMessage(e));
-      return;
-    }
-    setOdBusy("push");
-    try {
-      const dk = dateKeyRef.current;
-      const folderId = await msStatusFolder(link);
-      const built = await dayWorkbookBytes(batchRef.current, client.name, dk, Date.now());
-      const bytes = built.bytes;
-      const fileName = statusFileName(client.name, dk);
-      const item = await msUploadStatus(link, folderId, fileName, bytes);
-      const list = (await store.get(K.dates(client.id))) || [];
-      const i = list.findIndex(d => d.dateKey === dk);
-      if (i >= 0) {
-        list[i] = {
-          ...list[i],
-          pushedAt: Date.now(),
-          pushedBy: me.username,
-          pushAccount: acct && acct.username || "",
-          pushFile: fileName,
-          pushWebUrl: item && item.webUrl || ""
-        };
-        await store.set(K.dates(client.id), list);
-        setDates([...list]);
-      }
-      toast("Pushed to OneDrive: " + fileName);
-    } catch (e) {
-      toast(msalMessage(e));
-    } finally {
-      setOdBusy(null);
-    }
+  if (!/\.xlsx$/i.test(link.name || "")) {
+    setUpd({ phase: "error", error: "Brahmastra can write status only into an .xlsx workbook, and " + (link.name || "this file") + " is a different kind of Excel file. In Excel, save it as an Excel Workbook (.xlsx) in the same OneDrive folder, then click Change link and link the new file." });
+    return;
   }
+  let acct;
+  try {
+    acct = await ensureMs();
+  } catch (e) {
+    toast(msalMessage(e));
+    return;
+  }
+  setOdBusy("update");
+  setUpd({ phase: "running", label: "Opening the production file", done: 0, total: 0 });
+  try {
+    const list = await store.get(K.dates(client.id)) || [];
+    const res = await msWriteProduction({ ms: link, clientId: client.id, clientName: client.name, list, user: me.username, onProgress: (p) => setUpd((u) => u && u.phase === "running" ? { ...u, ...p } : u) });
+    const l2 = await store.get(K.dates(client.id)) || [];
+    l2.forEach((d, i) => {
+      const r = d && res.perDate[d.dateKey];
+      if (!r) return;
+      const done = !r.open;
+      l2[i] = { ...d, fileAt: res.at, fileBy: me.username, fileAccount: acct && acct.username || "", fileWebUrl: res.webUrl || "", stats: r.stats, allDone: done, ...d.allDone !== done ? { stateAt: res.at } : {} };
+    });
+    const sorted = sortDates(l2);
+    await store.set(K.dates(client.id), sorted);
+    setDates(sorted);
+    setUpd({ phase: "done", res });
+  } catch (e) {
+    setUpd({ phase: "error", error: e && e.kind ? e.message : "Something went wrong while writing the production file, so it may be only partly updated. Click Update production file again. (" + (e && e.message || e) + ")" });
+  } finally {
+    setOdBusy(null);
+  }
+}
   const buckets = useMemo(() => {
     const b = {
       submission: [],
@@ -4784,307 +5412,103 @@ function Console({
     const pad = n => String(n).padStart(2, "0");
     return (neg ? "-" : "") + `${h}:${pad(m)}:${pad(sec)}`;
   };
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(TopBar, {
-    me: me,
-    onSignOut: onSignOut,
-    onBack: onBack,
-    clientName: client.name
-  }), view === "day" && batch && !busy && /*#__PURE__*/React.createElement("div", {
-    style: S.heroWrap
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.hero
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.heroTitle
-  }, "Today's claims don't stand a chance, ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "#5fe3b8"
+  const tasked = buckets.submission.length + buckets.payment_posting.length + buckets.ev.length + buckets.client_assistance.length;
+  const moreOf = (k) => {
+    const l = carry.byDept && carry.byDept[k] || [];
+    const n = l.filter((it) => k === "rejection" ? isOpenRej(it.c) : isOpenTask(it.c)).length;
+    return n ? k === "rejection" ? n + " due" : "+" + n + " earlier" : null;
+  };
+  const fileInfo = dates.reduce((m, d) => d && d.fileAt && (!m || d.fileAt > m.at) ? { at: d.fileAt, by: d.fileBy, webUrl: d.fileWebUrl } : m, null);
+  const stat = (k, label, accent) => /* @__PURE__ */ React.createElement(PipeStat, { label, value: buckets[k].length, accent, onClick: () => setTab(k), active: tab === k, more: moreOf(k) });
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(TopBar, { me, onSignOut, onBack, clientName: client.name }), view === "day" && batch && !busy && /* @__PURE__ */ React.createElement("div", { style: S.heroWrap }, /* @__PURE__ */ React.createElement("div", { style: S.hero }, /* @__PURE__ */ React.createElement("div", { style: S.heroTitle }, "Today's claims don't stand a chance, ", /* @__PURE__ */ React.createElement("span", { style: { color: "#5fe3b8" } }, firstNameOf(me.username)), "."), /* @__PURE__ */ React.createElement("div", { style: S.heroSub }, niceDate(dateKey), " · ", batch.claims.length, " claims read · ", tasked, " tasked to departments · ", buckets.rejection.length, " rejection follow ups", carry.openCount > 0 ? " · " + carry.openCount + " still open from earlier days" : ""), /* @__PURE__ */ React.createElement("div", { className: "goldline", style: { position: "absolute", left: 0, right: 0, bottom: 0 } }))), /* @__PURE__ */ React.createElement("div", { style: S.consoleActions }, /* @__PURE__ */ React.createElement(ViewToggle, { view, setView }), view === "day" && /* @__PURE__ */ React.createElement("div", { style: S.dowGroup }, /* @__PURE__ */ React.createElement("span", { style: S.dowLabel }, "Date of work"), dates.length > 0 ? /* @__PURE__ */ React.createElement("select", { style: S.dowSelect, value: dates.some((d) => d.dateKey === dateKey) ? dateKey : "", onChange: (e) => e.target.value && setDateKey(e.target.value), "data-testid": "dow-select" }, !dates.some((d) => d.dateKey === dateKey) && /* @__PURE__ */ React.createElement("option", { value: "" }, niceDate(dateKey), " (no board)"), dates.map((d) => /* @__PURE__ */ React.createElement("option", { key: d.dateKey, value: d.dateKey }, niceDate(d.dateKey), " · ", d.count, " claims", d.allDone === false ? " · open" : ""))) : /* @__PURE__ */ React.createElement("span", { style: S.dowNone }, "No dates uploaded yet")), view === "day" && batch && /* @__PURE__ */ React.createElement("div", { style: S.fileMeta }, batch.fileName, " · ", batch.source === "onedrive" ? "from OneDrive, first fetched by" : batch.source === "file" ? "whole file brought in by" : "uploaded by", " ", batch.uploadedBy), view === "day" && batch && /* @__PURE__ */ React.createElement("button", { style: S.dayXlsBtn, "data-testid": "day-export", onClick: () => exportDayWorkbook(batch, client.name, dateKey, Date.now()), title: "One Excel file with the whole day: summary, every claim and its status, and the rejection follow-up list" }, "⤓ Download full day (Excel)"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), view === "day" && /* @__PURE__ */ React.createElement("div", { style: S.uploadGroup }, /* @__PURE__ */ React.createElement("label", { style: S.uploadDateLabel }, "Upload for", /* @__PURE__ */ React.createElement("input", { type: "date", style: S.dateInput, value: uploadDate, onChange: (e) => setUploadDate(e.target.value || todayKey()) })), /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.uploadBtn, onClick: () => fileRef.current && fileRef.current.click(), disabled: busy }, busy ? "Reading…" : "Upload AR file")), /* @__PURE__ */ React.createElement("input", { ref: fileRef, type: "file", accept: ".xlsx,.xls", onChange: handleFile, style: { display: "none" } }), /* @__PURE__ */ React.createElement("input", { ref: wholeRef, type: "file", accept: ".xlsx,.xls,.xlsm", onChange: onWholeFile, style: { display: "none" }, "data-testid": "od-whole-input" })), view === "day" && /* @__PURE__ */ React.createElement(
+    OneDriveStrip,
+    {
+      ms,
+      msOk,
+      acct: msAcct,
+      me,
+      busy: odBusy || (fx && (fx.phase === "loading" || fx.phase === "running") ? "fetch" : null),
+      entry: dates.find((d) => d.dateKey === dateKey) || null,
+      hasDates: dates.length > 0,
+      fileInfo,
+      onLink: () => setLinkOpen(true),
+      onSignIn: msSignIn,
+      onSwitch: msSwitch,
+      onFetch: startFetch,
+      onUpdate: updateProductionFile,
+      onUploadWhole: () => wholeRef.current && wholeRef.current.click()
     }
-  }, firstNameOf(me.username)), "."), /*#__PURE__*/React.createElement("div", {
-    style: S.heroSub
-  }, niceDate(dateKey), " \xB7 ", batch.claims.length, " claims read \xB7 ", buckets.submission.length + buckets.payment_posting.length + buckets.ev.length + buckets.client_assistance.length, " tasked to departments \xB7 ", buckets.rejection.length, " rejection follow ups"), /*#__PURE__*/React.createElement("div", {
-    className: "goldline",
-    style: {
-      position: "absolute",
-      left: 0,
-      right: 0,
-      bottom: 0
-    }
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: S.consoleActions
-  }, React.createElement(ViewToggle, {
-    view: view,
-    setView: setView
-  }), view === "day" && /*#__PURE__*/React.createElement("div", {
-    style: S.dowGroup
-  }, /*#__PURE__*/React.createElement("span", {
-    style: S.dowLabel
-  }, "Date of work"), dates.length > 0 ? /*#__PURE__*/React.createElement("select", {
-    style: S.dowSelect,
-    value: dates.some(d => d.dateKey === dateKey) ? dateKey : "",
-    onChange: e => e.target.value && setDateKey(e.target.value)
-  }, !dates.some(d => d.dateKey === dateKey) && /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, niceDate(dateKey), " (no board)"), dates.map(d => /*#__PURE__*/React.createElement("option", {
-    key: d.dateKey,
-    value: d.dateKey
-  }, niceDate(d.dateKey), " \xB7 ", d.count, " claims"))) : /*#__PURE__*/React.createElement("span", {
-    style: S.dowNone
-  }, "No dates uploaded yet")), view === "day" && batch && batch !== undefined && /*#__PURE__*/React.createElement("div", {
-    style: S.fileMeta
-  }, batch.fileName, " \xB7 ", batch.source === "onedrive" ? "from OneDrive, first fetched by" : batch.source === "file" ? "whole file brought in by" : "uploaded by", " ", batch.uploadedBy), view === "day" && batch && /*#__PURE__*/React.createElement("button", {
-    style: S.dayXlsBtn,
-    "data-testid": "day-export",
-    onClick: () => exportDayWorkbook(batch, client.name, dateKey, Date.now()),
-    title: "One Excel file with the whole day: summary, every claim and its status, and the rejection follow-up list"
-  }, "\u2913 Download full day (Excel)"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }), view === "day" && /*#__PURE__*/React.createElement("div", {
-    style: S.uploadGroup
-  }, /*#__PURE__*/React.createElement("label", {
-    style: S.uploadDateLabel
-  }, "Upload for", /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    style: S.dateInput,
-    value: uploadDate,
-    onChange: e => setUploadDate(e.target.value || todayKey())
-  })), /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.uploadBtn,
-    onClick: () => {
-      var _fileRef$current;
-      return (_fileRef$current = fileRef.current) === null || _fileRef$current === void 0 ? void 0 : _fileRef$current.click();
-    },
-    disabled: busy
-  }, busy ? "Reading…" : "Upload AR file")), /*#__PURE__*/React.createElement("input", {
-    ref: fileRef,
-    type: "file",
-    accept: ".xlsx,.xls",
-    onChange: handleFile,
-    style: {
-      display: "none"
-    }
-  }), /*#__PURE__*/React.createElement("input", {
-    ref: wholeRef,
-    type: "file",
-    accept: ".xlsx,.xls,.xlsm",
-    onChange: onWholeFile,
-    style: {
-      display: "none"
-    },
-    "data-testid": "od-whole-input"
-  })), view === "day" && /*#__PURE__*/React.createElement(OneDriveStrip, {
-    ms: ms,
-    msOk: msOk,
-    acct: msAcct,
-    me: me,
-    busy: odBusy || (fx && (fx.phase === "loading" || fx.phase === "running") ? "fetch" : null),
-    entry: dates.find(d => d.dateKey === dateKey) || null,
-    hasBoard: !!batch,
-    onLink: () => setLinkOpen(true),
-    onSignIn: msSignIn,
-    onSwitch: msSwitch,
-    onFetch: startFetch,
-    onPush: pushDate,
-    onUploadWhole: () => {
-      var _wholeRef$current;
-      return (_wholeRef$current = wholeRef.current) === null || _wholeRef$current === void 0 ? void 0 : _wholeRef$current.click();
-    }
-  }), view === "day" && batch && /*#__PURE__*/React.createElement("div", {
-    style: S.pipeline
-  }, /*#__PURE__*/React.createElement(PipeStat, {
-    label: "AR inventory",
-    value: buckets.arAll.length,
-    accent: "#334155",
-    onClick: () => setTab("ar"),
-    active: tab === "ar"
-  }), /*#__PURE__*/React.createElement(PipeArrow, null), /*#__PURE__*/React.createElement(PipeStat, {
-    label: "Submission",
-    value: buckets.submission.length,
-    accent: DEPTS.submission.accent,
-    onClick: () => setTab("submission"),
-    active: tab === "submission"
-  }), /*#__PURE__*/React.createElement(PipeStat, {
-    label: "Payment Posting",
-    value: buckets.payment_posting.length,
-    accent: DEPTS.payment_posting.accent,
-    onClick: () => setTab("payment_posting"),
-    active: tab === "payment_posting"
-  }), /*#__PURE__*/React.createElement(PipeStat, {
-    label: "EV review",
-    value: buckets.ev.length,
-    accent: DEPTS.ev.accent,
-    onClick: () => setTab("ev"),
-    active: tab === "ev"
-  }), /*#__PURE__*/React.createElement(PipeStat, {
-    label: "Client Assistance",
-    value: buckets.client_assistance.length,
-    accent: DEPTS.client_assistance.accent,
-    onClick: () => setTab("client_assistance"),
-    active: tab === "client_assistance"
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }), /*#__PURE__*/React.createElement(PipeStat, {
-    label: "Rejection follow-up",
-    value: buckets.rejection.length,
-    accent: "#dc2626",
-    onClick: () => setTab("rejection"),
-    active: tab === "rejection",
-    tag: "next day"
-  })), view === "range" && React.createElement(RangeView, {
-    client: client,
-    dates: dates,
-    onOpenDate: dk => {
-      setView("day");
-      setTab("ar");
-      if (dk === dateKeyRef.current) load();else setDateKey(dk);
-    }
-  }), view === "day" && /*#__PURE__*/React.createElement("main", {
-    style: S.main
-  }, batch === undefined && /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "Loading this client's board\u2026"), batch === null && !busy && /*#__PURE__*/React.createElement(EmptyState, {
-    onUpload: () => {
-      var _fileRef$current2;
-      return (_fileRef$current2 = fileRef.current) === null || _fileRef$current2 === void 0 ? void 0 : _fileRef$current2.click();
-    },
-    clientName: client.name,
-    dateLabel: niceDate(dateKey),
-    hasDates: dates.length > 0,
-    onFetch: ms && msOk ? startFetch : null
-  }), busy && /*#__PURE__*/React.createElement(Busy, {
-    progress: progress
-  }), batch && !busy && /*#__PURE__*/React.createElement(React.Fragment, null, tab === "ar" && /*#__PURE__*/React.createElement(ARInventory, {
-    batch: batch,
-    buckets: buckets,
-    onNote: v => setDeptNote("ar", v)
-  }), (tab === "submission" || tab === "payment_posting" || tab === "ev" || tab === "client_assistance") && /*#__PURE__*/React.createElement(DeptSection, {
-    me: me,
-    dept: tab,
-    claims: buckets[tab],
-    note: batch.deptNotes[tab],
-    onNote: v => setDeptNote(tab, v),
-    updateClaim: updateClaimIn(tab),
-    bulkUpdate: mapper => commitWork(tab, mapper),
-    tatState: tatState,
-    fmtRemain: fmtRemain
-  }), tab === "rejection" && /*#__PURE__*/React.createElement(RejectionSection, {
-    claims: buckets.rejection,
-    generatedAt: batch.uploadedAt,
-    updateClaim: updateClaimIn("rejection")
-  }))), breachModal && /*#__PURE__*/React.createElement("div", {
-    style: S.modalOverlay,
-    onClick: () => setBreachModal(null)
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modal,
-    onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modalHead
-  }, /*#__PURE__*/React.createElement("span", {
-    style: S.modalPulse
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: S.modalTitle
-  }, "24-hour TAT missed"), /*#__PURE__*/React.createElement("div", {
-    style: S.modalSub
-  }, "These claims passed their window and need to move now."))), /*#__PURE__*/React.createElement("div", {
-    style: S.modalList
-  }, breachModal.claims.map(c => /*#__PURE__*/React.createElement("div", {
-    key: c.idx,
-    style: S.modalRow
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 600
-    }
-  }, c.label), /*#__PURE__*/React.createElement("div", {
-    style: S.modalRowSub
-  }, DEPTS[c.route].label, " \xB7 ", c.payer || "—")), /*#__PURE__*/React.createElement("button", {
-    style: S.reissueBtn,
-    onClick: () => reissue(c.idx)
-  }, "Reissue 24h")))), /*#__PURE__*/React.createElement("div", {
-    style: S.modalFoot
-  }, /*#__PURE__*/React.createElement("button", {
-    style: S.modalDismiss,
-    onClick: () => setBreachModal(null)
-  }, "Review later"), /*#__PURE__*/React.createElement("button", {
-    style: S.modalPrimary,
-    onClick: async () => {
-      for (const c of breachModal.claims) {
-        await commitWork(c.route, x => x.idx === c.idx ? {
-          reissuedAt: Date.now()
-        } : null);
+  ), view === "day" && batch && /* @__PURE__ */ React.createElement("div", { style: S.pipeline }, /* @__PURE__ */ React.createElement(PipeStat, { label: "AR inventory", value: buckets.arAll.length, accent: "#334155", onClick: () => setTab("ar"), active: tab === "ar" }), /* @__PURE__ */ React.createElement(PipeArrow, null), stat("submission", "Submission", DEPTS.submission.accent), stat("payment_posting", "Payment Posting", DEPTS.payment_posting.accent), stat("ev", "EV review", DEPTS.ev.accent), stat("client_assistance", "Client Assistance", DEPTS.client_assistance.accent), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement(PipeStat, { label: "Rejection follow-up", value: buckets.rejection.length, accent: "#dc2626", onClick: () => setTab("rejection"), active: tab === "rejection", tag: "next day", more: moreOf("rejection") })), view === "range" && /* @__PURE__ */ React.createElement(
+    RangeView,
+    {
+      client,
+      dates,
+      onOpenDate: (dk) => {
+        setView("day");
+        setTab("ar");
+        if (dk === dateKeyRef.current) load();
+        else setDateKey(dk);
       }
-      setBreachModal(null);
     }
-  }, "Reissue all \xB7 fresh 24h")))), dateWarn && /*#__PURE__*/React.createElement("div", {
-    style: S.modalOverlay,
-    onClick: () => setDateWarn(null)
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modal,
-    onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalHead,
-      background: "#fff7ed",
-      borderBottom: "1px solid #fed7aa"
+  ), view === "day" && /* @__PURE__ */ React.createElement("main", { style: S.main }, batch === void 0 && /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "Loading this client's board…"), batch === null && !busy && /* @__PURE__ */ React.createElement(EmptyState, { onUpload: () => fileRef.current && fileRef.current.click(), clientName: client.name, dateLabel: niceDate(dateKey), hasDates: dates.length > 0, onFetch: ms && msOk ? startFetch : null }), busy && /* @__PURE__ */ React.createElement(Busy, { progress }), batch && !busy && /* @__PURE__ */ React.createElement(React.Fragment, null, tab === "ar" && /* @__PURE__ */ React.createElement(ARInventory, { batch, buckets, onNote: (v) => setDeptNote("ar", v) }), (tab === "submission" || tab === "payment_posting" || tab === "ev" || tab === "client_assistance") && /* @__PURE__ */ React.createElement(
+    DeptSection,
+    {
+      key: tab,
+      me,
+      dept: tab,
+      viewDk: dateKey,
+      claims: buckets[tab],
+      carried: carry.byDept[tab],
+      note: batch.deptNotes[tab],
+      onNote: (v) => setDeptNote(tab, v),
+      updateClaim: updateClaimIn(tab),
+      bulkUpdate: (mapper) => commitWork(tab, mapper),
+      onCarried: (dk, p) => carry.update(dk, tab, p),
+      tatState,
+      fmtRemain
     }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.modalPulse,
-      background: "#d97706",
-      animation: "none"
-    }
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalTitle,
-      color: "#b45309"
-    }
-  }, "Date of work doesn't match the file"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalSub,
-      color: "#b45309"
-    }
-  }, "Check the date before this board is saved."))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: "16px 20px",
-      fontSize: 13.5,
-      color: "#334155",
-      lineHeight: 1.6
-    }
-  }, "You selected ", /*#__PURE__*/React.createElement("b", null, niceDate(dateWarn.selectedDate)), ", but the file's Date Worked column is mostly ", /*#__PURE__*/React.createElement("b", null, niceDate(dateWarn.fileDate)), " (", dateWarn.fileCount, " of ", dateWarn.total, " claims).", /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8,
-      color: "#64748b"
-    }
-  }, "Save this board under the date you selected, or cancel and pick the right one.")), /*#__PURE__*/React.createElement("div", {
-    style: S.modalFoot
-  }, /*#__PURE__*/React.createElement("button", {
-    style: S.modalDismiss,
-    onClick: () => setDateWarn(null)
-  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.modalPrimary,
-      background: "#d97706"
+  ), tab === "rejection" && /* @__PURE__ */ React.createElement(RejectionSection, { claims: buckets.rejection, carried: carry.byDept.rejection, generatedAt: batch.uploadedAt, updateClaim: updateClaimIn("rejection"), onCarried: (dk, p) => carry.update(dk, "rejection", p) }))), breachModal && /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: () => setBreachModal(null) }, /* @__PURE__ */ React.createElement("div", { style: S.modal, onClick: (e) => e.stopPropagation(), "data-testid": "breach-modal" }, /* @__PURE__ */ React.createElement("div", { style: S.modalHead }, /* @__PURE__ */ React.createElement("span", { style: S.modalPulse }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: S.modalTitle }, "24-hour TAT missed"), /* @__PURE__ */ React.createElement("div", { style: S.modalSub }, "These claims passed their window and need to move now."))), /* @__PURE__ */ React.createElement("div", { style: S.modalList }, breachModal.claims.map((c) => /* @__PURE__ */ React.createElement("div", { key: (c._dk || "") + ":" + c.idx, style: S.modalRow }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600 } }, c.label), /* @__PURE__ */ React.createElement("div", { style: S.modalRowSub }, DEPTS[c.route].label, " · ", c.payer || "—", c._dk ? " · from " + dayLabel(c._dk) : "")), /* @__PURE__ */ React.createElement("button", { style: S.reissueBtn, onClick: () => reissueAny(c) }, "Reissue 24h")))), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: () => setBreachModal(null) }, "Review later"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      style: S.modalPrimary,
+      onClick: async () => {
+        for (const c of breachModal.claims) {
+          if (c._dk) await carry.update(c._dk, c.route, { [c.ref]: { reissuedAt: Date.now() } });
+          else await commitWork(c.route, (x) => x.idx === c.idx ? { reissuedAt: Date.now() } : null);
+        }
+        setBreachModal(null);
+      }
     },
-    onClick: () => {
-      const w = dateWarn;
-      setDateWarn(null);
-      runClassifyStore(w.claims, w.selectedDate, w.file);
+    "Reissue all · fresh 24h"
+  )))), dateWarn && /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: () => setDateWarn(null) }, /* @__PURE__ */ React.createElement("div", { style: S.modal, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#fff7ed", borderBottom: "1px solid #fed7aa" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: "#d97706", animation: "none" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: "#b45309" } }, "Date of work doesn't match the file"), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: "#b45309" } }, "Check the date before this board is saved."))), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px", fontSize: 13.5, color: "#334155", lineHeight: 1.6 } }, "You selected ", /* @__PURE__ */ React.createElement("b", null, niceDate(dateWarn.selectedDate)), ", but the file's Date Worked column is mostly ", /* @__PURE__ */ React.createElement("b", null, niceDate(dateWarn.fileDate)), " (", dateWarn.fileCount, " of ", dateWarn.total, " claims).", /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8, color: "#64748b" } }, "Save this board under the date you selected, or cancel and pick the right one.")), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, /* @__PURE__ */ React.createElement("button", { style: S.modalDismiss, onClick: () => setDateWarn(null) }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      style: { ...S.modalPrimary, background: "#d97706" },
+      onClick: () => {
+        const w = dateWarn;
+        setDateWarn(null);
+        runClassifyStore(w.claims, w.selectedDate, w.file);
+      }
+    },
+    "Use ",
+    niceDate(dateWarn.selectedDate)
+  )))), linkOpen && /* @__PURE__ */ React.createElement(LinkDialog, { clientName: client.name, onClose: () => setLinkOpen(false), onResolve: resolveLink, onSave: saveLink }), fx && /* @__PURE__ */ React.createElement(
+    FetchDialog,
+    {
+      st: fx,
+      setSt: setFx,
+      onRun: runFetch,
+      onClose: () => {
+        const wasDone = fx && fx.phase === "done";
+        setFx(null);
+        if (wasDone) {
+          load();
+          carry.refresh(true);
+        }
+      },
+      onOpenDate: openFetchedDate
     }
-  }, "Use ", niceDate(dateWarn.selectedDate))))), linkOpen && /*#__PURE__*/React.createElement(LinkDialog, {
-    clientName: client.name,
-    onClose: () => setLinkOpen(false),
-    onResolve: resolveLink,
-    onSave: saveLink
-  }), fx && /*#__PURE__*/React.createElement(FetchDialog, {
-    st: fx,
-    setSt: setFx,
-    onRun: runFetch,
-    onClose: () => setFx(null),
-    onOpenDate: openFetchedDate
-  }));
+  ), upd && /* @__PURE__ */ React.createElement(UpdateDialog, { st: upd, onClose: () => setUpd(null) }));
 }
 
 /* ---------- OneDrive bar: link the production file once, then fetch and push ---------- */
@@ -5103,98 +5527,11 @@ function CloudIcon() {
     fill: "#e0f2fe"
   }));
 }
-function OneDriveStrip({
-  ms,
-  msOk,
-  acct,
-  me,
-  entry,
-  busy,
-  hasBoard,
-  onLink,
-  onSignIn,
-  onSwitch,
-  onFetch,
-  onPush,
-  onUploadWhole
-}) {
+function OneDriveStrip({ ms, msOk, acct, me, entry, busy, hasDates, fileInfo, onLink, onSignIn, onSwitch, onFetch, onUpdate, onUploadWhole }) {
   const mismatch = acct && acct.username && me && String(acct.username).toLowerCase() !== String(me.username).toLowerCase();
-  const who = email => /*#__PURE__*/React.createElement("span", {
-    title: email
-  }, firstNameOf(email || ""));
-  return /*#__PURE__*/React.createElement("div", {
-    style: S.odOuter
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.odWrap,
-    "data-testid": "od-strip"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.odIcon
-  }, /*#__PURE__*/React.createElement(CloudIcon, null)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, ms ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: S.odTitle,
-    "data-testid": "od-file"
-  }, ms.name), /*#__PURE__*/React.createElement("div", {
-    style: S.odMeta
-  }, "OneDrive", ms.folderPath ? " · " + ms.folderPath : "", " \xB7 linked by ", who(ms.linkedBy)), entry && (entry.lastSyncAt || entry.pushedAt) ? /*#__PURE__*/React.createElement("div", {
-    style: S.odMeta,
-    "data-testid": "od-activity"
-  }, "This date:", entry.lastSyncAt ? /*#__PURE__*/React.createElement(React.Fragment, null, " fetched ", timeAgo(entry.lastSyncAt), " by ", who(entry.lastSyncBy)) : null, entry.pushedAt ? /*#__PURE__*/React.createElement(React.Fragment, null, entry.lastSyncAt ? " ·" : "", " status pushed ", timeAgo(entry.pushedAt), " by ", who(entry.pushedBy), entry.pushWebUrl ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("a", {
-    href: entry.pushWebUrl,
-    target: "_blank",
-    rel: "noopener noreferrer",
-    style: S.odLink
-  }, "open status file")) : null) : null) : null) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: S.odTitle
-  }, "OneDrive production file"), /*#__PURE__*/React.createElement("div", {
-    style: S.odMeta
-  }, "Not linked yet. Link this client's production file once, and everyone on the client can fetch claims from it and push status back.")), msOk ? /*#__PURE__*/React.createElement("div", {
-    style: S.odAcct,
-    "data-testid": "od-acct"
-  }, acct ? /*#__PURE__*/React.createElement(React.Fragment, null, "Microsoft: ", /*#__PURE__*/React.createElement("b", null, acct.username), " ", /*#__PURE__*/React.createElement("button", {
-    style: S.odTextBtn,
-    onClick: onSwitch
-  }, "Switch account")) : /*#__PURE__*/React.createElement(React.Fragment, null, "Not signed in to Microsoft. ", /*#__PURE__*/React.createElement("button", {
-    style: S.odTextBtn,
-    onClick: onSignIn,
-    "data-testid": "od-signin"
-  }, "Sign in")), mismatch && /*#__PURE__*/React.createElement("div", {
-    style: S.odWarn
-  }, "That is not your Brahmastra login (", me.username, "), so Fetch and Push will be done as ", acct.username, ".")) : /*#__PURE__*/React.createElement("div", {
-    style: S.odAcct
-  }, "Fetch and Push need Microsoft sign in, which works on the team site. Here, Upload whole production file runs the same steps from a file on your computer.")), /*#__PURE__*/React.createElement("div", {
-    style: S.odBtns
-  }, ms ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.odPrimary,
-    disabled: !!busy || !msOk,
-    onClick: onFetch,
-    "data-testid": "od-fetch"
-  }, busy === "fetch" ? "Fetching…" : "⤓ Fetch claims"), /*#__PURE__*/React.createElement("button", {
-    style: S.odSecondary,
-    disabled: !!busy || !msOk || !hasBoard,
-    onClick: onPush,
-    "data-testid": "od-push",
-    title: hasBoard ? "Save this date's status file into the Brahmastra status folder next to the production file" : "Pick a date that has a board first"
-  }, busy === "push" ? "Pushing…" : "⤒ Push this date"), /*#__PURE__*/React.createElement("button", {
-    style: S.odGhost,
-    onClick: onLink,
-    disabled: !!busy || !msOk
-  }, "Change link")) : /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.odPrimary,
-    onClick: onLink,
-    disabled: !!busy || !msOk,
-    "data-testid": "od-link"
-  }, "Link production file"), /*#__PURE__*/React.createElement("button", {
-    style: S.odGhost,
-    onClick: onUploadWhole,
-    disabled: !!busy,
-    "data-testid": "od-upload-whole"
-  }, "Upload whole production file"))));
+  const who = (email) => /* @__PURE__ */ React.createElement("span", { title: email }, firstNameOf(email || ""));
+  const fetched = entry && entry.lastSyncAt;
+  return /* @__PURE__ */ React.createElement("div", { style: S.odOuter }, /* @__PURE__ */ React.createElement("div", { style: S.odWrap, "data-testid": "od-strip" }, /* @__PURE__ */ React.createElement("div", { style: S.odIcon }, /* @__PURE__ */ React.createElement(CloudIcon, null)), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, ms ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.odTitle, "data-testid": "od-file" }, ms.name), /* @__PURE__ */ React.createElement("div", { style: S.odMeta }, "OneDrive", ms.folderPath ? " · " + ms.folderPath : "", " · linked by ", who(ms.linkedBy)), fetched || fileInfo ? /* @__PURE__ */ React.createElement("div", { style: S.odMeta, "data-testid": "od-activity" }, fetched ? /* @__PURE__ */ React.createElement(React.Fragment, null, "This date: fetched ", timeAgo(entry.lastSyncAt), " by ", who(entry.lastSyncBy)) : null, fileInfo ? /* @__PURE__ */ React.createElement(React.Fragment, null, fetched ? " · " : "", "Status written into the file ", timeAgo(fileInfo.at), " by ", who(fileInfo.by), fileInfo.webUrl ? /* @__PURE__ */ React.createElement(React.Fragment, null, " · ", /* @__PURE__ */ React.createElement("a", { href: fileInfo.webUrl, target: "_blank", rel: "noopener noreferrer", style: S.odLink }, "open the file")) : null) : null) : null) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.odTitle }, "OneDrive production file"), /* @__PURE__ */ React.createElement("div", { style: S.odMeta }, "Not linked yet. Link this client's production file once, and everyone on the client can fetch claims from it and write each claim's status back into it.")), msOk ? /* @__PURE__ */ React.createElement("div", { style: S.odAcct, "data-testid": "od-acct" }, acct ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Microsoft: ", /* @__PURE__ */ React.createElement("b", null, acct.username), " ", /* @__PURE__ */ React.createElement("button", { style: S.odTextBtn, onClick: onSwitch }, "Switch account")) : /* @__PURE__ */ React.createElement(React.Fragment, null, "Not signed in to Microsoft. ", /* @__PURE__ */ React.createElement("button", { style: S.odTextBtn, onClick: onSignIn, "data-testid": "od-signin" }, "Sign in")), mismatch && /* @__PURE__ */ React.createElement("div", { style: S.odWarn }, "That is not your Brahmastra login (", me.username, "), so Fetch and Update will be done as ", acct.username, ".")) : /* @__PURE__ */ React.createElement("div", { style: S.odAcct }, "Fetch and Update need Microsoft sign in, which works on the team site. Here, Upload whole production file runs the fetch steps from a file on your computer.")), /* @__PURE__ */ React.createElement("div", { style: S.odBtns }, ms ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.odPrimary, disabled: !!busy || !msOk, onClick: onFetch, "data-testid": "od-fetch" }, busy === "fetch" ? "Fetching…" : "⤓ Fetch claims"), /* @__PURE__ */ React.createElement("button", { style: S.odSecondary, disabled: !!busy || !msOk || !hasDates, onClick: onUpdate, "data-testid": "od-update", title: hasDates ? "Write each claim's department and status into Brahmastra's own columns in the production file, and refresh the Brahmastra summary tab" : "Fetch claims first" }, busy === "update" ? "Updating…" : "⤒ Update production file"), /* @__PURE__ */ React.createElement("button", { style: S.odGhost, onClick: onLink, disabled: !!busy || !msOk }, "Change link")) : /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.odPrimary, onClick: onLink, disabled: !!busy || !msOk, "data-testid": "od-link" }, "Link production file"), /* @__PURE__ */ React.createElement("button", { style: S.odGhost, onClick: onUploadWhole, disabled: !!busy, "data-testid": "od-upload-whole" }, "Upload whole production file"))));
 }
 function LinkDialog({
   clientName,
@@ -5257,7 +5594,7 @@ function LinkDialog({
     style: S.odSteps
   }, /*#__PURE__*/React.createElement("li", null, "In OneDrive, open ", /*#__PURE__*/React.createElement("b", null, "Brahmastra"), ", then ", /*#__PURE__*/React.createElement("b", null, clientName), "."), /*#__PURE__*/React.createElement("li", null, "Click the three dots next to the production file and choose ", /*#__PURE__*/React.createElement("b", null, "Copy link"), "."), /*#__PURE__*/React.createElement("li", null, "Paste it below and click ", /*#__PURE__*/React.createElement("b", null, "Check link"), ".")), /*#__PURE__*/React.createElement("input", {
     style: S.input,
-    placeholder: "https://purviewservices-my.sharepoint.com/...",
+    placeholder: "Paste the OneDrive link to the production file here",
     value: link,
     autoFocus: true,
     onChange: e => {
@@ -5289,7 +5626,7 @@ function LinkDialog({
       ...S.odMeta,
       marginTop: 6
     }
-  }, "Brahmastra only reads this file and never changes it. Status files go into a \"", STATUS_FOLDER, "\" folder next to it."))), /*#__PURE__*/React.createElement("div", {
+  }, "Brahmastra reads the claims from this file, and writes each claim's department and status into six columns of its own at the end of each sheet, plus a Brahmastra summary tab. Your team's own columns are never changed."))), /*#__PURE__*/React.createElement("div", {
     style: S.modalFoot
   }, /*#__PURE__*/React.createElement("button", {
     style: S.modalDismiss,
@@ -5444,7 +5781,7 @@ function FetchDialog({
         color: "#334155",
         marginBottom: 10
       }
-    }, rows.length, " date", rows.length === 1 ? "" : "s", " saved. Department work already on these boards was kept."), /*#__PURE__*/React.createElement("div", {
+    }, rows.length, " date", rows.length === 1 ? "" : "s", " saved. Department work already on these boards was kept."), React.createElement(LinkSummary, { link: st.link }), /*#__PURE__*/React.createElement("div", {
       style: {
         overflowX: "auto"
       }
@@ -5669,7 +6006,7 @@ function FetchDialog({
       marginTop: 10,
       lineHeight: 1.55
     }
-  }, "Dates already on Brahmastra are merged, never replaced: department work stays. A claim whose action or comments changed is closed if the file now says the work is done, moved if it is now another department's work and nobody has finished it, otherwise flagged for the lead."), tooMany && /*#__PURE__*/React.createElement("div", {
+  }, "Dates already on Brahmastra are merged, never replaced: department work stays. A claim whose action or comments changed is closed if the file now says the work is done, moved if it is now another department's work and nobody has finished it, otherwise flagged for the lead. A claim AR worked again while it was still open from an earlier day is closed, kept on that earlier task, or moved, by what the new note says."), tooMany && /*#__PURE__*/React.createElement("div", {
     style: {
       ...S.errBox,
       marginTop: 10,
@@ -5695,37 +6032,8 @@ function FetchDialog({
 }
 
 /* ---------- shared console sub-components ---------- */
-function PipeStat({
-  label,
-  value,
-  accent,
-  onClick,
-  active,
-  tag
-}) {
-  return /*#__PURE__*/React.createElement("button", {
-    className: "navpill",
-    onClick: onClick,
-    style: {
-      ...S.pipeStat,
-      ...(active ? {
-        background: "#fff",
-        borderColor: accent,
-        boxShadow: "0 2px 8px rgba(15,42,71,.08)"
-      } : {})
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.pipeDot,
-      background: accent
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: S.pipeVal
-  }, value), /*#__PURE__*/React.createElement("span", {
-    style: S.pipeLabel
-  }, label), tag && /*#__PURE__*/React.createElement("span", {
-    style: S.pipeTag
-  }, tag));
+function PipeStat({ label, value, accent, onClick, active, tag, more }) {
+  return /* @__PURE__ */ React.createElement("button", { className: "navpill", onClick, style: { ...S.pipeStat, ...active ? { background: "#fff", borderColor: accent, boxShadow: "0 2px 8px rgba(15,42,71,.08)" } : {} } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.pipeDot, background: accent } }), /* @__PURE__ */ React.createElement("span", { style: S.pipeVal }, value), /* @__PURE__ */ React.createElement("span", { style: S.pipeLabel }, label), tag && !more && /* @__PURE__ */ React.createElement("span", { style: S.pipeTag }, tag), more && /* @__PURE__ */ React.createElement("span", { style: XS2.more, "data-testid": "pipe-more" }, more));
 }
 const PipeArrow = () => /*#__PURE__*/React.createElement("span", {
   style: S.pipeArrow
@@ -5788,123 +6096,28 @@ function Busy({
     style: S.busySub
   }, progress.done, " / ", progress.total, " claims")));
 }
-function ARInventory({
-  batch,
-  buckets,
-  onNote
-}) {
+function ARInventory({ batch, buckets, onNote }) {
   const routed = buckets.submission.length + buckets.payment_posting.length + buckets.ev.length + buckets.client_assistance.length;
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
-  const fileTouched = batch.claims.filter(c => c.changedInFile || c.closedInFile).length;
-  const rows = batch.claims.filter(c => {
+  const fileTouched = batch.claims.filter((c) => c.changedInFile || c.closedInFile).length;
+  const linked = batch.claims.filter((c) => !c.task && c.linkTo).length;
+  const rows = batch.claims.filter((c) => {
     if (filter === "file" && !(c.changedInFile || c.closedInFile)) return false;
     if (filter === "submission" && !(c.task && c.route === "submission")) return false;
     if (filter === "payment_posting" && !(c.task && c.route === "payment_posting")) return false;
     if (filter === "ev" && !(c.task && c.route === "ev")) return false;
     if (filter === "client_assistance" && !(c.task && c.route === "client_assistance")) return false;
     if (filter === "rejection" && !c.rej) return false;
-    if (filter === "ar_only" && c.task) return false;
+    if (filter === "ar_only" && (c.task || c.linkTo)) return false;
+    if (filter === "linked" && !(!c.task && c.linkTo)) return false;
     if (q && !`${c.label} ${c.claimId} ${c.patient} ${c.payer} ${c.action} ${c.subStatus}`.toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: S.sectionHead
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
-    style: S.h2
-  }, "AR inventory"), /*#__PURE__*/React.createElement("p", {
-    style: S.subline
-  }, batch.claims.length, " claims read \xB7 ", routed, " tasked to a department \xB7 ", batch.claims.length - routed, " staying in AR"))), /*#__PURE__*/React.createElement(NoteCard, {
-    label: "AR supervisor note (travels with this batch)",
-    value: batch.deptNotes.ar,
-    onChange: onNote,
-    placeholder: "Any special instruction for the departments as these claims go out\u2026"
-  }), /*#__PURE__*/React.createElement("div", {
-    style: S.filterBar
-  }, [["all", "All"], ["submission", "→ Submission"], ["payment_posting", "→ Payment Posting"], ["ev", "→ EV"], ["client_assistance", "→ Client Assistance"], ["rejection", "Rejections"], ["ar_only", "Stays in AR"], ...(fileTouched ? [["file", "Changed by file (" + fileTouched + ")"]] : [])].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    onClick: () => setFilter(k),
-    style: {
-      ...S.chip,
-      ...(filter === k ? S.chipActive : {})
-    }
-  }, l)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }), /*#__PURE__*/React.createElement("input", {
-    style: S.search,
-    placeholder: "Search claim, patient, payer\u2026",
-    value: q,
-    onChange: e => setQ(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    style: S.tableWrap
-  }, /*#__PURE__*/React.createElement("table", {
-    style: S.table
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, ["Patient / Claim", "Payer", "Sub status", "Action", "Routed to", "Why"].map(h => /*#__PURE__*/React.createElement("th", {
-    key: h,
-    style: S.th
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, rows.map(c => /*#__PURE__*/React.createElement("tr", {
-    key: c.idx,
-    style: S.tr
-  }, /*#__PURE__*/React.createElement("td", {
-    style: S.td
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.claimId
-  }, c.label), (c.claimId || c.rej || c.closedInFile || c.changedInFile) && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 2
-    }
-  }, c.claimId && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: "#94a3b8",
-      fontVariantNumeric: "tabular-nums"
-    }
-  }, "#", c.claimId), c.rej && /*#__PURE__*/React.createElement("span", {
-    style: S.rejPill
-  }, "rejection"), c.closedInFile && /*#__PURE__*/React.createElement("span", {
-    style: S.fileClosedBadge
-  }, "closed by file"), c.changedInFile && !c.closedInFile && /*#__PURE__*/React.createElement("span", {
-    style: S.fileChangedBadge
-  }, "changed in file")), c.fileNote && filter === "file" && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11.5,
-      color: "#64748b",
-      marginTop: 4,
-      maxWidth: 360
-    }
-  }, c.fileNote)), /*#__PURE__*/React.createElement("td", {
-    style: S.td
-  }, c.payer || "—"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...S.td,
-      color: "#475569"
-    }
-  }, c.subStatus || "—"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...S.td,
-      color: "#475569"
-    }
-  }, c.action || "—"), /*#__PURE__*/React.createElement("td", {
-    style: S.td
-  }, c.task && DEPTS[c.route] ? /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.routeBadge,
-      background: DEPTS[c.route].accent + "1a",
-      color: DEPTS[c.route].accent
-    }
-  }, DEPTS[c.route].label) : /*#__PURE__*/React.createElement("span", {
-    style: S.stayBadge
-  }, "AR")), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...S.td,
-      color: "#64748b",
-      maxWidth: 220
-    }
-  }, c.why || "—"))))), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "No claims match this filter.")));
+  const chips = [["all", "All"], ["submission", "→ Submission"], ["payment_posting", "→ Payment Posting"], ["ev", "→ EV"], ["client_assistance", "→ Client Assistance"], ["rejection", "Rejections"], ["ar_only", "Stays in AR"]];
+  if (linked) chips.push(["linked", "Already tasked earlier (" + linked + ")"]);
+  if (fileTouched) chips.push(["file", "Changed by file (" + fileTouched + ")"]);
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: S.sectionHead }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: S.h2 }, "AR inventory"), /* @__PURE__ */ React.createElement("p", { style: S.subline }, batch.claims.length, " claims read · ", routed, " tasked to a department", linked ? " · " + linked + " already open in a department from an earlier day" : "", " · ", batch.claims.length - routed - linked, " staying in AR"))), /* @__PURE__ */ React.createElement(NoteCard, { label: "AR supervisor note (travels with this batch)", value: batch.deptNotes.ar, onChange: onNote, placeholder: "Any special instruction for the departments as these claims go out…" }), /* @__PURE__ */ React.createElement("div", { style: S.filterBar }, chips.map(([k, l]) => /* @__PURE__ */ React.createElement("button", { key: k, onClick: () => setFilter(k), style: { ...S.chip, ...filter === k ? S.chipActive : {} } }, l)), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("input", { style: S.search, placeholder: "Search claim, patient, payer…", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React.createElement("div", { style: S.tableWrap }, /* @__PURE__ */ React.createElement("table", { style: S.table }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, ["Patient / Claim", "Payer", "Sub status", "Action", "Routed to", "Why"].map((h) => /* @__PURE__ */ React.createElement("th", { key: h, style: S.th }, h)))), /* @__PURE__ */ React.createElement("tbody", null, rows.map((c) => /* @__PURE__ */ React.createElement("tr", { key: c.idx, style: S.tr }, /* @__PURE__ */ React.createElement("td", { style: S.td }, /* @__PURE__ */ React.createElement("div", { style: S.claimId }, c.label), (c.claimId || c.rej || c.closedInFile || c.changedInFile) && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 2 } }, c.claimId && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "#94a3b8", fontVariantNumeric: "tabular-nums" } }, "#", c.claimId), c.rej && /* @__PURE__ */ React.createElement("span", { style: S.rejPill }, "rejection"), c.closedInFile && /* @__PURE__ */ React.createElement("span", { style: S.fileClosedBadge }, "closed by file"), c.changedInFile && !c.closedInFile && /* @__PURE__ */ React.createElement("span", { style: S.fileChangedBadge }, "changed in file")), c.fileNote && (filter === "file" || filter === "linked") && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: "#64748b", marginTop: 4, maxWidth: 360 } }, c.fileNote)), /* @__PURE__ */ React.createElement("td", { style: S.td }, c.payer || "—"), /* @__PURE__ */ React.createElement("td", { style: { ...S.td, color: "#475569" } }, c.subStatus || "—"), /* @__PURE__ */ React.createElement("td", { style: { ...S.td, color: "#475569" } }, c.action || "—"), /* @__PURE__ */ React.createElement("td", { style: S.td }, c.task && DEPTS[c.route] ? /* @__PURE__ */ React.createElement("span", { style: { ...S.routeBadge, background: DEPTS[c.route].accent + "1a", color: DEPTS[c.route].accent } }, DEPTS[c.route].label) : c.linkTo && DEPTS[c.linkTo.route] ? /* @__PURE__ */ React.createElement("span", { style: XS2.linkBadge, title: c.fileNote || "", "data-testid": "linked-badge" }, DEPTS[c.linkTo.route].label, " · task from ", shortDay(c.linkTo.dk)) : /* @__PURE__ */ React.createElement("span", { style: S.stayBadge }, "AR")), /* @__PURE__ */ React.createElement("td", { style: { ...S.td, color: "#64748b", maxWidth: 220 } }, c.linkTo && !c.task ? c.fileNote || c.why || "—" : c.why || "—"))))), rows.length === 0 && /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "No claims match this filter.")));
 }
 
 /* A reason is "valid" when it's a real sentence, not a blank / mash / one word. */
@@ -6050,7 +6263,7 @@ async function buildStyledDayWorkbook(XL, batch, clientName, dateKey, now) {
     if (s === "" || !/^-?\d+(\.\d+)?$/.test(s)) return v == null ? "" : String(v);
     return Number(s);
   }
-  const depLabel = c => (c.task && DEPTS[c.route] ? DEPTS[c.route].label : "Not tasked");
+  const depLabel = c => (c.task && DEPTS[c.route] ? DEPTS[c.route].label : c.linkTo && DEPTS[c.linkTo.route] ? DEPTS[c.linkTo.route].label + " (task from " + shortDay(c.linkTo.dk) + ")" : "Not tasked");
   function tat(c) {
     if (!c.task) return { label: "", detail: "" };
     if (c.noClock) return { label: "No TAT", detail: "past date, clock off" };
@@ -6827,649 +7040,189 @@ function normStatus(v) {
   if (/pending|in\s*process|progress|wip|working/.test(s)) return "Pending";
   return "";
 }
-function DeptSection({
-  me,
-  dept,
-  claims,
-  note,
-  onNote,
-  updateClaim,
-  bulkUpdate,
-  tatState,
-  fmtRemain
-}) {
+function DeptSection({ me, dept, viewDk, claims, carried, note, onNote, updateClaim, bulkUpdate, onCarried, tatState, fmtRemain }) {
   const meta = DEPTS[dept];
-  const counts = STATUS.reduce((a, s) => (a[s] = claims.filter(c => (c.workStatus || "Pending") === s).length, a), {});
-  const isOverdue = c => {
+  const earlier = carried || [];
+  const rows = useMemo(() => [...earlier.map((it) => ({ key: it.dk + ":" + it.c.idx, dk: it.dk, c: it.c })), ...claims.map((c) => ({ key: String(c.idx), dk: null, c }))], [earlier, claims]);
+  const all = rows.map((r) => r.c);
+  const counts = STATUS.reduce((a, s) => (a[s] = all.filter((c) => (c.workStatus || "Pending") === s).length, a), {});
+  const isOverdue = (c) => {
     const t = tatState(c);
     return t && t.breach && c.workStatus !== "Completed";
   };
-  const breached = claims.filter(isOverdue).length;
-  const [filter, setFilter] = useState("all"); // all | Pending | Completed | Not Completed | overdue
+  const breached = all.filter(isOverdue).length;
+  const [filter, setFilter] = useState("all");
   const [expanded, setExpanded] = useState(null);
   const [importSummary, setImportSummary] = useState(null);
   const fileRef = useRef(null);
-  const pct = claims.length ? Math.round(counts["Completed"] / claims.length * 100) : 0;
-  const filtered = claims.filter(c => {
+  const doneHere = claims.filter((c) => c.workStatus === "Completed").length;
+  const pct = claims.length ? Math.round(doneHere / claims.length * 100) : 0;
+  const openEarlier = earlier.filter((it) => isOpenTask(it.c)).length;
+  const pass = (r) => {
     if (filter === "all") return true;
-    if (filter === "overdue") return isOverdue(c);
-    return (c.workStatus || "Pending") === filter;
-  });
-  const tiles = [{
-    k: "all",
-    label: "Tasked",
-    val: claims.length,
-    color: NAVY
-  }, {
-    k: "Pending",
-    label: "Pending",
-    val: counts["Pending"],
-    color: STATUS_COLOR["Pending"]
-  }, {
-    k: "Completed",
-    label: "Completed",
-    val: counts["Completed"],
-    color: STATUS_COLOR["Completed"]
-  }, {
-    k: "Not Completed",
-    label: "Not completed",
-    val: counts["Not Completed"],
-    color: STATUS_COLOR["Not Completed"]
-  }];
-  if (meta.tat) tiles.push({
-    k: "overdue",
-    label: "Overdue",
-    val: breached,
-    color: "#dc2626"
-  });
-
-  // ---- status right on the board: one claim, or every ticked claim at once ----
-  const [sel, setSel] = useState(() => new Set());
+    if (filter === "earlier") return !!r.dk;
+    if (filter === "overdue") return isOverdue(r.c);
+    return (r.c.workStatus || "Pending") === filter;
+  };
+  const shown = rows.filter(pass);
+  const shownEarlier = shown.filter((r) => r.dk);
+  const shownHere = shown.filter((r) => !r.dk);
+  const tiles = [{ k: "all", label: earlier.length ? "All claims" : "Tasked", val: rows.length, color: NAVY }];
+  if (earlier.length) tiles.push({ k: "earlier", label: "From earlier days", val: earlier.length, color: "#b45309", carry: true });
+  tiles.push({ k: "Pending", label: "Pending", val: counts["Pending"], color: STATUS_COLOR["Pending"] });
+  tiles.push({ k: "Completed", label: "Completed", val: counts["Completed"], color: STATUS_COLOR["Completed"] });
+  tiles.push({ k: "Not Completed", label: "Not completed", val: counts["Not Completed"], color: STATUS_COLOR["Not Completed"] });
+  if (meta.tat) tiles.push({ k: "overdue", label: "Overdue", val: breached, color: "#dc2626" });
+  const [sel, setSel] = useState(() => /* @__PURE__ */ new Set());
   const [reasonFor, setReasonFor] = useState(null);
-  const selectedShown = filtered.filter(c => sel.has(c.idx));
-  const allShownSelected = filtered.length > 0 && filtered.every(c => sel.has(c.idx));
-  function toggleSel(idx) {
-    setSel(s => {
+  const selectedShown = shown.filter((r) => sel.has(r.key));
+  const allShownSelected = shown.length > 0 && shown.every((r) => sel.has(r.key));
+  function toggleSel(key) {
+    setSel((s) => {
       const n = new Set(s);
-      if (n.has(idx)) n.delete(idx);else n.add(idx);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
       return n;
     });
   }
   function toggleAllShown() {
-    setSel(s => {
+    setSel((s) => {
       const n = new Set(s);
-      if (allShownSelected) filtered.forEach(c => n.delete(c.idx));else filtered.forEach(c => n.add(c.idx));
+      if (allShownSelected) shown.forEach((r) => n.delete(r.key));
+      else shown.forEach((r) => n.add(r.key));
       return n;
     });
   }
-  // one save for the whole change, however many claims it covers
   function applyStatus(list, st, reason) {
     const now = Date.now();
-    const patches = {};
+    const here = {}, there = {};
     let moved = 0;
-    list.forEach(c => {
+    list.forEach((r) => {
       const p = statusPatch(dept, st, reason, now, me && me.username || "", "app");
       if (p.route === "client_assistance") moved++;
-      patches[c.idx] = p;
+      if (r.dk) (there[r.dk] = there[r.dk] || {})[r.c.ref] = p;
+      else here[r.c.idx] = p;
     });
-    bulkUpdate(c => patches[c.idx] || null);
-    setSel(new Set());
+    if (Object.keys(here).length) bulkUpdate((c) => here[c.idx] || null);
+    Object.keys(there).forEach((dk) => onCarried(dk, there[dk]));
+    setSel(/* @__PURE__ */ new Set());
     const word = st === "Not Completed" ? "not completed" : st.toLowerCase();
-    toast((list.length === 1 ? list[0].label : list.length + " claims") + " marked " + word + "." + (moved ? (moved === 1 ? " It moved" : " " + moved + " moved") + " to Client Assistance, since the client needs to act." : ""));
+    toast((list.length === 1 ? list[0].c.label : list.length + " claims") + " marked " + word + "." + (moved ? (moved === 1 ? " It moved" : " " + moved + " moved") + " to Client Assistance, since the client needs to act." : ""));
   }
   function pickStatus(list, st) {
     if (!list.length) return;
     if (st === "Not Completed") {
-      setReasonFor({
-        list,
-        initial: list.length === 1 ? list[0].incompleteReason || "" : ""
-      });
+      setReasonFor({ list, initial: list.length === 1 ? list[0].c.incompleteReason || "" : "" });
       return;
     }
     applyStatus(list, st, "");
   }
-
-  // ---- CSV round-trip import ----
   async function handleWorkedFile(e) {
-    var _e$target$files3;
-    const file = (_e$target$files3 = e.target.files) === null || _e$target$files3 === void 0 ? void 0 : _e$target$files3[0];
+    const file = e.target.files && e.target.files[0];
     if (e.target) e.target.value = "";
     if (!file) return;
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(new Uint8Array(buf), {
-        type: "array"
-      });
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {
-        defval: ""
-      });
-      // build match maps for THIS department's claims
-      const byKey = {},
-        byFp = {};
-      claims.forEach(c => {
+      const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
+      const sheetRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+      const byKey = {}, byFp = {}, earlierKey = {}, earlierFp = {}, earlierOnly = {};
+      claims.forEach((c) => {
         byKey[String(c.matchKey)] = c;
-        // two identical lines cannot be told apart by fingerprint, so do not guess
         byFp[c.fp] = c.fp in byFp ? null : c;
       });
-      const findById = raw => {
+      earlier.forEach((it) => {
+        earlierKey[it.dk + "|" + it.c.matchKey] = it;
+        const f = it.dk + "|" + it.c.fp;
+        earlierFp[f] = f in earlierFp ? null : it;
+        earlierOnly[it.c.matchKey] = it.c.matchKey in earlierOnly ? null : it;
+      });
+      const idOf = (raw) => {
         const id = String(raw || "").trim();
-        if (!id) return null;
-        return byKey[id] || byKey["BR-" + id] || byKey[id.replace(/^BR-/i, "BR-")] || null; // worklists from before the BR- prefix
+        if (!id) return "";
+        return /^BR-/i.test(id) ? "BR-" + id.slice(3) : "BR-" + id;
       };
       const now = Date.now();
-      const patches = {}; // idx -> patch
-      let completed = 0,
-        pending = 0,
-        notDone = 0,
-        unmatched = 0,
-        missingReason = 0,
-        movedCA = 0;
-      rows.forEach(r => {
-        const idCell = pick(r, ["Brahmastra ID", "BrahmastraID", "Brahmastra Id"]);
-        const rowObj = {
-          patient: pick(r, ["Patient", "Patient Name"]),
-          dos: pick(r, ["DOS"]),
-          payer: pick(r, ["Payer"]),
-          cpt: pick(r, ["CPT"]),
-          provider: pick(r, ["Provider"]),
-          balance: pick(r, ["Balance", "Balance Amount($)", "Billed Amount($)"])
-        };
-        let claim = findById(idCell) || byFp[fingerprintOf(rowObj)] || null;
-        if (!claim) {
+      const here = {}, there = {};
+      let unmatched = 0, fromEarlier = 0;
+      sheetRows.forEach((r) => {
+        const id = idOf(pick(r, ["Brahmastra ID", "BrahmastraID", "Brahmastra Id"]));
+        const rowObj = { patient: pick(r, ["Patient", "Patient Name"]), dos: pick(r, ["DOS"]), payer: pick(r, ["Payer"]), cpt: pick(r, ["CPT"]), provider: pick(r, ["Provider"]), balance: pick(r, ["Balance", "Balance Amount($)", "Billed Amount($)"]) };
+        const fp = fingerprintOf(rowObj);
+        const dk = normDateKey(pick(r, ["Date of Work", "Date Worked"]));
+        let hit = null, it = null;
+        if (dk && dk !== viewDk) it = id && earlierKey[dk + "|" + id] || earlierFp[dk + "|" + fp] || null;
+        else {
+          hit = id && byKey[id] || byFp[fp] || null;
+          if (!hit && !dk && id) it = earlierOnly[id] || null;
+        }
+        if (!hit && !it) {
           unmatched++;
           return;
         }
         const st = normStatus(pick(r, ["Work Status (Completed/Pending/Not Completed)", "Work Status", "Status"]));
-        if (!st) {
-          return;
-        } // no status given → leave as is
+        if (!st) return;
         const reason = pick(r, ["Reason If Not Completed", "Reason if not completed", "Reason", "Incomplete reason"]);
-        patches[claim.idx] = statusPatch(dept, st, reason, now, me && me.username || "", "file");
-        
+        const p = statusPatch(dept, st, reason, now, me && me.username || "", "file");
+        if (hit) here[hit.idx] = p;
+        else {
+          (there[it.dk] = there[it.dk] || {})[it.c.ref] = p;
+          fromEarlier++;
+        }
       });
-      bulkUpdate(c => patches[c.idx] || null);
-      // count what actually changed on the board, so the summary can never disagree with it
-      const applied = Object.values(patches);
-      completed = applied.filter(p => p.workStatus === "Completed").length;
-      pending = applied.filter(p => p.workStatus === "Pending").length;
-      notDone = applied.filter(p => p.workStatus === "Not Completed").length;
-      missingReason = applied.filter(p => p.reasonFlag === true).length;
-      movedCA = applied.filter(p => p.route === "client_assistance").length;
+      if (Object.keys(here).length) bulkUpdate((c) => here[c.idx] || null);
+      Object.keys(there).forEach((k) => onCarried(k, there[k]));
+      const applied = [...Object.values(here), ...Object.values(there).flatMap((m) => Object.values(m))];
       setImportSummary({
         fileName: file.name,
-        total: rows.length,
-        completed,
-        pending,
-        notDone,
+        total: sheetRows.length,
+        completed: applied.filter((p) => p.workStatus === "Completed").length,
+        pending: applied.filter((p) => p.workStatus === "Pending").length,
+        notDone: applied.filter((p) => p.workStatus === "Not Completed").length,
         unmatched,
-        missingReason,
-        movedCA
+        missingReason: applied.filter((p) => p.reasonFlag === true).length,
+        movedCA: applied.filter((p) => p.route === "client_assistance").length,
+        fromEarlier
       });
       setExpanded(null);
     } catch (err) {
       toast("Could not read that worked file. Upload the CSV you downloaded from this section, with the Work Status column filled.\n\n" + err.message);
     }
   }
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: S.sectionHead
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
-    style: {
-      ...S.h2,
-      color: meta.accent
-    }
-  }, meta.label), /*#__PURE__*/React.createElement("p", {
-    style: S.subline
-  }, claims.length, " claims tasked \xB7 ", pct, "% completed", breached > 0 && /*#__PURE__*/React.createElement("span", {
-    style: S.breachTag
-  }, " \xB7 ", breached, " overdue"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      alignItems: "center",
-      flexWrap: "wrap"
-    }
-  }, meta.tat && /*#__PURE__*/React.createElement("div", {
-    style: S.tatBadge
-  }, "24-hour TAT"), claims.length > 0 && /*#__PURE__*/React.createElement("button", {
-    style: S.csvBtn,
-    onClick: () => downloadSectionCSV(claims, meta.label)
-  }, "\u2913 Download worklist"), claims.length > 0 && /*#__PURE__*/React.createElement("button", {
-    className: "gbtn",
-    style: S.importBtn,
-    onClick: () => {
-      var _fileRef$current3;
-      return (_fileRef$current3 = fileRef.current) === null || _fileRef$current3 === void 0 ? void 0 : _fileRef$current3.click();
-    }
-  }, "\u2912 Upload worked file"), /*#__PURE__*/React.createElement("input", {
-    ref: fileRef,
-    type: "file",
-    accept: ".csv,.xlsx,.xls",
-    onChange: handleWorkedFile,
-    style: {
-      display: "none"
-    }
-  }))), claims.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: S.tileRow
-  }, tiles.map(t => /*#__PURE__*/React.createElement("button", {
-    key: t.k,
-    className: "navpill",
-    onClick: () => setFilter(t.k),
-    style: {
-      ...S.tile,
-      ...(filter === t.k ? {
-        borderColor: t.color,
-        boxShadow: `0 0 0 1px ${t.color}`
-      } : {})
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.tileVal,
-      color: t.color
-    }
-  }, t.val), /*#__PURE__*/React.createElement("span", {
-    style: S.tileLabel
-  }, t.label)))), /*#__PURE__*/React.createElement("div", {
-    style: S.progressWide
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.progressWideFill,
-      width: `${pct}%`,
-      background: meta.accent
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    style: S.howStrip
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "Two ways to update:"), " change a claim's status right here (tick several to update them together), or download the worklist, fill the ", /*#__PURE__*/React.createElement("b", null, "Work Status"), " and ", /*#__PURE__*/React.createElement("b", null, "Reason If Not Completed"), " columns and upload it back. Not completed claims turn red and get a fresh 24-hour clock."), filter !== "all" && /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.clearFilter,
-      marginLeft: "auto",
-      whiteSpace: "nowrap"
-    },
-    onClick: () => setFilter("all")
-  }, "Clear filter \xB7 ", filtered.length))), /*#__PURE__*/React.createElement(NoteCard, {
-    label: `${meta.label} supervisor note`,
-    value: note,
-    onChange: onNote,
-    placeholder: `Special instruction for the ${meta.label} team…`
-  }), selectedShown.length > 0 && React.createElement(BulkBar, {
-    n: selectedShown.length,
-    onPick: st => pickStatus(selectedShown, st),
-    onClear: () => setSel(new Set())
-  }), claims.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "No claims tasked to ", meta.label, " from this file.") : /*#__PURE__*/React.createElement("div", {
-    style: S.tableWrap
-  }, /*#__PURE__*/React.createElement("table", {
-    style: S.dTable
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, React.createElement("th", {
-    style: {
-      ...S.dTh,
-      width: 34,
-      paddingRight: 0
-    }
-  }, React.createElement("input", {
-    type: "checkbox",
-    checked: allShownSelected,
-    onChange: toggleAllShown,
-    "aria-label": "Select every claim shown",
-    "data-testid": "claim-select-all"
-  })), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...S.dTh,
-      width: 30
-    }
-  }), /*#__PURE__*/React.createElement("th", {
-    style: S.dTh
-  }, "Patient / Claim"), /*#__PURE__*/React.createElement("th", {
-    style: S.dTh
-  }, "Payer"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...S.dTh,
-      width: 128
-    }
-  }, "Status"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...S.dTh,
-      width: 110
-    }
-  }, "Time left"), /*#__PURE__*/React.createElement("th", {
-    style: S.dTh
-  }, "Reason if not completed"))), /*#__PURE__*/React.createElement("tbody", null, filtered.map(c => {
-    var _c$evMissing;
+  const headRow = (withSelectAll) => /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { style: { ...S.dTh, width: 34, paddingRight: 0 } }, withSelectAll ? /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: allShownSelected, onChange: toggleAllShown, "aria-label": "Select every claim shown", "data-testid": "claim-select-all" }) : null), /* @__PURE__ */ React.createElement("th", { style: { ...S.dTh, width: 30 } }), /* @__PURE__ */ React.createElement("th", { style: S.dTh }, "Patient / Claim"), /* @__PURE__ */ React.createElement("th", { style: S.dTh }, "Payer"), /* @__PURE__ */ React.createElement("th", { style: { ...S.dTh, width: 128 } }, "Status"), /* @__PURE__ */ React.createElement("th", { style: { ...S.dTh, width: 110 } }, "Time left"), /* @__PURE__ */ React.createElement("th", { style: S.dTh }, "Reason if not completed"));
+  function renderRow(r) {
+    const c = r.c;
     const done = c.workStatus === "Completed";
     const notDone = c.workStatus === "Not Completed";
     const over = isOverdue(c);
     const t = tatState(c);
     const rowBg = notDone ? "#fef2f2" : done ? "#f0fdf4" : over ? "#fff5f5" : "transparent";
-    const open = expanded === c.idx;
-    const stColor = STATUS_COLOR[c.workStatus || "Pending"];
-    return /*#__PURE__*/React.createElement(React.Fragment, {
-      key: c.idx
-    }, /*#__PURE__*/React.createElement("tr", {
-      className: "rowh",
-      style: {
-        ...S.dTr,
-        background: rowBg,
-        ...(notDone ? {
-          boxShadow: "inset 3px 0 0 #dc2626"
-        } : {})
+    const open = expanded === r.key;
+    return /* @__PURE__ */ React.createElement(React.Fragment, { key: r.key }, /* @__PURE__ */ React.createElement("tr", { className: "rowh", style: { ...S.dTr, background: rowBg, ...notDone ? { boxShadow: "inset 3px 0 0 #dc2626" } : {} }, "data-testid": r.dk ? "carried-row" : "claim-row" }, /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, paddingRight: 0, width: 34 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sel.has(r.key), onChange: () => toggleSel(r.key), "aria-label": "Select " + c.label, "data-testid": "claim-select" })), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("button", { style: S.expandBtn, onClick: () => setExpanded(open ? null : r.key) }, open ? "▾" : "▸")), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: notDone ? "#b91c1c" : NAVY, ...done ? { textDecoration: "line-through", color: "#94a3b8" } : {} } }, c.label), /* @__PURE__ */ React.createElement("div", { style: S.dMeta }, r.dk && /* @__PURE__ */ React.createElement("span", { style: XS2.fromDay }, "From ", dayLabel(r.dk)), r.dk && /* @__PURE__ */ React.createElement(AgeChip, { dk: r.dk }), r.dk && (c.dos || c.claimId) ? " · " : "", c.dos && `DOS ${c.dos}`, c.claimId && ` · #${c.claimId}`, c.rej && /* @__PURE__ */ React.createElement("span", { style: S.rejPill }, "rejection"), c.originDept && /* @__PURE__ */ React.createElement("span", { style: S.originBadge }, "from ", c.originDept), c.closedInFile && /* @__PURE__ */ React.createElement("span", { style: S.fileClosedBadge }, "closed by file"), c.changedInFile && !c.closedInFile && /* @__PURE__ */ React.createElement("span", { style: S.fileChangedBadge }, r.dk ? "AR worked again" : "changed in file"))), /* @__PURE__ */ React.createElement("td", { style: { ...S.dTd, color: "#475569" } }, c.payer || "—"), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, /* @__PURE__ */ React.createElement(StatusCell, { c, onPick: (st) => pickStatus([r], st) })), /* @__PURE__ */ React.createElement("td", { style: S.dTd }, done ? /* @__PURE__ */ React.createElement("span", { style: { ...S.miniTimer, background: "#dcfce7", color: "#16a34a" } }, "✓ done") : c.noClock ? /* @__PURE__ */ React.createElement("span", { style: S.noClockChip, title: "Fetched for a past date with clocks switched off" }, "no clock") : t ? /* @__PURE__ */ React.createElement("span", { style: { ...S.miniTimer, ...over ? { background: "#dc2626", color: "#fff" } : { background: "#f1f5f9", color: "#475569" } } }, "⏱ ", over ? "-" : "", fmtRemain(t.remain)) : /* @__PURE__ */ React.createElement("span", { style: { color: "#c3d0d8" } }, "—")), /* @__PURE__ */ React.createElement(ReasonCell, { c, onEdit: () => setReasonFor({ list: [r], initial: c.incompleteReason || "" }) })), open && /* @__PURE__ */ React.createElement("tr", { style: { background: rowBg } }, /* @__PURE__ */ React.createElement("td", null), /* @__PURE__ */ React.createElement("td", null), /* @__PURE__ */ React.createElement("td", { colSpan: 5, style: S.expandCell }, /* @__PURE__ */ React.createElement("div", { style: S.expandGrid }, r.dk && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "Date of work"), " ", dayLabelYear(r.dk), ", still open, so it shows here every day until it is completed. A change here is saved on that date."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "Why routed"), " ", c.why || "—"), c.originDept && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "Origin"), " moved here from ", c.originDept), c.subStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "Sub status"), " ", c.subStatus), c.action && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "AR action"), " ", c.action), c.cpt && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "CPT"), " ", c.cpt), c.balance && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "Balance"), " ", c.balance), c.sheet && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "Production file"), " ", c.sheet, c.row ? ", row " + c.row : "")), c.fileNote && /* @__PURE__ */ React.createElement("div", { style: S.fileNoteBox }, c.fileNote), dept === "ev" && c.evMissing && c.evMissing.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { ...S.evBox, marginTop: 8 } }, /* @__PURE__ */ React.createElement("div", { style: S.evTitle }, "Missing eligibility steps"), /* @__PURE__ */ React.createElement("ul", { style: S.evList }, c.evMissing.map((m, i) => /* @__PURE__ */ React.createElement("li", { key: i }, m)))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "AR comments")), /* @__PURE__ */ React.createElement("div", { style: S.commentsBody }, c.comments || "—"))));
+  }
+  const table = (list, withSelectAll) => /* @__PURE__ */ React.createElement("table", { style: S.dTable }, /* @__PURE__ */ React.createElement("thead", null, headRow(withSelectAll)), /* @__PURE__ */ React.createElement("tbody", null, list.map(renderRow)));
+  const nothing = rows.length === 0;
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: S.sectionHead }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { ...S.h2, color: meta.accent } }, meta.label), /* @__PURE__ */ React.createElement("p", { style: S.subline }, claims.length, " claims tasked · ", pct, "% completed", openEarlier > 0 && /* @__PURE__ */ React.createElement("span", { style: { color: "#b45309", fontWeight: 700 } }, " · ", openEarlier, " still open from earlier days"), breached > 0 && /* @__PURE__ */ React.createElement("span", { style: S.breachTag }, " · ", breached, " overdue"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } }, meta.tat && /* @__PURE__ */ React.createElement("div", { style: S.tatBadge }, "24-hour TAT"), !nothing && /* @__PURE__ */ React.createElement("button", { style: S.csvBtn, onClick: () => downloadDeptWorklist(rows, meta.label, viewDk), "data-testid": "dept-download" }, "⤓ Download worklist"), !nothing && /* @__PURE__ */ React.createElement("button", { className: "gbtn", style: S.importBtn, onClick: () => fileRef.current && fileRef.current.click() }, "⤒ Upload worked file"), /* @__PURE__ */ React.createElement("input", { ref: fileRef, type: "file", accept: ".csv,.xlsx,.xls", onChange: handleWorkedFile, style: { display: "none" }, "data-testid": "dept-upload-input" }))), !nothing && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: S.tileRow }, tiles.map((t) => /* @__PURE__ */ React.createElement("button", { key: t.k, className: "navpill", onClick: () => setFilter(t.k), style: { ...S.tile, ...t.carry ? XS2.tileCarry : {}, ...filter === t.k ? { borderColor: t.color, boxShadow: `0 0 0 1px ${t.color}` } : {} }, "data-testid": "tile-" + t.k }, /* @__PURE__ */ React.createElement("span", { style: { ...S.tileVal, color: t.color } }, t.val), /* @__PURE__ */ React.createElement("span", { style: S.tileLabel }, t.label)))), /* @__PURE__ */ React.createElement("div", { style: S.progressWide }, /* @__PURE__ */ React.createElement("div", { style: { ...S.progressWideFill, width: `${pct}%`, background: meta.accent } })), /* @__PURE__ */ React.createElement("div", { style: S.howStrip }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("b", null, "Two ways to update:"), " change a claim's status right here (tick several to update them together), or download the worklist, fill the ", /* @__PURE__ */ React.createElement("b", null, "Work Status"), " and ", /* @__PURE__ */ React.createElement("b", null, "Reason If Not Completed"), " columns and upload it back. Not completed claims turn red and get a fresh 24-hour clock."), filter !== "all" && /* @__PURE__ */ React.createElement("button", { style: { ...S.clearFilter, marginLeft: "auto", whiteSpace: "nowrap" }, onClick: () => setFilter("all") }, "Clear filter · ", shown.length))), /* @__PURE__ */ React.createElement(NoteCard, { label: `${meta.label} supervisor note`, value: note, onChange: onNote, placeholder: `Special instruction for the ${meta.label} team…` }), selectedShown.length > 0 && /* @__PURE__ */ React.createElement(BulkBar, { n: selectedShown.length, onPick: (st) => pickStatus(selectedShown, st), onClear: () => setSel(/* @__PURE__ */ new Set()) }), shownEarlier.length > 0 && /* @__PURE__ */ React.createElement("div", { style: XS2.carryCard, "data-testid": "carried-card" }, /* @__PURE__ */ React.createElement("div", { style: XS2.carryHead }, /* @__PURE__ */ React.createElement("span", { style: XS2.carryTitle }, "Still open from earlier days"), /* @__PURE__ */ React.createElement("span", { style: XS2.carryCount }, shownEarlier.length), /* @__PURE__ */ React.createElement("span", { style: XS2.carryNote }, "These stay here every day until they're completed. A change here is saved on the day the claim came from.")), /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto" } }, table(shownEarlier, true))), claims.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, earlier.length ? "Nothing new tasked to " + meta.label + " on " + dayLabel(viewDk) + "." : "No claims tasked to " + meta.label + " from this file.") : /* @__PURE__ */ React.createElement(React.Fragment, null, earlier.length > 0 && filter !== "earlier" && /* @__PURE__ */ React.createElement("div", { style: XS2.listHead }, "Tasked on ", dayLabel(viewDk), " ", /* @__PURE__ */ React.createElement("span", { style: XS2.listCount }, shownHere.length)), filter !== "earlier" && /* @__PURE__ */ React.createElement("div", { style: S.tableWrap }, table(shownHere, shownEarlier.length === 0), shownHere.length === 0 && /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "No claims match this filter."))), reasonFor && /* @__PURE__ */ React.createElement(
+    ReasonDialog,
+    {
+      count: reasonFor.list.length,
+      dept,
+      initial: reasonFor.initial,
+      onClose: () => setReasonFor(null),
+      onSave: (text) => {
+        const l = reasonFor.list;
+        setReasonFor(null);
+        applyStatus(l, "Not Completed", text);
       }
-    }, React.createElement("td", {
-      style: {
-        ...S.dTd,
-        paddingRight: 0,
-        width: 34
-      }
-    }, React.createElement("input", {
-      type: "checkbox",
-      checked: sel.has(c.idx),
-      onChange: () => toggleSel(c.idx),
-      "aria-label": "Select " + c.label,
-      "data-testid": "claim-select"
-    })), /*#__PURE__*/React.createElement("td", {
-      style: S.dTd
-    }, /*#__PURE__*/React.createElement("button", {
-      style: S.expandBtn,
-      onClick: () => setExpanded(open ? null : c.idx)
-    }, open ? "▾" : "▸")), /*#__PURE__*/React.createElement("td", {
-      style: S.dTd
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontWeight: 700,
-        color: notDone ? "#b91c1c" : NAVY,
-        ...(done ? {
-          textDecoration: "line-through",
-          color: "#94a3b8"
-        } : {})
-      }
-    }, c.label), /*#__PURE__*/React.createElement("div", {
-      style: S.dMeta
-    }, c.dos && `DOS ${c.dos}`, c.claimId && ` · #${c.claimId}`, c.rej && /*#__PURE__*/React.createElement("span", {
-      style: S.rejPill
-    }, "rejection"), c.originDept && /*#__PURE__*/React.createElement("span", {
-      style: S.originBadge
-    }, "from ", c.originDept), c.closedInFile && /*#__PURE__*/React.createElement("span", {
-      style: S.fileClosedBadge
-    }, "closed by file"), c.changedInFile && !c.closedInFile && /*#__PURE__*/React.createElement("span", {
-      style: S.fileChangedBadge
-    }, "changed in file"))), /*#__PURE__*/React.createElement("td", {
-      style: {
-        ...S.dTd,
-        color: "#475569"
-      }
-    }, c.payer || "—"), React.createElement("td", {
-      style: S.dTd
-    }, React.createElement(StatusCell, {
-      c: c,
-      onPick: st => pickStatus([c], st)
-    })), /*#__PURE__*/React.createElement("td", {
-      style: S.dTd
-    }, done ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        ...S.miniTimer,
-        background: "#dcfce7",
-        color: "#16a34a"
-      }
-    }, "\u2713 done") : c.noClock ? /*#__PURE__*/React.createElement("span", {
-      style: S.noClockChip,
-      title: "Fetched for a past date with clocks switched off"
-    }, "no clock") : t ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        ...S.miniTimer,
-        ...(over ? {
-          background: "#dc2626",
-          color: "#fff"
-        } : {
-          background: "#f1f5f9",
-          color: "#475569"
-        })
-      }
-    }, "\u23F1 ", over ? "-" : "", fmtRemain(t.remain)) : /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "#c3d0d8"
-      }
-    }, "\u2014")), React.createElement(ReasonCell, {
-      c: c,
-      onEdit: () => setReasonFor({
-        list: [c],
-        initial: c.incompleteReason || ""
-      })
-    })), open && /*#__PURE__*/React.createElement("tr", {
-      style: {
-        background: rowBg
-      }
-    }, React.createElement("td", null), /*#__PURE__*/React.createElement("td", null), /*#__PURE__*/React.createElement("td", {
-      colSpan: 5,
-      style: S.expandCell
-    }, /*#__PURE__*/React.createElement("div", {
-      style: S.expandGrid
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "Why routed"), " ", c.why || "—"), c.originDept && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "Origin"), " moved here from ", c.originDept), c.subStatus && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "Sub status"), " ", c.subStatus), c.action && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "AR action"), " ", c.action), c.cpt && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "CPT"), " ", c.cpt), c.balance && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "Balance"), " ", c.balance), c.sheet && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "Production file"), " ", c.sheet, c.row ? ", row " + c.row : "")), c.fileNote && /*#__PURE__*/React.createElement("div", {
-      style: S.fileNoteBox
-    }, c.fileNote), dept === "ev" && ((_c$evMissing = c.evMissing) === null || _c$evMissing === void 0 ? void 0 : _c$evMissing.length) > 0 && /*#__PURE__*/React.createElement("div", {
-      style: {
-        ...S.evBox,
-        marginTop: 8
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: S.evTitle
-    }, "Missing eligibility steps"), /*#__PURE__*/React.createElement("ul", {
-      style: S.evList
-    }, c.evMissing.map((m, i) => /*#__PURE__*/React.createElement("li", {
-      key: i
-    }, m)))), /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 8
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: S.taskFieldLabel
-    }, "AR comments")), /*#__PURE__*/React.createElement("div", {
-      style: S.commentsBody
-    }, c.comments || "—"))));
-  }))), filtered.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "No claims match this filter.")), reasonFor && React.createElement(ReasonDialog, {
-    count: reasonFor.list.length,
-    dept: dept,
-    initial: reasonFor.initial,
-    onClose: () => setReasonFor(null),
-    onSave: text => {
-      const l = reasonFor.list;
-      setReasonFor(null);
-      applyStatus(l, "Not Completed", text);
     }
-  }), importSummary && /*#__PURE__*/React.createElement("div", {
-    style: S.modalOverlay,
-    onClick: () => setImportSummary(null)
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modal,
-    onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalHead,
-      background: "#f0fdf4",
-      borderBottom: "1px solid #bbf7d0"
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.modalPulse,
-      background: "#16a34a",
-      animation: "none"
-    }
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalTitle,
-      color: "#16a34a"
-    }
-  }, "File mapped to ", meta.label), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.modalSub,
-      color: "#16a34a"
-    }
-  }, importSummary.fileName, " \xB7 ", importSummary.total, " rows read"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: "16px 20px",
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.sumTile
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.sumVal,
-      color: "#16a34a"
-    }
-  }, importSummary.completed), /*#__PURE__*/React.createElement("span", {
-    style: S.sumLabel
-  }, "Completed")), /*#__PURE__*/React.createElement("div", {
-    style: S.sumTile
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.sumVal,
-      color: "#dc2626"
-    }
-  }, importSummary.notDone), /*#__PURE__*/React.createElement("span", {
-    style: S.sumLabel
-  }, "Not completed")), /*#__PURE__*/React.createElement("div", {
-    style: S.sumTile
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.sumVal,
-      color: "#64748b"
-    }
-  }, importSummary.pending), /*#__PURE__*/React.createElement("span", {
-    style: S.sumLabel
-  }, "Still pending")), /*#__PURE__*/React.createElement("div", {
-    style: S.sumTile
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.sumVal,
-      color: "#b45309"
-    }
-  }, importSummary.movedCA), /*#__PURE__*/React.createElement("span", {
-    style: S.sumLabel
-  }, "\u2192 Client Assistance")), importSummary.unmatched > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.sumTile,
-      gridColumn: "1 / -1"
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.sumVal,
-      color: "#dc2626"
-    }
-  }, importSummary.unmatched), /*#__PURE__*/React.createElement("span", {
-    style: S.sumLabel
-  }, "Unmatched rows (Brahmastra ID not found, skipped)")), importSummary.missingReason > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.sumTile,
-      gridColumn: "1 / -1",
-      background: "#fff7ed"
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.sumVal,
-      color: "#b45309"
-    }
-  }, importSummary.missingReason), /*#__PURE__*/React.createElement("span", {
-    style: S.sumLabel
-  }, "Not-completed rows missing a valid reason, flagged for follow-up"))), /*#__PURE__*/React.createElement("div", {
-    style: S.modalFoot
-  }, /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.modalPrimary,
-      background: meta.accent
-    },
-    onClick: () => setImportSummary(null)
-  }, "Done")))));
+  ), importSummary && /* @__PURE__ */ React.createElement("div", { style: S.modalOverlay, onClick: () => setImportSummary(null) }, /* @__PURE__ */ React.createElement("div", { style: S.modal, onClick: (e) => e.stopPropagation(), "data-testid": "import-summary" }, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalHead, background: "#f0fdf4", borderBottom: "1px solid #bbf7d0" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.modalPulse, background: "#16a34a", animation: "none" } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { ...S.modalTitle, color: "#16a34a" } }, "File mapped to ", meta.label), /* @__PURE__ */ React.createElement("div", { style: { ...S.modalSub, color: "#16a34a" } }, importSummary.fileName, " · ", importSummary.total, " rows read"))), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 20px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: S.sumTile }, /* @__PURE__ */ React.createElement("span", { style: { ...S.sumVal, color: "#16a34a" } }, importSummary.completed), /* @__PURE__ */ React.createElement("span", { style: S.sumLabel }, "Completed")), /* @__PURE__ */ React.createElement("div", { style: S.sumTile }, /* @__PURE__ */ React.createElement("span", { style: { ...S.sumVal, color: "#dc2626" } }, importSummary.notDone), /* @__PURE__ */ React.createElement("span", { style: S.sumLabel }, "Not completed")), /* @__PURE__ */ React.createElement("div", { style: S.sumTile }, /* @__PURE__ */ React.createElement("span", { style: { ...S.sumVal, color: "#64748b" } }, importSummary.pending), /* @__PURE__ */ React.createElement("span", { style: S.sumLabel }, "Still pending")), /* @__PURE__ */ React.createElement("div", { style: S.sumTile }, /* @__PURE__ */ React.createElement("span", { style: { ...S.sumVal, color: "#b45309" } }, importSummary.movedCA), /* @__PURE__ */ React.createElement("span", { style: S.sumLabel }, "→ Client Assistance")), importSummary.fromEarlier > 0 && /* @__PURE__ */ React.createElement("div", { style: { ...S.sumTile, gridColumn: "1 / -1", background: "#fffbf3" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.sumVal, color: "#b45309" } }, importSummary.fromEarlier), /* @__PURE__ */ React.createElement("span", { style: S.sumLabel }, "of these were from earlier days, saved on the date each came from")), importSummary.unmatched > 0 && /* @__PURE__ */ React.createElement("div", { style: { ...S.sumTile, gridColumn: "1 / -1" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.sumVal, color: "#dc2626" } }, importSummary.unmatched), /* @__PURE__ */ React.createElement("span", { style: S.sumLabel }, "Unmatched rows (Brahmastra ID not found, skipped)")), importSummary.missingReason > 0 && /* @__PURE__ */ React.createElement("div", { style: { ...S.sumTile, gridColumn: "1 / -1", background: "#fff7ed" } }, /* @__PURE__ */ React.createElement("span", { style: { ...S.sumVal, color: "#b45309" } }, importSummary.missingReason), /* @__PURE__ */ React.createElement("span", { style: S.sumLabel }, "Not-completed rows missing a valid reason, flagged for follow-up"))), /* @__PURE__ */ React.createElement("div", { style: S.modalFoot }, /* @__PURE__ */ React.createElement("button", { style: { ...S.modalPrimary, background: meta.accent }, onClick: () => setImportSummary(null) }, "Done")))));
 }
-function RejectionSection({
-  claims,
-  generatedAt,
-  updateClaim
-}) {
+function RejectionSection({ claims, carried, generatedAt, updateClaim, onCarried }) {
   const nextDay = new Date(generatedAt + TWENTY_FOUR_H);
-  const pending = claims.filter(c => !c.rejOutcome).length;
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: S.sectionHead
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
-    style: {
-      ...S.h2,
-      color: "#dc2626"
-    }
-  }, "Rejection follow-up"), /*#__PURE__*/React.createElement("p", {
-    style: S.subline
-  }, "Rejections corrected and resubmitted in this file. Check each on ", nextDay.toLocaleDateString(), ". Did it go through or reject again? ", pending, " still to verify."))), claims.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: S.emptyRow
-  }, "No corrected-and-resubmitted rejections in this file.") : /*#__PURE__*/React.createElement("div", {
-    style: S.cardGrid
-  }, claims.map(c => /*#__PURE__*/React.createElement("div", {
-    key: c.idx,
-    style: {
-      ...S.taskCard,
-      borderTopColor: "#dc2626",
-      ...(c.rejOutcome === "rejected" ? S.taskCardBreach : {})
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.taskTop
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: S.taskClaim
-  }, c.label), /*#__PURE__*/React.createElement("div", {
-    style: S.taskMeta
-  }, c.payer || "—", c.dos && ` · DOS ${c.dos}`, c.claimId && ` · #${c.claimId}`)), c.rejOutcome === "passed" && /*#__PURE__*/React.createElement("span", {
-    style: S.okBadge
-  }, "Went through"), c.rejOutcome === "rejected" && /*#__PURE__*/React.createElement("span", {
-    style: S.badBadge
-  }, "Re-rejected")), /*#__PURE__*/React.createElement("div", {
-    style: S.taskField
-  }, /*#__PURE__*/React.createElement("span", {
-    style: S.taskFieldLabel
-  }, "AR action"), " ", c.action || "—"), /*#__PURE__*/React.createElement("details", {
-    style: S.commentsWrap
-  }, /*#__PURE__*/React.createElement("summary", {
-    style: S.commentsSummary
-  }, "Rejection detail"), /*#__PURE__*/React.createElement("div", {
-    style: S.commentsBody
-  }, c.comments || "—")), /*#__PURE__*/React.createElement("div", {
-    style: S.verifyRow
-  }, /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.verifyBtn,
-      ...(c.rejOutcome === "passed" ? {
-        background: "#16a34a",
-        color: "#fff",
-        borderColor: "#16a34a"
-      } : {})
-    },
-    onClick: () => updateClaim(c.idx, {
-      rejOutcome: c.rejOutcome === "passed" ? null : "passed"
-    })
-  }, "Submitted OK"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.verifyBtn,
-      ...(c.rejOutcome === "rejected" ? {
-        background: "#dc2626",
-        color: "#fff",
-        borderColor: "#dc2626"
-      } : {})
-    },
-    onClick: () => updateClaim(c.idx, {
-      rejOutcome: c.rejOutcome === "rejected" ? null : "rejected"
-    })
-  }, "Rejected again, rework"))))));
+  const pending = claims.filter((c) => !c.rejOutcome).length;
+  const earlier = carried || [];
+  const dueEarlier = earlier.filter((it) => !it.c.rejOutcome).length;
+  const card = (c, set, dk, key) => /* @__PURE__ */ React.createElement("div", { key, style: { ...S.taskCard, borderTopColor: "#dc2626", ...c.rejOutcome === "rejected" ? S.taskCardBreach : {} }, "data-testid": dk ? "carried-rej" : "rej-card" }, /* @__PURE__ */ React.createElement("div", { style: S.taskTop }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: S.taskClaim }, c.label), /* @__PURE__ */ React.createElement("div", { style: S.taskMeta }, c.payer || "—", c.dos && ` · DOS ${c.dos}`, c.claimId && ` · #${c.claimId}`), dk && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 4 } }, /* @__PURE__ */ React.createElement("span", { style: XS2.fromDay }, "From ", dayLabel(dk)), /* @__PURE__ */ React.createElement(AgeChip, { dk }))), c.rejOutcome === "passed" && /* @__PURE__ */ React.createElement("span", { style: S.okBadge }, "Went through"), c.rejOutcome === "rejected" && /* @__PURE__ */ React.createElement("span", { style: S.badBadge }, "Re-rejected")), /* @__PURE__ */ React.createElement("div", { style: S.taskField }, /* @__PURE__ */ React.createElement("span", { style: S.taskFieldLabel }, "AR action"), " ", c.action || "—"), /* @__PURE__ */ React.createElement("details", { style: S.commentsWrap }, /* @__PURE__ */ React.createElement("summary", { style: S.commentsSummary }, "Rejection detail"), /* @__PURE__ */ React.createElement("div", { style: S.commentsBody }, c.comments || "—")), /* @__PURE__ */ React.createElement("div", { style: S.verifyRow }, /* @__PURE__ */ React.createElement("button", { style: { ...S.verifyBtn, ...c.rejOutcome === "passed" ? { background: "#16a34a", color: "#fff", borderColor: "#16a34a" } : {} }, onClick: () => set({ rejOutcome: c.rejOutcome === "passed" ? null : "passed" }) }, "Submitted OK"), /* @__PURE__ */ React.createElement("button", { style: { ...S.verifyBtn, ...c.rejOutcome === "rejected" ? { background: "#dc2626", color: "#fff", borderColor: "#dc2626" } : {} }, onClick: () => set({ rejOutcome: c.rejOutcome === "rejected" ? null : "rejected" }) }, "Rejected again, rework")));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: S.sectionHead }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { ...S.h2, color: "#dc2626" } }, "Rejection follow-up"), /* @__PURE__ */ React.createElement("p", { style: S.subline }, "Rejections corrected and resubmitted in this file. Check each on ", nextDay.toLocaleDateString(), ". Did it go through or reject again? ", pending, " still to verify.", dueEarlier ? " " + dueEarlier + " due from earlier days." : ""))), earlier.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { ...XS2.carryCard, padding: 0 }, "data-testid": "carried-rej-card" }, /* @__PURE__ */ React.createElement("div", { style: XS2.carryHead }, /* @__PURE__ */ React.createElement("span", { style: XS2.carryTitle }, "Due from earlier days"), /* @__PURE__ */ React.createElement("span", { style: XS2.carryCount }, earlier.length), /* @__PURE__ */ React.createElement("span", { style: XS2.carryNote }, "Check each one; it stays here until it's marked. The answer is saved on the day it came from.")), /* @__PURE__ */ React.createElement("div", { style: { ...S.cardGrid, padding: 14 } }, earlier.map((it) => card(it.c, (p) => onCarried(it.dk, { [it.c.ref]: p }), it.dk, it.dk + ":" + it.c.idx)))), claims.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: S.emptyRow }, "No corrected-and-resubmitted rejections in this file.") : /* @__PURE__ */ React.createElement("div", { style: S.cardGrid }, claims.map((c) => card(c, (p) => updateClaim(c.idx, p), null, String(c.idx)))));
 }
 function NoteCard({
   label,
