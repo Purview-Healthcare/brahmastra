@@ -90,8 +90,8 @@ const EXTRA_COLUMNS = {
     ["effective", "TEXT NOT NULL DEFAULT ''"], ["note_action", "TEXT NOT NULL DEFAULT ''"], ["fields_json", "TEXT NOT NULL DEFAULT '{}'"], ["edited_at", "INTEGER"], ["edited_by", "TEXT"]],
   claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"],
     ["alt_key", "TEXT NOT NULL DEFAULT ''"], ["fp_key", "TEXT NOT NULL DEFAULT ''"]],
-  locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"]],
-  clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"]],
+  locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
+  clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
   users: [["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
@@ -133,6 +133,66 @@ async function sendEmail(env, { to, subject, text, html }) {
     const r = await fetch(env.EMAIL_WEBHOOK_URL || "", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret: env.EMAIL_API_KEY || "", to, subject, text, html }) });
     if (!r.ok) await fail(r, "The email webhook");
   } else throw new ApiError(503, "Unknown EMAIL_PROVIDER '" + provider + "'. Use resend, brevo, sendgrid, graph or webhook.");
+}
+/* ---- billers' work written into an Excel workbook in OneDrive ----
+   A team lead pastes the workbook's sharing link on the client or location. The Worker (not the biller, who has
+   no OneDrive access) appends one row per saved entry using the same Microsoft 365 app registration that sends
+   the sign-in codes, which therefore also needs the Files.ReadWrite.All application permission. */
+const WORKBOOK_HEADER = ["Saved at", "Biller", "Client", "Location", "Claim #", "Account #", "Patient", "Payer", "DOS", "CPT", "Provider", "Balance", "SAAG status", "Sub-status", "Action", "Bucket", "Effective matrix", "Follow-up", "Claim state", "Note"];
+function workbookLinkOf(v) { if (v == null) return null; const s = str(v, 1000).trim(); if (!s) return ""; if (!/^https:\/\//i.test(s)) throw bad("Paste the whole OneDrive link, starting with https://"); return s; }
+const shareIdOf = (link) => "u!" + btoa(unescape(encodeURIComponent(link))).replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
+async function graphAppToken(env) {
+  if (!env.MS_TENANT_ID || !env.MS_CLIENT_ID || !env.MS_CLIENT_SECRET) throw new ApiError(503, "Microsoft 365 is not set up on the server (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET).");
+  const tr = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID)}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: env.MS_CLIENT_ID, client_secret: env.MS_CLIENT_SECRET, scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials" }) });
+  if (!tr.ok) throw new ApiError(502, "Microsoft sign-in (token) did not accept (" + tr.status + ").");
+  return (await tr.json()).access_token;
+}
+async function graphCall(tok, method, path, body) {
+  const r = await fetch("https://graph.microsoft.com/v1.0" + path, { method, headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" }, body: body == null ? undefined : JSON.stringify(body) });
+  if (!r.ok) { let t = ""; try { t = (await r.text()).slice(0, 240); } catch {} throw new ApiError(502, `Microsoft Graph ${method} ${path.split("?")[0].slice(0, 80)} failed (${r.status}${t ? ": " + t : ""})`); }
+  if (r.status === 204) return null;
+  return r.json();
+}
+const colLetter = (n) => { let s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+/* Append one row to the first worksheet of the workbook behind a sharing link. Writes the header into an empty sheet first. */
+async function appendWorkbookRow(env, link, values) {
+  const tok = await graphAppToken(env);
+  const key = "wb:" + (await sha256Hex(link)).slice(0, 24);
+  let loc = null; const cached = await one(env, "SELECT value_json FROM settings WHERE key = ?", key);
+  if (cached) { try { loc = JSON.parse(cached.value_json); } catch {} }
+  if (!loc || !loc.driveId) {
+    const it = await graphCall(tok, "GET", "/shares/" + shareIdOf(link) + "/driveItem?$select=id,name,parentReference,file");
+    if (!it.file || !/\.xlsx$/i.test(it.name || "")) throw new ApiError(400, "The link must point to an Excel workbook (.xlsx), not a folder or another file type.");
+    loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name };
+    await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", key, JSON.stringify(loc), Date.now());
+  }
+  const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
+  const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
+  const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
+  const ws = base + "/worksheets/" + encodeURIComponent(sheet.id);
+  const used = await graphCall(tok, "GET", ws + "/usedRange(valuesOnly=true)?$select=rowCount,address,values");
+  const empty = !used || used.rowCount <= 1 && (!used.values || !used.values[0] || used.values[0].every((v) => v === "" || v == null));
+  const rows = empty ? [WORKBOOK_HEADER, values] : [values];
+  const startRow = empty ? 1 : (parseInt(String(used.address).replace(/^.*![A-Z]+\d+:?[A-Z]*/, "").replace(/\D/g, ""), 10) || used.rowCount) + 1;
+  const last = colLetter(WORKBOOK_HEADER.length);
+  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows });
+  return loc.name;
+}
+async function recordWorkbookStatus(env, targetId, status) {
+  await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", "workbook_status:" + targetId, JSON.stringify(status), Date.now());
+}
+/* Fire-and-forget after a save: find the workbook (location first, then client) and append the entry. */
+async function syncEntryToWorkbook(env, claimId, userName) {
+  const c = await one(env, `SELECT c.*, cl.name AS client_name, cl.workbook_link AS client_link, l.name AS location_name, l.workbook_link AS location_link
+      FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE c.id = ?`, claimId);
+  if (!c) return;
+  const link = c.location_link || c.client_link; if (!link) return;
+  const targetId = c.location_link ? c.location_id : c.client_id;
+  const row = [new Date().toISOString().replace("T", " ").slice(0, 19), userName, c.client_name || "", c.location_name || "", c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, Number(c.balance) || 0,
+    c.last_status_code, c.last_sub_status, c.last_action_code, c.last_bucket, c.last_effective, c.follow_up_on, c.state, c.last_note];
+  try { const name = await appendWorkbookRow(env, link, row); await recordWorkbookStatus(env, targetId, { ok: true, at: Date.now(), file: name, claim_no: c.claim_no }); }
+  catch (e) { await recordWorkbookStatus(env, targetId, { ok: false, at: Date.now(), error: String(e && e.message || e).slice(0, 300), claim_no: c.claim_no }); }
 }
 const otpCode = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0] % 900000)); };
 const otpHash = (env, email, code) => sha256Hex(`otp:${email}:${code}:${env.PEPPER || DEFAULT_PEPPER}`);
@@ -602,15 +662,16 @@ const OPS = {
     const code = str(payload.code, 20).trim().toUpperCase();
     const fu = Math.max(1, Math.min(365, Math.round(num(payload.follow_up_days, 30))));
     const active = payload.active === false ? 0 : 1;
+    const link = workbookLinkOf(payload.workbook_link);
     if (payload.id) {
       const ex = await one(env, "SELECT id FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
-      await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ? WHERE id = ?", name, code, fu, active, ex.id);
-      return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active } };
+      await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);
+      return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active, workbook_link: link } };
     }
     const id = uuid(), now = Date.now();
-    await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,?,?,?,?)", id, name, code, active, fu, user.id, now);
-    return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [] } };
+    await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at, workbook_link) VALUES (?,?,?,?,?,?,?,?)", id, name, code, active, fu, user.id, now, link || "");
+    return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [], workbook_link: link || "" } };
   },
   /* Delete a client with everything under it: locations, uploads, claims, notes, allocation history. Confirmed by name on the screen. */
   "clients.delete": async ({ env, payload }) => {
@@ -632,11 +693,12 @@ const OPS = {
     const name = str(payload.name, 160).trim();
     if (!name) throw bad("Give the location a name.");
     const active = payload.active === false ? 0 : 1;
+    const link = workbookLinkOf(payload.workbook_link);
     if (payload.id) {
       const ex = await one(env, "SELECT id, client_id FROM locations WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown location.");
-      await run(env, "UPDATE locations SET name = ?, active = ? WHERE id = ?", name, active, ex.id);
-      return { location: { id: ex.id, client_id: ex.client_id, name, active: !!active } };
+      await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
+      return { location: { id: ex.id, client_id: ex.client_id, name, active: !!active, workbook_link: link } };
     }
     const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!client) throw bad("Unknown client.");
@@ -872,6 +934,10 @@ const OPS = {
     const where = [], params = [];
     if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(payload.location_id); }
+    // Dashboard cross-filters: click a bar and every other number is recomputed for that slice.
+    for (const f of ["tier", "bucket", "status_class", "payer", "inventory_kind", "assigned_to"]) if (payload[f]) { where.push(`${f} = ?`); params.push(str(payload[f], 200)); }
+    if (payload.saag_status) { where.push("last_status_code = ?"); params.push(str(payload.saag_status, 60)); }
+    if (payload.saag_bucket) { where.push("last_bucket = ?"); params.push(str(payload.saag_bucket, 20)); }
     const w = where.length ? "WHERE " + where.join(" AND ") : "";
     const ww = (where.length ? w + " AND " : "WHERE ") + `state IN ${WORKABLE}`;
     const today = isoDate(payload.today) || isoToday();
@@ -891,11 +957,20 @@ const OPS = {
     ]);
     // Follow-up date passed and nobody has touched the claim since: these need a biller again.
     const overdue = await one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} state = 'completed' AND follow_up_on <> '' AND follow_up_on < ?`, ...params, today);
-    const [workBuckets, saagStatuses] = await Promise.all([
+    const [workBuckets, saagStatuses, byLocation] = await Promise.all([
       all(env, `SELECT last_bucket AS bucket, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} last_bucket <> '' GROUP BY last_bucket`, ...params),
       all(env, `SELECT last_status_code AS status, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} last_status_code <> '' GROUP BY last_status_code ORDER BY n DESC`, ...params),
+      all(env, `SELECT c.client_id, cl.name AS client_name, c.location_id, l.name AS location_name,
+          SUM(c.state = 'open') AS open_n, COALESCE(SUM(CASE WHEN c.state = 'open' THEN c.balance END),0) AS open_amt,
+          SUM(c.state IN ('assigned','in_progress')) AS desk_n, COALESCE(SUM(CASE WHEN c.state IN ('assigned','in_progress') THEN c.balance END),0) AS desk_amt,
+          SUM(c.state = 'completed') AS worked_n, COALESCE(SUM(CASE WHEN c.state = 'completed' THEN c.balance END),0) AS worked_amt,
+          SUM(c.state = 'closed') AS closed_n, COALESCE(SUM(CASE WHEN c.state = 'closed' THEN c.balance END),0) AS closed_amt,
+          SUM(c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ?) AS overdue_n,
+          COUNT(*) AS n, COALESCE(SUM(CASE WHEN c.state IN ${WORKABLE} THEN c.balance END),0) AS amt
+        FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id ${(where.length ? "WHERE " + where.map((x) => "c." + x).join(" AND ") : "")}
+        GROUP BY c.client_id, c.location_id ORDER BY cl.name, l.name`, today, ...params),
     ]);
-    return { states, tiers, buckets, classes, payers, kinds, users, follow_ups_due: due, overdue, escalated: escalated ? escalated.n : 0, work_buckets: workBuckets, saag_statuses: saagStatuses };
+    return { states, tiers, buckets, classes, payers, kinds, users, follow_ups_due: due, overdue, escalated: escalated ? escalated.n : 0, work_buckets: workBuckets, saag_statuses: saagStatuses, by_location: byLocation };
   },
   /* Every claim of one patient (same account number, or same patient name) at a client, with the last entry on each: one call covers them all. */
   "claims.byPatient": async ({ env, user, payload }) => {
@@ -1011,11 +1086,14 @@ const OPS = {
   "queue.next": async ({ env, user, payload }) => {
     const today = isoDate(payload.today) || isoToday();
     const now = Date.now();
+    // "Next" while a claim is open: that claim goes back to the list (nothing saved) and the following one opens.
+    const skipId = str(payload.skip_id, 60);
+    if (skipId) await run(env, "UPDATE claims SET state = 'assigned', started_at = NULL, updated_at = ? WHERE id = ? AND assigned_to = ? AND state = 'in_progress'", now, skipId, user.id);
     let c = await one(env, "SELECT * FROM claims WHERE assigned_to = ? AND state = 'in_progress' LIMIT 1", user.id);
     // Pick the top claim in two plain steps (no RETURNING / subquery update), retrying once if it was taken meanwhile.
     for (let attempt = 0; !c && attempt < 2; attempt++) {
       const cand = await one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)
-          ORDER BY CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today);
+          ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, skipId || "");
       if (!cand) break;
       const r = await run(env, "UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned'", now, now, cand.id);
       if (changesOf(r)) c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id);
@@ -1036,7 +1114,7 @@ const OPS = {
     await env.DB.batch(stmts);
     return { ok: true };
   },
-  "queue.complete": async ({ env, user, payload }) => {
+  "queue.complete": async ({ env, user, payload, ctx }) => {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
     if (c.assigned_to !== user.id && user.role !== "supervisor") throw denied("This claim is not on your desk.");
@@ -1071,6 +1149,8 @@ const OPS = {
         .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, f.action, text.slice(0, 600), user.id, today, followUp, escalate, now, t.id));
     }
     await batchAll(env, stmts);
+    // Copy the entry into the client's / location's OneDrive workbook in the background (when a link is set and Microsoft 365 is configured).
+    if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user.name); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
     return { completed: targets.length, closed, follow_up_on: followUp, state: newState, comment };
   },
   /* Open a specific claim from the day list (instead of "next"). Any other claim open on the desk goes back to assigned. */

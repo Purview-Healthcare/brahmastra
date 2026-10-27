@@ -214,6 +214,25 @@ Save, and deploy if the editor asks.
 **E. Test.** Sign in as a team lead → Team → **Send a test email**. When it
 arrives, sign out and try **Sign in with a code**.
 
+#### Billers' work in OneDrive
+
+A team lead can link an Excel workbook (.xlsx in the Purview Automate
+OneDrive) to a client, and a different one to any of its locations (Clients
+screen → "link an Excel workbook", or the 📎 next to a location). From then
+on every entry a biller saves on those claims is appended as one row (saved
+at, biller, client, location, claim #, account #, patient, payer, DOS, CPT,
+provider, balance, SAAG status / sub-status / action, bucket, effective
+matrix, follow-up, claim state, the one-cell note). The first row of an
+empty sheet becomes the header. The copy is made by the Worker, so billers
+need no OneDrive access.
+
+It uses the same *Brahmastra Mailer* registration as the sign-in emails,
+which therefore needs one more permission: Entra admin center → App
+registrations → Brahmastra Mailer → API permissions → Add a permission →
+Microsoft Graph → **Application permissions** → Files → **Files.ReadWrite.All**
+→ Add, then **Grant admin consent**. The Clients screen shows, next to each
+link, when the last row was copied or why the last copy failed.
+
 **If it fails**, the toast quotes the provider's answer:
 
 - `Microsoft sign-in (token) did not accept (401)`: tenant id, client id or
