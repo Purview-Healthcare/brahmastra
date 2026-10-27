@@ -7,15 +7,42 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="lib/saag.js"></script>
 <script src="lib/denial-library.js"></script>
+<script src="lib/msal-redirect-bridge.js"></script>
+<script>
+/* A Microsoft sign-in pop-up lands back on this page: hand its response to the window that opened it and stop there. */
+(function () {
+  var looks = function (s) { return /[?#&]state=/.test(s) && /[?#&](code|error)=/.test(s); };
+  if (!(looks(location.search || "") || looks(location.hash || ""))) return;
+  window.__BRAHMASTRA_MS_CALLBACK = true;
+  var say = function (ok) {
+    setTimeout(function () {
+      var r = document.getElementById("root");
+      if (r) r.innerHTML = '<div style="font:15px Inter,system-ui,sans-serif;padding:40px;color:#0A0E24;line-height:1.6">' + (ok ? "Microsoft sign in is complete. You can close this window and go back to Brahmastra." : "Microsoft sign in could not finish in this window. Close it and try again from Brahmastra.") + ' <a href="' + location.pathname + '">Open Brahmastra</a></div>';
+    }, 800);
+  };
+  try { Promise.resolve(window.msalRedirectBridge.broadcastResponseToMainFrame()).then(function () { say(true); }, function () { say(false); }); } catch (e) { say(false); }
+})();
+</script>
+<script src="lib/msal-browser.js"></script>
 <script>
 /* =============== BRAHMASTRA CONFIG (the only lines you need to edit) ===============
    API_BASE  Your brahmastra-api Worker URL, e.g. "https://brahmastra-api.purviewautomate.workers.dev"
              Leave it "" for demo mode: the API runs inside this browser and data stays on this device.
-   ALLOWED_DOMAINS  Email domains a supervisor may create accounts for (the Worker enforces its own list too).
+   ALLOWED_DOMAINS  Email domains a team lead may create accounts for. "*purview*" = any domain with purview in it.
+             Exact names (purview-healthcare.com) and suffixes (*.purviewservices.com) work too.
+   MS_*      The Brahmastra app registration in Microsoft Entra (public identifiers, not secrets) used for the
+             OneDrive picker. MS_REDIRECT_URI must be listed on that registration as a single-page app redirect,
+             and the picker only signs in when the app is opened from that address.
+   ONEDRIVE_FOLDER_LINK  A sharing link to the Purview Automate inventory folder. A team lead can also set it
+             from the Inventory screen; that setting wins over this one.
    ================================================================================== */
 window.BRAHMASTRA_CONFIG = {
   API_BASE: "",
-  ALLOWED_DOMAINS: ["purview-healthcare.com", "purviewservices.com"],
+  ALLOWED_DOMAINS: ["*purview*"],
+  MS_CLIENT_ID: "66b15331-dd65-4904-9ec1-12f60e8f837c",
+  MS_TENANT_ID: "94be55e5-2194-40e4-9d98-1dcc7e91c268",
+  MS_REDIRECT_URI: "https://purview-healthcare.github.io/brahmastra/",
+  ONEDRIVE_FOLDER_LINK: "",
 };
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -149,7 +176,15 @@ const { useState, useEffect, useMemo, useRef, useCallback } = React;
 const CFG = window.BRAHMASTRA_CONFIG || {};
 const API_BASE = String(CFG.API_BASE || "").replace(/\/+$/, "");
 const DEMO = !API_BASE;
-const ALLOWED_DOMAINS = Array.isArray(CFG.ALLOWED_DOMAINS) ? CFG.ALLOWED_DOMAINS : [];
+const ALLOWED_DOMAINS = (Array.isArray(CFG.ALLOWED_DOMAINS) && CFG.ALLOWED_DOMAINS.length ? CFG.ALLOWED_DOMAINS : ["*purview*"]).map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+function domainMatches(pattern, domain) {
+  if (pattern === "*") return true;
+  if (pattern.startsWith("*") && pattern.endsWith("*") && pattern.length > 2) return domain.includes(pattern.slice(1, -1));
+  if (pattern.startsWith("*.")) return domain === pattern.slice(2) || domain.endsWith(pattern.slice(1));
+  if (pattern.startsWith("*")) return domain.endsWith(pattern.slice(1));
+  return domain === pattern;
+}
+const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
 const APP_VERSION = "2.1.0";
 
@@ -175,6 +210,7 @@ const EFFECTIVE_BUCKET = { "Pending-Collectible Insurance": "Payer", "Pending-Cl
 const EFFECTIVE_DAYS = { "Pending-Collectible Insurance": 30, "Pending-Client Assistance": 14, "Pending-Collectible Patient": 30, "Pending-Purview internal review": 7 };
 const NOTE_ACTIONS = ["corrected & resubmitted", "appeal filed", "pending with client", "pending with patient", "pending with payer", "follow up", "closed"];
 const NOTE_SOURCES = ["Call", "Portal", "IVR", "EOB/ERA", "Email", "Clearinghouse", "Client", "Other"];
+const DESIGNATIONS = ["SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const PRECHECKS = ["Eligibility active on DOS", "Claim status with payer", "Timely filing limit", "Appeal filing limit", "Auth / referral on file", "Prior notes read", "EOB / ERA reviewed", "Patient demographics / member ID", "Payer ID / address", "Coding (CPT, DX, modifiers)"];
 const isClosedSaag = (saag, noteAction) => !!(saag && saag.bucket === "Closed") || /^(processing-closed|payment-cash in bank)$/i.test((saag && saag.effective) || "") || noteAction === "closed";
 const mmdd = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}` : (iso || ""));
@@ -277,7 +313,7 @@ const normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f ? f(x) : x) || 0), 0);
 const by = (arr, keyFn) => { const m = new Map(); arr.forEach((x) => { const k = keyFn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }); return m; };
 const mailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || "").trim());
-const domainOk = (email) => !ALLOWED_DOMAINS.length || ALLOWED_DOMAINS.includes(String(email).toLowerCase().slice(String(email).lastIndexOf("@") + 1));
+const domainOk = (email) => { const e = String(email || "").toLowerCase(); const d = e.slice(e.lastIndexOf("@") + 1); return ALLOWED_DOMAINS.some((p) => domainMatches(p, d)); };
 
 function downloadText(text, name, type = "text/csv;charset=utf-8") {
   const blob = new Blob(["﻿" + text], { type });
@@ -677,13 +713,13 @@ async function rpc(op, payload = {}) {
 function signedOut() { setToken(null); try { window.dispatchEvent(new CustomEvent("brahmastra:signedout")); } catch (e) {} }
 
 /* Upload mapped claims in chunks; the first chunk opens the batch. */
-async function uploadClaims({ client_id, location_id, kind, file_name, claims, summary, rows_read, onProgress }) {
+async function uploadClaims({ client_id, location_id, kind, file_name, claims, summary, rows_read, source, web_url, onProgress }) {
   const totals = { inserted: 0, updated: 0, reopened: 0, closed: 0, excluded: 0, skipped: 0 };
   const parts = chunk(claims, 250);
   let batch_id = null;
   if (!parts.length) parts.push([]);
   for (let i = 0; i < parts.length; i++) {
-    const r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, claims: parts[i], final: i === parts.length - 1, summary });
+    const r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, source: source || "file", web_url: web_url || "", claims: parts[i], final: i === parts.length - 1, summary });
     batch_id = r.batch_id;
     for (const k in totals) totals[k] += r[k] || 0;
     if (onProgress) onProgress((i + 1) / parts.length);
@@ -841,22 +877,33 @@ async function seedDemo(setStatus) {
   return r.user;
 }
 function LoginScreen({ onSignedIn }) {
+  const [mode, setMode] = useState("code");
   const [email, setEmail] = useState(DEMO ? DEMO_SUPERVISOR.email : "");
   const [pw, setPw] = useState(DEMO ? DEMO_SUPERVISOR.password : "");
+  const [code, setCode] = useState("");
+  const [sent, setSent] = useState(null);
+  const [su, setSu] = useState({ first_name: "", last_name: "", email: "", designation: "", pw: "", pw2: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [status, setStatus] = useState(null);
   const [resetAsk, setResetAsk] = useState(false);
-  const signin = async (e) => {
-    if (e) e.preventDefault();
-    setBusy(true); setErr(null);
-    try { const r = await rpc("auth.login", { email: email.trim(), passHash: await sha256Hex(pw) }); setToken(r.token); onSignedIn(r.user); }
-    catch (e2) { setErr(e2.message); }
-    setBusy(false);
+  const finish = (r) => { setToken(r.token); onSignedIn(r.user); };
+  const guard = async (fn) => { setBusy(true); setErr(null); try { await fn(); } catch (e2) { setErr(e2.message); } setBusy(false); };
+  const loginPw = (e) => { if (e) e.preventDefault(); guard(async () => { const r = await rpc("auth.login", { email: email.trim(), passHash: await sha256Hex(pw) }); finish(r); }); };
+  const sendCode = (e, addr) => { if (e) e.preventDefault(); const to = (addr || email).trim(); guard(async () => { const r = await rpc("auth.sendOtp", { email: to }); setSent({ ...r, email: to }); setCode(""); }); };
+  const verify = (e) => { if (e) e.preventDefault(); guard(async () => { const r = await rpc("auth.verifyOtp", { email: sent.email, code: code.trim() }); finish(r); }); };
+  const signup = (e) => {
+    e.preventDefault();
+    if (!mailOk(su.email)) { setErr("Enter a valid work email."); return; }
+    if (!domainOk(su.email)) { setErr("Team lead accounts need a Purview email (" + domainHint() + ")."); return; }
+    if (!su.designation) { setErr("Pick your designation."); return; }
+    if (su.pw.length < 8) { setErr("Use a password of at least 8 characters."); return; }
+    if (su.pw !== su.pw2) { setErr("The two passwords don't match."); return; }
+    guard(async () => { const r = await rpc("auth.signup", { first_name: su.first_name, last_name: su.last_name, email: su.email.trim(), designation: su.designation, passHash: await sha256Hex(su.pw) }); setEmail(su.email.trim()); setSent({ ...r, email: su.email.trim(), signup: true }); setCode(""); setMode("code"); });
   };
   const seed = async () => {
     setBusy(true); setErr(null);
-    try { const u = await seedDemo(setStatus); setStatus(null); toast("Sample data loaded. Sign in as a biller with the same password to see their day."); onSignedIn(u); }
+    try { const u = await seedDemo(setStatus); setStatus(null); toast("Sample data loaded. Sign in as a biller (same password, or a code) to see their day."); onSignedIn(u); }
     catch (e2) { setErr(e2.message); setStatus(null); }
     setBusy(false);
   };
@@ -866,22 +913,69 @@ function LoginScreen({ onSignedIn }) {
     catch (e2) { setErr(e2.message); }
     setBusy(false);
   };
+  const tab = (k, l) => <button key={k} type="button" className={"chip " + (mode === k ? "on" : "")} onClick={() => { setMode(k); setErr(null); }}>{l}</button>;
   return (
     <div className="login">
       <div className="box stack">
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><Wordmark size={30} /></div>
-        <form className="card stack" onSubmit={signin}>
-          <h2>Sign in</h2>
-          <Field label="Email"><input className="input" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
-          <Field label="Password"><input className="input" type="password" autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} required /></Field>
-          <ErrorBox error={err} />
+        <div className="card stack">
+          {mode !== "signup" && <div className="row" style={{ gap: 4 }}>{tab("code", "Sign in with a code")}{tab("password", "Sign in with password")}</div>}
+          {mode === "code" && !sent && (
+            <form className="stack" onSubmit={sendCode}>
+              <h2>Sign in</h2>
+              <div className="small muted">A one-time code is emailed to you each time you sign in.</div>
+              <Field label="Work email"><input className="input" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus /></Field>
+              <ErrorBox error={err} />
+              <button className="btn primary" type="submit" disabled={busy}>{busy ? "Sending…" : "Send me a code"}</button>
+            </form>
+          )}
+          {mode === "code" && sent && (
+            <form className="stack" onSubmit={verify}>
+              <h2>{sent.signup ? "Confirm your email" : "Enter your code"}</h2>
+              <div className="small muted">{sent.sent ? <>We sent a 6-digit code to <b>{sent.email}</b>. It works for 10 minutes.</> : <>Code issued for <b>{sent.email}</b>.</>}</div>
+              {sent.demo_code && <div className="alert info">Demo mode, no email is sent: your code is <b className="mono" style={{ fontSize: 18 }}>{sent.demo_code}</b></div>}
+              <Field label="Code"><input className="input mono" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} required autoFocus style={{ fontSize: 22, letterSpacing: 6 }} /></Field>
+              <ErrorBox error={err} />
+              <button className="btn primary" type="submit" disabled={busy || code.length < 6}>{busy ? "Checking…" : sent.signup ? "Create my account" : "Sign in"}</button>
+              <div className="row small"><button type="button" className="btn link sm" disabled={busy} onClick={() => sendCode(null, sent.email)}>Send a new code</button><button type="button" className="btn link sm" disabled={busy} onClick={() => { setSent(null); setErr(null); }}>Use another email</button></div>
+            </form>
+          )}
+          {mode === "password" && (
+            <form className="stack" onSubmit={loginPw}>
+              <h2>Sign in</h2>
+              <Field label="Work email"><input className="input" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
+              <Field label="Password"><input className="input" type="password" autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} required /></Field>
+              <ErrorBox error={err} />
+              <button className="btn primary" type="submit" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
+              <div className="small muted">Forgot it? <button type="button" className="btn link sm" onClick={() => { setMode("code"); setSent(null); setErr(null); }}>Sign in with a code</button> and set a new password from the menu.</div>
+            </form>
+          )}
+          {mode === "signup" && (
+            <form className="stack" onSubmit={signup}>
+              <h2>Create a team lead account</h2>
+              <div className="small muted">For team leads and managers. Billers' accounts are created by their team lead on the Team screen.</div>
+              <div className="grid g2">
+                <Field label="First name"><input className="input" value={su.first_name} onChange={(e) => setSu({ ...su, first_name: e.target.value })} required autoFocus /></Field>
+                <Field label="Last name"><input className="input" value={su.last_name} onChange={(e) => setSu({ ...su, last_name: e.target.value })} required /></Field>
+              </div>
+              <Field label="Work email" hint={"Allowed: " + domainHint()}><input className="input" type="email" autoComplete="username" value={su.email} onChange={(e) => setSu({ ...su, email: e.target.value })} required /></Field>
+              <Field label="Designation"><select className="select" value={su.designation} onChange={(e) => setSu({ ...su, designation: e.target.value })} required><option value="">Pick…</option>{DESIGNATIONS.map((d) => <option key={d} value={d}>{d}</option>)}</select></Field>
+              <div className="grid g2">
+                <Field label="Password" hint="At least 8 characters"><input className="input" type="password" autoComplete="new-password" value={su.pw} onChange={(e) => setSu({ ...su, pw: e.target.value })} required /></Field>
+                <Field label="Password again"><input className="input" type="password" autoComplete="new-password" value={su.pw2} onChange={(e) => setSu({ ...su, pw2: e.target.value })} required /></Field>
+              </div>
+              <ErrorBox error={err} />
+              <button className="btn primary" type="submit" disabled={busy}>{busy ? "Sending…" : "Send me a code to confirm"}</button>
+              <div className="small muted">Already have an account? <button type="button" className="btn link sm" onClick={() => { setMode("code"); setErr(null); }}>Sign in</button></div>
+            </form>
+          )}
           {status && <div className="alert info"><span className="spin" /> {status}</div>}
-          <button className="btn primary" type="submit" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
-        </form>
+          {mode !== "signup" && <div className="small muted" style={{ textAlign: "center" }}>New team lead? <button type="button" className="btn link sm" onClick={() => { setMode("signup"); setErr(null); }}>Create a team lead account</button></div>}
+        </div>
         {DEMO && (
           <div className="card tight stack" style={{ gap: 8 }}>
             <div className="b">Demo mode</div>
-            <div className="small muted">This copy runs its server inside your browser. Data stays on this device. Supervisor sign in: <span className="mono">{DEMO_SUPERVISOR.email}</span> / <span className="mono">{DEMO_SUPERVISOR.password}</span>. Load sample data to add three billers ({DEMO_USERS.map((u) => u[1].split(" ")[0]).join(", ")}, same password), two clients and inventory.</div>
+            <div className="small muted">This copy runs its server inside your browser and sends no email: codes are shown on screen. Team lead: <span className="mono">{DEMO_SUPERVISOR.email}</span> / <span className="mono">{DEMO_SUPERVISOR.password}</span>. Load sample data to add three billers ({DEMO_USERS.map((u) => u[1].split(" ")[0]).join(", ")}, same password), two clients and inventory.</div>
             <div className="row">
               <button className="btn sm" onClick={seed} disabled={busy}>Load sample data</button>
               <button className="btn sm link" onClick={() => setResetAsk(true)} disabled={busy}>Reset demo data</button>
@@ -890,27 +984,29 @@ function LoginScreen({ onSignedIn }) {
         )}
         <div className="tiny muted" style={{ textAlign: "center" }}>Purview Brahmastra {APP_VERSION} · {DEMO ? "demo mode" : "connected to " + API_BASE.replace(/^https?:\/\//, "")}</div>
       </div>
-      {resetAsk && <Confirm title="Reset demo data?" text="Every client, claim, note and account created in this browser's demo will be deleted. The default supervisor account comes back automatically." confirmLabel="Reset" danger onYes={resetDemo} onNo={() => setResetAsk(false)} busy={busy} />}
+      {resetAsk && <Confirm title="Reset demo data?" text="Every client, claim, note and account created in this browser's demo will be deleted. The default team lead account comes back automatically." confirmLabel="Reset" danger onYes={resetDemo} onNo={() => setResetAsk(false)} busy={busy} />}
     </div>
   );
 }
-function ChangePasswordForm({ forced, onDone, onCancel }) {
+function ChangePasswordForm({ forced, onDone, onCancel, me }) {
   const [f, setF] = useState({ old: "", a: "", b: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const needOld = !!(me && me.has_password) && !(me && me.via === "otp");
   const submit = async (e) => {
     e.preventDefault();
     if (f.a.length < 8) { setErr("Use at least 8 characters."); return; }
     if (f.a !== f.b) { setErr("The two new passwords don't match."); return; }
     setBusy(true); setErr(null);
-    try { await rpc("auth.changePassword", { oldHash: await sha256Hex(f.old), newHash: await sha256Hex(f.a) }); toast("Password changed."); onDone(); }
+    try { await rpc("auth.changePassword", { oldHash: needOld ? await sha256Hex(f.old) : undefined, newHash: await sha256Hex(f.a) }); toast("Password saved."); onDone(); }
     catch (e2) { setErr(e2.message); }
     setBusy(false);
   };
   return (
     <form className="stack" onSubmit={submit}>
       {forced && <div className="alert info">Welcome. Set a password of your own before you start.</div>}
-      <Field label={forced ? "Temporary password" : "Current password"}><input className="input" type="password" autoComplete="current-password" value={f.old} onChange={(e) => setF({ ...f, old: e.target.value })} required /></Field>
+      {!needOld && !forced && <div className="small muted">{me && me.has_password ? "You signed in with a code, so no current password is needed." : "You have no password yet. With one, you can also sign in without waiting for a code."}</div>}
+      {needOld && <Field label={forced ? "Temporary password" : "Current password"}><input className="input" type="password" autoComplete="current-password" value={f.old} onChange={(e) => setF({ ...f, old: e.target.value })} required /></Field>}
       <Field label="New password" hint="At least 8 characters"><input className="input" type="password" autoComplete="new-password" value={f.a} onChange={(e) => setF({ ...f, a: e.target.value })} required /></Field>
       <Field label="New password again"><input className="input" type="password" autoComplete="new-password" value={f.b} onChange={(e) => setF({ ...f, b: e.target.value })} required /></Field>
       <ErrorBox error={err} />
@@ -920,7 +1016,7 @@ function ChangePasswordForm({ forced, onDone, onCancel }) {
 }
 
 /* ---------- shell ---------- */
-const SUPERVISOR_NAV = [["dashboard", "Dashboard"], ["inventory", "Inventory"], ["allocate", "Allocate"], ["claims", "Claims"], ["team", "Team"], ["clients", "Clients"], ["saag", "SAAG"], ["reports", "Reports"], ["queue", "My day"]];
+const SUPERVISOR_NAV = [["dashboard", "Dashboard"], ["inventory", "Inventory"], ["allocate", "Allocate"], ["claims", "Claims"], ["team", "Team"], ["clients", "Clients"], ["locations", "Locations"], ["saag", "SAAG"], ["reports", "Reports"], ["queue", "My day"]];
 const USER_NAV = [["queue", "My day"], ["history", "My work"]];
 function Shell({ me, view, setView, onSignOut, onChangePassword, children }) {
   const [menu, setMenu] = useState(false);
@@ -936,7 +1032,8 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, children }) {
           <button className="btn sm" onClick={() => setMenu(!menu)}>{me.name || me.email} ▾</button>
           {menu && <div className="menu">
             <div className="small muted" style={{ padding: "6px 10px" }}>{me.email}<br />{me.role === "supervisor" ? "Team lead" : "Biller"}</div>
-            <button onClick={() => { setMenu(false); onChangePassword(); }}>Change password</button>
+            <div className="tiny muted" style={{ padding: "0 10px 6px" }}>{me.designation ? me.designation + " · " : ""}signed in with {me.via === "otp" ? "a code" : "password"}</div>
+            <button onClick={() => { setMenu(false); onChangePassword(); }}>{me.has_password ? "Change password" : "Set a password"}</button>
             <button onClick={() => { setMenu(false); onSignOut(); }}>Sign out</button>
           </div>}
         </div>
@@ -1079,19 +1176,289 @@ function ClientsView({ ctx, reload }) {
   );
 }
 
-/* ---------- inventory upload ---------- */
-function InventoryView({ ctx, reload, go, params }) {
-  const [tab, setTab] = useState("upload");
+/* ---------- Microsoft 365 / OneDrive (the Brahmastra app registration from the previous build) ---------- */
+const MS_CFG = { clientId: CFG.MS_CLIENT_ID || "", tenantId: CFG.MS_TENANT_ID || "common", redirectUri: CFG.MS_REDIRECT_URI || (location.origin + location.pathname), scopes: ["User.Read", "Files.ReadWrite.All"] };
+const GRAPH = "https://graph.microsoft.com/v1.0";
+const msMock = () => window.__BRAHMASTRA_MS_MOCK || null;
+// Microsoft only sends people back to the address registered for the app, so sign in works on the team site, not on a copy hosted elsewhere.
+function msSupported() {
+  if (msMock()) return true;
+  try { return !!(window.msal && window.msal.PublicClientApplication) && !!MS_CFG.clientId && location.origin === new URL(MS_CFG.redirectUri).origin; } catch (e) { return false; }
+}
+let MSAL_P = null;
+function msalApp() {
+  if (!MSAL_P) {
+    const app = new window.msal.PublicClientApplication({ auth: { clientId: MS_CFG.clientId, authority: "https://login.microsoftonline.com/" + MS_CFG.tenantId, redirectUri: MS_CFG.redirectUri }, cache: { cacheLocation: "localStorage" }, system: { popupBridgeTimeout: 300000 } });
+    const p = app.initialize().then(() => app);
+    p.catch(() => { if (MSAL_P === p) MSAL_P = null; });
+    MSAL_P = p;
+  }
+  return MSAL_P;
+}
+function msError(kind, message, status) { const e = new Error(message); e.kind = kind; e.status = status || 0; return e; }
+function graphError(status, body) {
+  const code = (body && body.error && body.error.code) || "";
+  if (status === 401) return msError("auth", "Microsoft asked you to sign in again. Click Open OneDrive once more.", status);
+  if (status === 403) return msError("denied", "You do not have access to this in OneDrive yet. Ask whoever looks after the Purview Automate folder to share it with you.", status);
+  if (status === 404) return msError("missing", "OneDrive could not find it. The file or folder may have been moved, renamed or deleted.", status);
+  if (status === 423) return msError("locked", "The file is locked in OneDrive right now (it may be open in Excel). Wait a minute and try again.", status);
+  if (status === 429 || status >= 500) return msError("busy", "Microsoft is busy right now. Wait a minute and try again.", status);
+  return msError("other", "OneDrive turned this down (" + status + (code ? ", " + code : "") + "). Try again.", status);
+}
+function msalMessage(e) {
+  if (e && e.kind) return e.message;
+  const code = String((e && (e.errorCode || e.code)) || "");
+  const text = String((e && (e.errorMessage || e.message)) || "");
+  if (code === "user_cancelled") return "Microsoft sign in was closed before it finished.";
+  if (code === "popup_window_error" || code === "empty_window_error") return "Your browser blocked the Microsoft sign in window. Allow pop-ups for this site, then click again.";
+  if (code === "timed_out") return "Microsoft sign in took too long. Click again to retry.";
+  if (code === "interaction_in_progress") return "A Microsoft sign in window is already open. Finish it there, or close it and click again.";
+  if (/AADSTS65001|AADSTS90094|AADSTS90008|consent|approval/i.test(text)) return "Microsoft needs an admin to approve Brahmastra for Purview first (Entra ID → App registrations → Brahmastra → API permissions → Grant admin consent).";
+  if (/AADSTS50020|AADSTS50034|AADSTS50177|AADSTS700016|not exist in tenant/i.test(text)) return "That Microsoft account is not part of the Purview directory. Sign in with your Purview work account.";
+  if (/AADSTS50011|AADSTS50194|reply url|redirect/i.test(text)) return "Microsoft did not accept this page's address. The Brahmastra app registration needs " + MS_CFG.redirectUri + " as a single-page application redirect URI.";
+  if (/AADSTS50076|AADSTS50079|multi-?factor|\bmfa\b/i.test(text)) return "Microsoft needs you to finish multi-factor sign in. Click again and complete it in the window.";
+  return "Microsoft sign in did not finish" + (code ? " (" + code + ")" : text ? " (" + text.slice(0, 80) + ")" : "") + ". Try again.";
+}
+const msx = {
+  async account() { const m = msMock(); if (m) return m.account ? m.account() : null; const app = await msalApp(); return app.getActiveAccount() || app.getAllAccounts()[0] || null; },
+  async signIn(hint) {
+    const m = msMock(); if (m) return m.signIn(hint);
+    const app = await msalApp();
+    const r = await app.loginPopup({ scopes: MS_CFG.scopes, loginHint: hint || undefined, prompt: "select_account", overrideInteractionInProgress: true });
+    app.setActiveAccount(r.account);
+    return r.account;
+  },
+  async token() {
+    const m = msMock(); if (m) return m.token();
+    const app = await msalApp();
+    const acct = app.getActiveAccount() || app.getAllAccounts()[0];
+    if (!acct) throw msError("signin", "Sign in to Microsoft first.");
+    try { return (await app.acquireTokenSilent({ scopes: MS_CFG.scopes, account: acct })).accessToken; }
+    catch (e) { const r = await app.acquireTokenPopup({ scopes: MS_CFG.scopes, account: acct, overrideInteractionInProgress: true }); app.setActiveAccount(r.account); return r.accessToken; }
+  },
+  async forget() {
+    const m = msMock(); if (m) { if (m.forget) await m.forget(); return; }
+    const app = await msalApp();
+    const acct = app.getActiveAccount() || app.getAllAccounts()[0];
+    app.setActiveAccount(null);
+    if (acct) { try { await app.clearCache({ account: acct }); } catch (e) {} }
+  },
+  async request(url, opts = {}, auth = true) {
+    const m = msMock();
+    const doFetch = (m && m.fetch) || ((u, o) => fetch(u, o));
+    const headers = { ...(opts.headers || {}) };
+    if (auth) headers.Authorization = "Bearer " + (await msx.token());
+    let r;
+    try { r = await doFetch(url, { method: opts.method || "GET", headers, body: opts.body }); }
+    catch (e) { throw msError("network", "Could not reach Microsoft. Check your connection and try again."); }
+    if (!r.ok) { let j = null; try { j = await r.json(); } catch (e) {} throw graphError(r.status, j); }
+    return r;
+  },
+  async graph(path, opts = {}) { const r = await msx.request(GRAPH + path, opts, true); if (r.status === 204) return null; return r.json(); },
+  // OneDrive's short-lived download address is already signed, so it is fetched with no Authorization header.
+  async download(url) { const r = await msx.request(url, {}, false); return new Uint8Array(await r.arrayBuffer()); },
+};
+function shareIdOf(link) { const b64 = btoa(unescape(encodeURIComponent(String(link).trim()))); return "u!" + b64.replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-"); }
+function itemSummary(it) {
+  const who = it && it.lastModifiedBy && (it.lastModifiedBy.user || it.lastModifiedBy.application);
+  return { name: (it && it.name) || "", webUrl: (it && it.webUrl) || "", size: (it && it.size) || 0, modifiedAt: it && it.lastModifiedDateTime ? Date.parse(it.lastModifiedDateTime) : null, modifiedBy: (who && (who.displayName || who.email)) || "" };
+}
+const isSheetFile = (name) => /\.(xlsx|xlsm|xls|csv|tsv|txt)$/i.test(name || "");
+const ITEM_FIELDS = "id,name,size,folder,file,lastModifiedDateTime,lastModifiedBy,webUrl,parentReference,remoteItem";
+const driveIdOf = (it) => (it && it.parentReference && it.parentReference.driveId) || "";
+const msItemFromLink = (link) => msx.graph("/shares/" + shareIdOf(link) + "/driveItem?$select=" + ITEM_FIELDS);
+async function msRootItem() {
+  const it = await msx.graph("/me/drive/root?$select=" + ITEM_FIELDS);
+  if (!driveIdOf(it)) { const d = await msx.graph("/me/drive?$select=id"); it.parentReference = { ...(it.parentReference || {}), driveId: d.id }; }
+  return it;
+}
+async function msChildren(driveId, itemId) { const j = await msx.graph(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children?$top=500&$select=${ITEM_FIELDS}&$orderby=name`); return j.value || []; }
+async function msDownloadItem(driveId, itemId) {
+  const it = await msx.graph(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}?$select=${ITEM_FIELDS},@microsoft.graph.downloadUrl`);
+  const url = it["@microsoft.graph.downloadUrl"];
+  if (!url) throw msError("other", "OneDrive did not offer this file for download. Try again in a minute.");
+  return { bytes: await msx.download(url), info: itemSummary(it) };
+}
+const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace(/\.0$/, "") + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB");
+/* Browse OneDrive (the pinned Purview Automate folder, or the signed-in person's files) and pick a spreadsheet. */
+function OneDrivePicker({ folderLink, onPick, onClose }) {
+  const [acct, setAcct] = useState(null);
+  const [stack, setStack] = useState([]);
+  const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState("Signing in to Microsoft…");
+  const [err, setErr] = useState(null);
+  const [link, setLink] = useState("");
+  const nodeOf = (it) => (it.remoteItem ? { driveId: driveIdOf(it.remoteItem) || driveIdOf(it), id: it.remoteItem.id, name: it.name, webUrl: it.webUrl } : { driveId: driveIdOf(it), id: it.id, name: it.name === "root" || !it.name ? "My files" : it.name, webUrl: it.webUrl });
+  const load = async (node) => {
+    setBusy("Loading " + node.name + "…"); setErr(null);
+    try { const kids = await msChildren(node.driveId, node.id); setItems(kids.filter((k) => k.folder || isSheetFile(k.name)).sort((a, b) => (!!b.folder - !!a.folder) || String(a.name).localeCompare(String(b.name)))); }
+    catch (e) { setErr(msalMessage(e)); }
+    setBusy(null);
+  };
+  const openNode = async (node, replace) => { setStack((s) => (replace ? [node] : [...s, node])); await load(node); };
+  const pickFile = async (it) => {
+    setBusy("Downloading " + it.name + "…"); setErr(null);
+    try { const d = await msDownloadItem(driveIdOf(it), it.id); await onPick({ bytes: d.bytes, name: d.info.name || it.name, webUrl: d.info.webUrl || it.webUrl, modifiedAt: d.info.modifiedAt, modifiedBy: d.info.modifiedBy }); }
+    catch (e) { setErr(msalMessage(e)); setBusy(null); }
+  };
+  const start = async () => {
+    setBusy("Signing in to Microsoft…"); setErr(null);
+    try {
+      let a = await msx.account(); if (!a) a = await msx.signIn(); setAcct(a);
+      let it = null;
+      if (folderLink) { try { it = await msItemFromLink(folderLink); } catch (e) { setErr("The pinned folder did not open (" + msalMessage(e) + "). Showing your OneDrive instead."); } }
+      if (it && !it.folder) { await pickFile(it); return; }
+      if (!it) it = await msRootItem();
+      await openNode(nodeOf(it), true);
+    } catch (e) { setErr(msalMessage(e)); setBusy(null); }
+  };
+  useEffect(() => { start(); }, []);
+  const openLink = async () => {
+    if (!/^https:\/\//i.test(link.trim())) { setErr("Paste the whole OneDrive link, starting with https://"); return; }
+    setBusy("Opening the link…"); setErr(null);
+    try { const it = await msItemFromLink(link.trim()); if (it.folder) await openNode(nodeOf(it), true); else await pickFile(it); }
+    catch (e) { setErr(msalMessage(e)); setBusy(null); }
+  };
+  const switchAccount = async () => { try { await msx.forget(); setAcct(null); setStack([]); setItems([]); await start(); } catch (e) { setErr(msalMessage(e)); } };
+  const click = (it) => { if (busy) return; if (it.folder) openNode(nodeOf(it)); else pickFile(it); };
+  const here = stack[stack.length - 1];
+  return (
+    <Modal title="Open from OneDrive" sub={acct ? "Signed in as " + (acct.username || acct.name || "") : "Microsoft sign in"} onClose={onClose} wide>
+      <div className="stack">
+        <div className="row between">
+          <div className="row" style={{ gap: 4 }}>{stack.map((n, i) => <React.Fragment key={n.id + i}>{i > 0 && <span className="muted">›</span>}<button className="btn sm link" disabled={!!busy} onClick={() => { setStack(stack.slice(0, i + 1)); load(n); }}>{n.name}</button></React.Fragment>)}</div>
+          <div className="row">{here && here.webUrl && <a className="btn sm link" href={here.webUrl} target="_blank" rel="noopener">Open this folder in OneDrive</a>}{acct && <button className="btn sm link" onClick={switchAccount} disabled={!!busy}>Switch account</button>}</div>
+        </div>
+        <div className="row"><input className="input sm" style={{ flex: 1 }} placeholder="or paste a OneDrive link to a folder or an Excel file" value={link} onChange={(e) => setLink(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") openLink(); }} /><button className="btn sm" onClick={openLink} disabled={!!busy}>Open link</button></div>
+        <ErrorBox error={err} />
+        {busy && <Spinner label={busy} />}
+        {!busy && <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th>Name</th><th>Modified</th><th>By</th><th className="r">Size</th></tr></thead>
+          <tbody>{items.map((it) => <tr key={it.id} className="click" onClick={() => click(it)}><td>{it.folder ? "📁 " : "📄 "}{it.name}{it.folder && it.folder.childCount != null ? <span className="tiny muted"> · {it.folder.childCount} items</span> : null}</td><td className="small">{it.lastModifiedDateTime ? fmtWhen(Date.parse(it.lastModifiedDateTime)) : ""}</td><td className="small">{itemSummary(it).modifiedBy}</td><td className="num">{it.file ? fmtBytes(it.size) : ""}</td></tr>)}
+            {!items.length && <tr><td colSpan={4}><Empty>No folders or spreadsheet files here.</Empty></td></tr>}</tbody></table></div>}
+        <div className="tiny muted">Only Excel and CSV files are listed. Click a file to load it into the upload wizard; nothing is written back to OneDrive.</div>
+      </div>
+    </Modal>
+  );
+}
+/* Pin the Purview Automate inventory folder so the picker opens straight into it. */
+function PinFolderModal({ me, current, onClose, onSaved }) {
+  const [link, setLink] = useState(current || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const info = { link: link.trim(), name: "", webUrl: "", by: me.name || me.email, at: Date.now() };
+      if (info.link && msSupported()) {
+        try { let a = await msx.account(); if (!a) a = await msx.signIn(); const it = await msItemFromLink(info.link); info.name = it.name; info.webUrl = it.webUrl; info.isFolder = !!it.folder; }
+        catch (e) { setErr("The link is saved, but it could not be opened right now: " + msalMessage(e)); }
+      }
+      await rpc("settings.save", { settings: { onedrive_folder: info.link ? info : null } });
+      toast(info.link ? "OneDrive folder pinned." : "OneDrive folder cleared.");
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title="Purview Automate OneDrive folder" sub="Paste the sharing link of the inventory folder (OneDrive → folder → Share → Copy link). Everyone's picker opens there." onClose={onClose} narrow footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button></>}>
+      <div className="stack">
+        <Field label="Folder link"><input className="input" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://purviewhealthcare-my.sharepoint.com/…" /></Field>
+        <ErrorBox error={err} />
+        <div className="tiny muted">Leave it empty to clear the pin. The link is kept on the server, so every team lead and biller gets the same folder.</div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- automatic allocation: every open claim of a client / location goes to the billers mapped to it ---------- */
+async function autoAllocate({ ctx, client, loc }) {
+  const teamIds = loc && loc.team && loc.team.length ? loc.team : (client.team || []);
+  const users = ctx.users.filter((u) => u.active && teamIds.includes(u.id));
+  if (!users.length) return { applied: 0, perUser: [], reason: "no billers mapped" };
+  const today = todayISO();
+  const el = await rpc("claims.eligible", { client_id: client.id, location_id: loc ? loc.id : undefined });
+  const pool = rescore(el.claims.filter((c) => (loc ? c.location_id === loc.id : !c.location_id)), today);
+  if (!pool.length) return { applied: 0, perUser: [], reason: "no open claims" };
+  const cap = Math.ceil(pool.length / users.length) + 1;
+  const plan = planAllocation({ claims: pool, users: users.map((u) => ({ id: u.id, name: u.name, capacity: cap })), strategy: "smart" });
+  let applied = 0;
+  for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: client.id, location_id: loc ? loc.id : undefined, strategy: "auto", assignments: part, summary: { auto: true, perUser: plan.perUser } }); applied += r.applied; }
+  return { applied, perUser: plan.perUser };
+}
+
+/* ---------- locations: which billers work which client and location ---------- */
+function LocationsView({ ctx, reload, go }) {
+  const people = [...ctx.users].filter((u) => u.active).sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name) : a.role === "user" ? -1 : 1));
+  const [draft, setDraft] = useState({});
+  const [busy, setBusy] = useState(null);
+  const rows = [];
+  ctx.clients.filter((c) => c.active).forEach((c) => {
+    rows.push({ key: "c:" + c.id, client: c, loc: null, team: c.team || [], auto: c.auto_allocate !== false });
+    c.locations.filter((l) => l.active).forEach((l) => rows.push({ key: "l:" + l.id, client: c, loc: l, team: l.team || [], auto: l.auto_allocate !== false }));
+  });
+  const get = (r) => draft[r.key] || { team: r.team, auto: r.auto };
+  const dirty = (r) => !!draft[r.key] && (JSON.stringify([...draft[r.key].team].sort()) !== JSON.stringify([...r.team].sort()) || draft[r.key].auto !== r.auto);
+  const toggle = (r, uid) => setDraft((d) => { const g = d[r.key] || { team: r.team, auto: r.auto }; return { ...d, [r.key]: { ...g, team: g.team.includes(uid) ? g.team.filter((x) => x !== uid) : [...g.team, uid] } }; });
+  const setAuto = (r, v) => setDraft((d) => ({ ...d, [r.key]: { ...(d[r.key] || { team: r.team, auto: r.auto }), auto: v } }));
+  const save = async (r) => {
+    setBusy(r.key);
+    try { await rpc("clients.saveTeam", { client_id: r.client.id, location_id: r.loc ? r.loc.id : undefined, team: get(r).team, auto_allocate: get(r).auto }); toast("Saved."); const d = { ...draft }; delete d[r.key]; setDraft(d); reload(); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(null);
+  };
+  const allocateNow = async (r) => {
+    setBusy(r.key);
+    try {
+      const team = get(r).team;
+      const res = await autoAllocate({ ctx, client: { ...r.client, team: r.loc ? r.client.team : team }, loc: r.loc ? { ...r.loc, team } : null });
+      toast(res.applied ? `Assigned ${fmtInt(res.applied)} claims: ` + res.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)}`).join(", ") : "Nothing to assign: " + (res.reason || "no open claims") + ".");
+    } catch (e) { toast(e.message, "err"); }
+    setBusy(null);
+  };
   return (
     <div className="stack">
-      <div className="row between"><div><h1>Inventory</h1><div className="sub">Upload fresh inventory or previously worked inventory for a client and location.</div></div>
-        <div className="row" style={{ gap: 4 }}>{[["upload", "Upload"], ["batches", "Upload history"]].map(([k, l]) => <button key={k} className={"chip " + (tab === k ? "on" : "")} onClick={() => setTab(k)}>{l}</button>)}</div></div>
-      {tab === "upload" ? <UploadWizard ctx={ctx} reload={reload} go={go} params={params} /> : <BatchesTable ctx={ctx} />}
+      <div><h1>Locations</h1><div className="sub">Map billers to each client and location. When inventory is loaded for a location, its open claims are handed to these billers at once (evenly, highest priority first, patients and payers kept together). A team lead can still move claims on Allocate or Claims.</div></div>
+      {!rows.length && <div className="card"><Empty>No clients yet. <button className="btn link sm" onClick={() => go("clients")}>Add clients and locations</button> first.</Empty></div>}
+      {rows.length > 0 && (
+        <div className="card tight">
+          <div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Location</th><th>Billers</th><th>Allocate on upload</th><th></th></tr></thead>
+            <tbody>{rows.map((r) => { const g = get(r); return (
+              <tr key={r.key}>
+                <td>{r.loc ? <span className="muted">{r.client.name}</span> : <b>{r.client.name}</b>}</td>
+                <td>{r.loc ? <b>{r.loc.name}</b> : <span className="tiny muted">client level · used when a location has no billers of its own</span>}</td>
+                <td><div className="pill-list">{people.map((u) => <button key={u.id} className={"chip " + (g.team.includes(u.id) ? "on" : "")} onClick={() => toggle(r, u.id)} title={u.role === "supervisor" ? "team lead" : "biller"}>{u.name}{u.role === "supervisor" ? " (TL)" : ""}</button>)}{!people.length && <span className="muted small">No active people yet.</span>}</div></td>
+                <td><label className="check small"><input type="checkbox" checked={g.auto} onChange={(e) => setAuto(r, e.target.checked)} /> yes</label></td>
+                <td className="r" style={{ whiteSpace: "nowrap" }}>{dirty(r) && <button className="btn sm primary" disabled={busy === r.key} onClick={() => save(r)}>Save</button>} <button className="btn sm" disabled={busy === r.key || !g.team.length || dirty(r)} title={dirty(r) ? "Save first" : "Hand every open claim here to these billers now"} onClick={() => allocateNow(r)}>Allocate open claims now</button></td>
+              </tr>); })}</tbody></table></div>
+        </div>
+      )}
+      <div className="small muted">Tip: a location without billers falls back to the client-level billers. Claims already on someone's desk are never moved by automatic allocation.</div>
     </div>
   );
 }
-function UploadWizard({ ctx, reload, go, params }) {
+
+/* ---------- inventory upload ---------- */
+function InventoryView({ ctx, reload, go, params, me }) {
+  const [tab, setTab] = useState("upload");
+  const [pin, setPin] = useState(false);
+  const folder = (ctx.settings && ctx.settings.onedrive_folder) || null;
+  const folderLink = (folder && folder.link) || CFG.ONEDRIVE_FOLDER_LINK || "";
+  return (
+    <div className="stack">
+      <div className="row between"><div><h1>Inventory</h1><div className="sub">Upload fresh or previously worked inventory for a client and location. Files open straight from the Purview Automate OneDrive; the claims go to the location's billers as soon as they load.</div></div>
+        <div className="row" style={{ gap: 4 }}>{[["upload", "Upload inventory"], ["batches", "Upload history"]].map(([k, l]) => <button key={k} className={"chip " + (tab === k ? "on" : "")} onClick={() => setTab(k)}>{l}</button>)}</div></div>
+      <div className="card tight row between">
+        <div className="small"><b>OneDrive folder:</b> {folder && folder.name ? <>{folder.name}{folder.by ? <span className="muted"> · pinned by {folder.by}</span> : null}</> : folderLink ? <span className="mono">{folderLink.length > 70 ? folderLink.slice(0, 70) + "…" : folderLink}</span> : <span className="muted">not pinned yet, so the picker opens the signed-in person's own OneDrive</span>}</div>
+        <div className="row">{folder && folder.webUrl ? <a className="btn sm" href={folder.webUrl} target="_blank" rel="noopener">Open in OneDrive</a> : folderLink ? <a className="btn sm" href={folderLink} target="_blank" rel="noopener">Open in OneDrive</a> : null}<button className="btn sm link" onClick={() => setPin(true)}>{folderLink ? "Change folder" : "Pin the Purview Automate folder"}</button></div>
+      </div>
+      {tab === "upload" ? <UploadWizard ctx={ctx} reload={reload} go={go} params={params} me={me} folderLink={folderLink} /> : <BatchesTable ctx={ctx} />}
+      {pin && <PinFolderModal me={me} current={folderLink} onClose={() => setPin(false)} onSaved={() => { setPin(false); reload(); }} />}
+    </div>
+  );
+}
+function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
   const [step, setStep] = useState(0);
+  const [odOpen, setOdOpen] = useState(false);
+  const [autoAlloc, setAutoAlloc] = useState(true);
   const [clientId, setClientId] = useState((params && params.clientId) || "");
   const [locId, setLocId] = useState("");
   const [locMode, setLocMode] = useState("pick");
@@ -1121,6 +1488,22 @@ function UploadWizard({ ctx, reload, go, params }) {
     } catch (e) { toast("Could not read the file: " + e.message, "err"); }
     setBusy(false);
   };
+  const onOneDriveFile = async ({ bytes, name, webUrl }) => {
+    setBusy(true);
+    try {
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const sheets = readWorkbook(buf, name);
+      if (!sheets.length) throw new Error("No rows were found in " + name + ".");
+      setFile({ name, sheets, size: bytes.byteLength, source: "onedrive", webUrl });
+      pickSheet(sheets, 0);
+      setOdOpen(false);
+      setStep(2);
+    } catch (e) { toast("Could not read the file: " + e.message, "err"); }
+    setBusy(false);
+  };
+  const loc = client ? client.locations.find((l) => l.id === locId) : null;
+  const teamIds = loc && loc.team && loc.team.length ? loc.team : (client ? client.team || [] : []);
+  const teamNames = ctx.users.filter((u) => u.active && teamIds.includes(u.id)).map((u) => u.name);
   const built = useMemo(() => (step >= 3 && table ? buildClaims({ rows: table.rows, mapping, kind, today }) : null), [step, table, mapping, kind]);
   const mappingOk = !!(mapping.claim_no || (mapping.patient && mapping.dos));
   const samples = (h) => { if (!h || !table) return ""; const vals = []; for (const r of table.rows) { const v = r[h]; if (v !== "" && v != null) vals.push(String(v).slice(0, 28)); if (vals.length >= 3) break; } return vals.join(" · "); };
@@ -1143,8 +1526,14 @@ function UploadWizard({ ctx, reload, go, params }) {
       const results = [];
       let done = 0;
       for (const g of groups) {
-        const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / groups.length) });
-        results.push({ ...r, location: g.loc ? g.loc.name : "(no location)", total: g.claims.length });
+        const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, source: file.source || "file", web_url: file.webUrl || "", claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / groups.length) });
+        const row = { ...r, location: g.loc ? g.loc.name : "(no location)", total: g.claims.length, assigned: null };
+        const team = g.loc && g.loc.team && g.loc.team.length ? g.loc.team : (client.team || []);
+        const wants = g.loc ? g.loc.auto_allocate !== false : client.auto_allocate !== false;
+        if (autoAlloc && wants && team.length) {
+          try { row.assigned = await autoAllocate({ ctx, client, loc: g.loc }); } catch (e) { row.assignError = e.message; }
+        }
+        results.push(row);
         done++;
       }
       setResult(results); setProgress(1);
@@ -1182,6 +1571,13 @@ function UploadWizard({ ctx, reload, go, params }) {
             {kind === "fresh" ? <><b>Fresh inventory</b>: new claims for this client. Claims already on file (same claim number, or same patient + date of service + payer) are refreshed, not duplicated. Paid or zero-balance rows close the claim.</>
               : <><b>Previously worked inventory</b>: claims your team or the client already touched. Map the <b>Date worked</b> and <b>Comments</b> columns so the history travels with the claim; each claim gets a follow-up date (date worked + the client's follow-up days) and surfaces again when it is due.</>}
           </div>
+          {!ctx.clients.filter((c) => c.active).length && <div className="alert warn">No clients yet. <button className="btn link sm" onClick={() => go("clients")}>Add the client and its locations</button> first, then come back here.</div>}
+          {client && locMode !== "file" && (
+            <div className="card tight row between">
+              <div className="small">{teamNames.length ? <><b>Billers for {loc ? loc.name : client.name}:</b> {teamNames.join(", ")}. New claims are handed to them as soon as the file loads; change it on Allocate or Claims if needed.</> : <><b>No billers mapped to {loc ? loc.name : client.name} yet.</b> Map them on the <button className="btn link sm" onClick={() => go("locations")}>Locations</button> tab for automatic allocation, or allocate by hand afterwards.</>}</div>
+              <label className="check small"><input type="checkbox" checked={autoAlloc && !!teamNames.length} disabled={!teamNames.length} onChange={(e) => setAutoAlloc(e.target.checked)} /> Allocate after loading</label>
+            </div>
+          )}
           <div className="row between">
             {DEMO ? <div className="row small muted">Need a file to try? <button className="btn link sm" onClick={() => downloadSample("fresh")}>Download sample fresh inventory</button><button className="btn link sm" onClick={() => downloadSample("worked")}>Download sample worked inventory</button></div> : <span />}
             <button className="btn primary" disabled={!client} onClick={() => setStep(1)}>Next: choose file</button>
@@ -1192,13 +1588,21 @@ function UploadWizard({ ctx, reload, go, params }) {
       {step === 1 && (
         <div className="stack">
           <div className="small muted">Loading <b>{kind === "fresh" ? "fresh" : "previously worked"}</b> inventory for <b>{client && client.name}</b>{locId ? <> · <b>{(client.locations.find((l) => l.id === locId) || {}).name}</b></> : locMode === "file" ? " · split by the file's Location column" : ""}</div>
-          <div className={"drop " + (over ? "over" : "")} onClick={() => inputRef.current && inputRef.current.click()}
-            onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files[0]); }}>
-            <div className="display" style={{ fontSize: 18, color: "var(--ink)" }}>{busy ? "Reading…" : "Drop the inventory file here"}</div>
-            <div className="small">Excel (.xlsx, .xls) or CSV. The first sheet is used unless you pick another. Header row is detected automatically.</div>
-            <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
+          <div className="grid g2">
+            <div className="card tight stack" style={{ borderColor: "var(--teal)" }}>
+              <div className="b">Open from OneDrive</div>
+              <div className="small muted">{msSupported() ? (folderLink ? "Opens the pinned Purview Automate inventory folder. Pick the file and it is read straight from OneDrive." : "Opens your OneDrive. A team lead can pin the Purview Automate inventory folder at the top of this screen.") : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}. From this address, use a file from this computer.`}</div>
+              <button className="btn primary" disabled={!msSupported() || busy} onClick={() => setOdOpen(true)}>{busy ? "Reading…" : "Open OneDrive"}</button>
+            </div>
+            <div className={"drop " + (over ? "over" : "")} onClick={() => inputRef.current && inputRef.current.click()}
+              onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files[0]); }}>
+              <div className="display" style={{ fontSize: 16, color: "var(--ink)" }}>{busy ? "Reading…" : "Or drop a file from this computer"}</div>
+              <div className="small">Excel (.xlsx, .xls) or CSV. Header row is detected automatically.</div>
+              <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
+            </div>
           </div>
           <div className="row between"><button className="btn" onClick={() => setStep(0)}>Back</button><span /></div>
+          {odOpen && <OneDrivePicker folderLink={folderLink} onClose={() => setOdOpen(false)} onPick={onOneDriveFile} />}
         </div>
       )}
       {step === 2 && table && (
@@ -1229,7 +1633,8 @@ function UploadWizard({ ctx, reload, go, params }) {
           {result && (
             <>
               <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
-              <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Allocate these claims</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
+              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {fmtInt(r.assigned.applied)} claims allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
+              <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
             </>
           )}
         </div>
@@ -1273,7 +1678,7 @@ function BatchesTable({ ctx }) {
       <div className="row between"><h2>Upload history</h2><div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div></div>
       <ErrorBox error={q.error} />
       <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client · location</th><th>Kind</th><th>File</th><th>By</th><th className="r">Rows</th><th className="r">New</th><th className="r">Refreshed</th><th className="r">Reopened</th><th className="r">Closed</th><th className="r">Excluded</th><th></th></tr></thead>
-        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.file_name}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td>{b.undone_at ? <span className="tiny muted">undone</span> : <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button>}</td></tr>)}
+        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td>{b.undone_at ? <span className="tiny muted">undone</span> : <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button>}</td></tr>)}
           {q.data && !q.data.batches.length && <tr><td colSpan={12} className="muted">No uploads yet.</td></tr>}</tbody></table></div>
       {undo && <Confirm title="Undo this upload?" text="Claims this upload added that nobody has worked yet will be deleted. Claims it refreshed keep their refreshed values." confirmLabel="Undo upload" danger onYes={doUndo} onNo={() => setUndo(null)} busy={busy} />}
     </div>
@@ -1737,14 +2142,21 @@ function TeamView({ ctx, reload, me }) {
   const [resetFor, setResetFor] = useState(null);
   const [range, setRange] = useState({ from: addDaysISO(todayISO(), -6), to: todayISO() });
   const prod = useRpc("supervisor.productivity", { from_ms: dayBounds(range.from)[0], to_ms: dayBounds(range.to)[1] }, [range.from, range.to]);
+  const [codeFor, setCodeFor] = useState(null);
   const save = async () => {
     setBusy(true);
     try {
       const payload = { ...edit };
-      if (!edit.id) { const pw = randomPassword(); payload.passHash = await sha256Hex(pw); const r = await rpc("users.save", payload); setTempPw({ user: r.user, pw }); }
+      if (!edit.id && edit.tempPw) { const pw = randomPassword(); payload.passHash = await sha256Hex(pw); const r = await rpc("users.save", payload); setTempPw({ user: r.user, pw }); }
+      else if (!edit.id) { await rpc("users.save", payload); toast("Account created. They sign in with a code sent to their email."); }
       else { await rpc("users.save", payload); toast("Saved."); }
       setEdit(null); reload();
     } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const getCode = async (u) => {
+    setBusy(true);
+    try { const r = await rpc("users.loginCode", { id: u.id }); setCodeFor({ user: u, ...r }); } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const doReset = async () => {
@@ -1757,11 +2169,11 @@ function TeamView({ ctx, reload, me }) {
   return (
     <div className="stack">
       <div className="row between"><div><h1>Team</h1><div className="sub">Team leads upload and allocate; billers work their day list one claim at a time.</div></div>
-        <button className="btn primary" onClick={() => setEdit({ name: "", email: "", role: "user", capacity: 35, active: true })}>Add team member</button></div>
+        <button className="btn primary" onClick={() => setEdit({ first_name: "", last_name: "", email: "", designation: "SME", role: "user", capacity: 35, active: true, tempPw: false })}>Add team member</button></div>
       <div className="card">
-        <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th className="r">Claims / day</th><th>Status</th><th>Last sign in</th><th></th></tr></thead>
-          <tbody>{ctx.users.map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}</td><td className="small">{u.email}</td><td>{u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>
-            <td className="r"><button className="btn sm" onClick={() => setEdit({ id: u.id, name: u.name, email: u.email, role: u.role, capacity: u.capacity, active: u.active })}>Edit</button> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Designation</th><th>Email</th><th>Role</th><th className="r">Claims / day</th><th>Status</th><th>Last sign in</th><th></th></tr></thead>
+          <tbody>{ctx.users.map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}</td><td className="small">{u.designation || "–"}</td><td className="small">{u.email}</td><td>{u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}{u.has_password ? null : <div className="tiny muted">code sign-in only</div>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>
+            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}</td></tr>)}</tbody></table></div>
       </div>
       <div className="card">
         <div className="row between"><div><h3>Productivity</h3><div className="sub">Claims worked per person per day (one note per claim worked)</div></div>
@@ -1772,17 +2184,22 @@ function TeamView({ ctx, reload, me }) {
             {prod.data && !Object.keys(prodBy).length && <tr><td colSpan={days.length + 4} className="muted">No claims worked in this range.</td></tr>}</tbody></table></div>
       </div>
       {edit && (
-        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !edit.name.trim() || (!edit.id && !mailOk(edit.email))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
+        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || !String(edit.last_name || "").trim() || (!edit.id && !mailOk(edit.email))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
           <div className="stack">
-            <Field label="Name"><input className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus /></Field>
-            <Field label="Email" hint={ALLOWED_DOMAINS.length ? "Allowed: " + ALLOWED_DOMAINS.join(", ") : undefined}><input className="input" type="email" value={edit.email} disabled={!!edit.id} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
-            {!edit.id && edit.email && !domainOk(edit.email) && <div className="alert warn">That domain is not on the allowed list.</div>}
             <div className="grid g2">
-              <Field label="Role"><select className="select" value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })}><option value="user">Biller (works claims)</option><option value="supervisor">Team lead</option></select></Field>
-              <Field label="Claims per day" hint="Default capacity for allocation"><input className="input" type="number" min={1} max={500} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></Field>
+              <Field label="First name"><input className="input" value={edit.first_name} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} autoFocus /></Field>
+              <Field label="Last name"><input className="input" value={edit.last_name} onChange={(e) => setEdit({ ...edit, last_name: e.target.value })} /></Field>
             </div>
+            <Field label="Email" hint={"Allowed: " + domainHint()}><input className="input" type="email" value={edit.email} disabled={!!edit.id} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
+            {!edit.id && edit.email && mailOk(edit.email) && !domainOk(edit.email) && <div className="alert warn">That email's domain is not allowed (allowed: {domainHint()}).</div>}
+            <div className="grid g2">
+              <Field label="Designation"><select className="select" value={edit.designation} onChange={(e) => setEdit({ ...edit, designation: e.target.value })}><option value="">Pick…</option>{DESIGNATIONS.map((d) => <option key={d} value={d}>{d}</option>)}</select></Field>
+              <Field label="Role in Brahmastra"><select className="select" value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })}><option value="user">Biller (works claims)</option><option value="supervisor">Team lead (allocates)</option></select></Field>
+            </div>
+            <Field label="Claims per day" hint="Default capacity for allocation"><input className="input" type="number" min={1} max={500} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></Field>
             {edit.id && <label className="check"><input type="checkbox" checked={!!edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active (inactive people cannot sign in or receive claims)</label>}
-            {!edit.id && <div className="small muted">A temporary password is generated and shown once; the person sets their own on first sign in.</div>}
+            {!edit.id && <label className="check"><input type="checkbox" checked={!!edit.tempPw} onChange={(e) => setEdit({ ...edit, tempPw: e.target.checked })} /> Also give them a temporary password (shown once)</label>}
+            {!edit.id && <div className="small muted">They sign in with a one-time code sent to this email each time. If their email is slow, you can issue a code from the Team list.</div>}
           </div>
         </Modal>
       )}
@@ -1796,6 +2213,15 @@ function TeamView({ ctx, reload, me }) {
         </Modal>
       )}
       {resetFor && <Confirm title={`Reset ${resetFor.name}'s password?`} text="A new temporary password is generated and their current sessions are signed out." confirmLabel="Reset password" onYes={doReset} onNo={() => setResetFor(null)} busy={busy} />}
+      {codeFor && (
+        <Modal title={"Sign-in code for " + codeFor.user.name} onClose={() => setCodeFor(null)} narrow footer={<button className="btn primary" onClick={() => setCodeFor(null)}>Done</button>}>
+          <div className="stack">
+            <div>Pass this to <b>{codeFor.user.name}</b> ({codeFor.email}). On the sign-in screen they choose "Sign in with a code", enter their email, then this code. It works for {codeFor.expires_in_min} minutes and replaces any code emailed earlier.</div>
+            <div className="pre mono" style={{ fontSize: 26, textAlign: "center", letterSpacing: 8 }}>{codeFor.code}</div>
+            <button className="btn sm" onClick={() => { navigator.clipboard && navigator.clipboard.writeText(codeFor.code).then(() => toast("Copied.")); }}>Copy</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -2036,8 +2462,9 @@ function App() {
   const reload = useCallback(async () => {
     if (!me || me.must_change) return;
     try {
-      const [cl, us] = await Promise.all([rpc("clients.list"), me.role === "supervisor" ? rpc("users.list") : Promise.resolve({ users: [] })]);
-      setCtx({ clients: cl.clients, codes: [], users: us.users, loaded: true });
+      const sup = me.role === "supervisor";
+      const [cl, us, st] = await Promise.all([rpc("clients.list"), sup ? rpc("users.list") : Promise.resolve({ users: [] }), sup ? rpc("settings.get").catch(() => ({ settings: {} })) : Promise.resolve({ settings: {} })]);
+      setCtx({ clients: cl.clients, codes: [], users: us.users, settings: st.settings || {}, loaded: true });
     } catch (e) { toast(e.message, "err"); }
   }, [me && me.id, me && me.must_change, me && me.role]);
   useEffect(() => { reload(); }, [reload]);
@@ -2045,7 +2472,7 @@ function App() {
   if (me === undefined) return <div className="login"><Spinner label="Starting…" /></div>;
   if (!me) return <><LoginScreen onSignedIn={(u) => { setMe(u); go(u.role === "supervisor" ? "dashboard" : "queue"); }} /><Toaster /></>;
   if (me.must_change) return (
-    <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced onDone={() => setMe({ ...me, must_change: false })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
+    <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
   const allowed = (me.role === "supervisor" ? SUPERVISOR_NAV : USER_NAV).map((x) => x[0]);
   const view = allowed.includes(nav.view) ? nav.view : (me.role === "supervisor" ? "dashboard" : "queue");
@@ -2057,6 +2484,7 @@ function App() {
     : view === "claims" ? <ClaimsView {...props} />
     : view === "team" ? <TeamView {...props} />
     : view === "clients" ? <ClientsView {...props} />
+    : view === "locations" ? <LocationsView {...props} />
     : view === "saag" ? <SaagView {...props} />
     : view === "reports" ? <ReportsView {...props} />
     : view === "history" ? <HistoryView {...props} />
@@ -2066,11 +2494,11 @@ function App() {
       <Shell me={me} view={view} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)}>
         <React.Fragment key={view + JSON.stringify(nav.params || {})}>{body}</React.Fragment>
       </Shell>
-      {pwOpen && <Modal title="Change password" onClose={() => setPwOpen(false)} narrow><ChangePasswordForm onDone={() => setPwOpen(false)} onCancel={() => setPwOpen(false)} /></Modal>}
+      {pwOpen && <Modal title={me.has_password ? "Change password" : "Set a password"} onClose={() => setPwOpen(false)} narrow><ChangePasswordForm me={me} onDone={() => { setPwOpen(false); setMe({ ...me, has_password: true }); }} onCancel={() => setPwOpen(false)} /></Modal>}
       <Toaster />
     </>
   );
 }
 window.addEventListener("error", (e) => { const r = document.getElementById("root"); if (r && !r.childElementCount) r.innerHTML = '<div style="font:14px Inter,system-ui,sans-serif;padding:40px;color:#A32D2D;max-width:720px;margin:0 auto"><b>Brahmastra could not start.</b><br/>' + String(e.message || e.error || "Unknown error").replace(/</g, "&lt;") + '</div>'; });
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+if (!window.__BRAHMASTRA_MS_CALLBACK) ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script></body></html>

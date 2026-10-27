@@ -19,6 +19,7 @@ hours, and can be exported as one cell per note.
 | `lib/saag.js` | The SAAG matrix (8 statuses, 96 sub-statuses, 50 actions, their Effective Matrix), generated from the SAAG Claim Entry Tool workbook. |
 | `lib/denial-library.js` | The denial library from Purview Gurukul (72 denial scenarios: meaning, questions for the payer, next steps). Drives the "Suggested next steps" panel. |
 | `lib/local-backend.js` | Demo mode only: runs `worker.js` inside the browser on SQLite-in-WebAssembly so the app works with no server. |
+| `lib/msal-browser.js`, `lib/msal-redirect-bridge.js` | Microsoft's MSAL 5.22 (as shipped in the previous Brahmastra) for the OneDrive picker. |
 | `dev/build-saag.ps1` | Regenerates `lib/saag.js` from a new copy of the workbook. |
 | `dev/build-denial-library.ps1` | Refreshes `lib/denial-library.js` from Gurukul's `index.html`. |
 | `dev/serve.ps1` | A tiny local web server (PowerShell, no Node needed) for trying the app on a PC. |
@@ -98,14 +99,72 @@ sign-in), then **Clients** and **Inventory**.
 - **Biller**: My day (the allocations, one claim at a time) and My work (their
   history).
 
-Accounts are email + password. Passwords are hashed in the browser and hashed
-again on the server with a per-user salt and the `PEPPER` secret. Sessions last
-12 hours and extend while in use. Team leads can only create accounts on the
-allowed email domains.
+### Accounts and sign-in
+
+- **Billers** are created by a team lead on the Team screen (first name, last
+  name, work email, designation, role) and sign in with a **one-time code
+  emailed to them every time** (Sign in with a code → Send me a code → enter
+  the six digits). A team lead can optionally give them a temporary password
+  too, or issue a sign-in code from the Team list when an email is slow.
+- **Team leads** create their own account from the sign-in screen (Create a
+  team lead account: first name, last name, work email, designation from the
+  list SME / TL / Sr TL / Assistant Manager / Manager / Sr Manager, and a
+  password). A code sent to the email confirms it. They can then sign in with
+  the password or with a code.
+- Anyone signed in with a code can set or change a password from the menu
+  without typing the old one.
+
+Accounts are limited to email domains with "purview" in them (`*purview*` in
+`ALLOWED_DOMAINS`; exact names and `*.suffix` patterns work too, and the
+Worker's `ALLOWED_DOMAINS` variable can tighten it). Passwords are hashed in
+the browser and hashed again on the server with a per-user salt and the
+`PEPPER` secret. Codes are six digits, hashed on the server, valid for ten
+minutes, five attempts, at most one per 45 seconds and ten per hour per
+email. Sessions last 12 hours and extend while in use.
+
+**Email delivery** (needed for codes in production). Set these on the Worker:
+
+| Variable | Value |
+|---|---|
+| `EMAIL_PROVIDER` | `resend`, `brevo`, `sendgrid`, `graph` or `webhook` |
+| `EMAIL_FROM` | `Brahmastra <no-reply@purview-healthcare.com>` (a sender the provider allows) |
+| `EMAIL_API_KEY` | the provider's API key (secret); for `webhook`, a shared secret |
+| `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_SENDER` | for `graph` only: the app registration with the **Mail.Send** application permission (admin consent) and the mailbox to send from |
+| `EMAIL_WEBHOOK_URL` | for `webhook` only: a URL that accepts `POST {secret, to, subject, text, html}`, for example a Google Apps Script web app like Gurukul's |
+
+Without a provider, password sign-in still works and a team lead can hand out
+codes from the Team screen. In demo mode no email is sent: the code is shown
+on screen.
+
+### Locations: who works what
+
+**Locations** lists every client and location with the billers mapped to it
+and an "allocate on upload" switch. A location with no billers of its own
+uses the client-level billers. "Allocate open claims now" hands every open
+claim of that place to its billers at once.
 
 ### Inventory uploads
 
-Pick a client, a location, and the kind of inventory:
+Files open straight from OneDrive: **Upload inventory → Open OneDrive** signs
+you in with your Purview Microsoft account (pop-up) and opens the pinned
+Purview Automate inventory folder; pick the file and it is read from OneDrive
+(nothing is written back). A team lead pins that folder once with "Pin the
+Purview Automate folder" at the top of the Inventory screen (paste the
+folder's sharing link); you can also paste a link to any folder or file inside
+the picker, or drop a file from the computer. **Upload history** links each
+batch back to its OneDrive file.
+
+Microsoft sign-in works only when the app is opened from the address
+registered on the Brahmastra app registration in Entra ID
+(`MS_REDIRECT_URI` in `index.html`, currently the GitHub Pages site). If you
+host the app elsewhere, add that address as a single-page application redirect
+URI on the registration and update `MS_REDIRECT_URI`.
+
+Pick a client, a location, and the kind of inventory. As soon as the file
+loads, its claims are handed to the billers mapped to that location (evenly,
+highest priority first, patients and payers kept together) unless you untick
+"Allocate after loading"; a team lead can move them afterwards on Allocate or
+Claims.
 
 - **Fresh inventory**: claims never worked. New claims are added; claims already
   on file are refreshed (balance, status, payer...). Rows whose status reads

@@ -73,6 +73,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS allocations (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, location_id TEXT, by_user TEXT NOT NULL, at INTEGER NOT NULL,
      strategy TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL DEFAULT 0, summary_json TEXT NOT NULL DEFAULT '{}')`,
   `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS otps (id TEXT PRIMARY KEY, email TEXT NOT NULL, code_hash TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT 'login', data_json TEXT NOT NULL DEFAULT '{}',
+     created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE INDEX IF NOT EXISTS idx_otps_email ON otps (email, created_at)`,
 ];
 
 /* Columns added after the first release. ensureReady() adds any that an
@@ -81,7 +84,99 @@ const EXTRA_COLUMNS = {
   notes: [["status", "TEXT NOT NULL DEFAULT ''"], ["sub_status", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT NOT NULL DEFAULT ''"], ["bucket", "TEXT NOT NULL DEFAULT ''"],
     ["effective", "TEXT NOT NULL DEFAULT ''"], ["note_action", "TEXT NOT NULL DEFAULT ''"], ["fields_json", "TEXT NOT NULL DEFAULT '{}'"], ["edited_at", "INTEGER"], ["edited_by", "TEXT"]],
   claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"]],
+  locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"]],
+  clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"]],
+  batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
+  users: [["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"]],
+  sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
 };
+const DESIGNATIONS = ["SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_TRIES = 5;
+
+/* ---- email: one-time codes go out through whichever provider the Worker is configured with ----
+   EMAIL_PROVIDER = resend | brevo | sendgrid | graph | webhook, with EMAIL_API_KEY and EMAIL_FROM ("Brahmastra <no-reply@purview-healthcare.com>").
+   graph   = Microsoft 365 via the app registration: MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET (Mail.Send application permission), MS_SENDER (mailbox to send from).
+   webhook = POST {secret, to, subject, text, html} to EMAIL_WEBHOOK_URL (for a Google Apps Script web app like Gurukul's).
+   In demo mode (no provider) the code is shown on screen instead. */
+function splitFrom(from) { const m = String(from || "").match(/^\s*(.*?)\s*<([^>]+)>\s*$/); return m ? { name: m[1].replace(/^"|"$/g, ""), email: m[2] } : { name: "Brahmastra", email: String(from || "").trim() }; }
+async function sendEmail(env, { to, subject, text, html }) {
+  const provider = String(env.EMAIL_PROVIDER || "").toLowerCase().trim();
+  if (!provider) throw new ApiError(503, "Email is not set up on the server yet (EMAIL_PROVIDER). A team lead can give you a sign-in code from the Team screen instead.");
+  const from = splitFrom(env.EMAIL_FROM || "Brahmastra <no-reply@purview-healthcare.com>");
+  const fail = async (r, who) => { let t = ""; try { t = (await r.text()).slice(0, 300); } catch {} throw new ApiError(502, `${who} did not accept the email (${r.status}${t ? ": " + t : ""}).`); };
+  if (provider === "resend") {
+    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ from: `${from.name} <${from.email}>`, to: [to], subject, text, html }) });
+    if (!r.ok) await fail(r, "Resend");
+  } else if (provider === "brevo") {
+    const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ sender: { name: from.name, email: from.email }, to: [{ email: to }], subject, textContent: text, htmlContent: html }) });
+    if (!r.ok) await fail(r, "Brevo");
+  } else if (provider === "sendgrid") {
+    const r = await fetch("https://api.sendgrid.com/v3/mail/send", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ personalizations: [{ to: [{ email: to }] }], from: { email: from.email, name: from.name }, subject, content: [{ type: "text/plain", value: text }, { type: "text/html", value: html }] }) });
+    if (!r.ok) await fail(r, "SendGrid");
+  } else if (provider === "graph") {
+    const tr = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID || "")}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: env.MS_CLIENT_ID || "", client_secret: env.MS_CLIENT_SECRET || "", scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials" }) });
+    if (!tr.ok) await fail(tr, "Microsoft sign-in (token)");
+    const tok = (await tr.json()).access_token;
+    const sender = env.MS_SENDER || from.email;
+    const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, { method: "POST", headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
+      body: JSON.stringify({ message: { subject, body: { contentType: "HTML", content: html }, toRecipients: [{ emailAddress: { address: to } }] }, saveToSentItems: false }) });
+    if (!r.ok) await fail(r, "Microsoft Graph");
+  } else if (provider === "webhook") {
+    const r = await fetch(env.EMAIL_WEBHOOK_URL || "", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret: env.EMAIL_API_KEY || "", to, subject, text, html }) });
+    if (!r.ok) await fail(r, "The email webhook");
+  } else throw new ApiError(503, "Unknown EMAIL_PROVIDER '" + provider + "'. Use resend, brevo, sendgrid, graph or webhook.");
+}
+const otpCode = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0] % 900000)); };
+const otpHash = (env, email, code) => sha256Hex(`otp:${email}:${code}:${env.PEPPER || DEFAULT_PEPPER}`);
+async function issueOtp(env, email, purpose, data) {
+  const now = Date.now();
+  const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM otps WHERE email = ? AND created_at > ?", email, now - 3600000);
+  if (recent && recent.last && now - recent.last < 45000) throw new ApiError(429, "A code was sent less than a minute ago. Check your inbox (and spam), then try again.");
+  if (recent && recent.n >= 10) throw new ApiError(429, "Too many codes requested for this email in the last hour. Try again later.");
+  const code = otpCode();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE otps SET consumed = 1 WHERE email = ? AND consumed = 0").bind(email),
+    env.DB.prepare("INSERT INTO otps (id, email, code_hash, purpose, data_json, created_at, expires_at) VALUES (?,?,?,?,?,?,?)").bind(uuid(), email, await otpHash(env, email, code), purpose, JSON.stringify(data || {}), now, now + OTP_TTL_MS),
+    env.DB.prepare("DELETE FROM otps WHERE expires_at < ?").bind(now - 86400000),
+  ]);
+  return code;
+}
+async function deliverOtp(env, email, code, purpose) {
+  const what = purpose === "signup" ? "finish creating your Brahmastra account" : "sign in to Brahmastra";
+  const text = `Your Brahmastra code is ${code}. Use it within 10 minutes to ${what}. If you did not ask for it, ignore this email.`;
+  const html = `<div style="font-family:Inter,Segoe UI,sans-serif;font-size:15px;color:#0A0E24"><p>Your Brahmastra code is</p><p style="font-size:30px;font-weight:700;letter-spacing:6px;margin:8px 0 16px">${code}</p><p>Use it within 10 minutes to ${what}. If you did not ask for it, ignore this email.</p><p style="color:#5A6178;font-size:12px">Purview Brahmastra</p></div>`;
+  if (env.DEMO && !env.EMAIL_PROVIDER) return { sent: false, demo_code: code };
+  await sendEmail(env, { to: email, subject: `Your Brahmastra code: ${code}`, text, html });
+  return { sent: true };
+}
+async function checkOtp(env, email, code) {
+  const now = Date.now();
+  const row = await one(env, "SELECT * FROM otps WHERE email = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1", email);
+  if (!row || row.expires_at < now) throw new ApiError(401, "That code has expired or was never sent. Request a new one.");
+  const ok = sameHash(await otpHash(env, email, String(code || "").replace(/\s/g, "")), row.code_hash);
+  if (!ok) {
+    const tries = row.tries + 1;
+    await run(env, "UPDATE otps SET tries = ?, consumed = CASE WHEN ? >= ? THEN 1 ELSE consumed END WHERE id = ?", tries, tries, OTP_MAX_TRIES, row.id);
+    throw new ApiError(401, tries >= OTP_MAX_TRIES ? "Too many wrong codes. Request a new one." : "That code doesn't match. Check the latest email and try again.");
+  }
+  await run(env, "UPDATE otps SET consumed = 1 WHERE id = ?", row.id);
+  let data = {}; try { data = JSON.parse(row.data_json || "{}"); } catch {}
+  return { purpose: row.purpose, data };
+}
+async function openSession(env, u, via) {
+  const now = Date.now();
+  const token = randomHex(24);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+    env.DB.prepare("INSERT INTO sessions (token, user_id, created_at, expires_at, via) VALUES (?,?,?,?,?)").bind(token, u.id, now, now + SESSION_MS, via),
+    env.DB.prepare("UPDATE users SET last_login = ? WHERE id = ?").bind(now, u.id),
+  ]);
+  return { token, user: publicUser({ ...u, last_login: now, via }) };
+}
+const fullName = (first, last, fallback) => [first, last].map((s) => String(s || "").trim()).filter(Boolean).join(" ") || fallback || "";
+const parseTeam = (s) => { try { const a = JSON.parse(s || "[]"); return Array.isArray(a) ? a.map((x) => String(x)).slice(0, 100) : []; } catch { return []; } };
 
 /* ---- the SAAG entry and the standard note ----
    A worked claim carries a SAAG selection (Status > Sub-status > Action, with
@@ -179,7 +274,8 @@ function commentOk(t) {
   const words = s.split(/\s+/).filter((w) => w.length >= 2);
   return words.length >= 2 && /[a-zA-Z]/.test(s);
 }
-const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, role: u.role, active: !!u.active, capacity: u.capacity, must_change: !!u.must_change, created_at: u.created_at, last_login: u.last_login });
+const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_name: u.first_name || "", last_name: u.last_name || "", designation: u.designation || "", role: u.role, active: !!u.active, capacity: u.capacity,
+  must_change: !!u.must_change, has_password: !!u.pass_hash, via: u.via || undefined, created_at: u.created_at, last_login: u.last_login });
 
 const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).first();
 const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...p).all()).results || [];
@@ -203,8 +299,8 @@ function ensureReady(env) {
       const password = env.BOOTSTRAP_PASSWORD || DEFAULT_BOOTSTRAP_PASSWORD;
       const salt = randomHex(16);
       const hash = await makeHash(env, salt, await sha256Hex(password));
-      await run(env, "INSERT INTO users (id, email, name, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        uuid(), email, "Supervisor", "supervisor", salt, hash, env.BOOTSTRAP_PASSWORD ? 0 : 1, 1, 35, Date.now());
+      await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        uuid(), email, "Supervisor", "Supervisor", "", "TL", "supervisor", salt, hash, env.BOOTSTRAP_PASSWORD ? 0 : 1, 1, 35, Date.now());
     }
     for (const table of Object.keys(EXTRA_COLUMNS)) {
       const have = new Set((await all(env, `PRAGMA table_info(${table})`)).map((r) => r.name));
@@ -217,55 +313,102 @@ function ensureReady(env) {
 /* ------------------------------------------------------------- auth */
 async function userFromToken(env, token) {
   if (!token) return null;
-  const row = await one(env, "SELECT s.expires_at AS s_exp, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?", token);
+  const row = await one(env, "SELECT s.expires_at AS s_exp, s.via AS s_via, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?", token);
   if (!row) return null;
   const now = Date.now();
   if (row.s_exp < now || !row.active) { await run(env, "DELETE FROM sessions WHERE token = ?", token); return null; }
   if (row.s_exp - now < SESSION_MS / 2) await run(env, "UPDATE sessions SET expires_at = ? WHERE token = ?", now + SESSION_MS, token);
-  return publicUser(row);
+  return publicUser({ ...row, via: row.s_via || "password" });
 }
+/* Allowed email domains. Entries can be exact (purview-healthcare.com), a suffix (*.purview-healthcare.com)
+   or a contains-pattern (*purview*). The default lets in any domain with "purview" in it. */
 function allowedDomains(env) {
-  return String(env.ALLOWED_DOMAINS || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const list = String(env.ALLOWED_DOMAINS || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return list.length ? list : ["*purview*"];
+}
+function domainMatches(pattern, domain) {
+  if (pattern === "*") return true;
+  if (pattern.startsWith("*") && pattern.endsWith("*") && pattern.length > 2) return domain.includes(pattern.slice(1, -1));
+  if (pattern.startsWith("*.")) return domain === pattern.slice(2) || domain.endsWith(pattern.slice(1));
+  if (pattern.startsWith("*")) return domain.endsWith(pattern.slice(1));
+  return domain === pattern;
 }
 function domainOk(env, email) {
-  const list = allowedDomains(env);
-  if (!list.length) return true;
-  return list.includes(email.slice(email.lastIndexOf("@") + 1));
+  const domain = String(email || "").toLowerCase().slice(String(email || "").lastIndexOf("@") + 1);
+  return allowedDomains(env).some((p) => domainMatches(p, domain));
 }
 
 /* --------------------------------------------------------- the ops */
-const PUBLIC_OPS = new Set(["auth.login", "meta.info"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|demo\.)/;
+const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info"]);
+const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|demo\.)/;
 
 const OPS = {
-  "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env) }),
+  "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, designations: DESIGNATIONS }),
 
-  /* ---- auth ---- */
+  /* ---- auth: password, or a one-time code sent by email ---- */
   "auth.login": async ({ env, payload }) => {
     const email = mailClean(payload.email);
     if (!mailOk(email) || !isHash(payload.passHash)) throw bad("Enter your email and password.");
     const u = await one(env, "SELECT * FROM users WHERE email = ?", email);
     const fail = () => new ApiError(401, "That email or password doesn't match.");
     if (!u || !u.active) throw fail();
+    if (!u.pass_hash) throw new ApiError(401, "This account has no password yet. Sign in with a code sent to your email, then set a password from the menu if you want one.");
     const h = await makeHash(env, u.pass_salt, payload.passHash);
     if (!sameHash(h, u.pass_hash)) throw fail();
-    const now = Date.now();
-    const token = randomHex(24);
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
-      env.DB.prepare("INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)").bind(token, u.id, now, now + SESSION_MS),
-      env.DB.prepare("UPDATE users SET last_login = ? WHERE id = ?").bind(now, u.id),
-    ]);
-    return { token, user: publicUser({ ...u, last_login: now }) };
+    return openSession(env, u, "password");
+  },
+  "auth.sendOtp": async ({ env, payload }) => {
+    const email = mailClean(payload.email);
+    if (!mailOk(email)) throw bad("Enter your email address.");
+    const u = await one(env, "SELECT id, active FROM users WHERE email = ?", email);
+    if (!u) throw new ApiError(404, "No Brahmastra account uses that email. Ask your team lead to add you, or create a team lead account.");
+    if (!u.active) throw new ApiError(403, "This account is switched off. Ask your team lead.");
+    const code = await issueOtp(env, email, "login", {});
+    return { email, ...(await deliverOtp(env, email, code, "login")) };
+  },
+  "auth.signup": async ({ env, payload }) => {
+    const email = mailClean(payload.email);
+    if (!mailOk(email)) throw bad("Enter a valid email address.");
+    if (!domainOk(env, email)) throw bad("Accounts are limited to Purview email addresses (" + allowedDomains(env).join(", ") + ").");
+    const first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
+    if (!first || !last) throw bad("Enter your first and last name.");
+    const designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : "";
+    if (!designation) throw bad("Pick your designation.");
+    if (!isHash(payload.passHash)) throw bad("Set a password.");
+    const dup = await one(env, "SELECT id FROM users WHERE email = ?", email);
+    if (dup) throw bad("That email already has an account. Sign in instead (with a code if you forgot the password).");
+    const code = await issueOtp(env, email, "signup", { first_name: first, last_name: last, designation, passHash: payload.passHash, capacity: 35 });
+    return { email, ...(await deliverOtp(env, email, code, "signup")) };
+  },
+  "auth.verifyOtp": async ({ env, payload }) => {
+    const email = mailClean(payload.email);
+    if (!mailOk(email) || !String(payload.code || "").trim()) throw bad("Enter the email and the code.");
+    const { purpose, data } = await checkOtp(env, email, payload.code);
+    let u = await one(env, "SELECT * FROM users WHERE email = ?", email);
+    if (purpose === "signup") {
+      if (u) throw bad("That email already has an account. Sign in instead.");
+      const id = uuid(), salt = randomHex(16), now = Date.now();
+      const hash = isHash(data.passHash) ? await makeHash(env, salt, data.passHash) : "";
+      await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,'supervisor',?,?,0,1,?,?)",
+        id, email, fullName(data.first_name, data.last_name, email), data.first_name || "", data.last_name || "", data.designation || "", salt, hash, Math.round(num(data.capacity, 35)), now);
+      u = await one(env, "SELECT * FROM users WHERE id = ?", id);
+    }
+    if (!u || !u.active) throw new ApiError(403, "This account is not active. Ask your team lead.");
+    if (u.must_change && !u.pass_hash) await run(env, "UPDATE users SET must_change = 0 WHERE id = ?", u.id);
+    return openSession(env, u, "otp");
   },
   "auth.logout": async ({ env, token }) => { if (token) await run(env, "DELETE FROM sessions WHERE token = ?", token); return { ok: true }; },
   "auth.me": async ({ user }) => ({ user }),
   "auth.changePassword": async ({ env, user, token, payload }) => {
-    if (!isHash(payload.oldHash) || !isHash(payload.newHash)) throw bad("Enter your current and new password.");
-    if (String(payload.oldHash).toLowerCase() === String(payload.newHash).toLowerCase()) throw bad("Choose a different password.");
+    if (!isHash(payload.newHash)) throw bad("Enter the new password.");
     const u = await one(env, "SELECT * FROM users WHERE id = ?", user.id);
-    const h = await makeHash(env, u.pass_salt, payload.oldHash);
-    if (!sameHash(h, u.pass_hash)) throw bad("Your current password doesn't match.");
+    const needOld = !!u.pass_hash && user.via !== "otp";
+    if (needOld) {
+      if (!isHash(payload.oldHash)) throw bad("Enter your current password.");
+      if (String(payload.oldHash).toLowerCase() === String(payload.newHash).toLowerCase()) throw bad("Choose a different password.");
+      const h = await makeHash(env, u.pass_salt, payload.oldHash);
+      if (!sameHash(h, u.pass_hash)) throw bad("Your current password doesn't match.");
+    }
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.newHash);
     await env.DB.batch([
@@ -283,32 +426,43 @@ const OPS = {
   "users.save": async ({ env, user, payload }) => {
     const now = Date.now();
     const role = payload.role === "supervisor" ? "supervisor" : "user";
-    const name = str(payload.name, 120).trim();
+    const first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
+    const name = fullName(first, last, str(payload.name, 120).trim());
+    const designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
     const capacity = Math.max(1, Math.min(500, Math.round(num(payload.capacity, 35))));
     const active = payload.active === false ? 0 : 1;
     if (payload.id) {
       const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown user.");
+      if (!name) throw bad("Enter the person's name.");
       if (ex.id === user.id && (!active || role !== "supervisor")) throw bad("You can't deactivate or demote your own account.");
       if (ex.role === "supervisor" && (role !== "supervisor" || !active)) {
         const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role = 'supervisor' AND active = 1 AND id <> ?", ex.id);
-        if (!n.n) throw bad("Keep at least one active supervisor.");
+        if (!n.n) throw bad("Keep at least one active team lead.");
       }
-      await run(env, "UPDATE users SET name = ?, role = ?, capacity = ?, active = ? WHERE id = ?", name, role, capacity, active, ex.id);
+      await run(env, "UPDATE users SET name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, capacity = ?, active = ? WHERE id = ?", name, first, last, designation, role, capacity, active, ex.id);
       if (!active) await run(env, "DELETE FROM sessions WHERE user_id = ?", ex.id);
-      return { user: publicUser({ ...ex, name, role, capacity, active }) };
+      return { user: publicUser({ ...ex, name, first_name: first, last_name: last, designation, role, capacity, active }) };
     }
     const email = mailClean(payload.email);
     if (!mailOk(email)) throw bad("Enter a valid email address.");
     if (!domainOk(env, email)) throw bad("Accounts are limited to: " + allowedDomains(env).join(", "));
-    if (!isHash(payload.passHash)) throw bad("Set a temporary password.");
+    if (!first || !last) throw bad("Enter the person's first and last name.");
     const dup = await one(env, "SELECT id FROM users WHERE email = ?", email);
     if (dup) throw bad("That email already has an account.");
     const id = uuid(), salt = randomHex(16);
-    const hash = await makeHash(env, salt, payload.passHash);
-    await run(env, "INSERT INTO users (id, email, name, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,1,?,?,?)",
-      id, email, name || email.split("@")[0], role, salt, hash, active, capacity, now);
-    return { user: publicUser({ id, email, name, role, active, capacity, must_change: 1, created_at: now }) };
+    const hash = isHash(payload.passHash) ? await makeHash(env, salt, payload.passHash) : "";
+    await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      id, email, name, first, last, designation, role, salt, hash, hash ? 1 : 0, active, capacity, now);
+    return { user: publicUser({ id, email, name, first_name: first, last_name: last, designation, role, active, capacity, must_change: hash ? 1 : 0, pass_hash: hash, created_at: now }) };
+  },
+  /* A team lead can fetch a sign-in code for someone whose email has not arrived (or when email is not set up). */
+  "users.loginCode": async ({ env, payload }) => {
+    const ex = await one(env, "SELECT id, email, active, name FROM users WHERE id = ?", payload.id);
+    if (!ex) throw bad("Unknown user.");
+    if (!ex.active) throw bad("This account is switched off.");
+    const code = await issueOtp(env, ex.email, "login", {});
+    return { email: ex.email, code, expires_in_min: OTP_TTL_MS / 60000 };
   },
   "users.resetPassword": async ({ env, payload }) => {
     if (!isHash(payload.passHash)) throw bad("Set a temporary password.");
@@ -327,7 +481,21 @@ const OPS = {
   "clients.list": async ({ env }) => {
     const clients = await all(env, "SELECT * FROM clients ORDER BY active DESC, name");
     const locs = await all(env, "SELECT * FROM locations ORDER BY active DESC, name");
-    return { clients: clients.map((c) => ({ ...c, active: !!c.active, locations: locs.filter((l) => l.client_id === c.id).map((l) => ({ ...l, active: !!l.active })) })) };
+    const shape = (r) => { const { team_json, ...rest } = r; return { ...rest, active: !!r.active, auto_allocate: r.auto_allocate == null ? true : !!r.auto_allocate, team: parseTeam(team_json) }; };
+    return { clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape) })) };
+  },
+  /* Billers mapped to a client (used when a location has no team of its own) or to a location. */
+  "clients.saveTeam": async ({ env, payload }) => {
+    const table = payload.location_id ? "locations" : "clients";
+    const id = str(payload.location_id || payload.client_id, 60);
+    const ex = await one(env, `SELECT id FROM ${table} WHERE id = ?`, id);
+    if (!ex) throw bad("Unknown " + (payload.location_id ? "location" : "client") + ".");
+    const ids = [...new Set((Array.isArray(payload.team) ? payload.team : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
+    const valid = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
+    const team = ids.filter((x) => valid.includes(x));
+    const auto = payload.auto_allocate === false ? 0 : 1;
+    await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ?`, JSON.stringify(team), auto, ex.id);
+    return { team, auto_allocate: !!auto };
   },
   "clients.save": async ({ env, user, payload }) => {
     const name = str(payload.name, 160).trim();
@@ -343,7 +511,7 @@ const OPS = {
     }
     const id = uuid(), now = Date.now();
     await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,?,?,?,?)", id, name, code, active, fu, user.id, now);
-    return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, locations: [] } };
+    return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [] } };
   },
   "locations.save": async ({ env, payload }) => {
     const name = str(payload.name, 160).trim();
@@ -361,7 +529,7 @@ const OPS = {
     if (dup) throw bad("That location already exists for this client.");
     const id = uuid(), now = Date.now();
     await run(env, "INSERT INTO locations (id, client_id, name, active, created_at) VALUES (?,?,?,?,?)", id, client.id, name, active, now);
-    return { location: { id, client_id: client.id, name, active: !!active, created_at: now } };
+    return { location: { id, client_id: client.id, name, active: !!active, created_at: now, team: [], auto_allocate: true } };
   },
 
   /* ---- settings ---- */
@@ -390,8 +558,8 @@ const OPS = {
     let bid = batch_id;
     if (!bid) {
       bid = uuid();
-      await run(env, "INSERT INTO batches (id, client_id, location_id, kind, file_name, uploaded_by, uploaded_at, rows_read) VALUES (?,?,?,?,?,?,?,?)",
-        bid, client.id, location_id || null, kind, str(file_name, 200), user.id, now, Math.round(num(rows_read, 0)));
+      await run(env, "INSERT INTO batches (id, client_id, location_id, kind, file_name, uploaded_by, uploaded_at, rows_read, source, web_url) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        bid, client.id, location_id || null, kind, str(file_name, 200), user.id, now, Math.round(num(rows_read, 0)), payload.source === "onedrive" ? "onedrive" : "file", str(payload.web_url, 1000));
     } else {
       const b = await one(env, "SELECT id, client_id FROM batches WHERE id = ?", bid);
       if (!b || b.client_id !== client.id) throw bad("Unknown batch.");
@@ -553,7 +721,7 @@ const OPS = {
     if (payload.location_id) { where.push("location_id = ?"); params.push(payload.location_id); }
     const today = isoDate(payload.today) || isoToday();
     where.push("((state = 'open') OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?))"); params.push(today);
-    const rows = await all(env, `SELECT id, claim_no, account_no, patient, payer, dos, cpt, balance, age_days, bucket, tier, status_class, inventory_kind, worked_before,
+    const rows = await all(env, `SELECT id, location_id, claim_no, account_no, patient, payer, dos, cpt, balance, age_days, bucket, tier, status_class, inventory_kind, worked_before,
         last_worked_on, follow_up_on, priority, priority_reason, state, skips, escalated, touches FROM claims WHERE ${where.join(" AND ")} ORDER BY priority DESC LIMIT 20000`, ...params);
     return { claims: rows };
   },
@@ -830,7 +998,8 @@ const OPS = {
       let u = await one(env, "SELECT * FROM users WHERE email = ?", email);
       if (!u) {
         const id = uuid(), salt = randomHex(16);
-        await run(env, "INSERT INTO users (id, email, name, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,0,1,35,?)", id, email, name, "user", salt, await makeHash(env, salt, passHash), now);
+        const [first, ...rest] = name.split(" ");
+        await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,0,1,35,?)", id, email, name, first, rest.join(" "), "SME", "user", salt, await makeHash(env, salt, passHash), now);
         u = { id, email, name };
       }
       users.push(publicUser({ ...u, active: 1, role: "user" }));
