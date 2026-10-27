@@ -95,7 +95,7 @@ const EXTRA_COLUMNS = {
   users: [["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
 };
-const DESIGNATIONS = ["SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
+const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_TRIES = 5;
 
@@ -575,6 +575,22 @@ const OPS = {
     await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,?,?,?,?)", id, name, code, active, fu, user.id, now);
     return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [] } };
   },
+  /* Delete a client with everything under it: locations, uploads, claims, notes, allocation history. Confirmed by name on the screen. */
+  "clients.delete": async ({ env, payload }) => {
+    const ex = await one(env, "SELECT id, name FROM clients WHERE id = ?", payload.id);
+    if (!ex) throw bad("Unknown client.");
+    if (str(payload.confirm, 200).trim().toLowerCase() !== String(ex.name).trim().toLowerCase()) throw bad("Type the client's name exactly to confirm.");
+    const n = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ?", ex.id);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM notes WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
+      env.DB.prepare("DELETE FROM claims WHERE client_id = ?").bind(ex.id),
+      env.DB.prepare("DELETE FROM batches WHERE client_id = ?").bind(ex.id),
+      env.DB.prepare("DELETE FROM allocations WHERE client_id = ?").bind(ex.id),
+      env.DB.prepare("DELETE FROM locations WHERE client_id = ?").bind(ex.id),
+      env.DB.prepare("DELETE FROM clients WHERE id = ?").bind(ex.id),
+    ]);
+    return { ok: true, name: ex.name, claims: n ? n.n : 0 };
+  },
   "locations.save": async ({ env, payload }) => {
     const name = str(payload.name, 160).trim();
     if (!name) throw bad("Give the location a name.");
@@ -881,11 +897,13 @@ const OPS = {
     const today = isoDate(payload.today) || isoToday();
     const now = Date.now();
     let c = await one(env, "SELECT * FROM claims WHERE assigned_to = ? AND state = 'in_progress' LIMIT 1", user.id);
-    if (!c) {
-      const r = await env.DB.prepare(`UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = (
-          SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on <= ?)
-          ORDER BY CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority DESC, balance DESC, age_days DESC LIMIT 1) AND state = 'assigned' RETURNING *`).bind(now, now, user.id, today).first();
-      c = r || null;
+    // Pick the top claim in two plain steps (no RETURNING / subquery update), retrying once if it was taken meanwhile.
+    for (let attempt = 0; !c && attempt < 2; attempt++) {
+      const cand = await one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)
+          ORDER BY CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today);
+      if (!cand) break;
+      const r = await run(env, "UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned'", now, now, cand.id);
+      if (changesOf(r)) c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id);
     }
     if (!c) return { claim: null };
     const full = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", c.id);
@@ -967,6 +985,7 @@ const OPS = {
     if (payload.saag_bucket) { where.push("c.last_bucket = ?"); params.push(str(payload.saag_bucket, 20)); }
     if (payload.state) { where.push("c.state = ?"); params.push(str(payload.state, 20)); }
     if (payload.client_id) { where.push("c.client_id = ?"); params.push(str(payload.client_id, 60)); }
+    if (payload.location_id) { where.push("c.location_id = ?"); params.push(str(payload.location_id, 60)); }
     const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.balance, c.age_days, c.bucket, c.tier, c.status_class,
         c.file_status, c.file_sub_status, c.inventory_kind, c.worked_before, c.follow_up_on, c.priority, c.priority_reason, c.state, c.assigned_at, c.started_at, c.completed_at, c.skips, c.escalated,
         c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action, c.last_worked_on, cl.name AS client_name, l.name AS location_name

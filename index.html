@@ -210,7 +210,7 @@ const EFFECTIVE_BUCKET = { "Pending-Collectible Insurance": "Payer", "Pending-Cl
 const EFFECTIVE_DAYS = { "Pending-Collectible Insurance": 30, "Pending-Client Assistance": 14, "Pending-Collectible Patient": 30, "Pending-Purview internal review": 7 };
 const NOTE_ACTIONS = ["corrected & resubmitted", "appeal filed", "pending with client", "pending with patient", "pending with payer", "follow up", "closed"];
 const NOTE_SOURCES = ["Call", "Portal", "IVR", "EOB/ERA", "Email", "Clearinghouse", "Client", "Other"];
-const DESIGNATIONS = ["SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
+const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const PRECHECKS = ["Eligibility active on DOS", "Claim status with payer", "Timely filing limit", "Appeal filing limit", "Auth / referral on file", "Prior notes read", "EOB / ERA reviewed", "Patient demographics / member ID", "Payer ID / address", "Coding (CPT, DX, modifiers)"];
 const isClosedSaag = (saag, noteAction) => !!(saag && saag.bucket === "Closed") || /^(processing-closed|payment-cash in bank)$/i.test((saag && saag.effective) || "") || noteAction === "closed";
 const mmdd = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}` : (iso || ""));
@@ -1153,8 +1153,21 @@ function ClientsView({ ctx, reload }) {
     try { await rpc("locations.save", { client_id: c.id, name }); setLocName({ ...locName, [c.id]: "" }); toast("Location added."); reload(); } catch (e) { toast(e.message, "err"); }
   };
   const toggleLoc = async (l) => { try { await rpc("locations.save", { id: l.id, name: l.name, active: !l.active }); reload(); } catch (e) { toast(e.message, "err"); } };
+  const [del, setDel] = useState(null);
+  const [delTyped, setDelTyped] = useState("");
+  const doDelete = async () => {
+    setBusy(true);
+    try { const r = await rpc("clients.delete", { id: del.id, confirm: delTyped.trim() }); toast(`${r.name} deleted with ${fmtInt(r.claims)} claims.`); setDel(null); setDelTyped(""); setEdit(null); reload(); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
   return (
     <div className="stack">
+      {del && (
+        <Modal title={"Delete " + del.name + "?"} sub="This removes the client, its locations, every upload and claim under it, and the notes on those claims. It cannot be undone. To keep the history but hide the client, untick Active instead." onClose={() => setDel(null)} narrow footer={<><button className="btn" onClick={() => setDel(null)} disabled={busy}>Cancel</button><button className="btn danger" onClick={doDelete} disabled={busy || delTyped.trim().toLowerCase() !== del.name.trim().toLowerCase()}>{busy ? "Deleting…" : "Delete client"}</button></>}>
+          <Field label={"Type " + del.name + " to confirm"}><input className="input" value={delTyped} onChange={(e) => setDelTyped(e.target.value)} autoFocus /></Field>
+        </Modal>
+      )}
       <div className="row between"><div><h1>Clients & locations</h1><div className="sub">Inventory is uploaded per client and location; allocation and reports follow the same split.</div></div>
         <button className="btn primary" onClick={() => setEdit({ name: "", code: "", follow_up_days: 30, active: true })}>Add client</button></div>
       {!ctx.clients.length && <div className="card"><Empty>No clients yet. Add your first client, then its locations.</Empty></div>}
@@ -1163,7 +1176,7 @@ function ClientsView({ ctx, reload }) {
           <div className="row between top">
             <div><h2>{c.name} {c.code && <span className="badge ink">{c.code}</span>} {!c.active && <span className="badge red">inactive</span>}</h2>
               <div className="sub">Default follow-up after a claim is worked: {c.follow_up_days} days · added {fmtDate(new Date(c.created_at).toISOString().slice(0, 10))}</div></div>
-            <button className="btn sm" onClick={() => setEdit({ id: c.id, name: c.name, code: c.code, follow_up_days: c.follow_up_days, active: c.active })}>Edit</button>
+            <div className="row" style={{ gap: 6 }}><button className="btn sm" onClick={() => setEdit({ id: c.id, name: c.name, code: c.code, follow_up_days: c.follow_up_days, active: c.active })}>Edit</button><button className="btn sm link" style={{ color: "#A32D2D" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button></div>
           </div>
           <div className="row mt" style={{ alignItems: "flex-start" }}>
             <div className="pill-list" style={{ flex: 1 }}>
@@ -1458,22 +1471,37 @@ function LocationsView({ ctx, reload, go }) {
 /* ---------- inventory upload ---------- */
 function InventoryView({ ctx, reload, go, params, me }) {
   const [tab, setTab] = useState("upload");
+  const [refresh, setRefresh] = useState(null);
   return (
     <div className="stack">
-      <div className="row between"><div><h1>Inventory</h1><div className="sub">Open OneDrive, click the file, and the claims load. They go to the location's billers as soon as they are in.</div></div>
+      <div className="row between"><div><h1>Inventory</h1><div className="sub">Open OneDrive, click the file, and the claims load. They go to the location's billers as soon as they are in. Changed the file later? Refresh it from Upload history.</div></div>
         <div className="row" style={{ gap: 4 }}>{[["upload", "Upload inventory"], ["batches", "Upload history"]].map(([k, l]) => <button key={k} className={"chip " + (tab === k ? "on" : "")} onClick={() => setTab(k)}>{l}</button>)}</div></div>
-      {tab === "upload" ? <UploadWizard ctx={ctx} reload={reload} go={go} params={params} me={me} folderLink="" /> : <BatchesTable ctx={ctx} />}
+      {tab === "upload" ? <UploadWizard key={refresh ? refresh.id : "new"} ctx={ctx} reload={reload} go={go} params={params} me={me} folderLink="" refreshBatch={refresh} /> : <BatchesTable ctx={ctx} onRefresh={(b) => { setRefresh(b); setTab("upload"); }} />}
     </div>
   );
 }
-function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
+function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch }) {
   const [step, setStep] = useState(0);
   const [odOpen, setOdOpen] = useState(false);
   const [autoAlloc, setAutoAlloc] = useState(true);
-  const [clientId, setClientId] = useState((params && params.clientId) || "");
-  const [locId, setLocId] = useState("");
+  const [clientId, setClientId] = useState((refreshBatch && refreshBatch.client_id) || (params && params.clientId) || "");
+  const [locId, setLocId] = useState((refreshBatch && refreshBatch.location_id) || "");
   const [locMode, setLocMode] = useState("pick");
-  const [kind, setKind] = useState("fresh");
+  const [kind, setKind] = useState((refreshBatch && refreshBatch.kind) || "fresh");
+  /* Refresh: fetch the same OneDrive file again and run it through as a new upload of the same client, location and kind. */
+  const [refreshing, setRefreshing] = useState(!!(refreshBatch && refreshBatch.web_url));
+  useEffect(() => {
+    if (!refreshBatch || !refreshBatch.web_url) return;
+    (async () => {
+      try {
+        let a = await msx.account(); if (!a) a = await msx.signIn();
+        const it = await msItemFromLink(refreshBatch.web_url);
+        const d = await msDownloadItem(driveIdOf(it), it.id);
+        await onOneDriveFile({ bytes: d.bytes, name: d.info.name || refreshBatch.file_name, webUrl: d.info.webUrl || refreshBatch.web_url });
+      } catch (e) { toast("Could not fetch the file again from OneDrive: " + msalMessage(e), "err"); }
+      setRefreshing(false);
+    })();
+  }, []);
   const [file, setFile] = useState(null);
   const [sheetIdx, setSheetIdx] = useState(0);
   const [table, setTable] = useState(null);
@@ -1567,21 +1595,23 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
   };
   return (
     <div className="card">
-      {step === 0 && (
+      {step === 0 && refreshing && <Spinner label={"Fetching " + (refreshBatch.file_name || "the file") + " again from OneDrive…"} />}
+      {step === 0 && !refreshing && (
         <div className="stack">
-          <div className="grid g2">
-            <div className="card tight stack" style={{ borderColor: "var(--teal)" }}>
-              <div className="b">Open OneDrive</div>
-              <div className="small muted">{msSupported() ? "Your OneDrive opens here. Click the inventory file and it is read on the spot." : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}. From this address, use a file from this computer.`}</div>
-              <button className="btn primary lg" disabled={!msSupported() || busy} onClick={() => setOdOpen(true)}>{busy ? "Reading…" : "Open OneDrive"}</button>
-            </div>
+          <div className="card tight stack" style={{ borderColor: "var(--teal)", alignItems: "flex-start" }}>
+            <div className="b">Open OneDrive</div>
+            <div className="small muted">{msSupported() ? "Your OneDrive opens here. Click the inventory file and it is read on the spot." : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}.`}</div>
+            <button className="btn primary lg" disabled={!msSupported() || busy} onClick={() => setOdOpen(true)}>{busy ? "Reading…" : "Open OneDrive"}</button>
+          </div>
+          {/* Files from the computer are only for demo mode (no OneDrive there); live uploads come from OneDrive. */}
+          {(DEMO || !msSupported()) && (
             <div className={"drop " + (over ? "over" : "")} onClick={() => inputRef.current && inputRef.current.click()}
               onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files[0]); }}>
-              <div className="display" style={{ fontSize: 16, color: "var(--ink)" }}>{busy ? "Reading…" : "Or drop a file from this computer"}</div>
+              <div className="display" style={{ fontSize: 16, color: "var(--ink)" }}>{busy ? "Reading…" : "Demo: drop a file from this computer"}</div>
               <div className="small">Excel (.xlsx, .xls) or CSV. Header row is detected automatically.</div>
               <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
             </div>
-          </div>
+          )}
           <div className="small muted">You can pick the client and location now, or after the file is read.</div>
           <div className="grid g3">
             <ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={(v) => { setLocId(v); if (v) setLocMode("pick"); }} />
@@ -1678,7 +1708,7 @@ function ReviewStep({ built, kind, onBack, onLoad, busy }) {
     </div>
   );
 }
-function BatchesTable({ ctx }) {
+function BatchesTable({ ctx, onRefresh }) {
   const [clientId, setClientId] = useState("");
   const q = useRpc("inventory.batches", { client_id: clientId || undefined }, [clientId]);
   const [undo, setUndo] = useState(null);
@@ -1689,7 +1719,7 @@ function BatchesTable({ ctx }) {
       <div className="row between"><h2>Upload history</h2><div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div></div>
       <ErrorBox error={q.error} />
       <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client · location</th><th>Kind</th><th>File</th><th>By</th><th className="r">Rows</th><th className="r">New</th><th className="r">Refreshed</th><th className="r">Reopened</th><th className="r">Closed</th><th className="r">Excluded</th><th></th></tr></thead>
-        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td>{b.undone_at ? <span className="tiny muted">undone</span> : <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button>}</td></tr>)}
+        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td style={{ whiteSpace: "nowrap" }}>{b.undone_at ? <span className="tiny muted">undone</span> : <>{b.source === "onedrive" && b.web_url && msSupported() && <button className="btn sm" title="Read the same OneDrive file again and refresh the claims from it" onClick={() => onRefresh(b)}>Refresh</button>} <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button></>}</td></tr>)}
           {q.data && !q.data.batches.length && <tr><td colSpan={12} className="muted">No uploads yet.</td></tr>}</tbody></table></div>
       {undo && <Confirm title="Undo this upload?" text="Claims this upload added that nobody has worked yet will be deleted. Claims it refreshed keep their refreshed values." confirmLabel="Undo upload" danger onYes={doUndo} onNo={() => setUndo(null)} busy={busy} />}
     </div>
@@ -1705,6 +1735,39 @@ const CLAIM_COLS = [
   { key: "last_status_code", label: "SAAG status" }, { key: "last_sub_status", label: "SAAG sub-status" }, { key: "last_action_code", label: "SAAG action" }, { key: "last_bucket", label: "Bucket" }, { key: "last_effective", label: "Effective matrix" }, { key: "last_note_action", label: "Note action" },
   { key: "last_note", label: "Last note (one cell)" }, { key: "location_name", label: "Location" },
 ];
+/* One small button; the rules live in a dialog so they do not crowd the screen. */
+function AllocationLogicButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button className="btn sm link" onClick={() => setOpen(true)} title="How claims are ordered and handed out">See allocation logic</button>
+      {open && (
+        <Modal title="How allocation works" sub="Every claim gets a priority score; billers get the highest scores first, with a patient's or payer's claims kept together." onClose={() => setOpen(false)}>
+          <div className="stack">
+            <div><div className="b small mb">1. Priority score (higher works first)</div>
+              <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                <li><b>Status</b>: rejected 100 · denied 90 · partial payment 75 · secondary 65 · awaiting payer 50 · other 40 · patient responsibility 20 · paid 0.</li>
+                <li><b>Age since date of service</b>: 75–90 days +45 (near timely filing) · 91–120 +35 · 121–360 +30 · 361+ +25 · 61–74 +20 · 31–60 +10.</li>
+                <li><b>Value tier</b>: High +30 · Medium +15 · Low (under $100) 0, and a Low claim's whole score is halved. High = above the client's average balance.</li>
+                <li><b>Balance</b>: up to +25 more, growing with the amount.</li>
+                <li><b>Follow-up</b>: due today +15 · overdue 15+ days +25. Escalated +10. Each skip −5.</li>
+              </ul>
+              <div className="tiny muted mt8">The claim's own "Priority reason" column shows which of these applied to it.</div></div>
+            <div><div className="b small mb">2. Handing out (smart strategy, the default)</div>
+              <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                <li>Claims are taken in score order, highest first.</li>
+                <li>A patient with 2+ claims goes to one biller as a batch; other claims are grouped by payer, so one biller calls one payer.</li>
+                <li>Each claim goes to the biller with the most capacity left (claims per day on the Team screen); ties go to whoever has fewer so far.</li>
+                <li>Automatic allocation after an upload uses the billers mapped on the Locations tab and splits evenly between them.</li>
+                <li>Claims already on someone's desk are never moved automatically; a team lead can move them on Allocate or Claims.</li>
+              </ul></div>
+            <div className="small muted">Other strategies on the Allocate screen: by patient, by payer, round robin, or even dollars.</div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
 function ClaimsView({ ctx, params, me }) {
   const p = params || {};
   const [f, setF] = useState({ client_id: p.clientId || "", location_id: "", state: p.state || (p.follow_up_due || p.assigned_to || p.escalated ? "" : "workable"), tier: "", bucket: "", status_class: "", inventory_kind: "", assigned_to: p.assigned_to || "", q: "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: "", saag_bucket: "", follow_up_due: !!p.follow_up_due, escalated: !!p.escalated, sort: "priority", dir: "desc", page: 1, page_size: 50 });
@@ -1738,7 +1801,7 @@ function ClaimsView({ ctx, params, me }) {
   const users = ctx.users.filter((u) => u.active);
   return (
     <div className="stack">
-      <div className="row between"><div><h1>Claims</h1><div className="sub">Every claim on file, with filters, bulk actions and export.</div></div><button className="btn" onClick={exportCSV} disabled={busy || !rows.length}>Download CSV</button></div>
+      <div className="row between"><div><h1>Claims</h1><div className="sub">Every claim on file, with filters, bulk actions and export.</div></div><div className="row"><AllocationLogicButton /><button className="btn" onClick={exportCSV} disabled={busy || !rows.length}>Download CSV</button></div></div>
       <div className="card tight">
         <div className="grid g5">
           <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF((x) => ({ ...x, client_id: v, location_id: "", page: 1 }))} locId={f.location_id} setLocId={(v) => set("location_id", v)} allowAll />
@@ -1828,13 +1891,13 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
             )}
           </div>
           <div className="stack">
+            <Suggestions claim={c} subStatus={c.last_sub_status} />
             <div className="card tight">
               <div className="b small mb">Add a note</div>
               <textarea className="textarea" style={{ minHeight: 70 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Instruction, context, or a follow-up comment…" />
               <div className="row mt8" style={{ justifyContent: "flex-end" }}><button className="btn sm primary" disabled={busy || note.trim().length < 8} onClick={addNote}>Add note</button></div>
             </div>
             <NotesList notes={q.data.notes} me={me} claim={c} onChanged={() => { q.reload(); if (onChanged) onChanged(); }} />
-            <Suggestions claim={c} subStatus={c.last_sub_status} />
             <Siblings rows={q.data.siblings} users={ctx.users} meId={me.id} />
           </div>
         </div>
@@ -2092,7 +2155,7 @@ function AllocateView({ ctx, params, go }) {
   const sel = filtered;
   return (
     <div className="stack">
-      <div><h1>Allocate claims</h1><div className="sub">Build the day's work order from the inventory and hand it out. Highest priority first; batches by patient and payer so one call covers several claims.</div></div>
+      <div className="row between top"><div><h1>Allocate claims</h1><div className="sub">Build the day's work order from the inventory and hand it out. Highest priority first; batches by patient and payer so one call covers several claims.</div></div><AllocationLogicButton /></div>
       <div className="card">
         <div className="grid g3"><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={setLocId} /><div className="field"><span>Pool</span><div style={{ paddingTop: 6 }}>{loading ? <Spinner label="Loading claims…" /> : pool ? <span><b>{fmtInt(pool.length)}</b> eligible claims · {fmtMoney(sum(pool, (c) => c.balance))} <span className="muted">(unassigned, plus worked claims whose follow-up is due)</span></span> : <span className="muted">Pick a client to load its pool.</span>}</div></div></div>
       </div>
@@ -2336,8 +2399,9 @@ function QueueView({ ctx, me }) {
   const today = todayISO();
   const [from, to] = dayBounds(today);
   const summary = useRpc("queue.summary", { day_from_ms: from, day_to_ms: to }, []);
-  const [f, setF] = useState({ q: "", payer: "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: "", saag_bucket: "", state: "" });
-  const payload = useMemo(() => { const o = { day_from_ms: from }; for (const k in f) if (f[k] !== "") o[k] = f[k]; return o; }, [f]);
+  const EMPTY_F = { q: "", payer: "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: "", saag_bucket: "", state: "", client_id: "", location_id: "", due: "" };
+  const [f, setF] = useState(EMPTY_F);
+  const payload = useMemo(() => { const o = { day_from_ms: from }; for (const k in f) if (f[k] !== "" && k !== "due") o[k] = f[k]; return o; }, [f]);
   const list = useRpc("queue.list", payload, [JSON.stringify(payload)]);
   const [bundle, setBundle] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -2358,9 +2422,26 @@ function QueueView({ ctx, me }) {
   const refreshBundle = async () => { if (!bundle) return; try { const r = await rpc("claims.get", { id: bundle.claim.id }); setBundle({ ...r, claim: { ...bundle.claim, ...r.claim } }); } catch (e) { toast(e.message, "err"); } };
   useEffect(() => { if (summary.data && summary.data.in_progress_id && !bundle) open(summary.data.in_progress_id); }, [summary.data && summary.data.in_progress_id]);
   const s = summary.data;
-  const rows = list.data ? list.data.rows : [];
+  /* "Due" = when this claim should be done: parked claims on their follow-up date; the rest in list order,
+     a day's worth (the biller's claims per day) at a time: Today, Tomorrow, in 2 days... */
+  const cap = Math.max(1, Number(me.capacity) || 35);
+  const allRows = list.data ? list.data.rows : [];
+  const dueOf = useMemo(() => {
+    const m = {}; let n = 0;
+    allRows.forEach((r) => {
+      if (r.state === "completed" || r.state === "closed") { m[r.id] = { days: -1, label: "Done" }; return; }
+      const ahead = r.follow_up_on && r.follow_up_on > today ? daysBetween(today, r.follow_up_on) : 0;
+      const slot = Math.floor(n / cap); n++;
+      const days = Math.max(ahead, slot);
+      m[r.id] = { days, label: days === 0 ? "Today" : days === 1 ? "Tomorrow" : `In ${days} days` };
+    });
+    return m;
+  }, [allRows, cap, today]);
+  const rows = useMemo(() => allRows.filter((r) => { if (!f.due) return true; const d = dueOf[r.id] ? dueOf[r.id].days : 0; return f.due === "today" ? d === 0 : f.due === "tomorrow" ? d === 1 : d >= 2; }), [allRows, f.due, dueOf]);
   const counts = useMemo(() => { const c = { green: 0, yellow: 0, white: 0 }; rows.forEach((r) => { const t = workTone(r); c[t === "tr-green" ? "green" : t === "tr-yellow" ? "yellow" : "white"]++; }); return c; }, [rows]);
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const myClients = useMemo(() => ctx.clients.filter((c) => allRows.some((r) => r.client_id === c.id)), [ctx.clients, allRows]);
+  const myLocs = useMemo(() => { const c = myClients.find((x) => x.id === f.client_id); return c ? c.locations.filter((l) => allRows.some((r) => r.location_id === l.id)) : []; }, [myClients, f.client_id, allRows]);
   const saagOptions = useMemo(() => [...new Set(rows.map((r) => r.last_status_code).filter(Boolean))].sort(), [rows]);
   return (
     <div className="stack">
@@ -2384,7 +2465,10 @@ function QueueView({ ctx, me }) {
           <div><h3>My allocations</h3><div className="sub">Priority order. Click a claim to open its profile.</div></div>
           <div className="row"><span className="legend"><i style={{ background: "#DDF7EA" }} /> closed ({counts.green})</span><span className="legend"><i style={{ background: "#FFF4CC" }} /> worked, still open ({counts.yellow})</span><span className="legend"><i style={{ background: "#fff" }} /> not worked yet ({counts.white})</span></div>
         </div>
-        <div className="row" style={{ gap: 6 }}>
+        <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+          <select className="select sm" style={{ width: "auto" }} value={f.due} onChange={(e) => set("due", e.target.value)}><option value="">Due: any day</option><option value="today">Due today</option><option value="tomorrow">Due tomorrow</option><option value="later">Due later</option></select>
+          <select className="select sm" style={{ width: "auto" }} value={f.client_id} onChange={(e) => { set("client_id", e.target.value); set("location_id", ""); }}><option value="">All clients</option>{myClients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          {myLocs.length > 0 && <select className="select sm" style={{ width: "auto" }} value={f.location_id} onChange={(e) => set("location_id", e.target.value)}><option value="">All locations</option>{myLocs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select>}
           <input className="input sm" style={{ width: 200 }} placeholder="claim #, patient, account" value={f.q} onChange={(e) => set("q", e.target.value)} />
           <input className="input sm" style={{ width: 140 }} placeholder="payer" value={f.payer} onChange={(e) => set("payer", e.target.value)} />
           <input className="input sm" style={{ width: 140 }} placeholder="provider" value={f.provider} onChange={(e) => set("provider", e.target.value)} />
@@ -2394,14 +2478,14 @@ function QueueView({ ctx, me }) {
           <select className="select sm" style={{ width: "auto" }} value={f.saag_status} onChange={(e) => set("saag_status", e.target.value)}><option value="">Any SAAG status</option>{(saagOptions.length ? saagOptions : SAAG.statuses).map((x) => <option key={x} value={x}>{x}</option>)}</select>
           <select className="select sm" style={{ width: "auto" }} value={f.saag_bucket} onChange={(e) => set("saag_bucket", e.target.value)}><option value="">Any bucket</option>{BUCKETS4.map((b) => <option key={b} value={b}>{b}</option>)}</select>
           <select className="select sm" style={{ width: "auto" }} value={f.state} onChange={(e) => set("state", e.target.value)}><option value="">Any state</option><option value="assigned">Not worked</option><option value="in_progress">Open now</option><option value="completed">Worked today</option><option value="closed">Closed today</option></select>
-          {Object.values(f).some((v) => v !== "") && <button className="btn sm link" onClick={() => setF({ q: "", payer: "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: "", saag_bucket: "", state: "" })}>clear</button>}
+          {Object.values(f).some((v) => v !== "") && <button className="btn sm link" onClick={() => setF(EMPTY_F)}>clear</button>}
           <span style={{ flex: 1 }} /><span className="small muted">{fmtInt(rows.length)} claims · {fmtMoney(sum(rows, (r) => r.balance))}</span>
         </div>
         <ErrorBox error={list.error} />
-        <div className="table-wrap"><table className="t"><thead><tr><th className="r">Priority</th><th>Claim #</th><th>Patient</th><th>Payer</th><th>Provider</th><th>CPT</th><th>DOS</th><th className="r">Age</th><th className="r">Balance</th><th>Tier</th><th>File status</th><th>SAAG</th><th>Bucket</th><th>Follow-up</th><th>State</th></tr></thead>
+        <div className="table-wrap"><table className="t"><thead><tr><th>Due</th><th>Claim #</th><th>Patient</th><th>Payer</th><th>Provider</th><th>CPT</th><th>DOS</th><th className="r">Age</th><th className="r">Balance</th><th>Tier</th><th>File status</th><th>SAAG</th><th>Bucket</th><th>Follow-up</th><th>State</th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className={"click " + workTone(r)} onClick={() => open(r.id)}>
-              <td className="num" title={r.priority_reason}>{r.priority}</td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</div></td><td className="small">{r.payer}</td><td className="small">{r.provider}</td><td className="mono small">{r.cpt}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{r.age_days ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
+              <td title={"Priority " + r.priority + (r.priority_reason ? " · " + r.priority_reason : "")}>{dueOf[r.id] ? <span className={"badge " + (dueOf[r.id].days === 0 ? "red" : dueOf[r.id].days === 1 ? "amber" : dueOf[r.id].days < 0 ? "green" : "")}>{dueOf[r.id].label}</span> : ""}</td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</div></td><td className="small">{r.payer}</td><td className="small">{r.provider}</td><td className="mono small">{r.cpt}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{r.age_days ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td><TierBadge tier={r.tier} /></td><td className="small">{r.file_status}{r.file_sub_status ? <div className="tiny muted">{r.file_sub_status}</div> : null}</td>
               <td className="small">{r.last_status_code ? <><b>{r.last_status_code}</b>{r.last_sub_status ? <div className="tiny muted">{r.last_sub_status}</div> : null}<div className="tiny muted">{r.last_action_code}</div></> : <span className="muted">–</span>}</td>
               <td>{r.last_bucket ? <span className={"badge " + (r.last_bucket === "Closed" ? "green" : "teal")}>{r.last_bucket}</span> : ""}</td><td className="small">{r.follow_up_on ? fmtDate(r.follow_up_on) : ""}</td>
@@ -2433,16 +2517,17 @@ function WorkPanel({ bundle, ctx, me, onDone }) {
   return (
     <div className="grid g2-1">
       <div className="stack">
-        <ClaimFacts c={c} />
+        <div className="row between"><button className="btn sm" onClick={() => skip(false)} disabled={busy} title="Put this claim back on your list and return to your day">← Back to my day</button><span className="tiny muted">opened {fmtWhen(c.started_at)}</span></div>
         <Suggestions claim={c} subStatus={sub || c.last_sub_status} />
+        <ClaimFacts c={c} />
         <Siblings rows={bundle.siblings} users={ctx.users} selectable selected={sibs} onToggle={(id) => setSibs((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; })} meId={me.id} />
         <NotesList notes={bundle.notes} me={me} claim={c} onChanged={() => onDone(null)} />
       </div>
       <div className="card stack" style={{ alignSelf: "start" }}>
-        <div className="row between"><h2>Work this claim</h2><span className="tiny muted">opened {fmtWhen(c.started_at)}</span></div>
+        <h2>Work this claim</h2>
         <WorkForm claim={c} onChange={(s) => setSub(s.saag.sub_status)} buttons={[{ key: "stay", label: "Save" }, { key: "next", label: "Save & next claim", primary: true }]} onSave={save} />
         {sibs.size > 0 && <div className="alert info">The same entry will also be saved on {sibs.size} other claim{sibs.size > 1 ? "s" : ""} of this patient.</div>}
-        <div className="row"><button className="btn sm" onClick={() => setSkipAsk(true)} disabled={busy}>Skip for now</button><button className="btn sm link" onClick={() => skip(false)} disabled={busy}>Return to list</button></div>
+        <div className="row"><button className="btn sm" onClick={() => setSkipAsk(true)} disabled={busy}>Skip for now</button></div>
       </div>
       {skipAsk && (
         <Modal title="Skip this claim" sub="It goes to the back of your list and your team lead can see it was skipped." onClose={() => setSkipAsk(false)} narrow footer={<><button className="btn" onClick={() => setSkipAsk(false)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => skip(true)}>Skip</button></>}>
