@@ -134,7 +134,80 @@ email. Sessions last 12 hours and extend while in use.
 
 Without a provider, password sign-in still works and a team lead can hand out
 codes from the Team screen. In demo mode no email is sent: the code is shown
-on screen.
+on screen. The Team screen shows which provider is active and has a **Send a
+test email** button.
+
+#### Sending codes through Microsoft 365 (Graph), step by step
+
+You need a Microsoft 365 admin (Global Administrator, or Application
+Administrator for the registration plus Exchange Administrator for the
+mailbox policy) and a mailbox the codes will come from.
+
+**A. App registration.** Use a separate registration for the mailer so the
+browser-facing Brahmastra registration never holds a secret.
+
+1. Entra admin center (entra.microsoft.com) → Identity → Applications → App
+   registrations → **New registration**. Name `Brahmastra Mailer`, single
+   tenant, no redirect URI → Register.
+2. On Overview, copy the **Application (client) ID** and the **Directory
+   (tenant) ID**.
+3. Certificates & secrets → Client secrets → **New client secret**
+   (description `brahmastra-api`, expiry up to 24 months) → Add → copy the
+   secret **Value** immediately; it is shown once. Put a reminder in the
+   calendar for the expiry.
+4. API permissions → Add a permission → Microsoft Graph → **Application
+   permissions** → Mail → **Mail.Send** → Add permissions. Then **Grant admin
+   consent for (your tenant)** → Yes. The Status column must show a green
+   check. The default delegated `User.Read` can be removed.
+
+**B. Sending mailbox.** Decide `MS_SENDER`, for example
+`no-reply@purview-healthcare.com`. It must be a real Exchange Online mailbox:
+a licensed user, or a shared mailbox (Microsoft 365 admin center → Teams &
+groups → Shared mailboxes → Add; shared mailboxes need no licence).
+
+**C. Limit the app to that mailbox (strongly recommended).** An application
+`Mail.Send` permission can send as any mailbox in the tenant. Restrict it with
+an Exchange application access policy (Exchange Online PowerShell; replace
+the ids):
+
+```powershell
+Connect-ExchangeOnline
+New-DistributionGroup -Name "Brahmastra Mailer" -Type Security -PrimarySmtpAddress brahmastra-mailer@purview-healthcare.com
+Add-DistributionGroupMember -Identity "Brahmastra Mailer" -Member no-reply@purview-healthcare.com
+New-ApplicationAccessPolicy -AppId <client id of Brahmastra Mailer> -PolicyScopeGroupId brahmastra-mailer@purview-healthcare.com -AccessRight RestrictAccess -Description "Brahmastra may send only as no-reply"
+Test-ApplicationAccessPolicy -Identity no-reply@purview-healthcare.com -AppId <client id of Brahmastra Mailer>
+```
+
+The policy can take up to 30 minutes to apply.
+
+**D. Worker variables** (Cloudflare → Workers & Pages → brahmastra-api →
+Settings → Variables and secrets):
+
+| Name | Type | Value |
+|---|---|---|
+| `EMAIL_PROVIDER` | text | `graph` |
+| `EMAIL_FROM` | text | `Brahmastra <no-reply@purview-healthcare.com>` |
+| `MS_TENANT_ID` | text | the Directory (tenant) ID |
+| `MS_CLIENT_ID` | text | the Application (client) ID of *Brahmastra Mailer* |
+| `MS_CLIENT_SECRET` | **secret** | the client secret value |
+| `MS_SENDER` | text | `no-reply@purview-healthcare.com` (the address in `EMAIL_FROM`) |
+
+Save, and deploy if the editor asks.
+
+**E. Test.** Sign in as a team lead → Team → **Send a test email**. When it
+arrives, sign out and try **Sign in with a code**.
+
+**If it fails**, the toast quotes the provider's answer:
+
+- `Microsoft sign-in (token) did not accept (401)`: tenant id, client id or
+  secret is wrong, or the secret expired.
+- `Microsoft Graph did not accept the email (403 … ErrorAccessDenied)`:
+  `Mail.Send` has no admin consent yet, or the access policy does not include
+  `MS_SENDER`.
+- `(404 … MailboxNotEnabledForRESTAPI / ResourceNotFound)`: `MS_SENDER` is
+  not an Exchange Online mailbox.
+- Codes land in Junk: keep the sender in your own Microsoft 365 domain (SPF
+  and DKIM are then already in place) and ask IT to allow-list it.
 
 ### Locations: who works what
 

@@ -2166,10 +2166,21 @@ function TeamView({ ctx, reload, me }) {
   };
   const days = useMemo(() => { const out = []; let d = range.from; let guard = 0; while (d <= range.to && guard++ < 62) { out.push(d); d = addDaysISO(d, 1); } return out; }, [range.from, range.to]);
   const prodBy = useMemo(() => { const m = {}; (prod.data ? prod.data.rows : []).forEach((r) => { m[r.user_id] = m[r.user_id] || { name: r.user_name, days: {}, n: 0, amt: 0, resolved: 0 }; m[r.user_id].days[r.day] = r; m[r.user_id].n += r.n; m[r.user_id].amt += r.amt; m[r.user_id].resolved += r.resolved; }); return m; }, [prod.data]);
+  const info = useRpc("meta.info", {}, []);
+  const [testTo, setTestTo] = useState(me.email);
+  const [testing, setTesting] = useState(false);
+  const sendTest = async () => { setTesting(true); try { const r = await rpc("email.test", { to: testTo }); toast(`Test email sent to ${r.to} through ${r.provider}. Check the inbox (and spam).`); } catch (e) { toast(e.message, "err"); } setTesting(false); };
+  const PROVIDER_LABEL = { graph: "Microsoft 365 (Graph)", resend: "Resend", brevo: "Brevo", sendgrid: "SendGrid", webhook: "webhook" };
   return (
     <div className="stack">
       <div className="row between"><div><h1>Team</h1><div className="sub">Team leads upload and allocate; billers work their day list one claim at a time.</div></div>
         <button className="btn primary" onClick={() => setEdit({ first_name: "", last_name: "", email: "", designation: "SME", role: "user", capacity: 35, active: true, tempPw: false })}>Add team member</button></div>
+      <div className={"card tight row between " + (info.data && !info.data.email ? "" : "")} style={info.data && !info.data.email ? { borderLeft: "4px solid var(--amber)" } : { borderLeft: "4px solid var(--green)" }}>
+        <div className="small">
+          <b>Sign-in emails:</b> {!info.data ? "checking…" : info.data.email ? <>sent through <b>{PROVIDER_LABEL[info.data.email_provider] || info.data.email_provider}</b>{info.data.email_sender ? <> from <span className="mono">{info.data.email_sender}</span></> : info.data.email_from ? <> as <span className="mono">{info.data.email_from}</span></> : null}.</> : DEMO ? <>demo mode sends nothing; codes are shown on screen.</> : <>not set up on the Worker yet (EMAIL_PROVIDER). Billers cannot receive codes until it is; hand out codes from this list meanwhile. Setup steps are in the README.</>}
+        </div>
+        {info.data && (info.data.email || DEMO) && <div className="row"><input className="input sm" style={{ width: 240 }} type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} /><button className="btn sm" disabled={testing || !mailOk(testTo)} onClick={sendTest}>{testing ? "Sending…" : "Send a test email"}</button></div>}
+      </div>
       <div className="card">
         <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Designation</th><th>Email</th><th>Role</th><th className="r">Claims / day</th><th>Status</th><th>Last sign in</th><th></th></tr></thead>
           <tbody>{ctx.users.map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}</td><td className="small">{u.designation || "–"}</td><td className="small">{u.email}</td><td>{u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}{u.has_password ? null : <div className="tiny muted">code sign-in only</div>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>

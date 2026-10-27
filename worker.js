@@ -4,9 +4,14 @@
    One file, no imports. Deploy it as a Worker named brahmastra-api with:
      • a D1 database bound as   DB
      • (optional) secrets       PEPPER               extra salt for password hashes
-                                BOOTSTRAP_EMAIL      first supervisor login
-                                BOOTSTRAP_PASSWORD   first supervisor password
-                                ALLOWED_DOMAINS      comma list, e.g. purview-healthcare.com,purviewservices.com
+                                BOOTSTRAP_EMAIL      first team lead login
+                                BOOTSTRAP_PASSWORD   first team lead password
+                                ALLOWED_DOMAINS      comma list of domains or patterns, default *purview*
+     • email for sign-in codes  EMAIL_PROVIDER       graph | resend | brevo | sendgrid | webhook
+                                EMAIL_FROM           "Brahmastra <sender@purview-healthcare.com>"
+                                EMAIL_API_KEY        provider key (resend/brevo/sendgrid) or webhook secret
+                                MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_SENDER   for graph (Microsoft 365, Mail.Send application permission)
+                                EMAIL_WEBHOOK_URL    for webhook
    The Worker creates its own tables on the first request, seeds the
    default status/action codes, and creates the first supervisor account
    (supervisor@purview-healthcare.com / brahmastra-setup, forced to change
@@ -340,10 +345,21 @@ function domainOk(env, email) {
 
 /* --------------------------------------------------------- the ops */
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|demo\.)/;
+const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|email\.|demo\.)/;
 
 const OPS = {
-  "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, designations: DESIGNATIONS }),
+  "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
+    email_from: env.EMAIL_PROVIDER ? String(env.EMAIL_FROM || "") : "", email_sender: env.EMAIL_PROVIDER === "graph" ? String(env.MS_SENDER || "") : "", designations: DESIGNATIONS }),
+  /* Team lead: send a test message through the configured provider to prove the email setup works. */
+  "email.test": async ({ env, user, payload }) => {
+    const to = mailClean(payload.to || user.email);
+    if (!mailOk(to)) throw bad("Enter a valid email address.");
+    const provider = String(env.EMAIL_PROVIDER || "").toLowerCase();
+    const when = new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
+    await sendEmail(env, { to, subject: "Brahmastra test email", text: `This is a test from Brahmastra sent at ${when} through ${provider}. If you received it, sign-in codes will arrive the same way.`,
+      html: `<div style="font-family:Inter,Segoe UI,sans-serif;font-size:15px;color:#0A0E24"><p>This is a test from <b>Brahmastra</b>, sent at ${when} through <b>${provider}</b>.</p><p>If you received it, sign-in codes will arrive the same way.</p></div>` });
+    return { ok: true, to, provider };
+  },
 
   /* ---- auth: password, or a one-time code sent by email ---- */
   "auth.login": async ({ env, payload }) => {
