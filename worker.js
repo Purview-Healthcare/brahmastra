@@ -254,7 +254,20 @@ async function sha256Hex(s) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 const isHash = (h) => /^[0-9a-f]{64}$/i.test(String(h || ""));
-async function makeHash(env, salt, passHash) { return sha256Hex(`${salt}:${String(passHash).toLowerCase()}:${env.PEPPER || DEFAULT_PEPPER}`); }
+const hashWith = (salt, passHash, pepper) => sha256Hex(`${salt}:${String(passHash).toLowerCase()}:${pepper}`);
+async function makeHash(env, salt, passHash) { return hashWith(salt, passHash, env.PEPPER || DEFAULT_PEPPER); }
+/* True when the password matches. Accounts created before the PEPPER secret
+   was set (hashed with the built-in default) still work: their hash is
+   upgraded to the current PEPPER on the spot, so adding PEPPER later never
+   locks anyone out. */
+async function passwordOk(env, u, passHash) {
+  if (!u || !u.pass_hash || !isHash(passHash)) return false;
+  if (sameHash(await makeHash(env, u.pass_salt, passHash), u.pass_hash)) return true;
+  if (!env.PEPPER || env.PEPPER === DEFAULT_PEPPER) return false;
+  if (!sameHash(await hashWith(u.pass_salt, passHash, DEFAULT_PEPPER), u.pass_hash)) return false;
+  await run(env, "UPDATE users SET pass_hash = ? WHERE id = ?", await makeHash(env, u.pass_salt, passHash), u.id);
+  return true;
+}
 function sameHash(a, b) { // constant time
   a = String(a || ""); b = String(b || "");
   if (a.length !== b.length) return false;
@@ -298,6 +311,12 @@ function ensureReady(env) {
   if (READY) return READY;
   READY = (async () => {
     await env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s)));
+    // Add the columns introduced after the first release BEFORE anything is
+    // inserted: the bootstrap row below already uses them.
+    for (const table of Object.keys(EXTRA_COLUMNS)) {
+      const have = new Set((await all(env, `PRAGMA table_info(${table})`)).map((r) => r.name));
+      for (const [name, def] of EXTRA_COLUMNS[table]) if (!have.has(name)) await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
+    }
     const users = await one(env, "SELECT COUNT(*) AS n FROM users");
     if (!users || !users.n) {
       const email = mailClean(env.BOOTSTRAP_EMAIL || DEFAULT_BOOTSTRAP_EMAIL);
@@ -306,10 +325,6 @@ function ensureReady(env) {
       const hash = await makeHash(env, salt, await sha256Hex(password));
       await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         uuid(), email, "Supervisor", "Supervisor", "", "TL", "supervisor", salt, hash, env.BOOTSTRAP_PASSWORD ? 0 : 1, 1, 35, Date.now());
-    }
-    for (const table of Object.keys(EXTRA_COLUMNS)) {
-      const have = new Set((await all(env, `PRAGMA table_info(${table})`)).map((r) => r.name));
-      for (const [name, def] of EXTRA_COLUMNS[table]) if (!have.has(name)) await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
     }
   })().catch((e) => { READY = null; throw e; });
   return READY;
@@ -369,8 +384,7 @@ const OPS = {
     const fail = () => new ApiError(401, "That email or password doesn't match.");
     if (!u || !u.active) throw fail();
     if (!u.pass_hash) throw new ApiError(401, "This account has no password yet. Sign in with a code sent to your email, then set a password from the menu if you want one.");
-    const h = await makeHash(env, u.pass_salt, payload.passHash);
-    if (!sameHash(h, u.pass_hash)) throw fail();
+    if (!(await passwordOk(env, u, payload.passHash))) throw fail();
     return openSession(env, u, "password");
   },
   "auth.sendOtp": async ({ env, payload }) => {
@@ -422,8 +436,7 @@ const OPS = {
     if (needOld) {
       if (!isHash(payload.oldHash)) throw bad("Enter your current password.");
       if (String(payload.oldHash).toLowerCase() === String(payload.newHash).toLowerCase()) throw bad("Choose a different password.");
-      const h = await makeHash(env, u.pass_salt, payload.oldHash);
-      if (!sameHash(h, u.pass_hash)) throw bad("Your current password doesn't match.");
+      if (!(await passwordOk(env, u, payload.oldHash))) throw bad("Your current password doesn't match.");
     }
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.newHash);

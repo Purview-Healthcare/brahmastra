@@ -65,8 +65,8 @@ once under **Worker → Settings → Variables and secrets** (they survive every
 deploy):
 
 - `PEPPER` (secret): any long random text, mixed into every password hash and
-  sign-in code. Set it **before** the first real sign-in; changing it later
-  invalidates existing passwords.
+  sign-in code. Accounts created before it was set keep working (their hash
+  is upgraded at their next sign-in), but do not change it once set.
 - `BOOTSTRAP_PASSWORD` (secret, optional): the first team lead's first
   password. Without it the first team lead is
   `supervisor@purview-healthcare.com` / `brahmastra-setup` and must change the
