@@ -136,10 +136,11 @@ async function sendEmail(env, { to, subject, text, html }) {
 }
 const otpCode = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0] % 900000)); };
 const otpHash = (env, email, code) => sha256Hex(`otp:${email}:${code}:${env.PEPPER || DEFAULT_PEPPER}`);
-async function issueOtp(env, email, purpose, data) {
+async function issueOtp(env, email, purpose, data, { byTeamLead = false } = {}) {
   const now = Date.now();
   const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM otps WHERE email = ? AND created_at > ?", email, now - 3600000);
-  if (recent && recent.last && now - recent.last < 45000) throw new ApiError(429, "A code was sent less than a minute ago. Check your inbox (and spam), then try again.");
+  // The 45-second pause protects the mailbox; a team lead reading the code off the screen does not need it.
+  if (!byTeamLead && recent && recent.last && now - recent.last < 45000) throw new ApiError(429, "A code was sent less than a minute ago. Check your inbox (and spam), then try again.");
   if (recent && recent.n >= 10) throw new ApiError(429, "Too many codes requested for this email in the last hour. Try again later.");
   const code = otpCode();
   await env.DB.batch([
@@ -307,9 +308,11 @@ async function batchAll(env, stmts, size = 50) {
 }
 
 /* --------------------------------------------------------- first run */
-let READY = null;
+let READY = null, READY_DB = null;
 function ensureReady(env) {
-  if (READY) return READY;
+  // Demo mode swaps the database on "Reset demo data": a new DB object means the tables must be made again.
+  if (READY && (!env.DEMO || READY_DB === env.DB)) return READY;
+  READY_DB = env.DB;
   READY = (async () => {
     await env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s)));
     // Add the columns introduced after the first release BEFORE anything is
@@ -545,7 +548,7 @@ const OPS = {
     const ex = await one(env, "SELECT id, email, active, name FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (!ex.active) throw bad("This account is switched off.");
-    const code = await issueOtp(env, ex.email, "login", {});
+    const code = await issueOtp(env, ex.email, "login", {}, { byTeamLead: true });
     return { email: ex.email, code, expires_in_min: OTP_TTL_MS / 60000 };
   },
   "users.resetPassword": async ({ env, payload }) => {
@@ -1042,7 +1045,9 @@ const OPS = {
     const fields = cleanNoteFields(payload.note, c);
     const today = isoDate(payload.today) || isoToday();
     const closed = isClosedWork(saag, fields);
-    const followUp = closed ? "" : (isoDate(payload.follow_up_on) || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
+    // A follow-up date in the past would make the claim "overdue" the moment it is saved; the earliest is today.
+    const wanted = isoDate(payload.follow_up_on);
+    const followUp = closed ? "" : ((wanted && wanted >= today ? wanted : "") || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
     const comment = composeNote(fields, saag, followUp);
     const escalate = payload.escalate ? 1 : 0;
     const now = Date.now();
@@ -1117,7 +1122,8 @@ const OPS = {
     const fields = cleanNoteFields(payload.note, c);
     const today = isoDate(payload.today) || isoToday();
     const closed = isClosedWork(saag, fields);
-    const followUp = closed ? "" : (isoDate(payload.follow_up_on) || n.follow_up_on || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
+    const wantedFu = isoDate(payload.follow_up_on);
+    const followUp = closed ? "" : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
     const comment = composeNote(fields, saag, followUp);
     const now = Date.now();
     const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
@@ -1254,6 +1260,8 @@ export default {
       throw new ApiError(404, "Not found.");
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 500;
+      // A table that vanished (database replaced or emptied) means the schema must be made again on the next request.
+      if (/no such table/i.test(String(e && e.message))) READY = null;
       if (status >= 500) console.error("brahmastra-api", e);
       return json({ error: (e && e.message) || "Server error." }, status);
     }
