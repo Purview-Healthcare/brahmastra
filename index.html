@@ -788,12 +788,12 @@ const TierBadge = ({ tier }) => <span className={"badge " + (tier === "High" ? "
 const CLASS_TONE = { rejected: "amber", denied: "red", partial: "amber", secondary: "teal", awaiting: "teal", patient: "gray", paid: "green", other: "gray", unknown: "gray" };
 const ClassBadge = ({ cls }) => <span className={"badge " + (CLASS_TONE[cls] || "gray")}>{STATUS_LABEL[cls] || cls || "–"}</span>;
 const KindBadge = ({ claim }) => (claim.worked_before ? <span className="badge purple">worked before</span> : <span className="badge green">fresh</span>);
-function Bars({ rows, labelOf, valueOf, fmt = fmtMoney, subOf }) {
+function Bars({ rows, labelOf, valueOf, fmt = fmtMoney, subOf, onClick }) {
   const max = Math.max(1, ...rows.map((r) => valueOf(r)));
   return (
     <div className="stack" style={{ gap: 6 }}>
       {rows.map((r, i) => (
-        <div key={i} className="row" style={{ gap: 8 }}>
+        <div key={i} className={"row" + (onClick ? " click" : "")} style={{ gap: 8, borderRadius: 6, cursor: onClick ? "pointer" : undefined }} title={onClick ? "Open these claims" : undefined} onClick={onClick ? () => onClick(r) : undefined}>
           <div style={{ width: 140, fontSize: 12.5, fontWeight: 600, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={labelOf(r)}>{labelOf(r)}</div>
           <div className="bar" style={{ flex: 1 }}><i style={{ width: (valueOf(r) / max * 100) + "%" }} /></div>
           <div className="mono small" style={{ width: 86, textAlign: "right" }}>{fmt(valueOf(r))}</div>
@@ -1064,6 +1064,57 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
 /* ====================================================================
    PART 3 — supervisor screens
    ==================================================================== */
+/* Claims whose follow-up date passed with no new entry: hand them to a biller again, all at once. */
+function OverdueModal({ ctx, clientId, locId, onClose, onChanged }) {
+  const q = useRpc("claims.list", { client_id: clientId || undefined, location_id: locId || undefined, overdue: true, sort: "follow_up_on", dir: "asc", page_size: 500 }, []);
+  const rows = q.data ? q.data.rows : [];
+  const [sel, setSel] = useState(null);
+  const [user, setUser] = useState("");
+  const [busy, setBusy] = useState(false);
+  const chosen = sel || new Set(rows.map((r) => r.id));
+  const toggle = (id) => { const n = new Set(chosen); if (n.has(id)) n.delete(id); else n.add(id); setSel(n); };
+  const assign = async () => {
+    setBusy(true);
+    try { const r = await rpc("alloc.reassign", { ids: [...chosen], user_id: user }); toast(`${fmtInt(r.changed)} claims assigned.`); onChanged(); onClose(); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const billers = ctx.users.filter((u) => u.active);
+  return (
+    <Modal title="Overdue follow-ups" sub="The follow-up date passed and nobody has made a new entry. Pick who works them; they go to the top of that person's list." onClose={onClose} wide
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><div className="row"><select className="select sm" style={{ width: 220 }} value={user} onChange={(e) => setUser(e.target.value)}><option value="">Assign to…</option>{billers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.role === "supervisor" ? " (TL)" : ""}</option>)}</select><button className="btn primary" disabled={busy || !user || !chosen.size} onClick={assign}>{busy ? "Assigning…" : `Assign ${fmtInt(chosen.size)} claims`}</button></div></>}>
+      <ErrorBox error={q.error} />
+      {!q.data && !q.error && <Spinner />}
+      {q.data && (
+        <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th><input type="checkbox" checked={chosen.size === rows.length && rows.length > 0} onChange={(e) => setSel(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())} /></th><th>Claim #</th><th>Patient</th><th>Payer</th><th className="r">Balance</th><th>Follow-up was</th><th>Last entry</th><th>Last worked by</th></tr></thead>
+          <tbody>{rows.map((r) => <tr key={r.id}><td><input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} /></td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.location_name || ""}</div></td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td><td className="small" style={{ color: "#A32D2D" }}>{fmtDate(r.follow_up_on)}</td><td className="small">{r.last_status_code}{r.last_sub_status ? <div className="tiny muted">{r.last_sub_status}</div> : null}</td><td className="small">{r.assigned_name || "–"}</td></tr>)}
+            {!rows.length && <tr><td colSpan={8}><Empty>No overdue follow-ups.</Empty></td></tr>}</tbody></table></div>
+      )}
+    </Modal>
+  );
+}
+/* Every claim of one patient on one screen, so one call to the payer or the patient covers all of them. */
+function PatientModal({ id, ctx, me, onClose, onOpenClaim }) {
+  const q = useRpc("claims.byPatient", { id }, [id]);
+  const rows = q.data ? q.data.rows : [];
+  const open = rows.filter((r) => ["open", "assigned", "in_progress", "completed"].includes(r.state));
+  return (
+    <Modal title={q.data ? q.data.patient || "Patient" : "Patient"} sub={q.data ? `${q.data.account_no ? "Account " + q.data.account_no + " · " : ""}${fmtInt(open.length)} open claims · ${fmtMoney(sum(open, (r) => r.balance))} · one call can cover them all` : ""} onClose={onClose} wide>
+      <ErrorBox error={q.error} />
+      {!q.data && !q.error && <Spinner />}
+      {q.data && (
+        <div className="table-wrap" style={{ maxHeight: 480 }}><table className="t"><thead><tr><th>Claim #</th><th>DOS</th><th>CPT</th><th>Payer</th><th>Provider</th><th className="r">Balance</th><th className="r">Age</th><th>File status</th><th>Last SAAG entry</th><th>Follow-up</th><th>State</th><th>With</th></tr></thead>
+          <tbody>{rows.map((r) => <tr key={r.id} className={"click " + workTone(r)} onClick={() => onOpenClaim && onOpenClaim(r)} title={r.last_note || ""}>
+            <td className="mono small">{r.claim_no || "–"}</td><td className="small">{fmtDate(r.dos)}</td><td className="mono small">{r.cpt}</td><td className="small">{r.payer}</td><td className="small">{r.provider}</td><td className="num">{fmtMoney(r.balance)}</td><td className="num">{r.age_days ?? "–"}</td>
+            <td className="small">{r.file_status}{r.file_sub_status ? <div className="tiny muted">{r.file_sub_status}</div> : null}</td>
+            <td className="small">{r.last_status_code ? <><b>{r.last_status_code}</b>{r.last_sub_status ? <div className="tiny muted">{r.last_sub_status}</div> : null}<div className="tiny muted">{r.last_action_code}{r.last_worked_on ? " · " + fmtDate(r.last_worked_on) : ""}</div></> : <span className="muted">not worked yet</span>}</td>
+            <td className="small">{r.follow_up_on ? fmtDate(r.follow_up_on) : ""}</td><td><StateBadge state={r.state} /></td><td className="small">{r.mine ? "you" : r.assigned_name || "–"}</td></tr>)}
+            {!rows.length && <tr><td colSpan={12}><Empty>No other claims for this patient.</Empty></td></tr>}</tbody></table></div>
+      )}
+      <div className="tiny muted mt8">Green: closed · yellow: worked and still open · white: not worked yet. Click a claim on your desk to open it.</div>
+    </Modal>
+  );
+}
 function Dashboard({ ctx, go }) {
   const [clientId, setClientId] = useState("");
   const [locId, setLocId] = useState("");
@@ -1076,10 +1127,19 @@ function Dashboard({ ctx, go }) {
   const workable = open.n + assigned.n + prog.n + done.n;
   const workableAmt = open.amt + assigned.amt + prog.amt + done.amt;
   const nameOf = (id) => (ctx.users.find((u) => u.id === id) || {}).name || "–";
+  const openClaims = (extra) => go("claims", { clientId, locationId: locId, ...extra });
+  const [overdueOpen, setOverdueOpen] = useState(false);
   return (
     <div className="stack">
+      {overdueOpen && <OverdueModal ctx={ctx} clientId={clientId} locId={locId} onClose={() => setOverdueOpen(false)} onChanged={() => stats.reload()} />}
+      {d && d.overdue && d.overdue.n > 0 && (
+        <div className="card tight row between" style={{ borderLeft: "4px solid #A32D2D", background: "#FDEAEA" }}>
+          <div className="small"><b style={{ color: "#A32D2D" }}>{fmtInt(d.overdue.n)} claims are past their follow-up date with no new entry</b> · {fmtMoney(d.overdue.amt)}. They sit with nobody until a biller gets them again.</div>
+          <div className="row"><button className="btn sm" onClick={() => openClaims({ overdue: true })}>See them</button><button className="btn sm primary" onClick={() => setOverdueOpen(true)}>Assign to a biller</button></div>
+        </div>
+      )}
       <div className="row between top">
-        <div><h1>Dashboard</h1><div className="sub">Where the inventory stands and who is working what.</div></div>
+        <div><h1>Dashboard</h1><div className="sub">Where the inventory stands and who is working what. Click any number or bar to open those claims.</div></div>
         <div className="row"><div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
           {clientId && <div style={{ minWidth: 180 }}><LocationPicker ctx={ctx} clientId={clientId} locId={locId} setLocId={setLocId} /></div>}
         </div>
@@ -1089,30 +1149,30 @@ function Dashboard({ ctx, go }) {
       {d && (
         <>
           <div className="grid g4">
-            <Kpi label="Workable AR" value={fmtMoney(workableAmt)} sub={plural(workable, "claim") + " open, assigned, in progress or worked"} tone="accent" />
+            <Kpi label="Workable AR" value={fmtMoney(workableAmt)} sub={plural(workable, "claim") + " open, assigned, in progress or worked"} tone="accent" onClick={() => openClaims({ state: "workable" })} />
             <Kpi label="Unassigned" value={fmtInt(open.n)} sub={fmtMoney(open.amt) + " waiting for allocation"} onClick={() => go("allocate", { clientId })} />
-            <Kpi label="Assigned / in progress" value={fmtInt(assigned.n + prog.n)} sub={fmtMoney(assigned.amt + prog.amt) + " on desks · " + fmtInt(prog.n) + " open now"} />
-            <Kpi label="Worked, awaiting follow-up" value={fmtInt(done.n)} sub={fmtMoney(done.amt) + " · " + fmtInt(d.follow_ups_due ? d.follow_ups_due.n : 0) + " due today"} tone={d.follow_ups_due && d.follow_ups_due.n ? "warn" : ""} onClick={() => go("claims", { clientId, follow_up_due: true })} />
+            <Kpi label="Assigned / in progress" value={fmtInt(assigned.n + prog.n)} sub={fmtMoney(assigned.amt + prog.amt) + " on desks · " + fmtInt(prog.n) + " open now"} onClick={() => openClaims({ state: "assigned" })} />
+            <Kpi label="Worked, awaiting follow-up" value={fmtInt(done.n)} sub={fmtMoney(done.amt) + " · " + fmtInt(d.follow_ups_due ? d.follow_ups_due.n : 0) + " due today"} tone={d.follow_ups_due && d.follow_ups_due.n ? "warn" : ""} onClick={() => openClaims({ follow_up_due: true })} />
           </div>
           <div className="grid g4">
-            <Kpi label="Closed / resolved" value={fmtInt(closed.n)} sub={fmtMoney(closed.amt)} tone="good" />
-            <Kpi label="Excluded" value={fmtInt(excl.n)} sub="credits, zero balances, unbilled, paid in file" onClick={() => go("claims", { clientId, state: "excluded" })} />
-            <Kpi label="Escalated" value={fmtInt(d.escalated)} sub="flagged by the team for a supervisor" tone={d.escalated ? "bad" : ""} onClick={() => go("claims", { clientId, escalated: true })} />
-            <Kpi label="Previously worked" value={fmtInt(sum(d.kinds.filter((k) => k.worked_before), (k) => k.n))} sub={"vs " + fmtInt(sum(d.kinds.filter((k) => !k.worked_before), (k) => k.n)) + " fresh"} />
+            <Kpi label="Closed / resolved" value={fmtInt(closed.n)} sub={fmtMoney(closed.amt)} tone="good" onClick={() => openClaims({ state: "closed" })} />
+            <Kpi label="Excluded" value={fmtInt(excl.n)} sub="credits, zero balances, unbilled, paid in file" onClick={() => openClaims({ state: "excluded" })} />
+            <Kpi label="Escalated" value={fmtInt(d.escalated)} sub="flagged by the team for a supervisor" tone={d.escalated ? "bad" : ""} onClick={() => openClaims({ escalated: true })} />
+            <Kpi label="Previously worked" value={fmtInt(sum(d.kinds.filter((k) => k.worked_before), (k) => k.n))} sub={"vs " + fmtInt(sum(d.kinds.filter((k) => !k.worked_before), (k) => k.n)) + " fresh"} onClick={() => openClaims({ inventory_kind: "worked" })} />
           </div>
           <div className="grid g3">
             <div className="card"><h3>By value tier</h3><div className="sub mb">Low under $100 · Medium up to the average · High above it</div>
-              <Bars rows={["High", "Medium", "Low"].map((t) => d.tiers.find((x) => x.tier === t) || { tier: t, n: 0, amt: 0 })} labelOf={(r) => r.tier} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} /></div>
+              <Bars rows={["High", "Medium", "Low"].map((t) => d.tiers.find((x) => x.tier === t) || { tier: t, n: 0, amt: 0 })} labelOf={(r) => r.tier} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} onClick={(r) => openClaims({ tier: r.tier })} /></div>
             <div className="card"><h3>By age</h3><div className="sub mb">Days since date of service</div>
-              <Bars rows={BUCKET_ORDER.map((b) => d.buckets.find((x) => x.bucket === b) || { bucket: b, n: 0, amt: 0 })} labelOf={(r) => r.bucket} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} /></div>
+              <Bars rows={BUCKET_ORDER.map((b) => d.buckets.find((x) => x.bucket === b) || { bucket: b, n: 0, amt: 0 })} labelOf={(r) => r.bucket} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} onClick={(r) => openClaims({ bucket: r.bucket })} /></div>
             <div className="card"><h3>By status in file</h3><div className="sub mb">Rejected and denied are worked first</div>
-              <Bars rows={[...d.classes].sort((a, b) => STATUS_ORDER.indexOf(a.status_class) - STATUS_ORDER.indexOf(b.status_class))} labelOf={(r) => STATUS_LABEL[r.status_class] || r.status_class} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} /></div>
+              <Bars rows={[...d.classes].sort((a, b) => STATUS_ORDER.indexOf(a.status_class) - STATUS_ORDER.indexOf(b.status_class))} labelOf={(r) => STATUS_LABEL[r.status_class] || r.status_class} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} onClick={(r) => openClaims({ status_class: r.status_class })} /></div>
           </div>
           <div className="grid g2">
             <div className="card"><h3>Buckets after work</h3><div className="sub mb">Where the ball is, from the last SAAG entry on each claim</div>
-              <Bars rows={BUCKETS4.map((b) => (d.work_buckets || []).find((x) => x.bucket === b) || { bucket: b, n: 0, amt: 0 })} labelOf={(r) => r.bucket} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} /></div>
+              <Bars rows={BUCKETS4.map((b) => (d.work_buckets || []).find((x) => x.bucket === b) || { bucket: b, n: 0, amt: 0 })} labelOf={(r) => r.bucket} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} onClick={(r) => openClaims({ saag_bucket: r.bucket, state: "" })} /></div>
             <div className="card"><h3>SAAG statuses</h3><div className="sub mb">Last status the team entered</div>
-              <Bars rows={d.saag_statuses || []} labelOf={(r) => r.status} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} /></div>
+              <Bars rows={d.saag_statuses || []} labelOf={(r) => r.status} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} onClick={(r) => openClaims({ saag_status: r.status, state: "" })} /></div>
           </div>
           <div className="grid g2">
             <div className="card"><h3>Team workload</h3><div className="sub mb">Claims on each desk for this selection</div>
@@ -1120,7 +1180,7 @@ function Dashboard({ ctx, go }) {
                 <tbody>{d.users.map((u) => <tr key={u.user_id} className="click" onClick={() => go("claims", { clientId, assigned_to: u.user_id })}><td>{u.name || nameOf(u.user_id)}</td><td className="num">{fmtInt(u.assigned)}</td><td className="num">{fmtInt(u.in_progress)}</td><td className="num">{fmtInt(u.completed)}</td><td className="num">{fmtInt(u.closed)}</td><td className="num">{fmtMoney(u.amt)}</td></tr>)}
                   {!d.users.length && <tr><td colSpan={6} className="muted">Nothing allocated yet. <button className="btn link sm" onClick={() => go("allocate", { clientId })}>Allocate claims</button></td></tr>}</tbody></table></div></div>
             <div className="card"><h3>Payer concentration</h3><div className="sub mb">Fewest payers holding the most balance: fewest calls for the most money</div>
-              <Bars rows={d.payers} labelOf={(r) => r.payer || "Unknown"} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} /></div>
+              <Bars rows={d.payers} labelOf={(r) => r.payer || "Unknown"} valueOf={(r) => r.amt} subOf={(r) => plural(r.n, "claim")} onClick={(r) => openClaims({ payer: r.payer })} /></div>
           </div>
           <div className="grid g2">
             <div className="card"><h3>Recent uploads</h3>
@@ -1714,9 +1774,15 @@ function BatchesTable({ ctx, onRefresh }) {
   const [undo, setUndo] = useState(null);
   const [busy, setBusy] = useState(false);
   const doUndo = async () => { setBusy(true); try { const r = await rpc("inventory.undoBatch", { batch_id: undo.id }); toast(`Removed ${fmtInt(r.removed)} untouched claims added by this upload.`); setUndo(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const [dup, setDup] = useState(null);
+  const checkDup = async () => { setBusy(true); try { const r = await rpc("inventory.dedupe", { client_id: clientId, dry_run: true }); setDup(r); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const doDedupe = async () => { setBusy(true); try { const r = await rpc("inventory.dedupe", { client_id: clientId }); toast(r.duplicates ? `Merged ${fmtInt(r.duplicates)} duplicate claims into ${fmtInt(r.groups)}.` : "No duplicates found."); setDup(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   return (
     <div className="card stack">
-      <div className="row between"><h2>Upload history</h2><div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div></div>
+      <div className="row between"><h2>Upload history</h2><div className="row"><div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div><button className="btn sm" disabled={!clientId || busy} title="Find claims loaded twice (same claim number written differently, or same patient and date of service) and merge them" onClick={checkDup}>Merge duplicate claims</button></div></div>
+      {dup && (
+        <Confirm title={dup.duplicates ? `Merge ${fmtInt(dup.duplicates)} duplicate claims?` : "No duplicates found"} text={dup.duplicates ? `${fmtInt(dup.duplicates)} claims are copies of ${fmtInt(dup.groups)} claims already on file (same claim number written differently, or same patient and date of service). Each copy's notes, work history and biller move onto the original, and the copy is removed.` : "Every claim of this client is unique."} confirmLabel={dup.duplicates ? "Merge" : "OK"} onYes={dup.duplicates ? doDedupe : () => setDup(null)} onNo={() => setDup(null)} busy={busy} />
+      )}
       <ErrorBox error={q.error} />
       <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client · location</th><th>Kind</th><th>File</th><th>By</th><th className="r">Rows</th><th className="r">New</th><th className="r">Refreshed</th><th className="r">Reopened</th><th className="r">Closed</th><th className="r">Excluded</th><th></th></tr></thead>
         <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td style={{ whiteSpace: "nowrap" }}>{b.undone_at ? <span className="tiny muted">undone</span> : <>{b.source === "onedrive" && b.web_url && msSupported() && <button className="btn sm" title="Read the same OneDrive file again and refresh the claims from it" onClick={() => onRefresh(b)}>Refresh</button>} <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button></>}</td></tr>)}
@@ -1770,7 +1836,7 @@ function AllocationLogicButton() {
 }
 function ClaimsView({ ctx, params, me }) {
   const p = params || {};
-  const [f, setF] = useState({ client_id: p.clientId || "", location_id: "", state: p.state || (p.follow_up_due || p.assigned_to || p.escalated ? "" : "workable"), tier: "", bucket: "", status_class: "", inventory_kind: "", assigned_to: p.assigned_to || "", q: "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: "", saag_bucket: "", follow_up_due: !!p.follow_up_due, escalated: !!p.escalated, sort: "priority", dir: "desc", page: 1, page_size: 50 });
+  const [f, setF] = useState({ client_id: p.clientId || "", location_id: p.locationId || "", state: p.state != null ? p.state : (p.follow_up_due || p.overdue || p.assigned_to || p.escalated ? "" : "workable"), tier: p.tier || "", bucket: p.bucket || "", status_class: p.status_class || "", inventory_kind: p.inventory_kind || "", assigned_to: p.assigned_to || "", q: p.payer || "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: p.saag_status || "", saag_bucket: p.saag_bucket || "", follow_up_due: !!p.follow_up_due, overdue: !!p.overdue, escalated: !!p.escalated, sort: "priority", dir: "desc", page: 1, page_size: 50 });
   const set = (k, v) => setF((x) => ({ ...x, [k]: v, page: k === "page" ? v : 1 }));
   const payload = useMemo(() => { const o = {}; for (const k in f) if (f[k] !== "" && f[k] !== false) o[k] = f[k]; return o; }, [f]);
   const q = useRpc("claims.list", payload, [JSON.stringify(payload)]);
@@ -1821,6 +1887,7 @@ function ClaimsView({ ctx, params, me }) {
           <select className="select sm" style={{ width: "auto" }} value={f.saag_status} onChange={(e) => set("saag_status", e.target.value)}><option value="">Any SAAG status</option>{SAAG.statuses.map((x) => <option key={x} value={x}>{x}</option>)}</select>
           <select className="select sm" style={{ width: "auto" }} value={f.saag_bucket} onChange={(e) => set("saag_bucket", e.target.value)}><option value="">Any bucket</option>{BUCKETS4.map((b) => <option key={b} value={b}>{b}</option>)}</select>
           <label className="check small"><input type="checkbox" checked={f.follow_up_due} onChange={(e) => set("follow_up_due", e.target.checked)} /> Follow-up due</label>
+          <label className="check small" style={{ color: "#A32D2D" }}><input type="checkbox" checked={f.overdue} onChange={(e) => set("overdue", e.target.checked)} /> Overdue, no new entry</label>
           <label className="check small"><input type="checkbox" checked={f.escalated} onChange={(e) => set("escalated", e.target.checked)} /> Escalated</label>
           <span style={{ flex: 1 }} />
           {q.data && <span className="small muted">{fmtInt(q.data.total)} claims · {fmtMoney(q.data.amount)}</span>}
@@ -2406,6 +2473,7 @@ function QueueView({ ctx, me }) {
   const [bundle, setBundle] = useState(null);
   const [busy, setBusy] = useState(false);
   const [emptyMsg, setEmptyMsg] = useState(null);
+  const [patientOf, setPatientOf] = useState(null);
   const refreshAll = () => { summary.reload(); list.reload(); };
   const next = async () => {
     setBusy(true); setEmptyMsg(null);
@@ -2459,7 +2527,8 @@ function QueueView({ ctx, me }) {
         </div>
       )}
       {emptyMsg && <div className="card"><Empty>{emptyMsg}</Empty></div>}
-      {bundle && <WorkPanel key={bundle.claim.id} bundle={bundle} ctx={ctx} me={me} onDone={(mode) => { if (mode === null) return refreshBundle(); setBundle(null); refreshAll(); if (mode) next(); }} />}
+      {patientOf && <PatientModal id={patientOf} ctx={ctx} me={me} onClose={() => setPatientOf(null)} onOpenClaim={(r) => { if (r.mine && ["assigned", "in_progress", "completed"].includes(r.state)) { setPatientOf(null); open(r.id); } }} />}
+      {bundle && <WorkPanel key={bundle.claim.id} bundle={bundle} ctx={ctx} me={me} onPatient={() => setPatientOf(bundle.claim.id)} onDone={(mode) => { if (mode === null) return refreshBundle(); setBundle(null); refreshAll(); if (mode) next(); }} />}
       <div className="card tight stack">
         <div className="row between">
           <div><h3>My allocations</h3><div className="sub">Priority order. Click a claim to open its profile.</div></div>
@@ -2485,7 +2554,7 @@ function QueueView({ ctx, me }) {
         <div className="table-wrap"><table className="t"><thead><tr><th>Due</th><th>Claim #</th><th>Patient</th><th>Payer</th><th>Provider</th><th>CPT</th><th>DOS</th><th className="r">Age</th><th className="r">Balance</th><th>Tier</th><th>File status</th><th>SAAG</th><th>Bucket</th><th>Follow-up</th><th>State</th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className={"click " + workTone(r)} onClick={() => open(r.id)}>
-              <td title={"Priority " + r.priority + (r.priority_reason ? " · " + r.priority_reason : "")}>{dueOf[r.id] ? <span className={"badge " + (dueOf[r.id].days === 0 ? "red" : dueOf[r.id].days === 1 ? "amber" : dueOf[r.id].days < 0 ? "green" : "")}>{dueOf[r.id].label}</span> : ""}</td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</div></td><td className="small">{r.payer}</td><td className="small">{r.provider}</td><td className="mono small">{r.cpt}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{r.age_days ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
+              <td title={"Priority " + r.priority + (r.priority_reason ? " · " + r.priority_reason : "")}>{dueOf[r.id] ? <span className={"badge " + (dueOf[r.id].days === 0 ? "red" : dueOf[r.id].days === 1 ? "amber" : dueOf[r.id].days < 0 ? "green" : "")}>{dueOf[r.id].label}</span> : ""}</td><td className="mono small">{r.claim_no || "–"}</td><td><button className="btn link sm" style={{ padding: 0, fontWeight: 600 }} title="All claims of this patient" onClick={(e) => { e.stopPropagation(); setPatientOf(r.id); }}>{r.patient}</button><div className="tiny muted">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</div></td><td className="small">{r.payer}</td><td className="small">{r.provider}</td><td className="mono small">{r.cpt}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{r.age_days ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td><TierBadge tier={r.tier} /></td><td className="small">{r.file_status}{r.file_sub_status ? <div className="tiny muted">{r.file_sub_status}</div> : null}</td>
               <td className="small">{r.last_status_code ? <><b>{r.last_status_code}</b>{r.last_sub_status ? <div className="tiny muted">{r.last_sub_status}</div> : null}<div className="tiny muted">{r.last_action_code}</div></> : <span className="muted">–</span>}</td>
               <td>{r.last_bucket ? <span className={"badge " + (r.last_bucket === "Closed" ? "green" : "teal")}>{r.last_bucket}</span> : ""}</td><td className="small">{r.follow_up_on ? fmtDate(r.follow_up_on) : ""}</td>
@@ -2496,7 +2565,7 @@ function QueueView({ ctx, me }) {
     </div>
   );
 }
-function WorkPanel({ bundle, ctx, me, onDone }) {
+function WorkPanel({ bundle, ctx, me, onDone, onPatient }) {
   const c = bundle.claim;
   const [sibs, setSibs] = useState(new Set());
   const [busy, setBusy] = useState(false);
@@ -2517,7 +2586,7 @@ function WorkPanel({ bundle, ctx, me, onDone }) {
   return (
     <div className="grid g2-1">
       <div className="stack">
-        <div className="row between"><button className="btn sm" onClick={() => skip(false)} disabled={busy} title="Put this claim back on your list and return to your day">← Back to my day</button><span className="tiny muted">opened {fmtWhen(c.started_at)}</span></div>
+        <div className="row between"><div className="row"><button className="btn sm" onClick={() => skip(false)} disabled={busy} title="Put this claim back on your list and return to your day">← Back to my day</button>{onPatient && <button className="btn sm" onClick={onPatient} title="Every claim of this patient on one screen">All claims of this patient</button>}</div><span className="tiny muted">opened {fmtWhen(c.started_at)}</span></div>
         <Suggestions claim={c} subStatus={sub || c.last_sub_status} />
         <ClaimFacts c={c} />
         <Siblings rows={bundle.siblings} users={ctx.users} selectable selected={sibs} onToggle={(id) => setSibs((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; })} meId={me.id} />

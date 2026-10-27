@@ -88,7 +88,8 @@ const SCHEMA = [
 const EXTRA_COLUMNS = {
   notes: [["status", "TEXT NOT NULL DEFAULT ''"], ["sub_status", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT NOT NULL DEFAULT ''"], ["bucket", "TEXT NOT NULL DEFAULT ''"],
     ["effective", "TEXT NOT NULL DEFAULT ''"], ["note_action", "TEXT NOT NULL DEFAULT ''"], ["fields_json", "TEXT NOT NULL DEFAULT '{}'"], ["edited_at", "INTEGER"], ["edited_by", "TEXT"]],
-  claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"]],
+  claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"],
+    ["alt_key", "TEXT NOT NULL DEFAULT ''"], ["fp_key", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
@@ -317,6 +318,11 @@ function ensureReady(env) {
       const have = new Set((await all(env, `PRAGMA table_info(${table})`)).map((r) => r.name));
       for (const [name, def] of EXTRA_COLUMNS[table]) if (!have.has(name)) await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
     }
+    await env.DB.batch([
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_claims_alt ON claims (client_id, alt_key)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_claims_fp ON claims (client_id, fp_key)"),
+    ]);
+    await backfillKeys(env);
     const users = await one(env, "SELECT COUNT(*) AS n FROM users");
     if (!users || !users.n) {
       const email = mailClean(env.BOOTSTRAP_EMAIL || DEFAULT_BOOTSTRAP_EMAIL);
@@ -359,6 +365,34 @@ function domainOk(env, email) {
 }
 
 /* --------------------------------------------------------- the ops */
+/* ---- how a claim is recognised across uploads ----
+   alt_key: the claim number with everything but letters and digits removed, lower case, no leading
+            zeros, no Excel ".0" tail. "CLM 0012345", "12345.0" and "clm-12345" all become "clm12345" / "12345".
+   fp_key:  patient + date of service, for files that carry no claim number at all. A claim with no number
+            is given a generated id "BR-xxxxxxxx" from that fingerprint, so the same patient/DOS maps to
+            the same id in every later file. */
+function altKeyOf(claimNo) {
+  const raw = String(claimNo || "").trim().toLowerCase().replace(/\.0+$/, "");
+  // The longest run of digits is the claim number itself ("CLM 0012345", "12345/1" and "12345" agree); shorter ids keep their letters.
+  const longest = (raw.match(/\d+/g) || []).sort((a, b) => b.length - a.length)[0] || "";
+  let s = longest.length >= 5 ? longest : raw.replace(/[^a-z0-9]/g, "");
+  s = s.replace(/^0+(?=\d)/, "");
+  return /\d/.test(s) ? s.slice(0, 80) : "";
+}
+const normText = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+function fpKeyOf(patient, dos) { const p = normText(patient), d = isoDate(dos); return p && d ? p + "|" + d : ""; }
+function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, "0"); }
+const generatedClaimNo = (fp) => "BR-" + fnv1a(fp).toUpperCase();
+/* Fill alt_key / fp_key on claims loaded before these columns existed. */
+async function backfillKeys(env) {
+  for (let round = 0; round < 50; round++) {
+    const rows = await all(env, "SELECT id, claim_no, patient, dos FROM claims WHERE alt_key = '' AND fp_key = '' AND (claim_no <> '' OR (patient <> '' AND dos <> '')) LIMIT 200");
+    if (!rows.length) break;
+    await batchAll(env, rows.map((r) => env.DB.prepare("UPDATE claims SET alt_key = ?, fp_key = ? WHERE id = ?").bind(altKeyOf(r.claim_no), fpKeyOf(r.patient, r.dos), r.id)), 50);
+    if (rows.length < 200) break;
+  }
+}
+
 /* Delete a person's sign-in. Their open claims go back to the pool (state open,
    no biller), their sessions end, and their notes stay in the claim history
    under the name they wrote with. */
@@ -645,15 +679,26 @@ const OPS = {
     const counts = { inserted: 0, updated: 0, reopened: 0, closed: 0, excluded: 0, skipped: 0 };
     const seen = new Set();
     const rows = claims.filter((c) => { const k = str(c.match_key, 300); if (!k || seen.has(k)) { counts.skipped++; return false; } seen.add(k); return true; });
-    const existing = new Map();
-    for (const chunk of chunks(rows.map((c) => str(c.match_key, 300)), 80)) {
-      const ex = await all(env, `SELECT id, match_key, state, touches, assigned_to, worked_before, follow_up_on, inventory_kind FROM claims WHERE client_id = ? AND match_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk);
-      ex.forEach((r) => existing.set(r.match_key, r));
-    }
+    // Keys for recognising a claim already on file: exact key, normalised claim number, patient + DOS.
+    rows.forEach((c) => {
+      c._fp = fpKeyOf(c.patient, c.dos);
+      if (!str(c.claim_no, 80).trim() && c._fp) c.claim_no = generatedClaimNo(c._fp);
+      c._alt = altKeyOf(c.claim_no);
+    });
+    const byMatch = new Map(), byAlt = new Map(), byFp = new Map();
+    const SEL = "SELECT id, match_key, alt_key, fp_key, state, touches, assigned_to, worked_before, follow_up_on, inventory_kind FROM claims WHERE client_id = ? AND ";
+    for (const chunk of chunks(rows.map((c) => str(c.match_key, 300)), 80)) (await all(env, SEL + `match_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => byMatch.set(r.match_key, r));
+    for (const chunk of chunks([...new Set(rows.map((c) => c._alt).filter(Boolean))], 80)) (await all(env, SEL + `alt_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!byAlt.has(r.alt_key)) byAlt.set(r.alt_key, r); });
+    for (const chunk of chunks([...new Set(rows.map((c) => c._fp).filter(Boolean))], 80)) (await all(env, SEL + `fp_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!byFp.has(r.fp_key)) byFp.set(r.fp_key, r); });
     const stmts = [];
+    const taken = new Set();
     for (const c of rows) {
       const key = str(c.match_key, 300);
-      const ex = existing.get(key);
+      let ex = byMatch.get(key) || (c._alt && byAlt.get(c._alt)) || null;
+      // Patient + DOS only when neither side has a (different) claim number.
+      if (!ex && c._fp) { const f = byFp.get(c._fp); if (f && (!f.alt_key || !c._alt || f.alt_key === c._alt)) ex = f; }
+      if (ex && taken.has(ex.id)) ex = null; // two rows of one file cannot both refresh the same claim
+      if (ex) taken.add(ex.id);
       const exclude = str(c.exclude_reason, 80);
       const closedInFile = exclude === "closed";
       const vals = {
@@ -674,12 +719,12 @@ const OPS = {
         if (state === "open") counts.inserted++; else if (state === "closed") counts.closed++; else counts.excluded++;
         stmts.push(env.DB.prepare(`INSERT INTO claims (id, client_id, location_id, batch_id, first_batch_id, match_key, claim_no, account_no, patient, payer, dos, cpt, provider,
             billed, balance, lines, lines_json, age_days, bucket, tier, status_class, file_status, file_sub_status, file_action, file_comments, file_bucket,
-            inventory_kind, worked_before, last_worked_on, follow_up_on, priority, priority_reason, state, state_reason, raw_json, created_at, updated_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+            inventory_kind, worked_before, last_worked_on, follow_up_on, priority, priority_reason, state, state_reason, raw_json, created_at, updated_at, alt_key, fp_key)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
           uuid(), client.id, location_id || null, bid, bid, key, vals.claim_no, vals.account_no, vals.patient, vals.payer, vals.dos, vals.cpt, vals.provider,
           vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class, vals.file_status, vals.file_sub_status,
           vals.file_action, vals.file_comments, vals.file_bucket, kind, kind === "worked" ? 1 : 0, lastWorked, followUp, vals.priority, vals.priority_reason,
-          state, reason, vals.raw_json, now, now));
+          state, reason, vals.raw_json, now, now, c._alt, c._fp));
         continue;
       }
       // existing claim: refresh the file facts, then decide what happens to its state
@@ -699,12 +744,13 @@ const OPS = {
           last_worked_on = CASE WHEN ? <> '' THEN ? ELSE last_worked_on END, follow_up_on = CASE WHEN ? <> '' THEN ? ELSE follow_up_on END,
           priority = ?, priority_reason = ?, state = ?, state_reason = COALESCE(?, state_reason),
           assigned_to = CASE WHEN ? = 1 THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 1 THEN NULL ELSE assigned_at END,
-          skipped_at = CASE WHEN ? = 1 THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ? WHERE id = ?`).bind(
+          skipped_at = CASE WHEN ? = 1 THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ?,
+          alt_key = CASE WHEN alt_key = '' THEN ? ELSE alt_key END, fp_key = CASE WHEN fp_key = '' THEN ? ELSE fp_key END WHERE id = ?`).bind(
           location_id || null, bid, vals.claim_no, vals.claim_no, vals.account_no, vals.account_no, vals.patient, vals.patient, vals.payer, vals.payer,
           vals.dos, vals.dos, vals.cpt, vals.cpt, vals.provider, vals.provider, vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class,
           vals.file_status, vals.file_sub_status, vals.file_action, vals.file_comments, vals.file_comments, vals.file_bucket,
           kind, kind, lastWorked, lastWorked, followUp, followUp, vals.priority, vals.priority_reason, newState, reason,
-          clearAssign, clearAssign, clearAssign, vals.raw_json, now, ex.id));
+          clearAssign, clearAssign, clearAssign, vals.raw_json, now, c._alt, c._fp, ex.id));
     }
     if (stmts.length) await batchAll(env, stmts, 40);
     await run(env, `UPDATE batches SET inserted = inserted + ?, updated = updated + ?, reopened = reopened + ?, closed = closed + ?, excluded = excluded + ?, skipped = skipped + ?,
@@ -718,6 +764,58 @@ const OPS = {
       ? await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id WHERE b.client_id = ? ORDER BY b.uploaded_at DESC LIMIT 100", payload.client_id)
       : await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id ORDER BY b.uploaded_at DESC LIMIT 100");
     return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} return { ...b, summary: s, summary_json: undefined }; }) };
+  },
+  /* Merge claims that are really the same claim (same normalised claim number, or same patient + DOS with no
+     conflicting claim number). The oldest row is kept; notes, work history and the biller move onto it. */
+  "inventory.dedupe": async ({ env, payload }) => {
+    const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
+    if (!client) throw bad("Pick a client.");
+    await backfillKeys(env);
+    const rows = await all(env, `SELECT id, claim_no, alt_key, fp_key, created_at, state, assigned_to, assigned_at, touches, worked_before, inventory_kind, last_worked_on, follow_up_on,
+        last_status_code, last_action_code, last_sub_status, last_bucket, last_effective, last_note_action, last_note, last_worked_by FROM claims WHERE client_id = ? ORDER BY created_at`, client.id);
+    const groups = new Map();
+    for (const r of rows) { const k = r.alt_key ? "a:" + r.alt_key : r.fp_key ? "f:" + r.fp_key : ""; if (!k) continue; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+    // Rows with a claim number also join a patient+DOS group only when no other member has a different number.
+    const fpGroups = new Map();
+    for (const r of rows) if (r.fp_key) { if (!fpGroups.has(r.fp_key)) fpGroups.set(r.fp_key, []); fpGroups.get(r.fp_key).push(r); }
+    const merged = []; const seen = new Set();
+    const consider = (list) => {
+      const alts = new Set(list.map((r) => r.alt_key).filter(Boolean));
+      if (list.length < 2 || alts.size > 1) return;
+      const fresh = list.filter((r) => !seen.has(r.id)); if (fresh.length < 2) return;
+      fresh.forEach((r) => seen.add(r.id));
+      const keep = [...fresh].sort((a, b) => (b.touches - a.touches) || (a.created_at - b.created_at))[0];
+      merged.push({ keep, others: fresh.filter((r) => r.id !== keep.id) });
+    };
+    groups.forEach(consider); fpGroups.forEach(consider);
+    const total = merged.reduce((n, g) => n + g.others.length, 0);
+    if (payload.dry_run) return { groups: merged.length, duplicates: total };
+    const stmts = [];
+    for (const g of merged) {
+      const k = g.keep;
+      for (const o of g.others) {
+        stmts.push(env.DB.prepare("UPDATE notes SET claim_id = ? WHERE claim_id = ?").bind(k.id, o.id));
+        const newer = o.last_worked_on && o.last_worked_on > (k.last_worked_on || "");
+        stmts.push(env.DB.prepare(`UPDATE claims SET touches = touches + ?, worked_before = CASE WHEN ? = 1 THEN 1 ELSE worked_before END,
+            inventory_kind = CASE WHEN ? = 'worked' THEN 'worked' ELSE inventory_kind END,
+            last_worked_on = CASE WHEN ? = 1 THEN ? ELSE last_worked_on END, follow_up_on = CASE WHEN ? = 1 THEN ? ELSE follow_up_on END,
+            last_status_code = CASE WHEN ? = 1 THEN ? ELSE last_status_code END, last_action_code = CASE WHEN ? = 1 THEN ? ELSE last_action_code END,
+            last_sub_status = CASE WHEN ? = 1 THEN ? ELSE last_sub_status END, last_bucket = CASE WHEN ? = 1 THEN ? ELSE last_bucket END,
+            last_effective = CASE WHEN ? = 1 THEN ? ELSE last_effective END, last_note_action = CASE WHEN ? = 1 THEN ? ELSE last_note_action END,
+            last_note = CASE WHEN ? = 1 THEN ? ELSE last_note END, last_worked_by = CASE WHEN ? = 1 THEN ? ELSE last_worked_by END,
+            assigned_to = CASE WHEN assigned_to IS NULL AND ? IS NOT NULL AND state IN ('open','assigned') THEN ? ELSE assigned_to END,
+            assigned_at = CASE WHEN assigned_to IS NULL AND ? IS NOT NULL AND state IN ('open','assigned') THEN ? ELSE assigned_at END,
+            state = CASE WHEN assigned_to IS NULL AND ? IS NOT NULL AND state = 'open' THEN 'assigned' ELSE state END,
+            updated_at = ? WHERE id = ?`).bind(
+          o.touches, o.worked_before ? 1 : 0, o.inventory_kind, newer ? 1 : 0, o.last_worked_on, newer ? 1 : 0, o.follow_up_on,
+          newer ? 1 : 0, o.last_status_code, newer ? 1 : 0, o.last_action_code, newer ? 1 : 0, o.last_sub_status, newer ? 1 : 0, o.last_bucket,
+          newer ? 1 : 0, o.last_effective, newer ? 1 : 0, o.last_note_action, newer ? 1 : 0, o.last_note, newer ? 1 : 0, o.last_worked_by,
+          o.assigned_to, o.assigned_to, o.assigned_to, o.assigned_at, o.assigned_to, Date.now(), k.id));
+        stmts.push(env.DB.prepare("DELETE FROM claims WHERE id = ?").bind(o.id));
+      }
+    }
+    if (stmts.length) await batchAll(env, stmts, 40);
+    return { groups: merged.length, duplicates: total };
   },
   "inventory.undoBatch": async ({ env, payload }) => {
     const b = await one(env, "SELECT * FROM batches WHERE id = ?", payload.batch_id);
@@ -751,6 +849,7 @@ const OPS = {
     if (payload.worked === "yes") where.push("c.last_status_code <> ''");
     if (payload.worked === "no") where.push("c.last_status_code = ''");
     if (payload.follow_up_due) { where.push("c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on <= ?"); params.push(isoDate(payload.today) || isoToday()); }
+    if (payload.overdue) { where.push("c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ?"); params.push(isoDate(payload.today) || isoToday()); }
     if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
     const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "c.age_days", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on" };
     const sort = SORTS[payload.sort] || "c.priority";
@@ -787,11 +886,24 @@ const OPS = {
       one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?`, ...params, today),
       one(env, `SELECT COUNT(*) AS n FROM claims ${(where.length ? w + " AND " : "WHERE ")} escalated = 1 AND state IN ${WORKABLE}`, ...params),
     ]);
+    // Follow-up date passed and nobody has touched the claim since: these need a biller again.
+    const overdue = await one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} state = 'completed' AND follow_up_on <> '' AND follow_up_on < ?`, ...params, today);
     const [workBuckets, saagStatuses] = await Promise.all([
       all(env, `SELECT last_bucket AS bucket, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} last_bucket <> '' GROUP BY last_bucket`, ...params),
       all(env, `SELECT last_status_code AS status, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} last_status_code <> '' GROUP BY last_status_code ORDER BY n DESC`, ...params),
     ]);
-    return { states, tiers, buckets, classes, payers, kinds, users, follow_ups_due: due, escalated: escalated ? escalated.n : 0, work_buckets: workBuckets, saag_statuses: saagStatuses };
+    return { states, tiers, buckets, classes, payers, kinds, users, follow_ups_due: due, overdue, escalated: escalated ? escalated.n : 0, work_buckets: workBuckets, saag_statuses: saagStatuses };
+  },
+  /* Every claim of one patient (same account number, or same patient name) at a client, with the last entry on each: one call covers them all. */
+  "claims.byPatient": async ({ env, user, payload }) => {
+    const c = await one(env, "SELECT id, client_id, account_no, patient FROM claims WHERE id = ?", payload.id);
+    if (!c) throw bad("Claim not found.");
+    const rows = await all(env, `SELECT c.id, c.claim_no, c.account_no, c.patient, c.dos, c.cpt, c.payer, c.provider, c.balance, c.age_days, c.tier, c.state, c.assigned_to, u.name AS assigned_name, c.priority, c.follow_up_on,
+        c.last_status_code, c.last_sub_status, c.last_action_code, c.last_bucket, c.last_note, c.last_worked_on, c.file_status, c.file_sub_status, l.name AS location_name
+      FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id
+      WHERE c.client_id = ? AND ((c.account_no <> '' AND c.account_no = ?) OR (c.patient <> '' AND c.patient = ?)) ORDER BY c.state IN ('open','assigned','in_progress','completed') DESC, c.priority DESC LIMIT 200`,
+      c.client_id, c.account_no || "\u0000", c.patient || "\u0000");
+    return { patient: c.patient, account_no: c.account_no, rows: rows.map((r) => ({ ...r, mine: r.assigned_to === user.id })) };
   },
   "claims.eligible": async ({ env, payload }) => {
     if (!payload.client_id) throw bad("Pick a client.");
