@@ -1243,15 +1243,18 @@ function ClientsView({ ctx, reload }) {
     try { await rpc("locations.save", { client_id: c.id, name }); setLocName({ ...locName, [c.id]: "" }); toast("Location added."); reload(); } catch (e) { toast(e.message, "err"); }
   };
   const toggleLoc = async (l) => { try { await rpc("locations.save", { id: l.id, name: l.name, active: !l.active }); reload(); } catch (e) { toast(e.message, "err"); } };
-  /* Where billers' work is copied: an Excel workbook in OneDrive, per location (or per client as the fallback). Only team leads set it. */
-  const [wb, setWb] = useState(null);
-  const [wbLink, setWbLink] = useState("");
-  const saveWb = async () => {
+  /* Where billers' work is copied: an Excel workbook in OneDrive, per location (or per client as the fallback).
+     Inline, the same pattern as "Add location": click to reveal a text field and a Save button right there. */
+  const [wbOpen, setWbOpen] = useState(null); // "c:<clientId>" or "l:<locationId>"
+  const [wbDraft, setWbDraft] = useState({});
+  const openWb = (key, current) => { setWbOpen(wbOpen === key ? null : key); setWbDraft((d) => ({ ...d, [key]: current || "" })); };
+  const saveWb = async (key, target, isLoc) => {
     setBusy(true);
+    const link = (wbDraft[key] || "").trim();
     try {
-      if (wb.loc) await rpc("locations.save", { id: wb.loc.id, name: wb.loc.name, active: wb.loc.active, workbook_link: wbLink.trim() });
-      else await rpc("clients.save", { id: wb.client.id, name: wb.client.name, code: wb.client.code, follow_up_days: wb.client.follow_up_days, active: wb.client.active, workbook_link: wbLink.trim() });
-      toast(wbLink.trim() ? "Workbook linked. Every saved entry is copied there." : "Workbook link removed."); setWb(null); reload();
+      if (isLoc) await rpc("locations.save", { id: target.id, name: target.name, active: target.active, workbook_link: link });
+      else await rpc("clients.save", { id: target.id, name: target.name, code: target.code, follow_up_days: target.follow_up_days, active: target.active, workbook_link: link });
+      toast(link ? "Workbook linked. Every saved entry is copied there." : "Workbook link removed."); setWbOpen(null); reload();
     } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
@@ -1282,10 +1285,21 @@ function ClientsView({ ctx, reload }) {
               <div className="sub">Default follow-up after a claim is worked: {c.follow_up_days} days · added {fmtDate(new Date(c.created_at).toISOString().slice(0, 10))}</div></div>
             <div className="row" style={{ gap: 6 }}><button className="btn sm" onClick={() => setEdit({ id: c.id, name: c.name, code: c.code, follow_up_days: c.follow_up_days, active: c.active, workbook_link: c.workbook_link || "" })}>Edit</button><button className="btn sm link" style={{ color: "#A32D2D" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button></div>
           </div>
-          <div className="small mt8"><b>Billers' work is copied to:</b> {c.workbook_link ? <><a href={c.workbook_link} target="_blank" rel="noopener">client workbook</a><WbLine id={c.id} link={c.workbook_link} /></> : <span className="muted">no client workbook</span>} <button className="btn link sm" onClick={() => { setWb({ client: c }); setWbLink(c.workbook_link || ""); }}>{c.workbook_link ? "change" : "link an Excel workbook"}</button><span className="tiny muted"> · a location's own workbook below takes precedence</span></div>
+          <div className="small mt8">
+            <b>Billers' work is copied to:</b> {c.workbook_link ? <><a href={c.workbook_link} target="_blank" rel="noopener">client workbook</a><WbLine id={c.id} link={c.workbook_link} /></> : <span className="muted">no client workbook</span>}{" "}
+            <button className="btn link sm" onClick={() => openWb("c:" + c.id, c.workbook_link)}>{wbOpen === "c:" + c.id ? "cancel" : c.workbook_link ? "change" : "link an Excel workbook"}</button>
+            {c.locations.length > 0 && <span className="tiny muted"> · a location's own workbook (📎 below) takes precedence over this one</span>}
+            {wbOpen === "c:" + c.id && (
+              <div className="row mt8" style={{ gap: 6 }}>
+                <input className="input sm" style={{ flex: 1, maxWidth: 420 }} placeholder="https://purviewhealthcare-my.sharepoint.com/…/Billers-work.xlsx" value={wbDraft["c:" + c.id] || ""} onChange={(e) => setWbDraft({ ...wbDraft, ["c:" + c.id]: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") saveWb("c:" + c.id, c, false); }} autoFocus />
+                <button className="btn sm primary" disabled={busy} onClick={() => saveWb("c:" + c.id, c, false)}>Save</button>
+                <span className="tiny muted">Excel (.xlsx) sharing link; every saved entry becomes a row. Leave empty and Save to stop copying.</span>
+              </div>
+            )}
+          </div>
           <div className="row mt" style={{ alignItems: "flex-start" }}>
             <div className="pill-list" style={{ flex: 1 }}>
-              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={l.active ? "Click to deactivate" : "Click to reactivate"} onClick={() => toggleLoc(l)}>{l.name}{!l.active ? " (off)" : ""}</span><button className="btn link sm" style={{ padding: "0 4px" }} title={l.workbook_link ? "This location has its own workbook: " + l.workbook_link : "Link an Excel workbook for this location"} onClick={() => { setWb({ client: c, loc: l }); setWbLink(l.workbook_link || ""); }}>{l.workbook_link ? "📗" : "📎"}</button><WbLine id={l.id} link={l.workbook_link} /></span>)}
+              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={l.active ? "Click to deactivate" : "Click to reactivate"} onClick={() => toggleLoc(l)}>{l.name}{!l.active ? " (off)" : ""}</span><button className="btn link sm" style={{ padding: "0 4px" }} title={l.workbook_link ? "This location has its own workbook: " + l.workbook_link : "Link an Excel workbook for this location"} onClick={() => openWb("l:" + l.id, l.workbook_link)}>{l.workbook_link ? "📗" : "📎"}</button><WbLine id={l.id} link={l.workbook_link} /></span>)}
               {!c.locations.length && <span className="muted small">No locations yet.</span>}
             </div>
             <div className="row" style={{ gap: 6 }}>
@@ -1293,14 +1307,16 @@ function ClientsView({ ctx, reload }) {
               <button className="btn sm" onClick={() => addLoc(c)}>Add location</button>
             </div>
           </div>
+          {c.locations.filter((l) => wbOpen === "l:" + l.id).map((l) => (
+            <div key={l.id} className="row mt8" style={{ gap: 6 }}>
+              <span className="small muted" style={{ whiteSpace: "nowrap" }}>Workbook for {l.name}:</span>
+              <input className="input sm" style={{ flex: 1, maxWidth: 420 }} placeholder="https://purviewhealthcare-my.sharepoint.com/…/Billers-work.xlsx" value={wbDraft["l:" + l.id] || ""} onChange={(e) => setWbDraft({ ...wbDraft, ["l:" + l.id]: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") saveWb("l:" + l.id, l, true); }} autoFocus />
+              <button className="btn sm primary" disabled={busy} onClick={() => saveWb("l:" + l.id, l, true)}>Save</button>
+              <button className="btn sm link" onClick={() => setWbOpen(null)}>cancel</button>
+            </div>
+          ))}
         </div>
       ))}
-      {wb && (
-        <Modal title={wb.loc ? "Workbook for " + wb.client.name + " · " + wb.loc.name : "Workbook for " + wb.client.name} sub="Paste the sharing link of an Excel file (.xlsx) in the Purview Automate OneDrive. Every entry a biller saves on these claims is added as a row; the first row becomes the header when the sheet is empty. Billers never need OneDrive access." onClose={() => setWb(null)} narrow footer={<><button className="btn" onClick={() => setWb(null)} disabled={busy}>Cancel</button><button className="btn primary" onClick={saveWb} disabled={busy}>{busy ? "Saving…" : "Save"}</button></>}>
-          <Field label="OneDrive link to the .xlsx file" hint="OneDrive → the file → Share → Copy link"><input className="input" value={wbLink} onChange={(e) => setWbLink(e.target.value)} placeholder="https://purviewhealthcare-my.sharepoint.com/…/Billers-work.xlsx" autoFocus /></Field>
-          <div className="tiny muted mt8">Leave it empty to stop copying. The copy runs on the server through Microsoft 365, so the Brahmastra Mailer app needs the Files.ReadWrite.All permission (README, section "Billers' work in OneDrive").</div>
-        </Modal>
-      )}
       {edit && (
         <Modal title={edit.id ? "Edit client" : "New client"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || !edit.name.trim()}>{busy ? "Saving…" : "Save"}</button></>}>
           <div className="stack">
