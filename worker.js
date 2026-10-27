@@ -359,6 +359,18 @@ function domainOk(env, email) {
 }
 
 /* --------------------------------------------------------- the ops */
+/* Delete a person's sign-in. Their open claims go back to the pool (state open,
+   no biller), their sessions end, and their notes stay in the claim history
+   under the name they wrote with. */
+async function removeUser(env, id) {
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = CASE WHEN state IN ('assigned','in_progress') THEN 'open' ELSE state END, updated_at = ? WHERE assigned_to = ?").bind(now, id),
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id),
+  ]);
+}
+
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info"]);
 const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|email\.|demo\.)/;
 
@@ -429,6 +441,15 @@ const OPS = {
   },
   "auth.logout": async ({ env, token }) => { if (token) await run(env, "DELETE FROM sessions WHERE token = ?", token); return { ok: true }; },
   "auth.me": async ({ user }) => ({ user }),
+  "auth.deleteMyAccount": async ({ env, user, payload }) => {
+    if (str(payload.confirm, 200).trim().toLowerCase() !== String(user.email || "").toLowerCase()) throw bad("Type your email address exactly to confirm.");
+    if (user.role === "supervisor") {
+      const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role = 'supervisor' AND active = 1 AND id <> ?", user.id);
+      if (!n.n) throw bad("You are the only active team lead. Add another team lead before deleting this account.");
+    }
+    await removeUser(env, user.id);
+    return { ok: true };
+  },
   "auth.changePassword": async ({ env, user, token, payload }) => {
     if (!isHash(payload.newHash)) throw bad("Enter the new password.");
     const u = await one(env, "SELECT * FROM users WHERE id = ?", user.id);
@@ -504,6 +525,18 @@ const OPS = {
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(ex.id),
     ]);
     return { ok: true };
+  },
+
+  "users.delete": async ({ env, user, payload }) => {
+    const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
+    if (!ex) throw bad("Unknown user.");
+    if (ex.id === user.id) throw bad("To delete your own account, use Delete my account in the menu.");
+    if (ex.role === "supervisor" && ex.active) {
+      const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role = 'supervisor' AND active = 1 AND id <> ?", ex.id);
+      if (!n.n) throw bad("Keep at least one active team lead.");
+    }
+    await removeUser(env, ex.id);
+    return { ok: true, name: ex.name };
   },
 
   /* ---- clients & locations ---- */
@@ -1082,7 +1115,7 @@ export default {
         if (!handler) throw new ApiError(404, "Unknown operation: " + op);
         const user = await userFromToken(env, token);
         if (!PUBLIC_OPS.has(op) && !user) throw new ApiError(401, "Please sign in.");
-        if (user && user.must_change && !["auth.changePassword", "auth.me", "auth.logout", "meta.info"].includes(op)) throw new ApiError(403, "Please set a new password first.");
+        if (user && user.must_change && !["auth.changePassword", "auth.me", "auth.logout", "auth.deleteMyAccount", "meta.info"].includes(op)) throw new ApiError(403, "Please set a new password first.");
         if (SUPERVISOR_OPS.test(op) && (!user || user.role !== "supervisor")) throw denied("Supervisor access is needed for this.");
         const result = await handler({ env, user, token, payload, ctx });
         return json(result || { ok: true });

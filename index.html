@@ -1018,7 +1018,23 @@ function ChangePasswordForm({ forced, onDone, onCancel, me }) {
 /* ---------- shell ---------- */
 const SUPERVISOR_NAV = [["dashboard", "Dashboard"], ["inventory", "Inventory"], ["allocate", "Allocate"], ["claims", "Claims"], ["team", "Team"], ["clients", "Clients"], ["locations", "Locations"], ["saag", "SAAG"], ["reports", "Reports"], ["queue", "My day"]];
 const USER_NAV = [["queue", "My day"], ["history", "My work"]];
-function Shell({ me, view, setView, onSignOut, onChangePassword, children }) {
+/* A person deletes their own sign-in. Typing the email is the confirmation. */
+function DeleteMyAccount({ me, onClose, onDeleted }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ready = typed.trim().toLowerCase() === String(me.email || "").toLowerCase();
+  const go = async () => {
+    setBusy(true);
+    try { await rpc("auth.deleteMyAccount", { confirm: typed.trim() }); toast("Your account has been deleted."); onDeleted(); }
+    catch (e) { toast(e.message, "err"); setBusy(false); }
+  };
+  return (
+    <Modal title="Delete my account" sub="Your sign-in is removed and you are signed out. Claims you were working go back to the pool. Your notes stay in the claim history under your name." onClose={onClose} narrow footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn danger" onClick={go} disabled={!ready || busy}>{busy ? "Deleting…" : "Delete my account"}</button></>}>
+      <Field label={"Type " + me.email + " to confirm"}><input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus /></Field>
+    </Modal>
+  );
+}
+function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount, children }) {
   const [menu, setMenu] = useState(false);
   const nav = me.role === "supervisor" ? SUPERVISOR_NAV : USER_NAV;
   useEffect(() => { if (!menu) return; const h = () => setMenu(false); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu]);
@@ -1035,6 +1051,7 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, children }) {
             <div className="tiny muted" style={{ padding: "0 10px 6px" }}>{me.designation ? me.designation + " · " : ""}signed in with {me.via === "otp" ? "a code" : "password"}</div>
             <button onClick={() => { setMenu(false); onChangePassword(); }}>{me.has_password ? "Change password" : "Set a password"}</button>
             <button onClick={() => { setMenu(false); onSignOut(); }}>Sign out</button>
+            <button onClick={() => { setMenu(false); onDeleteAccount(); }} style={{ color: "#A32D2D" }}>Delete my account</button>
           </div>}
         </div>
       </div></div>
@@ -1274,9 +1291,11 @@ async function msRootItem() {
 }
 async function msChildren(driveId, itemId) { const j = await msx.graph(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children?$top=500&$select=${ITEM_FIELDS}&$orderby=name`); return j.value || []; }
 async function msDownloadItem(driveId, itemId) {
-  const it = await msx.graph(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}?$select=${ITEM_FIELDS},@microsoft.graph.downloadUrl`);
-  const url = it["@microsoft.graph.downloadUrl"];
-  if (!url) throw msError("other", "OneDrive did not offer this file for download. Try again in a minute.");
+  const base = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`;
+  const it = await msx.graph(`${base}?$select=${ITEM_FIELDS},@microsoft.graph.downloadUrl`);
+  let url = it["@microsoft.graph.downloadUrl"];
+  // Sometimes OneDrive leaves the short-lived link out; the content address always works with the token.
+  if (!url) { const r = await msx.request(GRAPH + base + "/content", {}, true); return { bytes: new Uint8Array(await r.arrayBuffer()), info: itemSummary(it) }; }
   return { bytes: await msx.download(url), info: itemSummary(it) };
 }
 const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace(/\.0$/, "") + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB");
@@ -1474,7 +1493,10 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
   const inputRef = useRef();
   const client = ctx.clients.find((c) => c.id === clientId);
   const today = todayISO();
-  const pickSheet = (sheets, i) => { const t = tableFromSheet(sheets[i].rows); setSheetIdx(i); setTable(t); setMapping(autoMap(t.headers)); };
+  const applySheet = (sheets, i) => { const t = tableFromSheet(sheets[i].rows); const m = autoMap(t.headers); setSheetIdx(i); setTable(t); setMapping(m); return m; };
+  const pickSheet = (sheets, i) => { applySheet(sheets, i); };
+  /* Columns recognised: load at once. Otherwise show the column check screen. */
+  const afterPick = (m) => { const ok = !!(m.claim_no || (m.patient && m.dos)) && !(locMode === "file" && !m.location); if (ok) setAutoGo(true); else setStep(2); };
   const onFile = async (f) => {
     if (!f) return;
     setBusy(true);
@@ -1483,8 +1505,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
       const sheets = readWorkbook(buf, f.name);
       if (!sheets.length) throw new Error("No rows were found in this file.");
       setFile({ name: f.name, sheets, size: f.size });
-      pickSheet(sheets, 0);
-      setStep(2);
+      afterPick(applySheet(sheets, 0));
     } catch (e) { toast("Could not read the file: " + e.message, "err"); }
     setBusy(false);
   };
@@ -1495,16 +1516,18 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
       const sheets = readWorkbook(buf, name);
       if (!sheets.length) throw new Error("No rows were found in " + name + ".");
       setFile({ name, sheets, size: bytes.byteLength, source: "onedrive", webUrl });
-      pickSheet(sheets, 0);
+      afterPick(applySheet(sheets, 0));
       setOdOpen(false);
-      setStep(2);
     } catch (e) { toast("Could not read the file: " + e.message, "err"); }
     setBusy(false);
   };
   const loc = client ? client.locations.find((l) => l.id === locId) : null;
   const teamIds = loc && loc.team && loc.team.length ? loc.team : (client ? client.team || [] : []);
   const teamNames = ctx.users.filter((u) => u.active && teamIds.includes(u.id)).map((u) => u.name);
-  const built = useMemo(() => (step >= 3 && table ? buildClaims({ rows: table.rows, mapping, kind, today }) : null), [step, table, mapping, kind]);
+  const built = useMemo(() => (table ? buildClaims({ rows: table.rows, mapping, kind, today }) : null), [table, mapping, kind]);
+  const [autoGo, setAutoGo] = useState(false);
+  useEffect(() => { if (autoGo && built && file) { setAutoGo(false); load(); } }, [autoGo, built, file]);
+  const backToStart = () => { setStep(0); setFile(null); setTable(null); setMapping({}); };
   const mappingOk = !!(mapping.claim_no || (mapping.patient && mapping.dos));
   const samples = (h) => { if (!h || !table) return ""; const vals = []; for (const r of table.rows) { const v = r[h]; if (v !== "" && v != null) vals.push(String(v).slice(0, 28)); if (vals.length >= 3) break; } return vals.join(" · "); };
   const load = async () => {
@@ -1543,7 +1566,6 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
     setBusy(false);
   };
   const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setProgress(null); };
-  const steps = ["Target", "File", "Columns", "Review", "Load"];
   const downloadSample = (k) => {
     const rows = makeSampleRows({ kind: k, seed: k === "worked" ? 5 : 3, count: 120, today });
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -1552,7 +1574,6 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
   };
   return (
     <div className="card">
-      <div className="steps">{steps.map((s, i) => <div key={s} className={"step " + (i === step ? "on" : i < step ? "done" : "")}><span className="n">{i < step ? "✓" : i + 1}</span>{s}</div>)}</div>
       {step === 0 && (
         <div className="stack">
           <div className="grid g3">
@@ -1578,31 +1599,24 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
               <label className="check small"><input type="checkbox" checked={autoAlloc && !!teamNames.length} disabled={!teamNames.length} onChange={(e) => setAutoAlloc(e.target.checked)} /> Allocate after loading</label>
             </div>
           )}
-          <div className="row between">
-            {DEMO ? <div className="row small muted">Need a file to try? <button className="btn link sm" onClick={() => downloadSample("fresh")}>Download sample fresh inventory</button><button className="btn link sm" onClick={() => downloadSample("worked")}>Download sample worked inventory</button></div> : <span />}
-            <button className="btn primary" disabled={!client} onClick={() => setStep(1)}>Next: choose file</button>
-          </div>
-          {client && !client.locations.length && <div className="small muted">This client has no locations yet; the inventory will be loaded at client level. Add locations on the Clients screen if you need the split.</div>}
-        </div>
-      )}
-      {step === 1 && (
-        <div className="stack">
-          <div className="small muted">Loading <b>{kind === "fresh" ? "fresh" : "previously worked"}</b> inventory for <b>{client && client.name}</b>{locId ? <> · <b>{(client.locations.find((l) => l.id === locId) || {}).name}</b></> : locMode === "file" ? " · split by the file's Location column" : ""}</div>
-          <div className="grid g2">
-            <div className="card tight stack" style={{ borderColor: "var(--teal)" }}>
-              <div className="b">Open from OneDrive</div>
-              <div className="small muted">{msSupported() ? (folderLink ? "Opens the pinned Purview Automate inventory folder. Pick the file and it is read straight from OneDrive." : "Opens your OneDrive. A team lead can pin the Purview Automate inventory folder at the top of this screen.") : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}. From this address, use a file from this computer.`}</div>
-              <button className="btn primary" disabled={!msSupported() || busy} onClick={() => setOdOpen(true)}>{busy ? "Reading…" : "Open OneDrive"}</button>
+          {!client ? <div className="alert info">Pick the client first (and the location, if it has one). Then choose the file.</div> : (
+            <div className="grid g2">
+              <div className="card tight stack" style={{ borderColor: "var(--teal)" }}>
+                <div className="b">Open from OneDrive</div>
+                <div className="small muted">{msSupported() ? (folderLink ? "Opens the Purview Automate inventory folder. Click the file and it loads." : "Opens your OneDrive. A team lead can pin the Purview Automate folder at the top of this screen.") : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}. From this address, use a file from this computer.`}</div>
+                <button className="btn primary" disabled={!msSupported() || busy} onClick={() => setOdOpen(true)}>{busy ? "Reading…" : "Open OneDrive"}</button>
+              </div>
+              <div className={"drop " + (over ? "over" : "")} onClick={() => inputRef.current && inputRef.current.click()}
+                onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files[0]); }}>
+                <div className="display" style={{ fontSize: 16, color: "var(--ink)" }}>{busy ? "Reading…" : "Or drop a file from this computer"}</div>
+                <div className="small">Excel (.xlsx, .xls) or CSV. Header row is detected automatically.</div>
+                <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
+              </div>
             </div>
-            <div className={"drop " + (over ? "over" : "")} onClick={() => inputRef.current && inputRef.current.click()}
-              onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files[0]); }}>
-              <div className="display" style={{ fontSize: 16, color: "var(--ink)" }}>{busy ? "Reading…" : "Or drop a file from this computer"}</div>
-              <div className="small">Excel (.xlsx, .xls) or CSV. Header row is detected automatically.</div>
-              <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
-            </div>
-          </div>
-          <div className="row between"><button className="btn" onClick={() => setStep(0)}>Back</button><span /></div>
+          )}
+          {DEMO && <div className="row small muted">Need a file to try? <button className="btn link sm" onClick={() => downloadSample("fresh")}>Download sample fresh inventory</button><button className="btn link sm" onClick={() => downloadSample("worked")}>Download sample worked inventory</button></div>}
           {odOpen && <OneDrivePicker folderLink={folderLink} onClose={() => setOdOpen(false)} onPick={onOneDriveFile} />}
+          {client && !client.locations.length && <div className="small muted">This client has no locations yet; the inventory will be loaded at client level. Add locations on the Clients screen if you need the split.</div>}
         </div>
       )}
       {step === 2 && table && (
@@ -1623,10 +1637,9 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
           {!mappingOk && <div className="alert warn">Map a Claim # column, or both Patient name and Date of service, so claims can be told apart.</div>}
           {!mapping.balance && <div className="alert warn">No Balance column: every claim will be treated as a small balance and land in the Low tier.</div>}
           {locMode === "file" && !mapping.location && <div className="alert warn">You chose to split by the file's Location column, but none is mapped. Map it, or go back and pick one location.</div>}
-          <div className="row between"><button className="btn" onClick={() => setStep(1)}>Back</button><button className="btn primary" disabled={!mappingOk || (locMode === "file" && !mapping.location)} onClick={() => setStep(3)}>Next: review</button></div>
+          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!mappingOk || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : `Load ${built ? fmtInt(built.summary.included) : ""} claims`}</button></div>
         </div>
       )}
-      {step === 3 && built && <ReviewStep built={built} kind={kind} onBack={() => setStep(2)} onLoad={load} busy={busy} />}
       {step === 4 && (
         <div className="stack">
           {progress != null && progress < 1 && <div><div className="bar"><i style={{ width: Math.round(progress * 100) + "%" }} /></div><div className="small muted mt8"><span className="spin" /> Loading claims… {Math.round(progress * 100)}%</div></div>}
@@ -2143,6 +2156,13 @@ function TeamView({ ctx, reload, me }) {
   const [range, setRange] = useState({ from: addDaysISO(todayISO(), -6), to: todayISO() });
   const prod = useRpc("supervisor.productivity", { from_ms: dayBounds(range.from)[0], to_ms: dayBounds(range.to)[1] }, [range.from, range.to]);
   const [codeFor, setCodeFor] = useState(null);
+  const [delFor, setDelFor] = useState(null);
+  const doDelete = async () => {
+    setBusy(true);
+    try { await rpc("users.delete", { id: delFor.id }); toast(delFor.name + " was deleted. Their open claims are back in the pool."); setDelFor(null); reload(); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
   const save = async () => {
     setBusy(true);
     try {
@@ -2184,7 +2204,7 @@ function TeamView({ ctx, reload, me }) {
       <div className="card">
         <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Designation</th><th>Email</th><th>Role</th><th className="r">Claims / day</th><th>Status</th><th>Last sign in</th><th></th></tr></thead>
           <tbody>{ctx.users.map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}</td><td className="small">{u.designation || "–"}</td><td className="small">{u.email}</td><td>{u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}{u.has_password ? null : <div className="tiny muted">code sign-in only</div>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>
-            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}</td></tr>)}</tbody></table></div>
+            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}{u.id !== me.id && <> <button className="btn sm link" style={{ color: "#A32D2D" }} onClick={() => setDelFor(u)}>Delete</button></>}</td></tr>)}</tbody></table></div>
       </div>
       <div className="card">
         <div className="row between"><div><h3>Productivity</h3><div className="sub">Claims worked per person per day (one note per claim worked)</div></div>
@@ -2194,6 +2214,7 @@ function TeamView({ ctx, reload, me }) {
           <tbody>{Object.entries(prodBy).map(([id, u]) => <tr key={id}><td><b>{u.name}</b></td>{days.map((d) => <td key={d} className="num">{u.days[d] ? u.days[d].n : ""}</td>)}<td className="num b">{fmtInt(u.n)}</td><td className="num">{fmtInt(u.resolved)}</td><td className="num">{fmtMoney(u.amt)}</td></tr>)}
             {prod.data && !Object.keys(prodBy).length && <tr><td colSpan={days.length + 4} className="muted">No claims worked in this range.</td></tr>}</tbody></table></div>
       </div>
+      {delFor && <Confirm title={"Delete " + delFor.name + "?"} text="Their sign-in is removed and they are signed out. Claims on their desk go back to the pool. Notes they wrote stay in the claim history." confirmLabel="Delete" danger busy={busy} onYes={doDelete} onNo={() => setDelFor(null)} />}
       {edit && (
         <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || !String(edit.last_name || "").trim() || (!edit.id && !mailOk(edit.email))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
           <div className="stack">
@@ -2461,6 +2482,7 @@ function App() {
   const [nav, setNav] = useState({ view: (location.hash || "").replace(/^#\/?/, "") || null, params: null });
   const [ctx, setCtx] = useState({ clients: [], codes: [], users: [], loaded: false });
   const [pwOpen, setPwOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
   const go = useCallback((view, params) => { setNav({ view, params: params || null }); try { history.replaceState(null, "", "#/" + view); } catch (e) {} window.scrollTo(0, 0); }, []);
   useEffect(() => {
     (async () => { if (!TOKEN) { setMe(null); return; } try { const r = await rpc("auth.me"); setMe(r.user); } catch (e) { setMe(null); } })();
@@ -2502,9 +2524,10 @@ function App() {
     : <QueueView {...props} />;
   return (
     <>
-      <Shell me={me} view={view} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)}>
+      <Shell me={me} view={view} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)} onDeleteAccount={() => setDelOpen(true)}>
         <React.Fragment key={view + JSON.stringify(nav.params || {})}>{body}</React.Fragment>
       </Shell>
+      {delOpen && <DeleteMyAccount me={me} onClose={() => setDelOpen(false)} onDeleted={() => { setDelOpen(false); signOut(); }} />}
       {pwOpen && <Modal title={me.has_password ? "Change password" : "Set a password"} onClose={() => setPwOpen(false)} narrow><ChangePasswordForm me={me} onDone={() => { setPwOpen(false); setMe({ ...me, has_password: true }); }} onCancel={() => setPwOpen(false)} /></Modal>}
       <Toaster />
     </>

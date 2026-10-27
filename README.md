@@ -118,6 +118,11 @@ sign-in), then **Clients** and **Inventory**.
   emailed to them every time** (Sign in with a code → Send me a code → enter
   the six digits). A team lead can optionally give them a temporary password
   too, or issue a sign-in code from the Team list when an email is slow.
+- **Deleting accounts**: a team lead deletes a team member from the Team list
+  (Delete). Anyone can delete their own account from the account menu (Delete
+  my account, confirmed by typing the email). Claims on that person's desk go
+  back to the pool; their notes stay in the claim history. The last active team
+  lead cannot be deleted.
 - **Team leads** create their own account from the sign-in screen (Create a
   team lead account: first name, last name, work email, designation from the
   list SME / TL / Sr TL / Assistant Manager / Manager / Sr Manager, and a
@@ -245,11 +250,13 @@ registered on the Brahmastra app registration in Entra ID
 host the app elsewhere, add that address as a single-page application redirect
 URI on the registration and update `MS_REDIRECT_URI`.
 
-Pick a client, a location, and the kind of inventory. As soon as the file
-loads, its claims are handed to the billers mapped to that location (evenly,
-highest priority first, patients and payers kept together) unless you untick
-"Allocate after loading"; a team lead can move them afterwards on Allocate or
-Claims.
+One screen: pick the client (and location), choose the file from the Purview
+Automate OneDrive or from the computer, done. When the file's columns are
+recognised the claims load at once; only a file with unfamiliar column names
+stops at a column check. As soon as the claims load they are handed to the
+billers mapped to that location (evenly, highest priority first, patients and
+payers kept together) unless you untick "Allocate after loading"; a team lead
+can move them afterwards on Allocate or Claims.
 
 - **Fresh inventory**: claims never worked. New claims are added; claims already
   on file are refreshed (balance, status, payer...). Rows whose status reads
@@ -263,8 +270,8 @@ Claims.
 Excel (`.xlsx`, `.xls`) and CSV are accepted. Columns are matched by name
 (`IG Claim ID#/Charge ID#`, `Claim ID`, `Patient Name`, `Payer`, `DOS`, `CPT`,
 `Provider`, `Balance Amount($)`, `Status`, `Sub Status`, `Action`,
-`Comments/Notes`, `Date Worked`, and the usual variants) and can be corrected
-before loading. A claim is recognised across uploads by its claim number, or,
+`Comments/Notes`, `Date Worked`, and the usual variants); when a claim column
+cannot be found the column check lets you point at the right ones. A claim is recognised across uploads by its claim number, or,
 without one, by patient + date of service + payer + provider. Several service
 lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
