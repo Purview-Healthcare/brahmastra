@@ -1354,7 +1354,7 @@ function OneDrivePicker({ folderLink, onPick, onClose }) {
         {!busy && <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th>Name</th><th>Modified</th><th>By</th><th className="r">Size</th></tr></thead>
           <tbody>{items.map((it) => <tr key={it.id} className="click" onClick={() => click(it)}><td>{it.folder ? "📁 " : "📄 "}{it.name}{it.folder && it.folder.childCount != null ? <span className="tiny muted"> · {it.folder.childCount} items</span> : null}</td><td className="small">{it.lastModifiedDateTime ? fmtWhen(Date.parse(it.lastModifiedDateTime)) : ""}</td><td className="small">{itemSummary(it).modifiedBy}</td><td className="num">{it.file ? fmtBytes(it.size) : ""}</td></tr>)}
             {!items.length && <tr><td colSpan={4}><Empty>No folders or spreadsheet files here.</Empty></td></tr>}</tbody></table></div>}
-        <div className="tiny muted">Only Excel and CSV files are listed. Click a file to load it into the upload wizard; nothing is written back to OneDrive.</div>
+        <div className="tiny muted">Only folders and Excel/CSV files are listed. Click a file and it is read on the spot; nothing is written back to OneDrive.</div>
       </div>
     </Modal>
   );
@@ -1458,19 +1458,11 @@ function LocationsView({ ctx, reload, go }) {
 /* ---------- inventory upload ---------- */
 function InventoryView({ ctx, reload, go, params, me }) {
   const [tab, setTab] = useState("upload");
-  const [pin, setPin] = useState(false);
-  const folder = (ctx.settings && ctx.settings.onedrive_folder) || null;
-  const folderLink = (folder && folder.link) || CFG.ONEDRIVE_FOLDER_LINK || "";
   return (
     <div className="stack">
-      <div className="row between"><div><h1>Inventory</h1><div className="sub">Upload fresh or previously worked inventory for a client and location. Files open straight from the Purview Automate OneDrive; the claims go to the location's billers as soon as they load.</div></div>
+      <div className="row between"><div><h1>Inventory</h1><div className="sub">Open OneDrive, click the file, and the claims load. They go to the location's billers as soon as they are in.</div></div>
         <div className="row" style={{ gap: 4 }}>{[["upload", "Upload inventory"], ["batches", "Upload history"]].map(([k, l]) => <button key={k} className={"chip " + (tab === k ? "on" : "")} onClick={() => setTab(k)}>{l}</button>)}</div></div>
-      <div className="card tight row between">
-        <div className="small"><b>OneDrive folder:</b> {folder && folder.name ? <>{folder.name}{folder.by ? <span className="muted"> · pinned by {folder.by}</span> : null}</> : folderLink ? <span className="mono">{folderLink.length > 70 ? folderLink.slice(0, 70) + "…" : folderLink}</span> : <span className="muted">not pinned yet, so the picker opens the signed-in person's own OneDrive</span>}</div>
-        <div className="row">{folder && folder.webUrl ? <a className="btn sm" href={folder.webUrl} target="_blank" rel="noopener">Open in OneDrive</a> : folderLink ? <a className="btn sm" href={folderLink} target="_blank" rel="noopener">Open in OneDrive</a> : null}<button className="btn sm link" onClick={() => setPin(true)}>{folderLink ? "Change folder" : "Pin the Purview Automate folder"}</button></div>
-      </div>
-      {tab === "upload" ? <UploadWizard ctx={ctx} reload={reload} go={go} params={params} me={me} folderLink={folderLink} /> : <BatchesTable ctx={ctx} />}
-      {pin && <PinFolderModal me={me} current={folderLink} onClose={() => setPin(false)} onSaved={() => { setPin(false); reload(); }} />}
+      {tab === "upload" ? <UploadWizard ctx={ctx} reload={reload} go={go} params={params} me={me} folderLink="" /> : <BatchesTable ctx={ctx} />}
     </div>
   );
 }
@@ -1495,8 +1487,9 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
   const today = todayISO();
   const applySheet = (sheets, i) => { const t = tableFromSheet(sheets[i].rows); const m = autoMap(t.headers); setSheetIdx(i); setTable(t); setMapping(m); return m; };
   const pickSheet = (sheets, i) => { applySheet(sheets, i); };
-  /* Columns recognised: load at once. Otherwise show the column check screen. */
-  const afterPick = (m) => { const ok = !!(m.claim_no || (m.patient && m.dos)) && !(locMode === "file" && !m.location); if (ok) setAutoGo(true); else setStep(2); };
+  /* Columns recognised and the client already chosen: load at once. Otherwise ask where it goes (and show the columns if they were not recognised). */
+  const afterPick = (m) => { const ok = !!(m.claim_no || (m.patient && m.dos)) && !(locMode === "file" && !m.location); setShowCols(!ok); if (ok && clientId) setAutoGo(true); else setStep(2); };
+  const [showCols, setShowCols] = useState(false);
   const onFile = async (f) => {
     if (!f) return;
     setBusy(true);
@@ -1576,6 +1569,40 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
     <div className="card">
       {step === 0 && (
         <div className="stack">
+          <div className="grid g2">
+            <div className="card tight stack" style={{ borderColor: "var(--teal)" }}>
+              <div className="b">Open OneDrive</div>
+              <div className="small muted">{msSupported() ? "Your OneDrive opens here. Click the inventory file and it is read on the spot." : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}. From this address, use a file from this computer.`}</div>
+              <button className="btn primary lg" disabled={!msSupported() || busy} onClick={() => setOdOpen(true)}>{busy ? "Reading…" : "Open OneDrive"}</button>
+            </div>
+            <div className={"drop " + (over ? "over" : "")} onClick={() => inputRef.current && inputRef.current.click()}
+              onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files[0]); }}>
+              <div className="display" style={{ fontSize: 16, color: "var(--ink)" }}>{busy ? "Reading…" : "Or drop a file from this computer"}</div>
+              <div className="small">Excel (.xlsx, .xls) or CSV. Header row is detected automatically.</div>
+              <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
+            </div>
+          </div>
+          <div className="small muted">You can pick the client and location now, or after the file is read.</div>
+          <div className="grid g3">
+            <ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={(v) => { setLocId(v); if (v) setLocMode("pick"); }} />
+            <Field label="Inventory kind">
+              <select className="select" value={kind} onChange={(e) => setKind(e.target.value)}>
+                <option value="fresh">Fresh inventory (never worked)</option>
+                <option value="worked">Previously worked inventory</option>
+              </select>
+            </Field>
+          </div>
+          {!ctx.clients.filter((c) => c.active).length && <div className="alert warn">No clients yet. <button className="btn link sm" onClick={() => go("clients")}>Add the client and its locations</button> first, then come back here.</div>}
+          {DEMO && <div className="row small muted">Need a file to try? <button className="btn link sm" onClick={() => downloadSample("fresh")}>Download sample fresh inventory</button><button className="btn link sm" onClick={() => downloadSample("worked")}>Download sample worked inventory</button></div>}
+          {odOpen && <OneDrivePicker folderLink={folderLink} onClose={() => setOdOpen(false)} onPick={onOneDriveFile} />}
+        </div>
+      )}
+      {step === 2 && table && (
+        <div className="stack">
+          <div className="row between">
+            <div className="small"><b>{file.name}</b> · {fmtInt(table.rows.length)} rows{built ? <> · <b>{fmtInt(built.summary.included)} claims</b> found</> : null}</div>
+            {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({fmtInt(s.rows.length)} rows)</option>)}</select></Field>}
+          </div>
           <div className="grid g3">
             <ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={(v) => { setLocId(v); if (v) setLocMode("pick"); }} />
             <Field label="Inventory kind">
@@ -1586,58 +1613,29 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink }) {
             </Field>
           </div>
           {client && client.locations.length > 0 && (
-            <label className="check"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created)</label>
+            <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created)</label>
           )}
-          <div className="alert info">
-            {kind === "fresh" ? <><b>Fresh inventory</b>: new claims for this client. Claims already on file (same claim number, or same patient + date of service + payer) are refreshed, not duplicated. Paid or zero-balance rows close the claim.</>
-              : <><b>Previously worked inventory</b>: claims your team or the client already touched. Map the <b>Date worked</b> and <b>Comments</b> columns so the history travels with the claim; each claim gets a follow-up date (date worked + the client's follow-up days) and surfaces again when it is due.</>}
-          </div>
-          {!ctx.clients.filter((c) => c.active).length && <div className="alert warn">No clients yet. <button className="btn link sm" onClick={() => go("clients")}>Add the client and its locations</button> first, then come back here.</div>}
           {client && locMode !== "file" && (
             <div className="card tight row between">
-              <div className="small">{teamNames.length ? <><b>Billers for {loc ? loc.name : client.name}:</b> {teamNames.join(", ")}. New claims are handed to them as soon as the file loads; change it on Allocate or Claims if needed.</> : <><b>No billers mapped to {loc ? loc.name : client.name} yet.</b> Map them on the <button className="btn link sm" onClick={() => go("locations")}>Locations</button> tab for automatic allocation, or allocate by hand afterwards.</>}</div>
+              <div className="small">{teamNames.length ? <><b>Billers for {loc ? loc.name : client.name}:</b> {teamNames.join(", ")}. The claims are handed to them as soon as they load.</> : <><b>No billers mapped to {loc ? loc.name : client.name} yet.</b> Map them on the <button className="btn link sm" onClick={() => go("locations")}>Locations</button> tab, or allocate by hand afterwards.</>}</div>
               <label className="check small"><input type="checkbox" checked={autoAlloc && !!teamNames.length} disabled={!teamNames.length} onChange={(e) => setAutoAlloc(e.target.checked)} /> Allocate after loading</label>
             </div>
           )}
-          {!client ? <div className="alert info">Pick the client first (and the location, if it has one). Then choose the file.</div> : (
-            <div className="grid g2">
-              <div className="card tight stack" style={{ borderColor: "var(--teal)" }}>
-                <div className="b">Open from OneDrive</div>
-                <div className="small muted">{msSupported() ? (folderLink ? "Opens the Purview Automate inventory folder. Click the file and it loads." : "Opens your OneDrive. A team lead can pin the Purview Automate folder at the top of this screen.") : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}. From this address, use a file from this computer.`}</div>
-                <button className="btn primary" disabled={!msSupported() || busy} onClick={() => setOdOpen(true)}>{busy ? "Reading…" : "Open OneDrive"}</button>
-              </div>
-              <div className={"drop " + (over ? "over" : "")} onClick={() => inputRef.current && inputRef.current.click()}
-                onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files[0]); }}>
-                <div className="display" style={{ fontSize: 16, color: "var(--ink)" }}>{busy ? "Reading…" : "Or drop a file from this computer"}</div>
-                <div className="small">Excel (.xlsx, .xls) or CSV. Header row is detected automatically.</div>
-                <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
-              </div>
-            </div>
+          {!mappingOk && <div className="alert warn">The claim column was not recognised. Point at the <b>Claim #</b> column below (or Patient name and Date of service) so claims can be told apart.</div>}
+          {mappingOk && !showCols && <div className="small muted">Columns were recognised by name. <button className="btn link sm" onClick={() => setShowCols(true)}>Check the columns</button></div>}
+          {showCols && (
+            <div className="table-wrap"><table className="t"><thead><tr><th>Brahmastra field</th><th>Column in your file</th><th>Sample values</th></tr></thead>
+              <tbody>{FIELDS.filter((f) => !f.worked || kind === "worked").map((f) => (
+                <tr key={f.key} className={f.key === "balance" && !mapping.balance ? "hl" : ""}>
+                  <td><b>{f.label}</b>{f.hint && <div className="tiny muted">{f.hint}</div>}</td>
+                  <td><select className="select sm" value={mapping[f.key] || ""} onChange={(e) => { const m = { ...mapping }; if (e.target.value) m[f.key] = e.target.value; else delete m[f.key]; setMapping(m); }}>
+                    <option value="">— not in file —</option>{table.headers.map((h) => <option key={h} value={h}>{h}</option>)}</select></td>
+                  <td className="small muted">{samples(mapping[f.key])}</td>
+                </tr>))}</tbody></table></div>
           )}
-          {DEMO && <div className="row small muted">Need a file to try? <button className="btn link sm" onClick={() => downloadSample("fresh")}>Download sample fresh inventory</button><button className="btn link sm" onClick={() => downloadSample("worked")}>Download sample worked inventory</button></div>}
-          {odOpen && <OneDrivePicker folderLink={folderLink} onClose={() => setOdOpen(false)} onPick={onOneDriveFile} />}
-          {client && !client.locations.length && <div className="small muted">This client has no locations yet; the inventory will be loaded at client level. Add locations on the Clients screen if you need the split.</div>}
-        </div>
-      )}
-      {step === 2 && table && (
-        <div className="stack">
-          <div className="row between">
-            <div className="small muted"><b>{file.name}</b> · {fmtInt(table.rows.length)} rows · header on row {table.headerRow + 1}</div>
-            {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({fmtInt(s.rows.length)} rows)</option>)}</select></Field>}
-          </div>
-          <div className="alert info">Columns were matched by name. Fix anything that looks wrong. <b>Claim #</b> (or Patient + Date of service) identifies a claim; <b>Balance</b> drives value tiers and priority.</div>
-          <div className="table-wrap"><table className="t"><thead><tr><th>Brahmastra field</th><th>Column in your file</th><th>Sample values</th></tr></thead>
-            <tbody>{FIELDS.filter((f) => !f.worked || kind === "worked").map((f) => (
-              <tr key={f.key} className={f.key === "balance" && !mapping.balance ? "hl" : ""}>
-                <td><b>{f.label}</b>{f.hint && <div className="tiny muted">{f.hint}</div>}</td>
-                <td><select className="select sm" value={mapping[f.key] || ""} onChange={(e) => { const m = { ...mapping }; if (e.target.value) m[f.key] = e.target.value; else delete m[f.key]; setMapping(m); }}>
-                  <option value="">— not in file —</option>{table.headers.map((h) => <option key={h} value={h}>{h}</option>)}</select></td>
-                <td className="small muted">{samples(mapping[f.key])}</td>
-              </tr>))}</tbody></table></div>
-          {!mappingOk && <div className="alert warn">Map a Claim # column, or both Patient name and Date of service, so claims can be told apart.</div>}
           {!mapping.balance && <div className="alert warn">No Balance column: every claim will be treated as a small balance and land in the Low tier.</div>}
-          {locMode === "file" && !mapping.location && <div className="alert warn">You chose to split by the file's Location column, but none is mapped. Map it, or go back and pick one location.</div>}
-          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!mappingOk || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : `Load ${built ? fmtInt(built.summary.included) : ""} claims`}</button></div>
+          {locMode === "file" && !mapping.location && <div className="alert warn">You chose to split by the file's Location column, but none is mapped. Map it, or pick one location.</div>}
+          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!client || !mappingOk || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : !client ? "Pick the client to load" : `Load ${built ? fmtInt(built.summary.included) : ""} claims`}</button></div>
         </div>
       )}
       {step === 4 && (
