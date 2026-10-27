@@ -1,11 +1,11 @@
-# Optional: deploy the API with Wrangler instead of the Cloudflare dashboard.
-#   npx wrangler d1 create brahmastra          (copy the database_id below)
+# Deploys the API. Used by Cloudflare Workers Builds (connected to this GitHub
+# repository, deploy command: npx wrangler deploy) or by hand:
 #   npx wrangler secret put PEPPER
-#   npx wrangler secret put BOOTSTRAP_PASSWORD
 #   npx wrangler deploy
 name = "brahmastra-api"
 main = "worker.js"
 compatibility_date = "2026-10-01"
+keep_vars = true
 
 [[d1_databases]]
 binding = "DB"
@@ -14,4 +14,5 @@ database_id = "abd329d7-ed96-4541-b6c4-c4bc7b9642ae"
 
 [vars]
 BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com"
-ALLOWED_DOMAINS = "purview-healthcare.com,purviewservices.com"
+# Any email domain that contains "purview" may sign up / be added to the team.
+ALLOWED_DOMAINS = "*purview*"
