@@ -10,7 +10,7 @@ compatibility_date = "2026-10-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "brahmastra"
-database_id = "PASTE-YOUR-D1-DATABASE-ID"
+database_id = "abd329d7-ed96-4541-b6c4-c4bc7b9642ae"
 
 [vars]
 BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com"
