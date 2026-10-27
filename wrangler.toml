@@ -16,3 +16,12 @@ database_id = "abd329d7-ed96-4541-b6c4-c4bc7b9642ae"
 BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com"
 # Any email domain that contains "purview" may sign up / be added to the team.
 ALLOWED_DOMAINS = "*purview*"
+# Sign-in codes go out through Microsoft 365 (Graph, Mail.Send application
+# permission) from the purviewautomate mailbox, using the "Brahmastra Mailer"
+# registration in the purview-healthcare.com tenant.
+# MS_CLIENT_SECRET is a dashboard secret, never in this file.
+EMAIL_PROVIDER = "graph"
+EMAIL_FROM = "Brahmastra <purviewautomate@purview-healthcare.com>"
+MS_SENDER = "purviewautomate@purview-healthcare.com"
+MS_TENANT_ID = "94be55e5-2194-40e4-9d98-1dcc7e91c268"
+MS_CLIENT_ID = "111e229f-1aab-4b75-9282-811742bfd707"
