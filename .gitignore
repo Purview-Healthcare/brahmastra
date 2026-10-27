@@ -5,3 +5,7 @@
 *.tsv
 *data*.json
 shared-data.json
+# local build scraps
+build/
+.wrangler/
+node_modules/
