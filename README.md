@@ -23,7 +23,7 @@ hours, and can be exported as one cell per note.
 | `dev/build-saag.ps1` | Regenerates `lib/saag.js` from a new copy of the workbook. |
 | `dev/build-denial-library.ps1` | Refreshes `lib/denial-library.js` from Gurukul's `index.html`. |
 | `dev/serve.ps1` | A tiny local web server (PowerShell, no Node needed) for trying the app on a PC. |
-| `wrangler.toml` | Optional, for deploying the Worker with Wrangler instead of the dashboard. |
+| `wrangler.toml` | Tells Cloudflare how to deploy the Worker: its name, the D1 database binding and the plain variables. Used by Cloudflare Workers Builds on every push. |
 
 Claim files are never committed (see `.gitignore`).
 
@@ -48,27 +48,39 @@ single browser tab for the demo.
 
 ## Go live
 
-### 1. Create the API (Cloudflare dashboard, about ten minutes)
+### 1. The API (Cloudflare Worker `brahmastra-api`)
 
-1. **Workers & Pages → D1 → Create database**, name it `brahmastra`.
-2. **Workers & Pages → Create → Worker**, name it `brahmastra-api`. Open the
-   editor, delete the starter code, paste the whole of `worker.js`, Deploy.
-3. **Worker → Settings → Bindings → Add → D1 database**. Variable name `DB`,
-   database `brahmastra`. Save.
-4. **Worker → Settings → Variables and secrets**. Add:
-   - `PEPPER` (secret): any long random text. Adds to every password hash.
-   - `BOOTSTRAP_EMAIL` (text): the first team lead's email.
-   - `BOOTSTRAP_PASSWORD` (secret): their first password.
-   - `ALLOWED_DOMAINS` (text): `purview-healthcare.com,purviewservices.com`.
-   Without `BOOTSTRAP_*` the first team lead is
-   `supervisor@purview-healthcare.com` / `brahmastra-setup` and must change the
-   password at first sign-in.
-5. Open `https://brahmastra-api.<your-account>.workers.dev/health`. You should
-   see `{"ok":true,...}`. The tables are created on this first request, and
-   later versions add any new columns on their own.
+The Worker is deployed by **Cloudflare Workers Builds** straight from this
+repository: the Worker's **Settings → Builds** is connected to
+`Purview-Healthcare/brahmastra` (branch `main`, deploy command
+`npx wrangler deploy`). Every push to `main` therefore updates both the site
+(GitHub Pages) and the API (Cloudflare) within a couple of minutes; the build
+log is under the Worker's **Deployments** tab.
 
-With Wrangler: fill in the `database_id` in `wrangler.toml`, set the secrets,
-run `wrangler deploy`.
+`wrangler.toml` carries everything the build needs: the Worker name, the D1
+database binding `DB` → `brahmastra` (its `database_id`), and the plain
+variables `BOOTSTRAP_EMAIL` and `ALLOWED_DOMAINS` (`*purview*` = any email
+domain that contains "purview"). Secrets are not in the repository; add them
+once under **Worker → Settings → Variables and secrets** (they survive every
+deploy):
+
+- `PEPPER` (secret): any long random text, mixed into every password hash and
+  sign-in code. Set it **before** the first real sign-in; changing it later
+  invalidates existing passwords.
+- `BOOTSTRAP_PASSWORD` (secret, optional): the first team lead's first
+  password. Without it the first team lead is
+  `supervisor@purview-healthcare.com` / `brahmastra-setup` and must change the
+  password at first sign-in.
+
+`https://brahmastra-api.<your-account>.workers.dev/health` answers
+`{"ok":true,...}` once the Worker is live. The tables are created on the first
+request, and later versions add any new columns on their own.
+
+To set it up again from nothing: **Workers & Pages → D1 → Create database**
+(`brahmastra`, copy its id into `wrangler.toml`), **Create → Worker**
+(`brahmastra-api`), then **Settings → Builds → Connect** to this repository.
+Without Workers Builds you can also paste `worker.js` into the dashboard
+editor and add the D1 binding by hand, or run `npx wrangler deploy` locally.
 
 ### 2. Point the app at it
 
