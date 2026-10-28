@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.9.0";
+const VERSION = "2.10.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -481,8 +481,9 @@ function ensureReady(env) {
     // Admin accounts named in ADMIN_EMAILS (wrangler.toml): created on first run, kept as admin. They sign in with a code.
     for (const email of adminEmails(env)) {
       const ex = await one(env, "SELECT id, role FROM users WHERE email = ?", email);
-      if (!ex) await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,'admin','','',0,1,35,?)", uuid(), email, "Admin", "Admin", "", "Admin", Date.now());
+      if (!ex) await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,'admin','','',0,1,35,?)", uuid(), email, ADMIN_NAME, "Bob", "The Builder", "Admin", Date.now());
       else if (ex.role !== "admin") await run(env, "UPDATE users SET role = 'admin', active = 1 WHERE id = ?", ex.id);
+      await run(env, "UPDATE users SET name = ?, first_name = 'Bob', last_name = 'The Builder' WHERE email = ? AND name IN ('Admin', '')", ADMIN_NAME, email);
     }
   })().catch((e) => { READY = null; throw e; });
   return READY;
@@ -517,6 +518,7 @@ function domainOk(env, email) {
 }
 
 const maskEmail = (e) => { const at = String(e || "").lastIndexOf("@"); return at > 0 ? e[0] + "•••@" + e.slice(at + 1) : ""; };
+const ADMIN_NAME = "Bob The Builder";
 const adminEmails = (env) => String(env.ADMIN_EMAILS || "").split(",").map(mailClean).filter(mailOk);
 async function getSetting(env, key, fallback) { const r = await one(env, "SELECT value_json FROM settings WHERE key = ?", key); if (!r) return fallback; try { return JSON.parse(r.value_json); } catch { return fallback; } }
 const setSetting = (env, key, value) => run(env, "INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json", key, JSON.stringify(value));
@@ -697,7 +699,7 @@ async function removeUser(env, id) {
   ]);
 }
 
-const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById"]);
+const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify"]);
 const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.)/;
 const ADMIN_OPS = /^roster\./;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
@@ -740,6 +742,7 @@ const OPS = {
     return { email, ...(await deliverOtp(env, email, code, "login")) };
   },
   "auth.signup": async ({ env, payload }) => {
+    throw bad("Accounts come from the Purview Shastra roster. Ask your team lead or admin to add you.");
     const email = mailClean(payload.email);
     if (!mailOk(email)) throw bad("Enter a valid email address.");
     if (await getSetting(env, "roster_meta", null)) throw bad("Accounts now come from the Purview Shastra roster. Ask your team lead or admin to add you.");
@@ -781,10 +784,24 @@ const OPS = {
     const q = str(payload.q, 80).trim().toLowerCase().replace(/[%_]/g, " ");
     if (q.length < 2) return { matches: [] };
     const like = "%" + q + "%";
-    const rows = await all(env, `SELECT id, name, emp_id, designation, department, email, email_missing, pass_hash FROM users
-      WHERE active = 1 AND role <> 'admin' AND (lower(name) LIKE ? OR lower(emp_id) LIKE ?) ORDER BY name LIMIT 8`, like, like);
-    return { matches: rows.map((u) => ({ id: u.id, name: u.name, emp_id: u.emp_id || "", designation: u.designation || "", department: u.department || "",
-      has_password: !!u.pass_hash, email_hint: u.email_missing ? "" : maskEmail(u.email) })) };
+    const rows = await all(env, `SELECT id, name, emp_id, designation, department, email, email_missing, pass_hash, role FROM users
+      WHERE active = 1 AND (lower(name) LIKE ? OR lower(emp_id) LIKE ? OR (role = 'admin' AND ? LIKE '%admin%')) ORDER BY role = 'admin' DESC, name LIMIT 8`, like, like, q);
+    return { matches: rows.map((u) => ({ id: u.id, name: u.name, emp_id: u.emp_id || "", designation: u.role === "admin" ? "Admin" : u.designation || "", department: u.department || "",
+      admin: u.role === "admin", has_password: !!u.pass_hash, email_hint: u.email_missing ? "" : maskEmail(u.email) })) };
+  },
+  /* Access Admin: a one-time code goes to the admin's mailbox; no password step. */
+  "auth.adminCode": async ({ env, payload }) => {
+    const u = payload.user_id ? await one(env, "SELECT * FROM users WHERE id = ? AND role = 'admin' AND active = 1", str(payload.user_id, 60))
+      : await one(env, "SELECT * FROM users WHERE role = 'admin' AND active = 1 ORDER BY created_at LIMIT 1");
+    if (!u) throw bad("No admin account is set up.");
+    const code = await issueOtp(env, u.email, "login", {});
+    return { user_id: u.id, name: u.name, email_hint: maskEmail(u.email), ...(await deliverOtp(env, u.email, code, "login")) };
+  },
+  "auth.adminVerify": async ({ env, payload }) => {
+    const u = await one(env, "SELECT * FROM users WHERE id = ? AND role = 'admin' AND active = 1", str(payload.user_id, 60));
+    if (!u) throw bad("No admin account is set up.");
+    await checkOtp(env, u.email, payload.code);
+    return openSession(env, u, "otp");
   },
   "auth.setupCode": async ({ env, payload }) => {
     const u = await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(payload.user_id, 60));
@@ -823,6 +840,7 @@ const OPS = {
   "auth.logout": async ({ env, token }) => { if (token) await run(env, "DELETE FROM sessions WHERE token = ?", token); return { ok: true }; },
   "auth.me": async ({ user }) => ({ user }),
   "auth.deleteMyAccount": async ({ env, user, payload }) => {
+    throw denied("Accounts are removed by the admin only.");
     if (str(payload.confirm, 200).trim().toLowerCase() !== String(user.email || "").toLowerCase()) throw bad("Type your email address exactly to confirm.");
     if (user.role === "supervisor") {
       const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", user.id);
@@ -930,6 +948,7 @@ const OPS = {
   },
 
   "users.delete": async ({ env, user, payload }) => {
+    if (!user.is_admin) throw denied("Only the admin can delete an account.");
     const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
