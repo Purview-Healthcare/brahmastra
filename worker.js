@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.1.0";
+const VERSION = "2.2.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -296,6 +296,22 @@ function validateWork(payload) {
   if (!NOTE_ACTIONS.includes(String(f.action || "").toLowerCase().trim())) throw bad("Pick the note ACTION from the list.");
   if (f.source === "Call" && !String(f.ref || "").trim()) throw bad("A call needs its reference number (REF).");
   return saag;
+}
+/* Entries that say an EOB is in hand, ask for posting, or file an appeal / reconsideration must carry the document:
+   a file attached to the claim since its last work entry. Keep in step with ATTACH_RULE in index.html. */
+const ATTACH_SUBS = /^(EOB Available|Claim Applied Towards Offset\(EOB Available\)|POTF available)$/i;
+const ATTACH_ACTIONS = /^(Need to Post\/Posting Correction|Need to Appeal|Need to Appeal Mail|Appeal Sent|Paper Appeal|PLSAPPEAL|Recon\/Appeal In Process)$/i;
+function attachNeeded(saag, fields) {
+  if (ATTACH_SUBS.test(saag.sub_status)) return saag.sub_status;
+  if (ATTACH_ACTIONS.test(saag.action)) return saag.action;
+  if (fields && fields.action === "appeal filed") return "appeal filed";
+  return "";
+}
+async function requireAttachment(env, claimId, saag, fields, since) {
+  const why = attachNeeded(saag, fields);
+  if (!why) return;
+  const a = await one(env, "SELECT id FROM attachments WHERE claim_id = ? AND created_at > ? LIMIT 1", claimId, since || 0);
+  if (!a) throw bad(`"${why}" needs the document attached (EOB, appeal or reconsideration letter). Attach it under RCA / findings, then save.`);
 }
 const isClosedWork = (saag, fields) => saag.bucket === "Closed" || CLOSED_EFFECTIVE.test(saag.effective) || fields.action === "closed";
 const followUpDays = (effective, clientDays) => EFFECTIVE_DAYS[effective] || clientDays || 30;
@@ -1131,6 +1147,8 @@ const OPS = {
     if (!["in_progress", "assigned", "completed"].includes(c.state)) throw bad("This claim is not open for work (it is " + c.state + ").");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
+    const lastWork = await one(env, "SELECT MAX(created_at) AS at FROM notes WHERE claim_id = ? AND kind = 'work'", c.id);
+    await requireAttachment(env, c.id, saag, fields, lastWork && lastWork.at);
     const today = isoDate(payload.today) || isoToday();
     const closed = isClosedWork(saag, fields);
     // A follow-up date in the past would make the claim "overdue" the moment it is saved; the earliest is today.
@@ -1210,6 +1228,10 @@ const OPS = {
     if (!c) throw bad("Claim not found.");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
+    if (!attachNeeded({ sub_status: n.sub_status, action: n.action }, { action: n.note_action })) {
+      const prev = await one(env, "SELECT MAX(created_at) AS at FROM notes WHERE claim_id = ? AND kind = 'work' AND created_at < ?", c.id, n.created_at);
+      await requireAttachment(env, c.id, saag, fields, prev && prev.at);
+    }
     const today = isoDate(payload.today) || isoToday();
     const closed = isClosedWork(saag, fields);
     const wantedFu = isoDate(payload.follow_up_on);
