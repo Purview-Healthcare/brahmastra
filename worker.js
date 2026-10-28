@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.6.0";
+const VERSION = "2.7.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -106,8 +106,9 @@ const EXTRA_COLUMNS = {
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
     ["department", "TEXT NOT NULL DEFAULT ''"], ["departments_also", "TEXT NOT NULL DEFAULT ''"], ["roster_status", "TEXT NOT NULL DEFAULT ''"], ["exit_date", "TEXT NOT NULL DEFAULT ''"],
     ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
-    ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"]],
+    ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
+  settings: [["updated_at", "INTEGER"]],
 };
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -154,7 +155,41 @@ async function sendEmail(env, { to, subject, text, html }) {
    A team lead pastes the workbook's sharing link on the client or location. The Worker (not the biller, who has
    no OneDrive access) appends one row per saved entry using the same Microsoft 365 app registration that sends
    the sign-in codes, which therefore also needs the Files.ReadWrite.All application permission. */
-const WORKBOOK_HEADER = ["Saved at", "Biller", "Client", "Location", "Claim #", "Account #", "Patient", "Payer", "DOS", "CPT", "Provider", "Balance", "SAAG status", "Sub-status", "Action", "Bucket", "Effective matrix", "Follow-up", "Claim state", "Note"];
+/* The Production Conso format: one row per entry, same columns as the team's consolidation workbook. */
+const WORKBOOK_HEADER = ["Sr. No", "Location", "Project", "Practice", "Uni", "IG Claim ID#/Charge ID#", "Patient Name", "DOS", "Payer", "Age", "Bucket", "Billed Amount($)", "Balance Amount($)", "CPT",
+  "Comments/Notes", "Status", "Sub Status", "Action", "Bucket", "Mode of Work", "Start Time", "End Time", "Total Duration", "Date Worked", "Emp. ID", "Associate Name", "Status", "Errors", "Team Lead", "Date Range", "Week"];
+const SR_NO = "__SR_NO__";
+const excelSerial = (iso) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ""))) return ""; const [y, m, d] = iso.split("-").map(Number); return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000); };
+const AGE_LETTER = [[30, "A: 0-30 Days"], [60, "B: 31-60 Days"], [90, "C: 61-90 Days"], [120, "D: 91-120 Days"], [180, "E: 121-180 Days"], [360, "F: 181-360 Days"]];
+const ageBucketLetter = (age) => { if (age == null || age === "") return ""; for (const [max, label] of AGE_LETTER) if (age <= max) return label; return "G: 360 plus"; };
+const IST_MIN = 330;
+const istDate = (ms) => new Date(ms + IST_MIN * 60000);
+const istISO = (ms) => istDate(ms).toISOString().slice(0, 10);
+const istHM = (ms) => (ms ? istDate(ms).toISOString().slice(11, 16) : "");
+const mdy = (iso) => { const [y, m, d] = iso.split("-"); return `${m}/${d}/${y}`; };
+/* Week ending Saturday; the range starts on the Sunday before, clamped to the 1st when the week crosses a month. */
+function weekOf(ms) {
+  const d = istDate(ms);
+  const we = new Date(d); we.setUTCDate(we.getUTCDate() + ((6 - we.getUTCDay()) % 7));
+  const start = new Date(we); start.setUTCDate(start.getUTCDate() - 6);
+  const first = new Date(Date.UTC(we.getUTCFullYear(), we.getUTCMonth(), 1));
+  const from = start < first ? first : start;
+  const iso = (x) => x.toISOString().slice(0, 10);
+  return { range: mdy(iso(from)) + " - " + mdy(iso(we)), week: "WE-" + mdy(iso(we)) };
+}
+function productionRow(c, by, extra) {
+  const now = (extra && extra.ended_at) || Date.now();
+  const started = extra && extra.started_at;
+  const mins = started && now > started ? Math.round((now - started) / 60000) : null;
+  const wk = weekOf(now);
+  const dosSerial = excelSerial(c.dos);
+  return [SR_NO, (by && by.city) || "", c.client_name || "", c.location_name || "",
+    [c.patient, dosSerial, c.payer, c.cpt].map((x) => (x == null ? "" : x)).join(""), c.claim_no || "", c.patient || "", dosSerial === "" ? (c.dos || "") : dosSerial, c.payer || "",
+    c.age_days == null ? "" : c.age_days, ageBucketLetter(c.age_days), c.billed == null ? "" : Number(c.billed), Number(c.balance) || 0, c.cpt || "",
+    c.last_note || "", c.last_status_code || "", c.last_sub_status || "", c.last_action_code || "", c.last_bucket || "", "",
+    istHM(started), started ? istHM(now) : "", mins == null ? "" : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, "0")}`, excelSerial(istISO(now)),
+    (by && by.emp_id) || "", (by && by.name) || "", "Production", "", (by && by.reports_to_name) || "", wk.range, wk.week];
+}
 function workbookLinkOf(v) { if (v == null) return null; const s = str(v, 1000).trim(); if (!s) return ""; if (!/^https:\/\//i.test(s)) throw bad("Paste the whole OneDrive link, starting with https://"); return s; }
 const shareIdOf = (link) => "u!" + btoa(unescape(encodeURIComponent(link))).replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
 async function graphAppToken(env) {
@@ -189,8 +224,11 @@ async function appendWorkbookRow(env, link, values) {
   const ws = base + "/worksheets/" + encodeURIComponent(sheet.id);
   const used = await graphCall(tok, "GET", ws + "/usedRange(valuesOnly=true)?$select=rowCount,address,values");
   const empty = !used || used.rowCount <= 1 && (!used.values || !used.values[0] || used.values[0].every((v) => v === "" || v == null));
-  const rows = empty ? [WORKBOOK_HEADER, values] : [values];
+  let rows = empty ? [WORKBOOK_HEADER, values] : [values];
   const startRow = empty ? 1 : (parseInt(String(used.address).replace(/^.*![A-Z]+\d+:?[A-Z]*/, "").replace(/\D/g, ""), 10) || used.rowCount) + 1;
+  // Sr. No = the row's own number in the sheet (header is row 1).
+  const srOf = (sheetRow) => sheetRow - 1;
+  rows = rows.map((r, i) => r.map((v) => (v === SR_NO ? srOf(startRow + i) : v)));
   const last = colLetter(WORKBOOK_HEADER.length);
   await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows });
   return loc.name;
@@ -199,14 +237,13 @@ async function recordWorkbookStatus(env, targetId, status) {
   await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", "workbook_status:" + targetId, JSON.stringify(status), Date.now());
 }
 /* Fire-and-forget after a save: find the workbook (location first, then client) and append the entry. */
-async function syncEntryToWorkbook(env, claimId, userName) {
+async function syncEntryToWorkbook(env, claimId, by, extra) {
   const c = await one(env, `SELECT c.*, cl.name AS client_name, cl.workbook_link AS client_link, l.name AS location_name, l.workbook_link AS location_link
       FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE c.id = ?`, claimId);
   if (!c) return;
   const link = c.location_link || c.client_link; if (!link) return;
   const targetId = c.location_link ? c.location_id : c.client_id;
-  const row = [new Date().toISOString().replace("T", " ").slice(0, 19), userName, c.client_name || "", c.location_name || "", c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, Number(c.balance) || 0,
-    c.last_status_code, c.last_sub_status, c.last_action_code, c.last_bucket, c.last_effective, c.follow_up_on, c.state, c.last_note];
+  const row = productionRow(c, by, extra);
   try { const name = await appendWorkbookRow(env, link, row); await recordWorkbookStatus(env, targetId, { ok: true, at: Date.now(), file: name, claim_no: c.claim_no }); }
   catch (e) { await recordWorkbookStatus(env, targetId, { ok: false, at: Date.now(), error: String(e && e.message || e).slice(0, 300), claim_no: c.claim_no }); }
 }
@@ -393,7 +430,7 @@ const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_
   must_change: !!u.must_change, has_password: !!u.pass_hash, via: u.via || undefined, created_at: u.created_at, last_login: u.last_login,
   source: u.source || "manual", emp_id: u.emp_id || "", position: u.position || "", roster_kind: u.roster_kind || "", department: u.department || "", departments_also: u.departments_also || "",
   roster_status: u.roster_status || "", exit_date: u.exit_date || "", reports_to: u.reports_to || null, reports_to_name: u.reports_to_name || "", projects: jsonList(u.projects_json),
-  scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "" });
+  scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "", city: u.city || "" });
 
 const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).first();
 const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...p).all()).results || [];
@@ -545,7 +582,8 @@ function rosterRow(r) {
   const g = (...keys) => { for (const k of keys) if (get[k]) return get[k]; return ""; };
   return { emp_id: g("empid", "employeeid", "id"), name: g("name", "employeename", "fullname"), hierarchy: g("hierarchy", "level"), position: g("position", "designation", "role"),
     func: g("function"), department: g("department"), departments_also: g("alsoindepartments"), status: g("status"), project: g("project"), also_projects: g("alsoonprojects"),
-    reports_to: g("reportsto", "manager"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), email: mailClean(g("email", "emailid", "workemail")) };
+    reports_to: g("reportsto", "manager"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), email: mailClean(g("email", "emailid", "workemail")),
+    city: ((v) => (/pune/i.test(v) ? "Pune" : /hyd/i.test(v) ? "Hyderabad" : v))(g("location", "worklocation", "city", "site", "baselocation")) };
 }
 function rosterClassify(row) {
   const pos = row.position.toLowerCase().trim();
@@ -1458,7 +1496,7 @@ const OPS = {
     }
     await batchAll(env, stmts);
     // Copy the entry into the client's / location's OneDrive workbook in the background (when a link is set and Microsoft 365 is configured).
-    if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user.name); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
+    if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user, { started_at: t.started_at, ended_at: now }); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
     return { completed: targets.length, closed, follow_up_on: followUp, state: newState, comment };
   },
   /* Open a specific claim from the day list (instead of "next"). Any other claim open on the desk goes back to assigned. */
@@ -1690,7 +1728,7 @@ const OPS = {
       const role = cls.kind === "agent" ? "user" : "supervisor";
       const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
         role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
-        roster_status: row.status, exit_date: row.exit_date, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, active: gone ? 0 : 1 };
+        roster_status: row.status, exit_date: row.exit_date, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
       const changes = [];
       if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
       plan.push({ row, cls, match, next, issues, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
@@ -1726,8 +1764,8 @@ const OPS = {
         const [first, ...rest] = n.name.split(/\s+/);
         await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
       }
-      await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, shift = ? WHERE id = ?`,
-        n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.shift, id);
+      await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, shift = ?, city = ? WHERE id = ?`,
+        n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.shift, n.city, id);
       p.id = id;
       if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
     }
