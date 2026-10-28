@@ -1246,7 +1246,7 @@ function Dashboard({ ctx, go }) {
         <div><h1>Dashboard</h1><div className="sub">Where the inventory stands and who is working what. Hover a bar for the figures; click it to filter the whole page to that slice.</div></div>
         <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
           {clientId && <div style={{ minWidth: 180 }}><LocationPicker ctx={ctx} clientId={clientId} locId={locId} setLocId={setLocId} /></div>}
-          <Field label="Date range" hint={rangeMs ? "activity in this window" : "everything on file"}><select className="select" value={range.key} onChange={(e) => setRange({ ...range, key: e.target.value })}>{DASH_RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+          <Field label="Date range"><select className="select" value={range.key} onChange={(e) => setRange({ ...range, key: e.target.value })}>{DASH_RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
           {range.key === "custom" && <Field label="From"><input className="input" type="date" value={range.from} max={range.to} onChange={(e) => setRange({ ...range, from: e.target.value })} /></Field>}
           {range.key === "custom" && <Field label="To"><input className="input" type="date" value={range.to} min={range.from} onChange={(e) => setRange({ ...range, to: e.target.value })} /></Field>}
         </div>
