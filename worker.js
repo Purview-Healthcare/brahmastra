@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.7.0";
+const VERSION = "2.8.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -871,6 +871,7 @@ const OPS = {
         if (await one(env, "SELECT id FROM users WHERE email = ? AND id <> ?", newEmail, ex.id)) throw bad("That email already has an account.");
         await run(env, "UPDATE users SET email = ?, email_missing = 0 WHERE id = ?", newEmail, ex.id);
       }
+      if (payload.emp_id != null) await run(env, "UPDATE users SET emp_id = ? WHERE id = ?", str(payload.emp_id, 20).trim().toUpperCase(), ex.id);
       if (projects) await run(env, "UPDATE users SET projects_json = ? WHERE id = ?", JSON.stringify(projects), ex.id);
       if (reportsTo !== undefined) { const r = reportsTo ? await one(env, "SELECT name FROM users WHERE id = ?", reportsTo) : null; await run(env, "UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?", reportsTo, r ? r.name : "", ex.id); }
       if (ex.id === user.id && (!active || role !== "supervisor")) throw bad("You can't deactivate or demote your own account.");
@@ -1702,14 +1703,18 @@ const OPS = {
     const extra = ((await getSetting(env, "extra_emails", [])) || []).map(mailClean);
     const rows = raw.map(rosterRow).filter((r) => r.name);
     const existing = await all(env, "SELECT * FROM users");
-    const byEmp = new Map(existing.filter((u) => u.emp_id).map((u) => [u.emp_id.toUpperCase(), u]));
+    // On a duplicate key (e.g. an Emp ID put on a hand-made account to merge it), the account with a
+    // password or a sign-in wins; the other copy, if it came from the roster, is switched off below.
+    const put = (m, k, u) => { const ex = m.get(k); if (!ex || (!(ex.pass_hash || ex.last_login) && (u.pass_hash || u.last_login))) m.set(k, u); };
+    const byEmp = new Map(); existing.forEach((u) => { if (u.emp_id) put(byEmp, u.emp_id.toUpperCase(), u); });
     const byEmail = new Map(existing.map((u) => [u.email, u]));
-    const byName = new Map(existing.filter((u) => u.source === "roster").map((u) => [u.name.toLowerCase(), u]));
+    // Exact full name also matches accounts created by hand before the roster, so they keep their password and get their Emp ID.
+    const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") put(byName, u.name.trim().toLowerCase(), u); });
     const domains = {}; rows.forEach((r) => { if (mailOk(r.email)) { const d = r.email.split("@")[1]; domains[d] = (domains[d] || 0) + 1; } });
     const plan = [], excluded = [], warnings = [], used = new Set(), dropped = new Set();
     for (const row of rows) {
       const cls = rosterClassify(row);
-      const match = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
+      const match = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
       if (cls.reason && match && match.source === "roster" && match.active) dropped.add(match.id);
       if (cls.reason) { excluded.push({ name: row.name, emp_id: row.emp_id, position: row.position, department: row.department, reason: cls.reason, existing: !!(match && match.source === "roster" && match.active) }); continue; }
       if (match) used.add(match.id);
@@ -1724,13 +1729,17 @@ const OPS = {
         if (!domainOk(env, row.email) && !extra.includes(row.email)) issues.push("not a Purview email, cannot sign in until allowed: " + row.email);
         else if ((domains[d] || 0) < 2) issues.push("check the spelling of the domain: " + row.email);
       }
-      if (emailOk && match && match.email !== row.email && byEmail.has(row.email) && byEmail.get(row.email).id !== match.id) issues.push("email already used by another account: " + row.email);
+      // The right email held by an unused copy (a roster duplicate nobody signed in to) is freed and taken over.
+      const holder = emailOk && match && match.email !== row.email ? byEmail.get(row.email) : null;
+      const freeable = holder && holder.id !== match.id && !holder.pass_hash && !holder.last_login;
+      if (holder && holder.id !== match.id && !freeable) issues.push("email already used by another account: " + row.email);
       const role = cls.kind === "agent" ? "user" : "supervisor";
-      const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
+      const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, free_email_from: freeable ? holder.id : null, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
         role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
         roster_status: row.status, exit_date: row.exit_date, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
       const changes = [];
       if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
+      if (match && next.free_email_from && !changes.includes("email")) changes.push("email");
       plan.push({ row, cls, match, next, issues, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
       if (issues.length) warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues });
     }
@@ -1754,6 +1763,7 @@ const OPS = {
     for (const p of plan) {
       if (p.action === "skip") continue;
       const n = p.next;
+      if (n.free_email_from) await run(env, "UPDATE users SET email = ?, email_missing = 1 WHERE id = ?", "freed-" + String(n.free_email_from).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) + "@no-email.invalid", n.free_email_from);
       let id = p.match && p.match.id;
       if (!id) {
         id = uuid();
