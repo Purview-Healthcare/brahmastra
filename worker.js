@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.3.0";
+const VERSION = "2.4.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -94,7 +94,9 @@ const EXTRA_COLUMNS = {
   notes: [["status", "TEXT NOT NULL DEFAULT ''"], ["sub_status", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT NOT NULL DEFAULT ''"], ["bucket", "TEXT NOT NULL DEFAULT ''"],
     ["effective", "TEXT NOT NULL DEFAULT ''"], ["note_action", "TEXT NOT NULL DEFAULT ''"], ["fields_json", "TEXT NOT NULL DEFAULT '{}'"], ["edited_at", "INTEGER"], ["edited_by", "TEXT"]],
   claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"],
-    ["alt_key", "TEXT NOT NULL DEFAULT ''"], ["fp_key", "TEXT NOT NULL DEFAULT ''"]],
+    ["alt_key", "TEXT NOT NULL DEFAULT ''"], ["fp_key", "TEXT NOT NULL DEFAULT ''"],
+    // Escalations: when the biller flagged it, and when / by whom a team lead answered.
+    ["escalated_at", "INTEGER"], ["escalated_by", "TEXT"], ["escalation_answered_at", "INTEGER"], ["escalation_answered_by", "TEXT"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
     ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"]],
@@ -422,6 +424,7 @@ function ensureReady(env) {
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_claims_fp ON claims (client_id, fp_key)"),
     ]);
     await backfillKeys(env);
+    await run(env, "UPDATE claims SET escalated_at = COALESCE(completed_at, updated_at), escalated_by = last_worked_by WHERE escalated = 1 AND escalated_at IS NULL");
     const users = await one(env, "SELECT COUNT(*) AS n FROM users");
     if (!users || !users.n) {
       const email = mailClean(env.BOOTSTRAP_EMAIL || DEFAULT_BOOTSTRAP_EMAIL);
@@ -649,8 +652,9 @@ async function removeUser(env, id) {
 }
 
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.)/;
+const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.)/;
 const ADMIN_OPS = /^roster\./;
+const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
@@ -1369,8 +1373,9 @@ const OPS = {
           VALUES (?,?,?,?,'work',?,?,?,?,?,?,?,?,?,?,?,?)`)
         .bind(uuid(), t.id, user.id, user.name, saag.status, saag.action, text, followUp, now, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, f.action, JSON.stringify(f)));
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, started_at = NULL, completed_at = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?,
-          last_note = ?, last_worked_by = ?, last_worked_on = ?, follow_up_on = ?, touches = touches + 1, worked_before = 1, escalated = ?, skipped_at = NULL, updated_at = ? WHERE id = ?`)
-        .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, f.action, text.slice(0, 600), user.id, today, followUp, escalate, now, t.id));
+          last_note = ?, last_worked_by = ?, last_worked_on = ?, follow_up_on = ?, touches = touches + 1, worked_before = 1, escalated = ?, skipped_at = NULL, updated_at = ?,
+          escalated_at = CASE WHEN ? = 1 AND (escalated = 0 OR escalated_at IS NULL) THEN ? WHEN ? = 1 THEN escalated_at ELSE NULL END, escalated_by = CASE WHEN ? = 1 THEN ? ELSE NULL END WHERE id = ?`)
+        .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, f.action, text.slice(0, 600), user.id, today, followUp, escalate, now, escalate, now, escalate, escalate, user.id, t.id));
     }
     await batchAll(env, stmts);
     // Copy the entry into the client's / location's OneDrive workbook in the background (when a link is set and Microsoft 365 is configured).
@@ -1537,6 +1542,37 @@ const OPS = {
       ? await all(env, "SELECT a.*, u.name AS by_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? ORDER BY a.at DESC LIMIT 50", payload.client_id)
       : await all(env, `SELECT a.*, u.name AS by_name, c.name AS client_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user LEFT JOIN clients c ON c.id = a.client_id WHERE 1 = 1${scopeSql(user, "a.client_id")} ORDER BY a.at DESC LIMIT 50`, ...scopeArgs(user));
     return { rows: rows.map((r) => { let s = {}; try { s = JSON.parse(r.summary_json); } catch {} return { ...r, summary: s, summary_json: undefined }; }) };
+  },
+
+  /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
+  "attention.list": async ({ env, user }) => {
+    const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.state, c.follow_up_on,
+        c.last_status_code, c.last_sub_status, c.last_action_code, c.last_note, c.escalated_at, c.assigned_to, u.name AS assigned_name, e.name AS escalated_by_name, cl.name AS client_name, l.name AS location_name
+      FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN users e ON e.id = c.escalated_by LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
+      WHERE c.escalated = 1 AND c.state IN ${WORKABLE}${scopeSql(user, "c.client_id")} ORDER BY c.escalated_at ASC LIMIT 500`, ...scopeArgs(user));
+    const now = Date.now();
+    const out = rows.map((r) => ({ ...r, waiting_ms: r.escalated_at ? now - r.escalated_at : 0, overdue: !!r.escalated_at && now - r.escalated_at > ESCALATION_TAT_MS }));
+    return { rows: out, overdue: out.filter((r) => r.overdue).length, tat_hours: ESCALATION_TAT_MS / 3600000 };
+  },
+  "attention.count": async ({ env, user }) => {
+    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND escalated_at < ? THEN 1 ELSE 0 END) AS overdue FROM claims WHERE escalated = 1 AND state IN ${WORKABLE}${scopeSql(user, "client_id")}`, Date.now() - ESCALATION_TAT_MS, ...scopeArgs(user));
+    return { n: (r && r.n) || 0, overdue: (r && r.overdue) || 0 };
+  },
+  /* Answer an escalation: the reply goes into the claim history and the flag comes off. Optionally the claim goes back on the biller's list today. */
+  "attention.answer": async ({ env, user, payload }) => {
+    const c = await one(env, "SELECT id, client_id, assigned_to, state, escalated FROM claims WHERE id = ?", payload.id);
+    if (!c) throw bad("Claim not found.");
+    if (!inScope(user, c.client_id)) throw outOfScope();
+    const comment = str(payload.comment, 4000).trim();
+    if (!commentOk(comment)) throw bad("Write your answer for the biller, a few words at least.");
+    const now = Date.now(), today = isoDate(payload.today) || isoToday();
+    const back = payload.send_back && c.assigned_to && ["completed", "assigned"].includes(c.state);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, "Escalation answered: " + comment, now),
+      env.DB.prepare(`UPDATE claims SET escalated = 0, escalation_answered_at = ?, escalation_answered_by = ?, updated_at = ?,
+          state = CASE WHEN ? THEN 'assigned' ELSE state END, follow_up_on = CASE WHEN ? THEN ? ELSE follow_up_on END, skipped_at = NULL WHERE id = ?`).bind(now, user.id, now, back ? 1 : 0, back ? 1 : 0, today, c.id),
+    ]);
+    return { ok: true, sent_back: !!back };
   },
 
   /* ---- roster (admin): load the Purview Shastra export. dry_run shows what would change; nothing is written until it is applied. ---- */
