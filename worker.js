@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.5.0";
+const VERSION = "2.6.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1192,7 +1192,8 @@ const OPS = {
     if (payload.follow_up_due) { where.push("c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on <= ?"); params.push(isoDate(payload.today) || isoToday()); }
     if (payload.overdue) { where.push("c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ?"); params.push(isoDate(payload.today) || isoToday()); }
     if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
-    const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "c.age_days", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on" };
+    const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "c.age_days", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on",
+      claim_no: "c.claim_no", tier: "c.tier", status_class: "c.status_class", inventory_kind: "c.inventory_kind", provider: "c.provider", cpt: "c.cpt" };
     const sort = SORTS[payload.sort] || "c.priority";
     const dir = payload.dir === "asc" ? "ASC" : "DESC";
     const size = Math.max(10, Math.min(500, Math.round(num(payload.page_size, 50))));
@@ -1205,6 +1206,30 @@ const OPS = {
         c.last_note, c.updated_at, u.name AS assigned_name, l.name AS location_name
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id ${w} ORDER BY ${sort} ${dir}, c.balance DESC LIMIT ? OFFSET ?`, ...params, size, (page - 1) * size);
     return { rows, total: total.n, amount: total.amt, page, page_size: size };
+  },
+  /* Suggestions under the search boxes: distinct values matching the typed letters, most used first.
+     Billers get values from their own claims only; scoped leads from their projects. */
+  "claims.suggest": async ({ env, user, payload }) => {
+    const q = str(payload.q, 80).trim();
+    const where = ["state <> 'excluded'"], params = [];
+    if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
+    if (user.role !== "supervisor") { where.push("(assigned_to = ? OR last_worked_by = ?)"); params.push(user.id, user.id); }
+    if (payload.client_id) { where.push("client_id = ?"); params.push(str(payload.client_id, 60)); }
+    if (payload.location_id) { where.push("location_id = ?"); params.push(str(payload.location_id, 60)); }
+    const w = where.join(" AND ");
+    const like = "%" + q.replace(/[%_]/g, " ") + "%";
+    const col = { payer: "payer", provider: "provider", cpt: "cpt" }[String(payload.field || "")];
+    if (col) {
+      const rows = await all(env, `SELECT ${col} AS v, COUNT(*) AS n FROM claims WHERE ${w} AND ${col} <> ''${q ? ` AND ${col} LIKE ?` : ""} GROUP BY ${col} ORDER BY n DESC LIMIT 12`, ...params, ...(q ? [like] : []));
+      return { values: rows.map((r) => r.v) };
+    }
+    if (q.length < 2) return { values: [] };
+    const [pt, cn, ac] = await Promise.all([
+      all(env, `SELECT DISTINCT patient AS v FROM claims WHERE ${w} AND patient LIKE ? LIMIT 6`, ...params, like),
+      all(env, `SELECT DISTINCT claim_no AS v FROM claims WHERE ${w} AND claim_no LIKE ? LIMIT 4`, ...params, like),
+      all(env, `SELECT DISTINCT account_no AS v FROM claims WHERE ${w} AND account_no <> '' AND account_no LIKE ? LIMIT 4`, ...params, like),
+    ]);
+    return { values: [...new Set([...pt, ...cn, ...ac].map((r) => r.v).filter(Boolean))].slice(0, 12) };
   },
   "claims.stats": async ({ env, user, payload }) => {
     const where = [], params = [];
