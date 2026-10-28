@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -73,6 +73,10 @@ const SCHEMA = [
      note_action TEXT NOT NULL DEFAULT '', fields_json TEXT NOT NULL DEFAULT '{}', edited_at INTEGER, edited_by TEXT)`,
   `CREATE INDEX IF NOT EXISTS idx_notes_claim ON notes (claim_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_notes_user ON notes (user_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, user_id TEXT NOT NULL, user_name TEXT NOT NULL DEFAULT '',
+     name TEXT NOT NULL, type TEXT NOT NULL DEFAULT '', size INTEGER NOT NULL DEFAULT 0, parts INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_attachments_claim ON attachments (claim_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS attachment_parts (attachment_id TEXT NOT NULL, seq INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (attachment_id, seq))`,
   `CREATE TABLE IF NOT EXISTS codes (id TEXT PRIMARY KEY, kind TEXT NOT NULL, code TEXT NOT NULL, label TEXT NOT NULL, category TEXT NOT NULL DEFAULT '',
      resolves INTEGER NOT NULL DEFAULT 0, follow_up_days INTEGER, sort INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, UNIQUE (kind, code))`,
   `CREATE TABLE IF NOT EXISTS allocations (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, location_id TEXT, by_user TEXT NOT NULL, at INTEGER NOT NULL,
@@ -99,6 +103,9 @@ const EXTRA_COLUMNS = {
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_TRIES = 5;
+/* Files attached to a claim are kept in D1 as base64, split into parts that stay well under D1's row size limit. */
+const ATTACH_MAX_BYTES = 8 * 1024 * 1024;
+const ATTACH_PART_CHARS = 512 * 1024;
 
 /* ---- email: one-time codes go out through whichever provider the Worker is configured with ----
    EMAIL_PROVIDER = resend | brevo | sendgrid | graph | webhook, with EMAIL_API_KEY and EMAIL_FROM ("Brahmastra <no-reply@purview-healthcare.com>").
@@ -681,6 +688,8 @@ const OPS = {
     const n = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ?", ex.id);
     await env.DB.batch([
       env.DB.prepare("DELETE FROM notes WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
+      env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id IN (SELECT a.id FROM attachments a JOIN claims c ON c.id = a.claim_id WHERE c.client_id = ?)").bind(ex.id),
+      env.DB.prepare("DELETE FROM attachments WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
       env.DB.prepare("DELETE FROM claims WHERE client_id = ?").bind(ex.id),
       env.DB.prepare("DELETE FROM batches WHERE client_id = ?").bind(ex.id),
       env.DB.prepare("DELETE FROM allocations WHERE client_id = ?").bind(ex.id),
@@ -860,6 +869,7 @@ const OPS = {
       const k = g.keep;
       for (const o of g.others) {
         stmts.push(env.DB.prepare("UPDATE notes SET claim_id = ? WHERE claim_id = ?").bind(k.id, o.id));
+        stmts.push(env.DB.prepare("UPDATE attachments SET claim_id = ? WHERE claim_id = ?").bind(k.id, o.id));
         const newer = o.last_worked_on && o.last_worked_on > (k.last_worked_on || "");
         stmts.push(env.DB.prepare(`UPDATE claims SET touches = touches + ?, worked_before = CASE WHEN ? = 1 THEN 1 ELSE worked_before END,
             inventory_kind = CASE WHEN ? = 'worked' THEN 'worked' ELSE inventory_kind END,
@@ -886,7 +896,7 @@ const OPS = {
     const b = await one(env, "SELECT * FROM batches WHERE id = ?", payload.batch_id);
     if (!b) throw bad("Unknown batch.");
     if (b.undone_at) throw bad("This batch was already undone.");
-    const r = await run(env, "DELETE FROM claims WHERE first_batch_id = ? AND touches = 0 AND state <> 'in_progress'", b.id);
+    const r = await run(env, "DELETE FROM claims WHERE first_batch_id = ? AND touches = 0 AND state <> 'in_progress' AND id NOT IN (SELECT claim_id FROM attachments)", b.id);
     await run(env, "UPDATE batches SET undone_at = ? WHERE id = ?", Date.now(), b.id);
     return { removed: changesOf(r) };
   },
@@ -1239,6 +1249,49 @@ const OPS = {
     return { note: { id, claim_id: c.id, user_id: user.id, user_name: user.name, kind: "note", comment, created_at: now } };
   },
 
+  /* ---- attachments: files kept with a claim, next to its notes (EOBs, denial letters, portal screenshots) ---- */
+  "attachments.add": async ({ env, user, payload }) => {
+    const c = await one(env, "SELECT id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
+    if (!c) throw bad("Claim not found.");
+    if (user.role !== "supervisor" && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    const name = str(payload.name, 200).replace(/[\\/\u0000-\u001f]/g, "_").trim();
+    if (!name) throw bad("The file has no name.");
+    const data = String(payload.data || "");
+    if (!data || !/^[A-Za-z0-9+/]+=*$/.test(data)) throw bad("The file could not be read. Try attaching it again.");
+    const size = Math.floor(data.length * 3 / 4) - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);
+    if (size > ATTACH_MAX_BYTES) throw bad("Files can be up to " + ATTACH_MAX_BYTES / 1048576 + " MB.");
+    const type = str(payload.type, 120);
+    const parts = [];
+    for (let i = 0; i < data.length; i += ATTACH_PART_CHARS) parts.push(data.slice(i, i + ATTACH_PART_CHARS));
+    const now = Date.now(), id = uuid();
+    // One part per statement keeps each request to D1 small.
+    for (let i = 0; i < parts.length; i++) await run(env, "INSERT INTO attachment_parts (attachment_id, seq, data) VALUES (?,?,?)", id, i, parts[i]);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO attachments (id, claim_id, user_id, user_name, name, type, size, parts, created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(id, c.id, user.id, user.name, name, type, size, parts.length, now),
+      env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
+    ]);
+    return { attachment: { id, claim_id: c.id, user_id: user.id, user_name: user.name, name, type, size, created_at: now, deletable: true } };
+  },
+  "attachments.get": async ({ env, user, payload }) => {
+    const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
+    if (!a) throw bad("This file is no longer attached.");
+    const c = await one(env, "SELECT assigned_to, last_worked_by FROM claims WHERE id = ?", a.claim_id);
+    if (user.role !== "supervisor" && (!c || (c.assigned_to !== user.id && c.last_worked_by !== user.id))) throw denied("This claim is not in your queue.");
+    const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", a.id);
+    return { name: a.name, type: a.type, size: a.size, data: parts.map((p) => p.data).join("") };
+  },
+  /* The person who attached a file can remove it for 24 hours; a team lead can remove it any time. */
+  "attachments.delete": async ({ env, user, payload }) => {
+    const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
+    if (!a) throw bad("This file is no longer attached.");
+    if (user.role !== "supervisor" && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id),
+      env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(a.id),
+    ]);
+    return { ok: true };
+  },
+
   /* ---- reports ---- */
   "reports.work": async ({ env, payload }) => {
     const where = ["nt.created_at BETWEEN ? AND ?"], params = [num(payload.from_ms, 0), num(payload.to_ms, Date.now())];
@@ -1301,6 +1354,7 @@ const OPS = {
 
 async function claimBundle(env, user, c) {
   const notes = await all(env, "SELECT * FROM notes WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id);
+  const files = await all(env, "SELECT id, claim_id, user_id, user_name, name, type, size, created_at FROM attachments WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id);
   const key = c.account_no || c.patient;
   const siblings = key ? await all(env, `SELECT id, claim_no, account_no, patient, dos, cpt, payer, balance, state, assigned_to, priority, follow_up_on, last_status_code FROM claims
       WHERE client_id = ? AND id <> ? AND state IN ${WORKABLE} AND ((account_no <> '' AND account_no = ?) OR (patient <> '' AND patient = ?)) ORDER BY priority DESC LIMIT 50`, c.client_id, c.id, c.account_no || "\u0000", c.patient || "\u0000") : [];
@@ -1309,7 +1363,8 @@ async function claimBundle(env, user, c) {
   const { raw_json, lines_json, ...rest } = c;
   const now = Date.now();
   const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: n.kind === "work" && now - n.created_at <= EDIT_WINDOW_MS && (n.user_id === user.id || user.role === "supervisor"), edit_until: n.created_at + EDIT_WINDOW_MS }; });
-  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id }, notes: shaped, siblings };
+  const attachments = files.map((a) => ({ ...a, deletable: user.role === "supervisor" || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
+  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id }, notes: shaped, attachments, siblings };
 }
 
 /* ------------------------------------------------------------ fetch */
