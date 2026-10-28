@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.8.0";
+const VERSION = "2.9.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -85,6 +85,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS otps (id TEXT PRIMARY KEY, email TEXT NOT NULL, code_hash TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT 'login', data_json TEXT NOT NULL DEFAULT '{}',
      created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS idx_otps_email ON otps (email, created_at)`,
+  `CREATE TABLE IF NOT EXISTS claim_events (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '',
+     kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', data_json TEXT NOT NULL DEFAULT '{}')`,
+  `CREATE INDEX IF NOT EXISTS idx_claim_events_claim ON claim_events (claim_id, at)`,
   `CREATE TABLE IF NOT EXISTS availability (client_id TEXT NOT NULL, day TEXT NOT NULL, on_json TEXT NOT NULL DEFAULT '[]', by_user TEXT, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
 ];
 
@@ -318,7 +321,7 @@ function cleanNoteFields(f, claim) {
   return {
     dos: mmdd(isoDate(f.dos) || claim.dos) || t(f.dos, 20), clm: t(f.clm || claim.claim_no, 80), denial: t(f.denial, 200),
     source: NOTE_SOURCES.includes(f.source) ? f.source : t(f.source, 40), ref: t(f.ref, 80),
-    precheck: pre, precheck_text: t(f.precheck_text, 300), findings: t(f.findings, 2000), action: NOTE_ACTIONS.includes(action) ? action : "",
+    precheck: pre, precheck_text: t(f.precheck_text, 300), findings: t(f.findings, 2000), action: NOTE_ACTIONS.includes(action) ? action : t(f.action, 120),
   };
 }
 function composeNote(fields, saag, followUp) {
@@ -327,7 +330,7 @@ function composeNote(fields, saag, followUp) {
     `SOURCE: ${fields.source || "-"}${fields.ref ? ", REF: " + fields.ref : (fields.source === "Call" ? ", REF: none" : "")}`,
     `PRE CALL CHECK: ${[...(fields.precheck || []), fields.precheck_text].filter(Boolean).join("; ") || "-"}`,
     `RCA/FINDINGS: ${fields.findings || "-"}`, `ACTION: ${fields.action || "-"}`,
-    `SAAG: ${saag.status} > ${saag.sub_status} > ${saag.action}`, `BUCKET: ${saag.bucket}`, `EFFECTIVE: ${saag.effective || "-"}`,
+    ...(saag ? [`SAAG: ${saag.status} > ${saag.sub_status} > ${saag.action}`, `BUCKET: ${saag.bucket}`, `EFFECTIVE: ${saag.effective || "-"}`] : []),
   ];
   if (followUp) parts.push(`FOLLOW-UP: ${mmdd(followUp)}`);
   return parts.join(" | ");
@@ -339,7 +342,7 @@ function validateWork(payload) {
   if (!BUCKETS4.includes(saag.bucket)) throw bad("Pick a bucket: Payer, Client, Closed or Purview.");
   const f = payload.note || {};
   if (!commentOk(f.findings)) throw bad("Write what you found (RCA / findings), a few words at least.");
-  if (!NOTE_ACTIONS.includes(String(f.action || "").toLowerCase().trim())) throw bad("Pick the note ACTION from the list.");
+  if (!String(f.action || "").trim()) throw bad("Pick the note ACTION from the list, or type it under Other.");
   if (f.source === "Call" && !String(f.ref || "").trim()) throw bad("A call needs its reference number (REF).");
   return saag;
 }
@@ -359,6 +362,10 @@ async function requireAttachment(env, claimId, saag, fields, since) {
   const a = await one(env, "SELECT id FROM attachments WHERE claim_id = ? AND created_at > ? LIMIT 1", claimId, since || 0);
   if (!a) throw bad(`"${why}" needs the document attached (EOB, appeal or reconsideration letter). Attach it under RCA / findings, then save.`);
 }
+/* One line in a claim's timeline (assigned, opened, skipped, refreshed from a file, state changed, worked with what changed). */
+const claimEvent = (env, claimId, user, kind, text, data) =>
+  env.DB.prepare("INSERT INTO claim_events (id, claim_id, at, user_id, user_name, kind, text, data_json) VALUES (?,?,?,?,?,?,?,?)")
+    .bind(uuid(), claimId, Date.now(), user ? user.id : null, user ? user.name || "" : "", kind, str(text, 500), JSON.stringify(data || {}));
 const isClosedWork = (saag, fields) => saag.bucket === "Closed" || CLOSED_EFFECTIVE.test(saag.effective) || fields.action === "closed";
 const followUpDays = (effective, clientDays) => EFFECTIVE_DAYS[effective] || clientDays || 30;
 const noteFields = (n) => { let f = {}; try { f = JSON.parse(n.fields_json || "{}"); } catch {} return f; };
@@ -1110,6 +1117,7 @@ const OPS = {
         else counts.updated++;
       } else if (ex.state === "closed" || ex.state === "excluded") { newState = "open"; reason = "Reopened by " + kind + " upload"; clearAssign = 1; counts.reopened++; }
       else counts.updated++;
+      stmts.push(claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), { kind, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance, ...(newState !== ex.state ? { changes: { state: [ex.state, newState] } } : {}) }));
       stmts.push(env.DB.prepare(`UPDATE claims SET location_id = COALESCE(?, location_id), batch_id = ?, claim_no = CASE WHEN ? <> '' THEN ? ELSE claim_no END,
           account_no = CASE WHEN ? <> '' THEN ? ELSE account_no END, patient = CASE WHEN ? <> '' THEN ? ELSE patient END, payer = CASE WHEN ? <> '' THEN ? ELSE payer END,
           dos = CASE WHEN ? <> '' THEN ? ELSE dos END, cpt = CASE WHEN ? <> '' THEN ? ELSE cpt END, provider = CASE WHEN ? <> '' THEN ? ELSE provider END,
@@ -1343,6 +1351,40 @@ const OPS = {
     if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
     return claimBundle(env, user, c);
   },
+  /* Everything that happened to one claim, newest first: loads and refreshes, assignments, openings, work entries
+     (SAAG, the note fields and what changed), notes, escalations and answers, skips, files and state changes. */
+  "claims.timeline": async ({ env, user, payload }) => {
+    const c = await one(env, "SELECT c.*, u.name AS assigned_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id = ?", payload.id);
+    if (!c) throw bad("Claim not found.");
+    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    const [notes, files, events] = await Promise.all([
+      all(env, "SELECT * FROM notes WHERE claim_id = ? ORDER BY created_at DESC LIMIT 300", c.id),
+      all(env, "SELECT id, user_name, name, type, size, created_at FROM attachments WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id),
+      all(env, "SELECT * FROM claim_events WHERE claim_id = ? ORDER BY at DESC LIMIT 500", c.id),
+    ]);
+    const out = [];
+    const workEv = events.filter((e) => e.kind === "worked");
+    for (const n of notes) {
+      const f = noteFields(n);
+      if (n.kind === "work") {
+        const ev = workEv.find((e) => e.user_id === n.user_id && Math.abs(e.at - n.created_at) < 5000);
+        const d = ev ? jsonObj(ev.data_json) : {};
+        out.push({ at: n.created_at, kind: "work", id: n.id, editable: Date.now() - n.created_at <= EDIT_WINDOW_MS && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
+          follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at });
+      } else if (n.kind === "skip") out.push({ at: n.created_at, kind: "skip", who: n.user_name, text: n.comment });
+      else if (/^Escalation answered:/.test(n.comment || "")) out.push({ at: n.created_at, kind: "answer", who: n.user_name, text: n.comment.replace(/^Escalation answered:\s*/, "") });
+      else out.push({ at: n.created_at, kind: "note", who: n.user_name, fields: f && f.findings != null ? f : null, text: n.comment });
+    }
+    for (const a of files) out.push({ at: a.created_at, kind: "file", who: a.user_name, file: { id: a.id, name: a.name, size: a.size, type: a.type } });
+    for (const e of events) if (e.kind !== "worked" && e.kind !== "edited") { const d = jsonObj(e.data_json); out.push({ at: e.at, kind: e.kind, who: e.user_name, text: e.text, changes: d.changes || {}, data: d }); }
+    // Claims from before the event log: the first upload and the current assignment still show.
+    const batch = c.first_batch_id ? await one(env, "SELECT b.file_name, b.kind, u.name AS by_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by WHERE b.id = ?", c.first_batch_id) : null;
+    out.push({ at: c.created_at, kind: "loaded", who: batch ? batch.by_name || "" : "", text: batch ? batch.file_name : "", data: { kind: c.inventory_kind, file_status: [c.file_status, c.file_sub_status].filter(Boolean).join(" · ") } });
+    if (c.assigned_at && !events.some((e) => e.kind === "assigned")) out.push({ at: c.assigned_at, kind: "assigned", who: "", text: c.assigned_name || "", data: {}, changes: {} });
+    if (c.escalated && c.escalated_at && !notes.some((n) => n.kind === "work" && Math.abs(n.created_at - c.escalated_at) < 5000)) out.push({ at: c.escalated_at, kind: "escalated", who: "", text: "" });
+    out.sort((a, b) => b.at - a.at);
+    return { claim: { id: c.id, claim_no: c.claim_no, patient: c.patient, payer: c.payer }, items: out };
+  },
   "claims.setState": async ({ env, user, payload }) => {
     const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
     const state = ["open", "excluded", "closed"].includes(payload.state) ? payload.state : null;
@@ -1350,6 +1392,8 @@ const OPS = {
     const reason = str(payload.reason, 200) || (state === "open" ? "Reopened by supervisor" : (state === "closed" ? "Closed by supervisor" : "Excluded by supervisor"));
     const now = Date.now();
     let changed = 0;
+    for (const part of chunks(ids, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${scopeSql(user, "client_id")}`, ...part, ...scopeArgs(user));
+      const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
     for (const chunk of chunks(ids, 60)) {
       const r = await run(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
         skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${scopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...scopeArgs(user));
@@ -1369,6 +1413,12 @@ const OPS = {
     const ok = new Set(users.map((u) => u.id));
     const today = isoDate(payload.today) || isoToday();
     const now = Date.now();
+    const names = new Map((await all(env, `SELECT id, name FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`, ...userIds)).map((u) => [u.id, u.name]));
+    const before = new Map();
+    for (const part of chunks(items.map((a) => str(a.id, 60)), 80)) (await all(env, `SELECT id, assigned_to, state, follow_up_on FROM claims WHERE id IN (${part.map(() => "?").join(",")}) AND client_id = ?`, ...part, client_id)).forEach((r) => before.set(r.id, r));
+    const eligible = (a) => { const b = before.get(str(a.id, 60)); return b && (b.state === "open" || (b.state === "completed" && b.follow_up_on && b.follow_up_on <= today)); };
+    const prevNames = new Map((await all(env, `SELECT id, name FROM users WHERE id IN (${[...new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean)), ""].map(() => "?").join(",")})`, ...[...new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean)), ""])).map((u) => [u.id, u.name]));
+    const evs = items.filter((a) => ok.has(str(a.user_id, 60)) && eligible(a)).map((a) => { const b = before.get(str(a.id, 60)); return claimEvent(env, b.id, user, "assigned", names.get(str(a.user_id, 60)) || "", { from: b.assigned_to ? prevNames.get(b.assigned_to) || "" : "", via: str(strategy, 40) || "allocate" }); });
     const stmts = items.filter((a) => ok.has(str(a.user_id, 60))).map((a) =>
       env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = ?, state = 'assigned', state_reason = '', priority = ?, priority_reason = ?, tier = CASE WHEN ? <> '' THEN ? ELSE tier END,
           age_days = COALESCE(?, age_days), bucket = CASE WHEN ? <> '' THEN ? ELSE bucket END, skipped_at = NULL, skips = 0, updated_at = ?
@@ -1377,6 +1427,7 @@ const OPS = {
           str(a.bucket, 20), str(a.bucket, 20), now, str(a.id, 60), client_id, today));
     const results = await batchAll(env, stmts, 50);
     const applied = results.reduce((s, r) => s + changesOf(r), 0);
+    if (evs.length) await batchAll(env, evs, 50);
     const id = uuid();
     await run(env, "INSERT INTO allocations (id, client_id, location_id, by_user, at, strategy, count, summary_json) VALUES (?,?,?,?,?,?,?,?)",
       id, client_id, location_id || null, user.id, now, str(strategy, 40), applied, str(JSON.stringify(payload.summary || {}), 20000));
@@ -1384,28 +1435,35 @@ const OPS = {
   },
   "alloc.reassign": async ({ env, user, payload }) => {
     const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
-    const u = await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", payload.user_id);
+    const u = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", payload.user_id);
     if (!ids.length || !u) throw bad("Pick claims and an active team member.");
     const now = Date.now();
     let changed = 0;
+    const evs = [];
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${scopeSql(user, "c.client_id")}`, ...part, ...scopeArgs(user)))
+      evs.push(claimEvent(env, r.id, user, "assigned", u.name, { from: r.prev || "", via: "reassign" }));
     for (const chunk of chunks(ids, 60)) {
       const r = await run(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
         WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${scopeSql(user, "client_id")}`, u.id, now, now, ...chunk, ...scopeArgs(user));
       changed += changesOf(r);
     }
+    if (evs.length) await batchAll(env, evs, 50);
     return { changed };
   },
   "alloc.unassign": async ({ env, user, payload }) => {
     const now = Date.now();
+    const logOff = async (where, args) => { const rows = await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE ${where}${scopeSql(user, "c.client_id")}`, ...args, ...scopeArgs(user)); if (rows.length) await batchAll(env, rows.map((r) => claimEvent(env, r.id, user, "unassigned", r.prev || "")), 50); };
     if (payload.user_id) {
       const where = ["assigned_to = ?", "state IN ('assigned','in_progress')"], params = [str(payload.user_id, 60)];
       if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
+      await logOff(where.map((w) => "c." + w).join(" AND "), params);
       const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE ${where.join(" AND ")}${scopeSql(user, "client_id")}`, now, ...params, ...scopeArgs(user));
       return { changed: changesOf(r) };
     }
     const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
     if (!ids.length) throw bad("Pick claims to unassign.");
     let changed = 0;
+    for (const part of chunks(ids, 80)) await logOff(`c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ('assigned','in_progress')`, part);
     for (const chunk of chunks(ids, 60)) {
       const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ('assigned','in_progress')${scopeSql(user, "client_id")}`, now, ...chunk, ...scopeArgs(user));
       changed += changesOf(r);
@@ -1440,7 +1498,7 @@ const OPS = {
           ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, skipId || "");
       if (!cand) break;
       const r = await run(env, "UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned'", now, now, cand.id);
-      if (changesOf(r)) c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id);
+      if (changesOf(r)) { c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id); await claimEvent(env, c.id, user, "opened", "Next claim").run(); }
     }
     if (!c) return { claim: null };
     const full = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", c.id);
@@ -1455,6 +1513,7 @@ const OPS = {
     const count = payload.count === false ? 0 : 1;
     const stmts = [env.DB.prepare("UPDATE claims SET state = 'assigned', started_at = NULL, skipped_at = CASE WHEN ? = 1 THEN ? ELSE skipped_at END, skips = skips + ?, updated_at = ? WHERE id = ?").bind(count, now, count, now, c.id)];
     if (reason) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'skip',?,?)").bind(uuid(), c.id, user.id, user.name, reason, now));
+    else stmts.push(claimEvent(env, c.id, user, count ? "skipped" : "returned", ""));
     await env.DB.batch(stmts);
     return { ok: true };
   },
@@ -1485,6 +1544,9 @@ const OPS = {
     const reason = closed ? "Closed: " + saag.effective + (saag.bucket === "Closed" ? "" : " (bucket " + saag.bucket + ")") : "";
     const stmts = [];
     for (const t of targets) {
+      const ch = {}; const diff = (k, a, b) => { if (String(a || "") !== String(b || "")) ch[k] = [a || "", b || ""]; };
+      diff("state", t.state === "in_progress" ? "assigned" : t.state, newState); diff("bucket", t.last_bucket, saag.bucket); diff("follow_up", t.follow_up_on, followUp); diff("status", t.last_status_code, saag.status);
+      stmts.push(claimEvent(env, t.id, user, "worked", "", { changes: ch, escalated: !!escalate, siblings: t.id === c.id ? targets.length - 1 : 0 }));
       const f = t.id === c.id ? fields : { ...fields, dos: mmdd(t.dos) || fields.dos, clm: t.claim_no || fields.clm, findings: fields.findings + " (applied with claim " + (c.claim_no || c.id.slice(0, 8)) + ")" };
       const text = t.id === c.id ? comment : composeNote(f, saag, followUp);
       stmts.push(env.DB.prepare(`INSERT INTO notes (id, claim_id, user_id, user_name, kind, status_code, action_code, comment, follow_up_on, created_at, status, sub_status, action, bucket, effective, note_action, fields_json)
@@ -1510,6 +1572,7 @@ const OPS = {
     await env.DB.batch([
       env.DB.prepare("UPDATE claims SET state = 'assigned', started_at = NULL, updated_at = ? WHERE assigned_to = ? AND state = 'in_progress' AND id <> ?").bind(now, user.id, c.id),
       env.DB.prepare("UPDATE claims SET state = 'in_progress', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ?").bind(now, now, c.id),
+      ...(c.state !== "in_progress" ? [claimEvent(env, c.id, user, "opened", "From the day list")] : []),
     ]);
     const full = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", c.id);
     return claimBundle(env, user, full);
@@ -1565,6 +1628,7 @@ const OPS = {
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?, last_note = ?, follow_up_on = ?, updated_at = ? WHERE id = ?`)
         .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, fields.action, comment.slice(0, 600), followUp, now, c.id));
     }
+    stmts.push(claimEvent(env, c.id, user, "edited", "", { note_id: n.id }));
     await env.DB.batch(stmts);
     return { ok: true, comment, closed };
   },
@@ -1580,14 +1644,24 @@ const OPS = {
     const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
     if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
-    const comment = str(payload.comment, 4000).trim();
-    if (!commentOk(comment)) throw bad("Write a few words.");
+    // A note in the standard format (DOS, CLM#, DENIAL, SOURCE/REF, PRE CALL CHECK, RCA/FINDINGS, ACTION) without a SAAG entry; plain text still works.
+    let comment, fields = null;
+    if (payload.note) {
+      const full = await one(env, "SELECT dos, claim_no FROM claims WHERE id = ?", c.id);
+      fields = cleanNoteFields(payload.note, full);
+      if (!commentOk(fields.findings)) throw bad("Write what you found (RCA / findings), a few words at least.");
+      if (fields.source === "Call" && !fields.ref) throw bad("A call needs its reference number (REF).");
+      comment = composeNote(fields, null, "");
+    } else {
+      comment = str(payload.comment, 4000).trim();
+      if (!commentOk(comment)) throw bad("Write a few words.");
+    }
     const now = Date.now(), id = uuid();
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(id, c.id, user.id, user.name, comment, now),
+      env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at, note_action, fields_json) VALUES (?,?,?,?,'note',?,?,?,?)").bind(id, c.id, user.id, user.name, comment, now, fields ? fields.action : "", JSON.stringify(fields || {})),
       env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
     ]);
-    return { note: { id, claim_id: c.id, user_id: user.id, user_name: user.name, kind: "note", comment, created_at: now } };
+    return { note: { id, claim_id: c.id, user_id: user.id, user_name: user.name, kind: "note", comment, created_at: now, fields } };
   },
 
   /* ---- attachments: files kept with a claim, next to its notes (EOBs, denial letters, portal screenshots) ---- */
