@@ -1046,9 +1046,11 @@ const OPS = {
     return { batch_id: bid, ...counts };
   },
   "inventory.batches": async ({ env, user, payload }) => {
+    const range = payload.from_ms != null || payload.to_ms != null ? [num(payload.from_ms, 0), num(payload.to_ms, Date.now())] : [];
+    const tail = range.length ? " AND b.uploaded_at BETWEEN ? AND ?" : "";
     const rows = payload.client_id
-      ? await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id WHERE b.client_id = ? ORDER BY b.uploaded_at DESC LIMIT 100", payload.client_id)
-      : await all(env, `SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id WHERE 1 = 1${scopeSql(user, "b.client_id")} ORDER BY b.uploaded_at DESC LIMIT 100`, ...scopeArgs(user));
+      ? await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id WHERE b.client_id = ?" + tail + " ORDER BY b.uploaded_at DESC LIMIT 100", payload.client_id, ...range)
+      : await all(env, `SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id WHERE 1 = 1${scopeSql(user, "b.client_id")}${tail} ORDER BY b.uploaded_at DESC LIMIT 100`, ...scopeArgs(user), ...range);
     return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} return { ...b, summary: s, summary_json: undefined }; }) };
   },
   /* Merge claims that are really the same claim (same normalised claim number, or same patient + DOS with no
@@ -1157,6 +1159,8 @@ const OPS = {
   "claims.stats": async ({ env, user, payload }) => {
     const where = [], params = [];
     if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
+    // Dashboard date range: only claims with activity in the window (loaded, refreshed, worked or closed then).
+    if (payload.from_ms != null || payload.to_ms != null) { where.push("updated_at BETWEEN ? AND ?"); params.push(num(payload.from_ms, 0), num(payload.to_ms, Date.now())); }
     if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(payload.location_id); }
     // Dashboard cross-filters: click a bar and every other number is recomputed for that slice.
@@ -1538,9 +1542,11 @@ const OPS = {
     return { rows };
   },
   "supervisor.allocations": async ({ env, user, payload }) => {
+    const range = payload.from_ms != null || payload.to_ms != null ? [num(payload.from_ms, 0), num(payload.to_ms, Date.now())] : [];
+    const tail = range.length ? " AND a.at BETWEEN ? AND ?" : "";
     const rows = payload.client_id
-      ? await all(env, "SELECT a.*, u.name AS by_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? ORDER BY a.at DESC LIMIT 50", payload.client_id)
-      : await all(env, `SELECT a.*, u.name AS by_name, c.name AS client_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user LEFT JOIN clients c ON c.id = a.client_id WHERE 1 = 1${scopeSql(user, "a.client_id")} ORDER BY a.at DESC LIMIT 50`, ...scopeArgs(user));
+      ? await all(env, "SELECT a.*, u.name AS by_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ?" + tail + " ORDER BY a.at DESC LIMIT 50", payload.client_id, ...range)
+      : await all(env, `SELECT a.*, u.name AS by_name, c.name AS client_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user LEFT JOIN clients c ON c.id = a.client_id WHERE 1 = 1${scopeSql(user, "a.client_id")}${tail} ORDER BY a.at DESC LIMIT 50`, ...scopeArgs(user), ...range);
     return { rows: rows.map((r) => { let s = {}; try { s = JSON.parse(r.summary_json); } catch {} return { ...r, summary: s, summary_json: undefined }; }) };
   },
 

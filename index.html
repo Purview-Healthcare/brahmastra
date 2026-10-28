@@ -1136,18 +1136,27 @@ function PatientModal({ id, ctx, me, onClose, onOpenClaim }) {
     </Modal>
   );
 }
+const DASH_RANGES = [["all", "All time"], ["today", "Today"], ["7d", "Last 7 days"], ["month", "This month"], ["custom", "Custom…"]];
 function Dashboard({ ctx, go }) {
   const [clientId, setClientId] = useState("");
   const [locId, setLocId] = useState("");
+  /* Date range: the dashboard then counts only claims with activity in the window (loaded, worked or closed then), and the uploads / allocations of that window. */
+  const [range, setRange] = useState({ key: "all", from: addDaysISO(todayISO(), -6), to: todayISO() });
+  const rangeMs = useMemo(() => {
+    const today = todayISO();
+    const span = range.key === "today" ? [today, today] : range.key === "7d" ? [addDaysISO(today, -6), today] : range.key === "month" ? [today.slice(0, 8) + "01", today] : range.key === "custom" ? [range.from, range.to] : null;
+    return span && span[0] && span[1] ? { from_ms: dayBounds(span[0])[0], to_ms: dayBounds(span[1])[1] } : null;
+  }, [range.key, range.from, range.to]);
+  const rangeLabel = range.key === "custom" ? fmtDate(range.from) + " – " + fmtDate(range.to) : (DASH_RANGES.find(([k]) => k === range.key) || [])[1];
   /* Cross-filters, Power BI style: a clicked slice narrows every figure on the page. */
   const [fl, setFl] = useState({});
   const toggleFl = (k, v) => setFl((f) => (f[k] === v ? Object.fromEntries(Object.entries(f).filter(([x]) => x !== k)) : { ...f, [k]: v }));
   const flCount = Object.keys(fl).length;
   const FL_LABEL = { tier: "Tier", bucket: "Age", status_class: "File status", payer: "Payer", saag_status: "SAAG status", saag_bucket: "Bucket after work", inventory_kind: "Inventory", assigned_to: "Team member" };
   const flText = (k, v) => k === "status_class" ? (STATUS_LABEL[v] || v) : k === "assigned_to" ? ((ctx.users.find((u) => u.id === v) || {}).name || v) : v;
-  const stats = useRpc("claims.stats", { client_id: clientId || undefined, location_id: locId || undefined, ...fl }, [clientId, locId, JSON.stringify(fl)]);
-  const batches = useRpc("inventory.batches", { client_id: clientId || undefined }, [clientId]);
-  const allocs = useRpc("supervisor.allocations", { client_id: clientId || undefined }, [clientId]);
+  const stats = useRpc("claims.stats", { client_id: clientId || undefined, location_id: locId || undefined, ...fl, ...(rangeMs || {}) }, [clientId, locId, JSON.stringify(fl), JSON.stringify(rangeMs)]);
+  const batches = useRpc("inventory.batches", { client_id: clientId || undefined, ...(rangeMs || {}) }, [clientId, JSON.stringify(rangeMs)]);
+  const allocs = useRpc("supervisor.allocations", { client_id: clientId || undefined, ...(rangeMs || {}) }, [clientId, JSON.stringify(rangeMs)]);
   const d = stats.data;
   const st = (k) => (d && d.states.find((s) => s.state === k)) || { n: 0, amt: 0 };
   const open = st("open"), assigned = st("assigned"), prog = st("in_progress"), done = st("completed"), closed = st("closed"), excl = st("excluded");
@@ -1168,14 +1177,18 @@ function Dashboard({ ctx, go }) {
       )}
       <div className="row between top">
         <div><h1>Dashboard</h1><div className="sub">Where the inventory stands and who is working what. Hover a bar for the figures; click it to filter the whole page to that slice.</div></div>
-        <div className="row"><div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
+        <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
           {clientId && <div style={{ minWidth: 180 }}><LocationPicker ctx={ctx} clientId={clientId} locId={locId} setLocId={setLocId} /></div>}
+          <Field label="Date range" hint={rangeMs ? "activity in this window" : "everything on file"}><select className="select" value={range.key} onChange={(e) => setRange({ ...range, key: e.target.value })}>{DASH_RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+          {range.key === "custom" && <Field label="From"><input className="input" type="date" value={range.from} max={range.to} onChange={(e) => setRange({ ...range, from: e.target.value })} /></Field>}
+          {range.key === "custom" && <Field label="To"><input className="input" type="date" value={range.to} min={range.from} onChange={(e) => setRange({ ...range, to: e.target.value })} /></Field>}
         </div>
       </div>
-      {(flCount > 0 || clientId) && (
+      {(flCount > 0 || clientId || rangeMs) && (
         <div className="card tight row between" style={{ background: "var(--teal-soft, #E6F7F4)" }}>
           <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><span className="small b">Showing:</span>
             {clientId && <span className="chip on">{(ctx.clients.find((c) => c.id === clientId) || {}).name}{locId ? " · " + locName(locId) : ""}</span>}
+            {rangeMs && <button className="chip on" title="Claims with activity in this window: loaded, worked or closed then. Click to go back to all time." onClick={() => setRange({ ...range, key: "all" })}>{rangeLabel} ✕</button>}
             {Object.entries(fl).map(([k, v]) => <button key={k} className="chip on" title="Click to remove this filter" onClick={() => toggleFl(k, v)}>{FL_LABEL[k] || k}: {flText(k, v)} ✕</button>)}
           </div>
           <div className="row"><button className="btn sm" onClick={() => openClaims({ state: fl.saag_status || fl.saag_bucket ? "" : "workable" })}>Open these claims</button>{flCount > 0 && <button className="btn sm link" onClick={() => setFl({})}>Clear filters</button>}</div>
