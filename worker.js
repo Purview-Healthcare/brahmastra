@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.4.0";
+const VERSION = "2.5.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -472,6 +472,7 @@ function domainOk(env, email) {
   return allowedDomains(env).some((p) => domainMatches(p, domain));
 }
 
+const maskEmail = (e) => { const at = String(e || "").lastIndexOf("@"); return at > 0 ? e[0] + "•••@" + e.slice(at + 1) : ""; };
 const adminEmails = (env) => String(env.ADMIN_EMAILS || "").split(",").map(mailClean).filter(mailOk);
 async function getSetting(env, key, fallback) { const r = await one(env, "SELECT value_json FROM settings WHERE key = ?", key); if (!r) return fallback; try { return JSON.parse(r.value_json); } catch { return fallback; } }
 const setSetting = (env, key, value) => run(env, "INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json", key, JSON.stringify(value));
@@ -651,14 +652,15 @@ async function removeUser(env, id) {
   ]);
 }
 
-const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info"]);
+const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById"]);
 const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.)/;
 const ADMIN_OPS = /^roster\./;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
-    email_from: env.EMAIL_PROVIDER ? String(env.EMAIL_FROM || "") : "", email_sender: env.EMAIL_PROVIDER === "graph" ? String(env.MS_SENDER || "") : "", designations: DESIGNATIONS }),
+    email_from: env.EMAIL_PROVIDER ? String(env.EMAIL_FROM || "") : "", email_sender: env.EMAIL_PROVIDER === "graph" ? String(env.MS_SENDER || "") : "", designations: DESIGNATIONS,
+    roster: !!(await getSetting(env, "roster_meta", null)) }),
   /* Team lead: send a test message through the configured provider to prove the email setup works. */
   "email.test": async ({ env, user, payload }) => {
     const to = mailClean(payload.to || user.email);
@@ -724,6 +726,54 @@ const OPS = {
     const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     if (u.must_change && !u.pass_hash) await run(env, "UPDATE users SET must_change = 0 WHERE id = ?", u.id);
     return openSession(env, u, "otp");
+  },
+
+  /* ---- sign in by name ----
+     Everyone is already in the roster, so the screen looks the person up by name, shows the matches with
+     their employee ID, and the first time they prove it is them with a one-time code (emailed, or handed
+     over by their team lead when they have no usable email) and set their password. After that: name + password. */
+  "auth.lookup": async ({ env, payload }) => {
+    const q = str(payload.q, 80).trim().toLowerCase().replace(/[%_]/g, " ");
+    if (q.length < 2) return { matches: [] };
+    const like = "%" + q + "%";
+    const rows = await all(env, `SELECT id, name, emp_id, designation, department, email, email_missing, pass_hash FROM users
+      WHERE active = 1 AND role <> 'admin' AND (lower(name) LIKE ? OR lower(emp_id) LIKE ?) ORDER BY name LIMIT 8`, like, like);
+    return { matches: rows.map((u) => ({ id: u.id, name: u.name, emp_id: u.emp_id || "", designation: u.designation || "", department: u.department || "",
+      has_password: !!u.pass_hash, email_hint: u.email_missing ? "" : maskEmail(u.email) })) };
+  },
+  "auth.setupCode": async ({ env, payload }) => {
+    const u = await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(payload.user_id, 60));
+    if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
+    const extra = ((await getSetting(env, "extra_emails", [])) || []).map(mailClean);
+    const mailable = !u.email_missing && mailOk(u.email) && (domainOk(env, u.email) || extra.includes(mailClean(u.email)));
+    if (!mailable) return { via: "lead" };
+    const code = await issueOtp(env, u.email, "setup", {});
+    const d = await deliverOtp(env, u.email, code, "setup");
+    return { via: "email", email_hint: maskEmail(u.email), ...d };
+  },
+  /* The code proves it is really them (a lead-issued sign-in code counts too); then the password is saved and they are in. */
+  "auth.completeSetup": async ({ env, payload }) => {
+    const u = await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(payload.user_id, 60));
+    if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
+    if (!isHash(payload.passHash)) throw bad("Set a password.");
+    const { purpose } = await checkOtp(env, u.email, payload.code);
+    if (purpose !== "setup" && purpose !== "login") throw bad("That code is not valid here. Ask for a new one.");
+    const salt = randomHex(16);
+    const hash = await makeHash(env, salt, payload.passHash);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0 WHERE id = ?").bind(salt, hash, u.id),
+      env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id),
+    ]);
+    return openSession(env, { ...u, pass_hash: hash, must_change: 0 }, "password");
+  },
+  "auth.loginById": async ({ env, payload }) => {
+    const u = await one(env, "SELECT * FROM users WHERE id = ?", str(payload.user_id, 60));
+    const fail = () => new ApiError(401, "That password doesn't match.");
+    if (!u || !u.active || u.role === "admin") throw fail();
+    if (!isHash(payload.passHash)) throw bad("Enter your password.");
+    if (!u.pass_hash) throw new ApiError(401, "No password set here yet. Use First time here to create one.");
+    if (!(await passwordOk(env, u, payload.passHash))) throw fail();
+    return openSession(env, u, "password");
   },
   "auth.logout": async ({ env, token }) => { if (token) await run(env, "DELETE FROM sessions WHERE token = ?", token); return { ok: true }; },
   "auth.me": async ({ user }) => ({ user }),
