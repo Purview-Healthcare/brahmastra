@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.2.0";
+const VERSION = "2.3.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -85,6 +85,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS otps (id TEXT PRIMARY KEY, email TEXT NOT NULL, code_hash TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT 'login', data_json TEXT NOT NULL DEFAULT '{}',
      created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS idx_otps_email ON otps (email, created_at)`,
+  `CREATE TABLE IF NOT EXISTS availability (client_id TEXT NOT NULL, day TEXT NOT NULL, on_json TEXT NOT NULL DEFAULT '[]', by_user TEXT, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
 ];
 
 /* Columns added after the first release. ensureReady() adds any that an
@@ -95,9 +96,15 @@ const EXTRA_COLUMNS = {
   claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"],
     ["alt_key", "TEXT NOT NULL DEFAULT ''"], ["fp_key", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
-  clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
+  clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
+    ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
-  users: [["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"]],
+  users: [["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
+    // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
+    ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
+    ["department", "TEXT NOT NULL DEFAULT ''"], ["departments_also", "TEXT NOT NULL DEFAULT ''"], ["roster_status", "TEXT NOT NULL DEFAULT ''"], ["exit_date", "TEXT NOT NULL DEFAULT ''"],
+    ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
+    ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
 };
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
@@ -377,8 +384,14 @@ function commentOk(t) {
   const words = s.split(/\s+/).filter((w) => w.length >= 2);
   return words.length >= 2 && /[a-zA-Z]/.test(s);
 }
-const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_name: u.first_name || "", last_name: u.last_name || "", designation: u.designation || "", role: u.role, active: !!u.active, capacity: u.capacity,
-  must_change: !!u.must_change, has_password: !!u.pass_hash, via: u.via || undefined, created_at: u.created_at, last_login: u.last_login });
+const jsonList = (s) => { try { const a = JSON.parse(s || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
+const jsonObj = (s) => { try { const o = JSON.parse(s || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch { return {}; } };
+/* An admin is a team lead with every right, so the screens treat role "admin" as "supervisor" plus is_admin. */
+const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_name: u.first_name || "", last_name: u.last_name || "", designation: u.designation || "", role: u.role === "admin" ? "supervisor" : u.role, is_admin: u.role === "admin", active: !!u.active, capacity: u.capacity,
+  must_change: !!u.must_change, has_password: !!u.pass_hash, via: u.via || undefined, created_at: u.created_at, last_login: u.last_login,
+  source: u.source || "manual", emp_id: u.emp_id || "", position: u.position || "", roster_kind: u.roster_kind || "", department: u.department || "", departments_also: u.departments_also || "",
+  roster_status: u.roster_status || "", exit_date: u.exit_date || "", reports_to: u.reports_to || null, reports_to_name: u.reports_to_name || "", projects: jsonList(u.projects_json),
+  scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "" });
 
 const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).first();
 const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...p).all()).results || [];
@@ -418,6 +431,12 @@ function ensureReady(env) {
       await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         uuid(), email, "Supervisor", "Supervisor", "", "TL", "supervisor", salt, hash, env.BOOTSTRAP_PASSWORD ? 0 : 1, 1, 35, Date.now());
     }
+    // Admin accounts named in ADMIN_EMAILS (wrangler.toml): created on first run, kept as admin. They sign in with a code.
+    for (const email of adminEmails(env)) {
+      const ex = await one(env, "SELECT id, role FROM users WHERE email = ?", email);
+      if (!ex) await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,'admin','','',0,1,35,?)", uuid(), email, "Admin", "Admin", "", "Admin", Date.now());
+      else if (ex.role !== "admin") await run(env, "UPDATE users SET role = 'admin', active = 1 WHERE id = ?", ex.id);
+    }
   })().catch((e) => { READY = null; throw e; });
   return READY;
 }
@@ -449,6 +468,144 @@ function domainOk(env, email) {
   const domain = String(email || "").toLowerCase().slice(String(email || "").lastIndexOf("@") + 1);
   return allowedDomains(env).some((p) => domainMatches(p, domain));
 }
+
+const adminEmails = (env) => String(env.ADMIN_EMAILS || "").split(",").map(mailClean).filter(mailOk);
+async function getSetting(env, key, fallback) { const r = await one(env, "SELECT value_json FROM settings WHERE key = ?", key); if (!r) return fallback; try { return JSON.parse(r.value_json); } catch { return fallback; } }
+const setSetting = (env, key, value) => run(env, "INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json", key, JSON.stringify(value));
+/* People who came from the roster sign in only with a Purview address, or one the admin has allowed by name (Extra sign-in emails). */
+async function signInBlock(env, u) {
+  if (u.role === "admin" || u.source !== "roster") return "";
+  if (u.email_missing) return "This account has no email address yet. Ask your team lead to add it in Purview Shastra.";
+  if (domainOk(env, u.email)) return "";
+  const extra = (await getSetting(env, "extra_emails", [])) || [];
+  return extra.map(mailClean).includes(mailClean(u.email)) ? "" : "This email is not a Purview address. Ask your admin to allow it, or to set your Purview email in Shastra.";
+}
+
+/* ---- who sees which projects ----
+   Admins, the VP (access_all) and people added by hand see every client. Everyone else from the roster sees the clients
+   their roster projects are matched to: team leads and SMEs their own projects, managers also every project of the people
+   under them. user.scope is null (everything) or the list of client ids. */
+async function scopeOf(env, user) {
+  if (user.role !== "supervisor" || user.is_admin || user.access_all || user.source !== "roster") return null;
+  const names = new Set(user.scope_projects.map(projKey));
+  const clients = await all(env, "SELECT id, roster_names_json FROM clients");
+  return clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id);
+}
+const projKey = (n) => String(n || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const inScope = (user, clientId) => !user.scope || user.scope.includes(clientId);
+const leadFor = (user, clientId) => user.role === "supervisor" && inScope(user, clientId);
+// " AND col IN (...)" for a scoped team lead, "" otherwise; scopeArgs gives the matching parameters.
+const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`);
+const scopeArgs = (user) => (user && user.scope) || [];
+const outOfScope = () => denied("That project is not one of yours.");
+/* The people a scoped team lead may see and edit: themselves, everyone below them, and everyone on their projects. */
+async function visibleUsers(env, user) {
+  const users = await all(env, "SELECT * FROM users ORDER BY role DESC, name, email");
+  if (!user.scope) return users;
+  const names = new Set(user.scope_projects.map(projKey));
+  const below = new Set([user.id]);
+  for (let grew = true; grew;) { grew = false; for (const u of users) if (u.reports_to && below.has(u.reports_to) && !below.has(u.id)) { below.add(u.id); grew = true; } }
+  const teams = new Set();
+  for (const c of await all(env, "SELECT team_json FROM clients WHERE id IN (" + (user.scope.length ? user.scope.map(() => "?").join(",") : "NULL") + ")", ...user.scope)) parseTeam(c.team_json).forEach((id) => teams.add(id));
+  return users.filter((u) => below.has(u.id) || teams.has(u.id) || jsonList(u.projects_json).some((p) => names.has(projKey(p.name))));
+}
+
+
+/* ---- Purview Shastra roster ----
+   Who gets in: Agents (billers), SMEs, Team Leads and Sr Team Leads (team leads for their own projects), Assistant Managers,
+   Managers and Sr Managers (team leads for their projects and their people's projects) and the Vice President (every project).
+   No access: CEO, Director, HR, IT, Administration, Quality Analysts, MIS, Tech Support, and anyone without a project. */
+const ROSTER_KIND = { "agent": "agent", "subject matter expert": "lead", "sme": "lead", "team lead": "lead", "tl": "lead", "senior team lead": "lead", "sr team lead": "lead", "sr tl": "lead",
+  "assistant manager": "manager", "manager": "manager", "senior manager": "manager", "sr manager": "manager", "vice president": "all", "vp": "all" };
+const ROSTER_DESIGNATION = { "agent": "Biller", "subject matter expert": "SME", "sme": "SME", "team lead": "TL", "tl": "TL", "senior team lead": "Sr TL", "sr team lead": "Sr TL", "sr tl": "Sr TL",
+  "assistant manager": "Assistant Manager", "manager": "Manager", "senior manager": "Sr Manager", "sr manager": "Sr Manager", "vice president": "Vice President", "vp": "Vice President" };
+const ROSTER_GONE = /^(resigned|exited|left|terminated|absconded|inactive|relieved)$/i;
+function rosterDate(v) {
+  const t = String(v || "").trim(); if (!t) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const m = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (!m) return "";
+  const y = m[3].length === 2 ? "20" + m[3] : m[3];
+  return `${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+}
+function rosterProjects(primary, also) {
+  const out = [];
+  const add = (name, share) => { name = String(name || "").trim(); if (!name || /^(none|all|n\/a|-)$/i.test(name) || out.some((p) => projKey(p.name) === projKey(name))) return; out.push({ name, share }); };
+  add(primary, null);
+  String(also || "").split(/[;,]/).forEach((x) => { const m = x.trim().match(/^(.*?)\s*([\d.]+)\s*%$/); if (m) add(m[1], num(m[2], 0)); else add(x, null); });
+  return out;
+}
+// Header names are matched loosely ("Emp ID", "emp_id", "EmpID" all work).
+function rosterRow(r) {
+  const get = {}; for (const k of Object.keys(r || {})) get[String(k).toLowerCase().replace(/[^a-z]/g, "")] = String(r[k] == null ? "" : r[k]).trim();
+  const g = (...keys) => { for (const k of keys) if (get[k]) return get[k]; return ""; };
+  return { emp_id: g("empid", "employeeid", "id"), name: g("name", "employeename", "fullname"), hierarchy: g("hierarchy", "level"), position: g("position", "designation", "role"),
+    func: g("function"), department: g("department"), departments_also: g("alsoindepartments"), status: g("status"), project: g("project"), also_projects: g("alsoonprojects"),
+    reports_to: g("reportsto", "manager"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), email: mailClean(g("email", "emailid", "workemail")) };
+}
+function rosterClassify(row) {
+  const pos = row.position.toLowerCase().trim();
+  const kind = ROSTER_KIND[pos];
+  const projects = rosterProjects(row.project, row.also_projects);
+  let reason = "";
+  if (!row.name) reason = "no name";
+  else if (/^administration$/i.test(row.func) || /^(hr|it)$/i.test(row.department)) reason = (row.department || row.func) + " (no access)";
+  else if (!kind) reason = (row.position || "no position") + " (no access)";
+  else if (kind !== "all" && !projects.length) reason = "no project";
+  return { kind, projects, reason, designation: ROSTER_DESIGNATION[pos] || row.position };
+}
+/* Team leads and SMEs see their own projects; managers also every project of the people below them. */
+async function recomputeScopes(env) {
+  const users = await all(env, "SELECT id, reports_to, roster_kind, projects_json, scope_projects_json, source, active FROM users");
+  const kids = new Map(); for (const u of users) if (u.reports_to) { if (!kids.has(u.reports_to)) kids.set(u.reports_to, []); kids.get(u.reports_to).push(u); }
+  const stmts = [];
+  for (const u of users) {
+    if (u.source !== "roster") continue;
+    const set = new Map(); const add = (p) => { const k = projKey(p.name); if (k && !set.has(k)) set.set(k, p.name); };
+    jsonList(u.projects_json).forEach(add);
+    if (u.roster_kind === "manager") { const seen = new Set([u.id]); const walk = (id) => (kids.get(id) || []).forEach((k) => { if (seen.has(k.id)) return; seen.add(k.id); if (k.active) jsonList(k.projects_json).forEach(add); walk(k.id); }); walk(u.id); }
+    const next = JSON.stringify([...set.values()]);
+    if (next !== (u.scope_projects_json || "[]")) stmts.push(env.DB.prepare("UPDATE users SET scope_projects_json = ? WHERE id = ?").bind(next, u.id));
+  }
+  if (stmts.length) await batchAll(env, stmts);
+}
+/* Brahmastra works AR claims: the roster's AR department (main or "also in"). Posting, Submission, PCC and Eligibility come in later. */
+const isAR = (u) => /^ar$/i.test(String(u.department || "").trim()) || String(u.departments_also || "").split(/[;,]/).some((d) => /^ar$/i.test(d.trim()));
+/* A client's billers = the people added by hand + every active roster AR Agent on one of its roster projects. */
+async function syncTeams(env) {
+  const users = await all(env, "SELECT id, source, role, active, projects_json, department, departments_also FROM users");
+  const roster = new Set(users.filter((u) => u.source === "roster").map((u) => u.id));
+  for (const c of await all(env, "SELECT id, team_json, roster_names_json FROM clients")) {
+    const names = new Set(jsonList(c.roster_names_json).map(projKey));
+    if (!names.size) continue;
+    const keep = parseTeam(c.team_json).filter((id) => !roster.has(id));
+    const add = users.filter((u) => u.source === "roster" && u.role === "user" && u.active && isAR(u) && jsonList(u.projects_json).some((p) => names.has(projKey(p.name)))).map((u) => u.id);
+    const team = [...new Set([...keep, ...add])].slice(0, 100);
+    if (JSON.stringify(team) !== JSON.stringify(parseTeam(c.team_json))) await run(env, "UPDATE clients SET team_json = ? WHERE id = ?", JSON.stringify(team), c.id);
+  }
+}
+async function rosterProjectNames(env) {
+  const m = new Map();
+  for (const u of await all(env, "SELECT projects_json FROM users WHERE source = 'roster' AND active = 1")) for (const p of jsonList(u.projects_json)) if (!m.has(projKey(p.name))) m.set(projKey(p.name), p.name);
+  return [...m.values()].sort((a, b) => a.localeCompare(b));
+}
+/* A roster project whose name or code matches exactly one client (ignoring case, spaces and punctuation) is matched silently. The rest wait for a team lead. */
+async function autoMapProjects(env) {
+  const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients");
+  const mapped = new Set(clients.flatMap((c) => jsonList(c.roster_names_json).map(projKey)));
+  for (const name of await rosterProjectNames(env)) {
+    const k = projKey(name); if (mapped.has(k)) continue;
+    const hits = clients.filter((c) => projKey(c.name) === k || (c.code && projKey(c.code) === k));
+    if (hits.length !== 1) continue;
+    const c = hits[0]; const list = [...jsonList(c.roster_names_json), name];
+    c.roster_names_json = JSON.stringify(list); mapped.add(k);
+    await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", c.roster_names_json, c.id);
+  }
+}
+async function unassignOpen(env, userId) {
+  await run(env, "UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', updated_at = ? WHERE assigned_to = ? AND state IN ('assigned','in_progress')", Date.now(), userId);
+}
+const placeholderEmail = (row) => (row.emp_id || row.name).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "") + "@no-email.invalid";
 
 /* --------------------------------------------------------- the ops */
 /* ---- how a claim is recognised across uploads ----
@@ -492,7 +649,8 @@ async function removeUser(env, id) {
 }
 
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|email\.|demo\.)/;
+const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.)/;
+const ADMIN_OPS = /^roster\./;
 
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
@@ -515,6 +673,7 @@ const OPS = {
     const u = await one(env, "SELECT * FROM users WHERE email = ?", email);
     const fail = () => new ApiError(401, "That email or password doesn't match.");
     if (!u || !u.active) throw fail();
+    const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     if (!u.pass_hash) throw new ApiError(401, "This account has no password yet. Sign in with a code sent to your email, then set a password from the menu if you want one.");
     if (!(await passwordOk(env, u, payload.passHash))) throw fail();
     return openSession(env, u, "password");
@@ -522,15 +681,17 @@ const OPS = {
   "auth.sendOtp": async ({ env, payload }) => {
     const email = mailClean(payload.email);
     if (!mailOk(email)) throw bad("Enter your email address.");
-    const u = await one(env, "SELECT id, active FROM users WHERE email = ?", email);
+    const u = await one(env, "SELECT id, active, role, source, email, email_missing FROM users WHERE email = ?", email);
     if (!u) throw new ApiError(404, "No Brahmastra account uses that email. Ask your team lead to add you, or create a team lead account.");
     if (!u.active) throw new ApiError(403, "This account is switched off. Ask your team lead.");
+    const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     const code = await issueOtp(env, email, "login", {});
     return { email, ...(await deliverOtp(env, email, code, "login")) };
   },
   "auth.signup": async ({ env, payload }) => {
     const email = mailClean(payload.email);
     if (!mailOk(email)) throw bad("Enter a valid email address.");
+    if (await getSetting(env, "roster_meta", null)) throw bad("Accounts now come from the Purview Shastra roster. Ask your team lead or admin to add you.");
     if (!domainOk(env, email)) throw bad("Accounts are limited to Purview email addresses (" + allowedDomains(env).join(", ") + ").");
     const first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
     if (!first || !last) throw bad("Enter your first and last name.");
@@ -556,6 +717,7 @@ const OPS = {
       u = await one(env, "SELECT * FROM users WHERE id = ?", id);
     }
     if (!u || !u.active) throw new ApiError(403, "This account is not active. Ask your team lead.");
+    const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     if (u.must_change && !u.pass_hash) await run(env, "UPDATE users SET must_change = 0 WHERE id = ?", u.id);
     return openSession(env, u, "otp");
   },
@@ -564,7 +726,7 @@ const OPS = {
   "auth.deleteMyAccount": async ({ env, user, payload }) => {
     if (str(payload.confirm, 200).trim().toLowerCase() !== String(user.email || "").toLowerCase()) throw bad("Type your email address exactly to confirm.");
     if (user.role === "supervisor") {
-      const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role = 'supervisor' AND active = 1 AND id <> ?", user.id);
+      const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", user.id);
       if (!n.n) throw bad("You are the only active team lead. Add another team lead before deleting this account.");
     }
     await removeUser(env, user.id);
@@ -589,13 +751,16 @@ const OPS = {
   },
 
   /* ---- users (supervisor) ---- */
-  "users.list": async ({ env }) => {
-    const users = await all(env, "SELECT * FROM users ORDER BY role DESC, name, email");
+  "users.list": async ({ env, user }) => {
+    const users = await visibleUsers(env, user);
     return { users: users.map(publicUser) };
   },
   "users.save": async ({ env, user, payload }) => {
     const now = Date.now();
-    const role = payload.role === "supervisor" ? "supervisor" : "user";
+    let role = payload.role === "supervisor" ? "supervisor" : "user";
+    const projects = Array.isArray(payload.projects) ? payload.projects.map((x) => ({ name: str(x && x.name != null ? x.name : x, 80).trim(), share: x && x.share != null ? num(x.share, 0) : null })).filter((x) => x.name && !/^(none|all)$/i.test(x.name)).slice(0, 30) : null;
+    let reportsTo = payload.reports_to === undefined ? undefined : (str(payload.reports_to, 60) || null);
+    if (reportsTo) { const r = await one(env, "SELECT id, name FROM users WHERE id = ?", reportsTo); if (!r) throw bad("Pick who they report to."); }
     const first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
     const name = fullName(first, last, str(payload.name, 120).trim());
     const designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
@@ -605,14 +770,26 @@ const OPS = {
       const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown user.");
       if (!name) throw bad("Enter the person's name.");
+      if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
+      if (ex.role === "admin") { if (!user.is_admin) throw denied("Only an admin can change an admin account."); role = "admin"; }
+      // A new email: for someone the roster had no (or a wrong) address for.
+      const newEmail = payload.email != null ? mailClean(payload.email) : ex.email;
+      if (newEmail !== ex.email) {
+        if (!mailOk(newEmail)) throw bad("Enter a valid email address.");
+        if (await one(env, "SELECT id FROM users WHERE email = ? AND id <> ?", newEmail, ex.id)) throw bad("That email already has an account.");
+        await run(env, "UPDATE users SET email = ?, email_missing = 0 WHERE id = ?", newEmail, ex.id);
+      }
+      if (projects) await run(env, "UPDATE users SET projects_json = ? WHERE id = ?", JSON.stringify(projects), ex.id);
+      if (reportsTo !== undefined) { const r = reportsTo ? await one(env, "SELECT name FROM users WHERE id = ?", reportsTo) : null; await run(env, "UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?", reportsTo, r ? r.name : "", ex.id); }
       if (ex.id === user.id && (!active || role !== "supervisor")) throw bad("You can't deactivate or demote your own account.");
       if (ex.role === "supervisor" && (role !== "supervisor" || !active)) {
-        const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role = 'supervisor' AND active = 1 AND id <> ?", ex.id);
+        const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", ex.id);
         if (!n.n) throw bad("Keep at least one active team lead.");
       }
       await run(env, "UPDATE users SET name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, capacity = ?, active = ? WHERE id = ?", name, first, last, designation, role, capacity, active, ex.id);
       if (!active) await run(env, "DELETE FROM sessions WHERE user_id = ?", ex.id);
-      return { user: publicUser({ ...ex, name, first_name: first, last_name: last, designation, role, capacity, active }) };
+      if (projects || reportsTo !== undefined || role !== ex.role || active !== ex.active) { await recomputeScopes(env); await syncTeams(env); }
+      return { user: publicUser(await one(env, "SELECT * FROM users WHERE id = ?", ex.id)) };
     }
     const email = mailClean(payload.email);
     if (!mailOk(email)) throw bad("Enter a valid email address.");
@@ -624,20 +801,25 @@ const OPS = {
     const hash = isHash(payload.passHash) ? await makeHash(env, salt, payload.passHash) : "";
     await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
       id, email, name, first, last, designation, role, salt, hash, hash ? 1 : 0, active, capacity, now);
-    return { user: publicUser({ id, email, name, first_name: first, last_name: last, designation, role, active, capacity, must_change: hash ? 1 : 0, pass_hash: hash, created_at: now }) };
+    if (projects) await run(env, "UPDATE users SET projects_json = ? WHERE id = ?", JSON.stringify(projects), id);
+    if (reportsTo) { const r = await one(env, "SELECT name FROM users WHERE id = ?", reportsTo); await run(env, "UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?", reportsTo, r.name, id); }
+    if (projects || reportsTo) { await recomputeScopes(env); await syncTeams(env); }
+    return { user: publicUser(await one(env, "SELECT * FROM users WHERE id = ?", id)) };
   },
   /* A team lead can fetch a sign-in code for someone whose email has not arrived (or when email is not set up). */
-  "users.loginCode": async ({ env, payload }) => {
+  "users.loginCode": async ({ env, user, payload }) => {
     const ex = await one(env, "SELECT id, email, active, name FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
+    if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
     if (!ex.active) throw bad("This account is switched off.");
     const code = await issueOtp(env, ex.email, "login", {}, { byTeamLead: true });
     return { email: ex.email, code, expires_in_min: OTP_TTL_MS / 60000 };
   },
-  "users.resetPassword": async ({ env, payload }) => {
+  "users.resetPassword": async ({ env, user, payload }) => {
     if (!isHash(payload.passHash)) throw bad("Set a temporary password.");
     const ex = await one(env, "SELECT id FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
+    if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
     await env.DB.batch([
@@ -650,9 +832,10 @@ const OPS = {
   "users.delete": async ({ env, user, payload }) => {
     const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
+    if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
     if (ex.id === user.id) throw bad("To delete your own account, use Delete my account in the menu.");
     if (ex.role === "supervisor" && ex.active) {
-      const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role = 'supervisor' AND active = 1 AND id <> ?", ex.id);
+      const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", ex.id);
       if (!n.n) throw bad("Keep at least one active team lead.");
     }
     await removeUser(env, ex.id);
@@ -660,18 +843,20 @@ const OPS = {
   },
 
   /* ---- clients & locations ---- */
-  "clients.list": async ({ env }) => {
-    const clients = await all(env, "SELECT * FROM clients ORDER BY active DESC, name");
+  "clients.list": async ({ env, user }) => {
+    const clients = (await all(env, "SELECT * FROM clients ORDER BY active DESC, name")).filter((c) => inScope(user, c.id));
     const locs = await all(env, "SELECT * FROM locations ORDER BY active DESC, name");
-    const shape = (r) => { const { team_json, ...rest } = r; return { ...rest, active: !!r.active, auto_allocate: r.auto_allocate == null ? true : !!r.auto_allocate, team: parseTeam(team_json) }; };
+    const shape = (r) => { const { team_json, roster_names_json, caps_json, ...rest } = r; return { ...rest, active: !!r.active, auto_allocate: r.auto_allocate == null ? true : !!r.auto_allocate, team: parseTeam(team_json),
+      ...(roster_names_json !== undefined ? { roster_names: jsonList(roster_names_json), caps: jsonObj(caps_json) } : {}) }; };
     return { clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape) })) };
   },
   /* Billers mapped to a client (used when a location has no team of its own) or to a location. */
-  "clients.saveTeam": async ({ env, payload }) => {
+  "clients.saveTeam": async ({ env, user, payload }) => {
     const table = payload.location_id ? "locations" : "clients";
     const id = str(payload.location_id || payload.client_id, 60);
-    const ex = await one(env, `SELECT id FROM ${table} WHERE id = ?`, id);
+    const ex = await one(env, `SELECT id, ${payload.location_id ? "client_id" : "id AS client_id"} FROM ${table} WHERE id = ?`, id);
     if (!ex) throw bad("Unknown " + (payload.location_id ? "location" : "client") + ".");
+    if (!inScope(user, ex.client_id)) throw outOfScope();
     const ids = [...new Set((Array.isArray(payload.team) ? payload.team : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
     const valid = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
     const team = ids.filter((x) => valid.includes(x));
@@ -689,17 +874,21 @@ const OPS = {
     if (payload.id) {
       const ex = await one(env, "SELECT id FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
+      if (!inScope(user, ex.id)) throw outOfScope();
       await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);
       return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active, workbook_link: link } };
     }
+    if (user.scope) throw denied("Only a manager with every project, or an admin, can add a client. Ask them to add it.");
     const id = uuid(), now = Date.now();
     await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at, workbook_link) VALUES (?,?,?,?,?,?,?,?)", id, name, code, active, fu, user.id, now, link || "");
+    await autoMapProjects(env);
     return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [], workbook_link: link || "" } };
   },
   /* Delete a client with everything under it: locations, uploads, claims, notes, allocation history. Confirmed by name on the screen. */
-  "clients.delete": async ({ env, payload }) => {
+  "clients.delete": async ({ env, user, payload }) => {
     const ex = await one(env, "SELECT id, name FROM clients WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown client.");
+    if (user.scope) throw denied("Only a manager with every project, or an admin, can delete a client.");
     if (str(payload.confirm, 200).trim().toLowerCase() !== String(ex.name).trim().toLowerCase()) throw bad("Type the client's name exactly to confirm.");
     const n = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ?", ex.id);
     await env.DB.batch([
@@ -714,7 +903,7 @@ const OPS = {
     ]);
     return { ok: true, name: ex.name, claims: n ? n.n : 0 };
   },
-  "locations.save": async ({ env, payload }) => {
+  "locations.save": async ({ env, user, payload }) => {
     const name = str(payload.name, 160).trim();
     if (!name) throw bad("Give the location a name.");
     const active = payload.active === false ? 0 : 1;
@@ -722,6 +911,7 @@ const OPS = {
     if (payload.id) {
       const ex = await one(env, "SELECT id, client_id FROM locations WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown location.");
+      if (!inScope(user, ex.client_id)) throw outOfScope();
       await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
       return { location: { id: ex.id, client_id: ex.client_id, name, active: !!active, workbook_link: link } };
     }
@@ -741,8 +931,10 @@ const OPS = {
     rows.forEach((r) => { try { out[r.key] = JSON.parse(r.value_json); } catch { out[r.key] = null; } });
     return { settings: out };
   },
-  "settings.save": async ({ env, payload }) => {
-    const s = payload.settings || {};
+  "settings.save": async ({ env, user, payload }) => {
+    const s = { ...(payload.settings || {}) };
+    // Sign-in and roster settings belong to the admin (Roster screen).
+    for (const k of ["extra_emails", "roster_meta"]) delete s[k];
     const stmts = Object.keys(s).slice(0, 50).map((k) => env.DB.prepare("INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json").bind(str(k, 60), JSON.stringify(s[k])));
     if (stmts.length) await batchAll(env, stmts);
     return OPS["settings.get"]({ env });
@@ -849,10 +1041,10 @@ const OPS = {
       Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), bid);
     return { batch_id: bid, ...counts };
   },
-  "inventory.batches": async ({ env, payload }) => {
+  "inventory.batches": async ({ env, user, payload }) => {
     const rows = payload.client_id
       ? await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id WHERE b.client_id = ? ORDER BY b.uploaded_at DESC LIMIT 100", payload.client_id)
-      : await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id ORDER BY b.uploaded_at DESC LIMIT 100");
+      : await all(env, `SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id WHERE 1 = 1${scopeSql(user, "b.client_id")} ORDER BY b.uploaded_at DESC LIMIT 100`, ...scopeArgs(user));
     return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} return { ...b, summary: s, summary_json: undefined }; }) };
   },
   /* Merge claims that are really the same claim (same normalised claim number, or same patient + DOS with no
@@ -908,9 +1100,10 @@ const OPS = {
     if (stmts.length) await batchAll(env, stmts, 40);
     return { groups: merged.length, duplicates: total };
   },
-  "inventory.undoBatch": async ({ env, payload }) => {
+  "inventory.undoBatch": async ({ env, user, payload }) => {
     const b = await one(env, "SELECT * FROM batches WHERE id = ?", payload.batch_id);
     if (!b) throw bad("Unknown batch.");
+    if (!inScope(user, b.client_id)) throw outOfScope();
     if (b.undone_at) throw bad("This batch was already undone.");
     const r = await run(env, "DELETE FROM claims WHERE first_batch_id = ? AND touches = 0 AND state <> 'in_progress' AND id NOT IN (SELECT claim_id FROM attachments)", b.id);
     await run(env, "UPDATE batches SET undone_at = ? WHERE id = ?", Date.now(), b.id);
@@ -918,8 +1111,9 @@ const OPS = {
   },
 
   /* ---- claims (supervisor views) ---- */
-  "claims.list": async ({ env, payload }) => {
+  "claims.list": async ({ env, user, payload }) => {
     const where = [], params = [];
+    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
     if (payload.client_id) { where.push("c.client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(payload.location_id); }
     if (payload.state === "workable") where.push(`c.state IN ${WORKABLE}`);
@@ -956,8 +1150,9 @@ const OPS = {
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id ${w} ORDER BY ${sort} ${dir}, c.balance DESC LIMIT ? OFFSET ?`, ...params, size, (page - 1) * size);
     return { rows, total: total.n, amount: total.amt, page, page_size: size };
   },
-  "claims.stats": async ({ env, payload }) => {
+  "claims.stats": async ({ env, user, payload }) => {
     const where = [], params = [];
+    if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
     if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(payload.location_id); }
     // Dashboard cross-filters: click a bar and every other number is recomputed for that slice.
@@ -1002,6 +1197,7 @@ const OPS = {
   "claims.byPatient": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT id, client_id, account_no, patient FROM claims WHERE id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
+    if (user.role === "supervisor" && !inScope(user, c.client_id)) throw outOfScope();
     const rows = await all(env, `SELECT c.id, c.claim_no, c.account_no, c.patient, c.dos, c.cpt, c.payer, c.provider, c.balance, c.age_days, c.tier, c.state, c.assigned_to, u.name AS assigned_name, c.priority, c.follow_up_on,
         c.last_status_code, c.last_sub_status, c.last_action_code, c.last_bucket, c.last_note, c.last_worked_on, c.file_status, c.file_sub_status, l.name AS location_name
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id
@@ -1022,7 +1218,7 @@ const OPS = {
   "claims.get": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (user.role !== "supervisor" && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
     return claimBundle(env, user, c);
   },
   "claims.setState": async ({ env, user, payload }) => {
@@ -1034,7 +1230,7 @@ const OPS = {
     let changed = 0;
     for (const chunk of chunks(ids, 60)) {
       const r = await run(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
-        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})`, state, reason, state, state, state, now, ...chunk);
+        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${scopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...scopeArgs(user));
       changed += changesOf(r);
     }
     return { changed };
@@ -1064,7 +1260,7 @@ const OPS = {
       id, client_id, location_id || null, user.id, now, str(strategy, 40), applied, str(JSON.stringify(payload.summary || {}), 20000));
     return { applied, allocation_id: id, skipped: items.length - applied };
   },
-  "alloc.reassign": async ({ env, payload }) => {
+  "alloc.reassign": async ({ env, user, payload }) => {
     const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
     const u = await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", payload.user_id);
     if (!ids.length || !u) throw bad("Pick claims and an active team member.");
@@ -1072,24 +1268,24 @@ const OPS = {
     let changed = 0;
     for (const chunk of chunks(ids, 60)) {
       const r = await run(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
-        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}`, u.id, now, now, ...chunk);
+        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${scopeSql(user, "client_id")}`, u.id, now, now, ...chunk, ...scopeArgs(user));
       changed += changesOf(r);
     }
     return { changed };
   },
-  "alloc.unassign": async ({ env, payload }) => {
+  "alloc.unassign": async ({ env, user, payload }) => {
     const now = Date.now();
     if (payload.user_id) {
       const where = ["assigned_to = ?", "state IN ('assigned','in_progress')"], params = [str(payload.user_id, 60)];
       if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
-      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE ${where.join(" AND ")}`, now, ...params);
+      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE ${where.join(" AND ")}${scopeSql(user, "client_id")}`, now, ...params, ...scopeArgs(user));
       return { changed: changesOf(r) };
     }
     const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
     if (!ids.length) throw bad("Pick claims to unassign.");
     let changed = 0;
     for (const chunk of chunks(ids, 60)) {
-      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ('assigned','in_progress')`, now, ...chunk);
+      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ('assigned','in_progress')${scopeSql(user, "client_id")}`, now, ...chunk, ...scopeArgs(user));
       changed += changesOf(r);
     }
     return { changed };
@@ -1143,7 +1339,7 @@ const OPS = {
   "queue.complete": async ({ env, user, payload, ctx }) => {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (c.assigned_to !== user.id && user.role !== "supervisor") throw denied("This claim is not on your desk.");
+    if (c.assigned_to !== user.id && !leadFor(user, c.client_id)) throw denied("This claim is not on your desk.");
     if (!["in_progress", "assigned", "completed"].includes(c.state)) throw bad("This claim is not open for work (it is " + c.state + ").");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
@@ -1185,7 +1381,7 @@ const OPS = {
   "queue.open": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (c.assigned_to !== user.id && user.role !== "supervisor") throw denied("This claim is not on your desk.");
+    if (c.assigned_to !== user.id && !leadFor(user, c.client_id)) throw denied("This claim is not on your desk.");
     if (!["assigned", "in_progress", "completed"].includes(c.state)) throw bad("This claim is " + c.state + " and cannot be opened for work.");
     const now = Date.now();
     await env.DB.batch([
@@ -1222,9 +1418,9 @@ const OPS = {
   "notes.update": async ({ env, user, payload }) => {
     const n = await one(env, "SELECT * FROM notes WHERE id = ?", payload.id);
     if (!n || n.kind !== "work") throw bad("Note not found.");
-    if (n.user_id !== user.id && user.role !== "supervisor") throw denied("Only the author or a team lead can edit this note.");
     if (Date.now() - n.created_at > EDIT_WINDOW_MS) throw new ApiError(403, "Notes can be edited for 24 hours after they are written. This one is now read-only.");
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", n.claim_id);
+    if (n.user_id !== user.id && !(c && leadFor(user, c.client_id))) throw denied("Only the author or a team lead can edit this note.");
     if (!c) throw bad("Claim not found.");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
@@ -1258,9 +1454,9 @@ const OPS = {
     return { rows };
   },
   "notes.add": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
+    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
-    if (user.role !== "supervisor" && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
     const comment = str(payload.comment, 4000).trim();
     if (!commentOk(comment)) throw bad("Write a few words.");
     const now = Date.now(), id = uuid();
@@ -1273,9 +1469,9 @@ const OPS = {
 
   /* ---- attachments: files kept with a claim, next to its notes (EOBs, denial letters, portal screenshots) ---- */
   "attachments.add": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
+    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
-    if (user.role !== "supervisor" && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
     const name = str(payload.name, 200).replace(/[\\/\u0000-\u001f]/g, "_").trim();
     if (!name) throw bad("The file has no name.");
     const data = String(payload.data || "");
@@ -1297,8 +1493,8 @@ const OPS = {
   "attachments.get": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
-    const c = await one(env, "SELECT assigned_to, last_worked_by FROM claims WHERE id = ?", a.claim_id);
-    if (user.role !== "supervisor" && (!c || (c.assigned_to !== user.id && c.last_worked_by !== user.id))) throw denied("This claim is not in your queue.");
+    const c = await one(env, "SELECT client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", a.claim_id);
+    if (!c || (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id)) throw denied("This claim is not in your queue.");
     const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", a.id);
     return { name: a.name, type: a.type, size: a.size, data: parts.map((p) => p.data).join("") };
   },
@@ -1306,7 +1502,8 @@ const OPS = {
   "attachments.delete": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
-    if (user.role !== "supervisor" && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
+    const ac = await one(env, "SELECT client_id FROM claims WHERE id = ?", a.claim_id);
+    if (!(ac && leadFor(user, ac.client_id)) && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
     await env.DB.batch([
       env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id),
       env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(a.id),
@@ -1315,8 +1512,9 @@ const OPS = {
   },
 
   /* ---- reports ---- */
-  "reports.work": async ({ env, payload }) => {
+  "reports.work": async ({ env, user, payload }) => {
     const where = ["nt.created_at BETWEEN ? AND ?"], params = [num(payload.from_ms, 0), num(payload.to_ms, Date.now())];
+    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
     if (payload.client_id) { where.push("c.client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(payload.location_id); }
     if (payload.user_id) { where.push("nt.user_id = ?"); params.push(payload.user_id); }
@@ -1327,18 +1525,183 @@ const OPS = {
       FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")} ORDER BY nt.created_at DESC LIMIT 5000`, ...params);
     return { rows };
   },
-  "supervisor.productivity": async ({ env, payload }) => {
+  "supervisor.productivity": async ({ env, user, payload }) => {
     const off = Math.round(num(payload.tz_offset_min, 0)) * 60;
     const rows = await all(env, `SELECT nt.user_id, nt.user_name, date((nt.created_at / 1000) + ?, 'unixepoch') AS day, COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt,
-        SUM(c.state = 'closed') AS resolved FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? GROUP BY nt.user_id, day ORDER BY day DESC, n DESC`,
-      off, num(payload.from_ms, 0), num(payload.to_ms, Date.now()));
+        SUM(c.state = 'closed') AS resolved FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${scopeSql(user, "c.client_id")} GROUP BY nt.user_id, day ORDER BY day DESC, n DESC`,
+      off, num(payload.from_ms, 0), num(payload.to_ms, Date.now()), ...scopeArgs(user));
     return { rows };
   },
-  "supervisor.allocations": async ({ env, payload }) => {
+  "supervisor.allocations": async ({ env, user, payload }) => {
     const rows = payload.client_id
       ? await all(env, "SELECT a.*, u.name AS by_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? ORDER BY a.at DESC LIMIT 50", payload.client_id)
-      : await all(env, "SELECT a.*, u.name AS by_name, c.name AS client_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user LEFT JOIN clients c ON c.id = a.client_id ORDER BY a.at DESC LIMIT 50");
+      : await all(env, `SELECT a.*, u.name AS by_name, c.name AS client_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user LEFT JOIN clients c ON c.id = a.client_id WHERE 1 = 1${scopeSql(user, "a.client_id")} ORDER BY a.at DESC LIMIT 50`, ...scopeArgs(user));
     return { rows: rows.map((r) => { let s = {}; try { s = JSON.parse(r.summary_json); } catch {} return { ...r, summary: s, summary_json: undefined }; }) };
+  },
+
+  /* ---- roster (admin): load the Purview Shastra export. dry_run shows what would change; nothing is written until it is applied. ---- */
+  "roster.import": async ({ env, user, payload }) => {
+    const raw = Array.isArray(payload.rows) ? payload.rows.slice(0, 5000) : [];
+    if (!raw.length) throw bad("The file has no rows.");
+    const today = isoDate(payload.today) || isoToday();
+    const extra = ((await getSetting(env, "extra_emails", [])) || []).map(mailClean);
+    const rows = raw.map(rosterRow).filter((r) => r.name);
+    const existing = await all(env, "SELECT * FROM users");
+    const byEmp = new Map(existing.filter((u) => u.emp_id).map((u) => [u.emp_id.toUpperCase(), u]));
+    const byEmail = new Map(existing.map((u) => [u.email, u]));
+    const byName = new Map(existing.filter((u) => u.source === "roster").map((u) => [u.name.toLowerCase(), u]));
+    const domains = {}; rows.forEach((r) => { if (mailOk(r.email)) { const d = r.email.split("@")[1]; domains[d] = (domains[d] || 0) + 1; } });
+    const plan = [], excluded = [], warnings = [], used = new Set(), dropped = new Set();
+    for (const row of rows) {
+      const cls = rosterClassify(row);
+      const match = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
+      if (cls.reason && match && match.source === "roster" && match.active) dropped.add(match.id);
+      if (cls.reason) { excluded.push({ name: row.name, emp_id: row.emp_id, position: row.position, department: row.department, reason: cls.reason, existing: !!(match && match.source === "roster" && match.active) }); continue; }
+      if (match) used.add(match.id);
+      const gone = ROSTER_GONE.test(row.status) || (row.exit_date && row.exit_date < today);
+      const emailOk = mailOk(row.email) && !/\.(comcom|con)$/.test(row.email);
+      const email = emailOk ? row.email : (match && !match.email_missing ? match.email : placeholderEmail(row));
+      const issues = [];
+      if (!row.email) issues.push("no email");
+      else if (!emailOk) issues.push("email looks wrong: " + row.email);
+      else {
+        const d = row.email.split("@")[1];
+        if (!domainOk(env, row.email) && !extra.includes(row.email)) issues.push("not a Purview email, cannot sign in until allowed: " + row.email);
+        else if ((domains[d] || 0) < 2) issues.push("check the spelling of the domain: " + row.email);
+      }
+      if (emailOk && match && match.email !== row.email && byEmail.has(row.email) && byEmail.get(row.email).id !== match.id) issues.push("email already used by another account: " + row.email);
+      const role = cls.kind === "agent" ? "user" : "supervisor";
+      const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
+        role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
+        roster_status: row.status, exit_date: row.exit_date, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, active: gone ? 0 : 1 };
+      const changes = [];
+      if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
+      plan.push({ row, cls, match, next, issues, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
+      if (issues.length) warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues });
+    }
+    const leaving = existing.filter((u) => u.source === "roster" && u.active && !used.has(u.id) && !dropped.has(u.id));
+    const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients");
+    const mapped = new Set(clients.flatMap((c) => jsonList(c.roster_names_json).map(projKey)));
+    const projNames = new Map(); plan.forEach((p) => p.cls.projects.forEach((x) => projNames.set(projKey(x.name), x.name)));
+    const projects = [...projNames.values()].sort().map((name) => { const k = projKey(name); const hits = clients.filter((c) => projKey(c.name) === k || (c.code && projKey(c.code) === k));
+      const owner = clients.find((c) => jsonList(c.roster_names_json).some((n) => projKey(n) === k));
+      return { name, client: owner ? owner.name : hits.length === 1 ? hits[0].name : "", state: owner ? "matched" : hits.length === 1 ? "auto" : "ask" }; });
+    const summary = { rows: rows.length, people: plan.filter((p) => p.action !== "skip").length, new: plan.filter((p) => p.action === "new").length, updated: plan.filter((p) => p.action === "update").length,
+      same: plan.filter((p) => p.action === "same").length, deactivated: plan.filter((p) => p.match && p.match.active && !p.next.active).length + leaving.length + excluded.filter((x) => x.existing).length,
+      excluded: excluded.length, warnings: warnings.length, leads: plan.filter((p) => p.cls.kind !== "agent" && p.next.active).length, agents: plan.filter((p) => p.cls.kind === "agent" && p.next.active).length };
+    const people = plan.filter((p) => p.action !== "skip").map((p) => ({ name: p.row.name, emp_id: p.row.emp_id, action: p.action, changes: p.changes, access: p.cls.kind, position: p.row.position, department: p.row.department,
+      projects: p.cls.projects, reports_to: p.row.reports_to, status: p.row.status, active: !!p.next.active, email: p.next.email_missing ? "" : p.next.email, issues: p.issues }));
+    const out = { summary, people, excluded, warnings, projects, leaving: leaving.map((u) => ({ name: u.name, emp_id: u.emp_id })) };
+    if (payload.dry_run) return out;
+
+    // Apply: people first, then who reports to whom, then project access and teams.
+    const now = Date.now();
+    for (const p of plan) {
+      if (p.action === "skip") continue;
+      const n = p.next;
+      let id = p.match && p.match.id;
+      if (!id) {
+        id = uuid();
+        const [first, ...rest] = n.name.split(/\s+/);
+        await run(env, `INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at, source)
+          VALUES (?,?,?,?,?,?,?,'','',0,?,35,?,'roster')`, id, n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, now);
+      } else {
+        const [first, ...rest] = n.name.split(/\s+/);
+        await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
+      }
+      await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, shift = ? WHERE id = ?`,
+        n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.shift, id);
+      p.id = id;
+      if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+    }
+    const off = [...leaving.map((u) => u.id), ...dropped];
+    for (const id of off) { await run(env, "UPDATE users SET active = 0 WHERE id = ?", id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+    const idByName = new Map(); plan.forEach((p) => { if (p.id) idByName.set(p.row.name.toLowerCase(), p.id); });
+    for (const p of plan) if (p.id) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", idByName.get(String(p.row.reports_to || "").toLowerCase()) || null, p.id);
+    await recomputeScopes(env);
+    await autoMapProjects(env);
+    await syncTeams(env);
+    await setSetting(env, "roster_meta", { at: now, by: user.name || user.email, file: str(payload.file_name, 200), summary });
+    return { ...out, applied: true };
+  },
+  "roster.meta": async ({ env }) => {
+    const meta = await getSetting(env, "roster_meta", null);
+    const extra = (await getSetting(env, "extra_emails", [])) || [];
+    const clients = await all(env, "SELECT id, name, roster_names_json FROM clients ORDER BY name");
+    const names = await rosterProjectNames(env);
+    const projects = names.map((name) => { const c = clients.find((x) => jsonList(x.roster_names_json).some((n) => projKey(n) === projKey(name))); return { name, client_id: c ? c.id : null, client_name: c ? c.name : "" }; });
+    return { meta, extra_emails: extra, projects, admins: adminEmails(env) };
+  },
+  "roster.saveEmails": async ({ env, payload }) => {
+    const list = [...new Set((Array.isArray(payload.emails) ? payload.emails : String(payload.emails || "").split(/[\s,;]+/)).map(mailClean).filter(mailOk))].slice(0, 200);
+    await setSetting(env, "extra_emails", list);
+    return { extra_emails: list };
+  },
+
+  /* ---- roster projects ↔ Brahmastra clients ---- */
+  "projects.unmapped": async ({ env, user }) => {
+    const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients WHERE active = 1 ORDER BY name");
+    const mapped = new Set(clients.flatMap((c) => jsonList(c.roster_names_json).map(projKey)));
+    const mine = user.scope ? new Set(user.scope_projects.map(projKey)) : null;
+    const names = (await rosterProjectNames(env)).filter((n) => !mapped.has(projKey(n)) && (!mine || mine.has(projKey(n))));
+    return { names, clients: clients.map((c) => ({ id: c.id, name: c.name, code: c.code })) };
+  },
+  "projects.map": async ({ env, user, payload }) => {
+    const name = str(payload.name, 80).trim();
+    if (!name) throw bad("Which roster project?");
+    if (user.scope && !user.scope_projects.some((p) => projKey(p) === projKey(name))) throw outOfScope();
+    let clientId = str(payload.client_id, 60);
+    if (payload.create) {
+      clientId = uuid();
+      await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,1,30,?,?)", clientId, str(payload.client_name || name, 160).trim() || name, "", user.id, Date.now());
+    }
+    const c = await one(env, "SELECT id, roster_names_json FROM clients WHERE id = ?", clientId);
+    if (!c) throw bad("Pick the client this project is.");
+    for (const o of await all(env, "SELECT id, roster_names_json FROM clients")) {
+      const list = jsonList(o.roster_names_json).filter((n) => projKey(n) !== projKey(name));
+      if (o.id === c.id) list.push(name);
+      if (JSON.stringify(list) !== o.roster_names_json) await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify(list), o.id);
+    }
+    await syncTeams(env);
+    return { ok: true, client_id: c.id };
+  },
+
+  /* ---- the day's team for a project: who receives claims today, and how many each ---- */
+  "team.today": async ({ env, payload }) => {
+    const c = await one(env, "SELECT id, name, team_json, caps_json, roster_names_json FROM clients WHERE id = ?", payload.client_id);
+    if (!c) throw bad("Unknown client.");
+    const day = isoDate(payload.day) || isoToday();
+    const ids = parseTeam(c.team_json);
+    const users = ids.length ? await all(env, `SELECT * FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")}) ORDER BY name`, ...ids) : [];
+    const caps = jsonObj(c.caps_json);
+    const saved = await one(env, "SELECT a.on_json, a.at, u.name AS by_name FROM availability a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? AND a.day = ?", c.id, day);
+    const on = saved ? jsonList(saved.on_json) : null;
+    const names = new Set(jsonList(c.roster_names_json).map(projKey));
+    const members = users.map((u) => { const p = jsonList(u.projects_json).find((x) => names.has(projKey(x.name)));
+      return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
+        cap: caps[u.id] != null ? caps[u.id] : u.capacity, cap_set: caps[u.id] != null, on: on ? on.includes(u.id) : true }; });
+    return { client: { id: c.id, name: c.name }, day, members, saved: saved ? { at: saved.at, by_name: saved.by_name || "" } : null };
+  },
+  "team.saveToday": async ({ env, user, payload }) => {
+    const c = await one(env, "SELECT id, team_json, caps_json FROM clients WHERE id = ?", payload.client_id);
+    if (!c) throw bad("Unknown client.");
+    const day = isoDate(payload.day) || isoToday();
+    const team = new Set(parseTeam(c.team_json));
+    const on = [...new Set((Array.isArray(payload.on) ? payload.on : []).map((x) => str(x, 60)))].filter((x) => team.has(x));
+    const caps = jsonObj(c.caps_json);
+    for (const [id, v] of Object.entries(payload.caps || {})) if (team.has(id)) caps[id] = Math.max(0, Math.min(500, Math.round(num(v, 35))));
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO availability (client_id, day, on_json, by_user, at) VALUES (?,?,?,?,?) ON CONFLICT(client_id, day) DO UPDATE SET on_json = excluded.on_json, by_user = excluded.by_user, at = excluded.at").bind(c.id, day, JSON.stringify(on), user.id, Date.now()),
+      env.DB.prepare("UPDATE clients SET caps_json = ? WHERE id = ?").bind(JSON.stringify(caps), c.id),
+    ]);
+    return { ok: true, on: on.length };
+  },
+  /* Projects a TL or SME still has to set the day's team for (the pop-up after sign-in). */
+  "team.pending": async ({ env, user, payload }) => {
+    if (user.roster_kind !== "lead" || !isAR(user) || !user.scope || !user.scope.length) return { clients: [] };
+    const day = isoDate(payload.day) || isoToday();
+    const rows = await all(env, `SELECT c.id, c.name, c.team_json FROM clients c LEFT JOIN availability a ON a.client_id = c.id AND a.day = ? WHERE c.active = 1 AND a.client_id IS NULL AND c.id IN (${user.scope.map(() => "?").join(",")}) ORDER BY c.name`, day, ...user.scope);
+    return { clients: rows.filter((r) => parseTeam(r.team_json).length).map((r) => ({ id: r.id, name: r.name })) };
   },
 
   /* ---- demo only (env.DEMO is set by index.html when it runs the Worker in the browser) ---- */
@@ -1384,8 +1747,8 @@ async function claimBundle(env, user, c) {
   let raw = {}; try { raw = JSON.parse(c.raw_json || "{}"); } catch {}
   const { raw_json, lines_json, ...rest } = c;
   const now = Date.now();
-  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: n.kind === "work" && now - n.created_at <= EDIT_WINDOW_MS && (n.user_id === user.id || user.role === "supervisor"), edit_until: n.created_at + EDIT_WINDOW_MS }; });
-  const attachments = files.map((a) => ({ ...a, deletable: user.role === "supervisor" || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
+  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: n.kind === "work" && now - n.created_at <= EDIT_WINDOW_MS && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
+  const attachments = files.map((a) => ({ ...a, deletable: leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
   return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id }, notes: shaped, attachments, siblings };
 }
 
@@ -1411,6 +1774,12 @@ export default {
         if (!PUBLIC_OPS.has(op) && !user) throw new ApiError(401, "Please sign in.");
         if (user && user.must_change && !["auth.changePassword", "auth.me", "auth.logout", "auth.deleteMyAccount", "meta.info"].includes(op)) throw new ApiError(403, "Please set a new password first.");
         if (SUPERVISOR_OPS.test(op) && (!user || user.role !== "supervisor")) throw denied("Supervisor access is needed for this.");
+        if (ADMIN_OPS.test(op) && (!user || !user.is_admin)) throw denied("Admin access is needed for this.");
+        if (user) {
+          user.scope = await scopeOf(env, user);
+          // Matching a roster project to a client is how a client comes into scope, so that one call is exempt.
+          if (user.scope && payload.client_id && op !== "projects.map" && !user.scope.includes(String(payload.client_id))) throw outOfScope();
+        }
         const result = await handler({ env, user, token, payload, ctx });
         return json(result || { ok: true });
       }

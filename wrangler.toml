@@ -14,6 +14,8 @@ database_id = "abd329d7-ed96-4541-b6c4-c4bc7b9642ae"
 
 [vars]
 BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com"
+# Admin accounts (comma-separated). Created on first run; they sign in with an email code and can load the Shastra roster.
+ADMIN_EMAILS = "purviewautomate@gmail.com"
 # Any email domain that contains "purview" may sign up / be added to the team.
 ALLOWED_DOMAINS = "*purview*"
 # Sign-in codes go out through Microsoft 365 (Graph, Mail.Send application

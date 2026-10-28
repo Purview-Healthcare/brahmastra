@@ -186,7 +186,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFEAAABcCAYAAAAWEVnoAAAlfElEQVR42q19d3wUVff+c2ZrqoBIT0ISSGgJRZqAgBQBRUXFFwUsiDRRQlFAeq+KKCgIgqjgiwURRUEQBBGwUEVRQNLAAirS0rN7vn/slHvvzCbw/n7LZ9nN7szs3DvnPuc5zzn3DgEAwKGXeALSAKTrzzQADeH8IOE9O3wmPpL8QFoMkB4LpMcAabFAagyAWAAxIMTCjxj4KRY+xMDPseDxBzjy9po43mkEdaAc+PVtfHDDD8APwJcC+NMBX1ro1Z8G+JJhfQ/AT4Cf9fcAWhPhZ7D5fQ0Q8vX3mt4EbmC1n9IBTgcQLzRSaafm2DlURqeQw+dURgeWd1xaAdDzAE0FA/CPP8VR3/zFNzxZH546N6AVHQMAnBg1j4+Omrj9ffG6EfD8B9axmYARBAwm67qCrfdMwGHlul8Q3ovHNc6TSW4Akb6R/iQAboDB+lGoNssNJQfTY6ceYmETKr8DJSseDCAWjBhUWVfI/nap+tnLh/e8dgMiusV1qdt4Ie9ld2KnAaOyAWDMA8LmBLysW506SNj4j1g5NDs3i4BQj4X2MbdnuX3MqiVSWZalXi8O25f2TuQyLdbYzR0fHTpxImHjNDASgCCDoMHfoQYiW1TK2jl/Rqg9Qgc69L3jmZf1vXyefE2jTLPMVN9abITUGCp//BKVPZTNzmTHZnBp0Lw+bDxxDEA2QGRaE0V6EPlAHexc9Tp/UH0cl92BpHwW2pihtk14Sn2BcnvRLbVdHXb1HS4TledlysHE+4+EfM38iRz8q/C/2c+/0Nds4Bcvy9gDwvcAbiUAy0gAdQIx4K4ejdiMZvjgyFIuOPDvHWfunrwF/z8ex/RnYwtLjTYafWVCIOmdKGOa0OBfysFEukbvLFycpFkTOLJnLWgVvbj82qmHwIP7Jq5LqJ3Zb0J2gx1LQrAlYE8L/fCBvwql32bWLYUBb+Mq8Dau8pm38nw8/fQ4kr0zw8eCxyaWvbfw6tYvHqcBSGfLEsvHRHYYdk6dwuVfQQ7fifEpj41K6/UMxzySBFclnVAE9d2OXspKP7ma3fHRIMMSQSBo5iGTp0ynq68fR+CfYhN+xH8AIeLOZKw4sJbnTZrC/xsesjMm4powUcE1IgeAv8YhGw43KvgWUQWviXUSBwEArwvwuMBMOhZC8puMf9BgzlSq1+Ixyv84E8GigLydQTkqRiB6QBPM276ax2dM+NbegaR0oIKRJLAM0xKpvE5UO/AaOOI1+hnp+xLWLUYLvZIM3ESidWnmQQ8o1vIhgFYjJ1DRx1nNi/b/YTspwyrdSRURM6Jly3HvvMpPTJ3dtTMBbQm4GUAjEOoAiANwE4AYAF6x7wRbkqkbyZ/r22nGuGY2xj6DKfQ0/zbYFId7soW0ABInjeWE0WNY6kS2LIaZpP2ZYLdA/c3Nwntm4D79z1vHTTzYZX4GXV5y6POS0/+alsTS7wDeFjVR8eG0bcmvLGJm4AAYx8A4BeAMgPNgXAaj2Gyn1X6G3gdknWyoqfLfmg3IrgkTnXliwqgxvzfcvYhjB9eFu0aU+XntPqN6kUu3MAkmjKtJE0ULlCwV6QBqI2fTxmq2syDgvr/mdr/38CDKW/0DghcKTWsWrRIg+LvWRYPDG/iBmXO4LIwsMzAojyfacJCujyembpzHFUalVHclRttYfkSLmzZG3h0XuoKCVRmP7HnFcy6v+AnBglKJI4Za9gMYWcD5C3+c/ngFHxz93DqLdlih2aO3Tqf+NftRweaTCBYFbMdhABTtQ8R/0tH7q/XcZdQkduSMZpRSVvhLZfDEk6ELb/ZdsuKgwlyV2mOe2ePPSNWvPhw7naK9UngRikEZoJUAgLMAJTVZxL6WVU0eCBAOAmhDAJYxPI2qwNOoSt+DtyztW3jw3LDcLTOXY616NuMpYd7MFt5aFb/ztooDMUnnxQS4q8UiamhbdOm4hgt2nVp85sXZo6RDHCKTI4pEXsRCNo9p8kTdoFMhe6fMciiMQR2DSBZ5k2PEyNZbiwcSwIN0aI8F3hW203lgMxN2yRzD3qbV4GlafVmdlMXLEOWveX/u0N99hopTHfBj0vd+gKaPfG6nv0e92zxJNwqWT2YU465XFdGpVUcmpy4ZuWjIU667iYJEADcXQz6yGALLKg5bw5kd+JE+HMneC4lTx3Lt0WOCkLGpQAofyYE2KThl4p6NsWkSDzQEAnJpAsyEPLy/fQJ8DSv/9r53AU+/HSFnKBCjOYvndprT/VG6+uYh8MUiK7RVvLmvYwrGff9xIHHiLDbJdXlqVlieKPEjeTgmL53YuMEXCzj2iURo1XzmlwnTxvUmRgSL8a5iscHioPCd6EGtDeNmBbrA+M7hOMFCCy8lvPO5EHFHChoceo9XrprNTg5j6awp9FLL+yn/05/BJQElNtdHR0wEIvq3Qsqn73NC2ymM66DIbkeeaOyUGHqps2QSR/aoDs3n0htvmXRMr/j3Q57XAmlSLl/Bd+ef0SI9z3tSK+gegSyiS68DzIju99/t4lmHYIFwGEBrALePGO/ese7lUl/rWuaQIn07gKDF+hHVJw0rv36H89778eKZJXMq2v3AGIqfOaetN7Hy197mCVIPGb3mqlkRUUM6IuX0u1y45dipM+lIQeVrINvWVRd4ETGQE/oiqldNkFfTrUBnlwJH1GK9YJCdB+oNyP100Qt5X/4xzsYDAYCfMDGQQZIFMoAm+ma/0N+BpP5D6fLSA5tLTl0QPLyA/EzQqsYg9uk2FeqsXcbJby+Ne5+BjxnYxsBuBt6fPGHvhv6D6crSr/eVZl0wR4f6cCVVQdTwznWTz67mhOnPt2JmhJ6wPZ1jZxUHSjiEQ2TgiCarDmKkIUUi1iYuV/AfGw+UBoE9Fg49GwNIBKMyAEbTxXPuatxjIOWtOoLghUKbhGXs62uZAF96XO7YBQsdh/j2pTPbbuvxIOW//R34sngcTYrdvTcnwX9Xk2+S5r3I5fNEAAl3j5tQv/88VrGAgwIOmWowQbRiiduxouyQrC6LeCR6daeIBTgKRiaAvyX3c+ui6dRu+IOU/9FxcH6JFDiZ5+L3IOKeRhi7bwMPHjeNneLlb+ZMon0te1LhlmPgkoBsbQbb8Hngu/tmpHy5meOfnsyOwznp82nVU9dM44rDE2Z760Vb3jReJdx63BsUPipkJcJQroApl2ku0WmRSb5ed9jPeh7Rd88a9cJnDOBjAO8BeJuAlQRkPTueLp44X7NoT455HpYXDo0MrXI0oh6/BU98uo4fyJj8dhMA9XTIrw6gEhGyRo+i/A8OdC45kG2NKOVcXFUrIGpYN9RZt5ZrTpxzh9Fkd+3nxnBsUiWgoQsh72g1PuXtmUweDeR1SRZjxMIgIG9jLmKeSAH5XBIPFIdy6nPzGD53GD1wIIBY5M39BVF96puhCOsDyuC8ntSbepz59kNO2PQLWs6ZTn7SdcCBgP+Pob/70kBvLZ+8wN8u8VlPw+pQeSsDcNe5CdHJVfonN1vRX/v9SpPPnxtzVNIWZ0zY6YoGxT028Rt/j6atXLVvks6XdNx3N0lETMP4TxMwD9lzxpMW+2g8KNJt8rvQa8ixEGnwt7lJ5lUK/cleuICurDpl44HSw++Bt3FlfT+RBwqh33MBKj54TuKBRvONIahVikT0gJvxw5Y1vHvoxA1QciyDJ84cO+jexynvtf0I/pWn8FJLPfK1SoKrR8MjnRcuYpjyioVBuYdmtT75yf1U8O434PwSqd0mZnvciOjbIeRYKcot4xQ7i9jhOCAAcHHgqsoDbQqOxO/IhokAdEwKg5tsRQ3u5BsR/WTr+3Y99SpvrTuruZpjGf3CDBrVtjcVbPoBXBwQ8JKsc/G64b+zMTru+YSbjZvJJs0R9MPsamOpeO+xesXf/SrjrYDt8RnTFmskYBmpgXgQkoUZeqCJidbD56wHWqlHEixZihxolZXfZeEc9O1+UKIeMeLxtU6A98707zeWPG+ynbEEZBAwhICssc9S/senmhV/l2OPVPR2u26MQeSj7dH4o/WcmDF5uQXboW2ymo86kTlgAOWv/AK4XCBgZaiNQSa3W9TRWQQ1XR63MIWU4FcwtgkejxPXMo0oEJRyIvKXA62DvcUS5rIuhDEzeGkghNlm7G2ApRv+ng2x4Z8NXLjwJ8znKSTmTfzIOOwDaMTTk45H3NO4vqtWJcdcibtudbjr1hiS1ChuCOfnp2aeyDhp9sMVANGg5PXr2dOotjTMNLBPMy3M4IEGJoJRdPTyjsCfhXYeKPRig69f5YjbasCmBwqWWLT7tzwuCjrwQOtR953K7E6uZNMDGU0AJKM059Lk0pyLgkVrkkW7boxC1GOtsGrrOn4+Y+JeVTNZsWRWg+VdHqCC9d8jeKXIPF/pfIjgbVMfvnbpJxLjX2KVL5uRGGkSA9FYwSsxz5Dz7PwuV97NOWbjgeIhozxw171B4nes8MScfYui8zf9GoYH6imWljWhVY2G/XyOADiN+IUjZsV1fYDy1h5G4J8CGy81/nYlVkb0kx3aLHxzBc+YNq+92pnrpo+nxi16eIp2/yJzS5HD+jzw9WyOlIbbOGHTXGsQsp3rhniixO80GROrETSf620bD2RZMiN1P4eIBUUBhyQ5dExcrPA7/WoT4RjMcBsMIHvGZPrllt5U8PFP4KKAxDtF6/K2SoLv/qa7J7y4mO8l4A4COhHQFoT3iEozhw2jq6/vfqbkSK6MtRSycoDgqhiDiIc7ou6uTRw/fMoxFZOJCAztshZKcJAcExltOQcw2CfmRBh2THTKvzCHq73RPaQZ7z4O8MiwsXAjU9oKvd6JUJ7llhnPUtGBPxKK9mSa5yV5YQMvu6chde8nnDBhNu/Qz+kAgB8B7Fo09YXT/R6hvFe2XQ2cvQBRRbLaRXAlVEXksDsbuevWskUzGiFfcyyhIJYlbQc90HIaUCIWERcdmLfEA4VHKYeJWkInXJOruNVcSIfVg3NvP/gkXX1973OlP50zMVu1aK1SNCL7t8XQz97nWk9P2mEFr6HXQ6/OjDnY7R4qXL8X/G+eErtbGEh+r8QujDZoNh4YVGSxICJlHkl6tiv0yP8oE4FLRXYeKDS2/vzX2Nuiho0vij2c99YRcFFAyomIsHlw+cslOeve5B+nze0o5liYgPvqzJh3f7VH6OrKPQj8nWfDVQsvqyB6aJdOfdas4XumLWyj4uWJWePoZK9uVLj5e3BBiZKhtGsEzEAQYM3OAwVMu0nIkYg8UNATs2fPofyPshx4oBCgV4qAJ7WybMlmQmg1QIuRPXcmlRw7p1RAEH4SGuptnoDo3o2/PPzii6bnXP6q1ZkDpk+nk+3uocItPyoRhiZxVU+LZLh7tdjb9fklDBCqgBALMkvysj/PoJJ9h1NL9v9sw0AIbAakIWh4ZwOjWE3g/y3HuqZ30mT8C1wqPOukB4pqudFq0cOFDvw4wBkATwYXBqyP9eM0NPDQwCm3hogeDXBoy0be2X4mDx1uOR4AmMPA06MyKH/N3n7FR8/YWYNJDN3wd2+GlD1bOX78HL4EoMiAbGJkZmacPO0aQAUrt8wt+THHxEAzR6MfWAOgqVeMDK9hCLO6+iJHIpriWbRSZz1Q9OAk5U6cCxXZxgMZTQHUUXCI4KoUjaiHb8HO7u/wR79MWSSlUQGMnTf5nQl9HqH813YieP6KYP2aTkpCf2sVYxDZvyNu/ngjJw+fslPKrxCQ8/C0Cafv600Fyz91Zhhgn+ak1MptZL/K79iu1dj1QPG7YNBZd7TJyZpDjuUwgF9DMTDbiy5cdaogcnCHUR8cX8HrNr1aU621mbN4Bs3p0JMKNn4PvlpkVjCosbArsSqihva4LXn+Wk5uvfA2ta9yX5lGgdxzEkvRDTNPs9XGsOCNbyQAVCjxQFVPpHIKdQgo+PgUUBiw80AOYWL8yIiTqdvrsjvpRrseqF+yQNaF5Xy1WBgt8tPbpg48KclnV8xewGOIbAVMSyeOoTyttGLJnuMmDySHQlZPixS472+3M7HGMhbrIUPtZruWoLn/1Gy1MWKy6l/dEuGgVocNlMlWw5i1bQYV7Myy80AigAcAjChXQkVoVWIsTZNlz1lj8fBhhXty6hXtzZTjXjFPHemF/74WqLtzE88fMZnVIb765u4X1wwbQldXfTGm9KczVtJNOC/mEF56uzVHStKXHP+uEbGw1AVmfiXI0ZqzIs1SGYjKA8lJSJA8u2azxuA/BWWUlUHK4cilzlZf1R418ESdgUMo77Xda0pPnpc5nIDp7moVEDW0K+a+9w5PGjPrCVnWY2xYNGXRh336UP7yrQievyTFwiIP1CrGIKL/7ajz2WaOGz51L0nYrpksRIMDn7Jqy+ReRxmaohSp2HIsFviIPFCaJREmFnYqyGy6eOaApgP7Ut6qPQj+dcUWRRj7eRrFwT+gw8qxS5bzXQ7FnduXTqftnbtR4Xt7ELxa4MgDwYCrdg1EDOnVRkuoZsNs0uiqxkH5ChBpUlEPBRFl0wPtE2IioSg4TErEoijWITwhgN4AgYrFnIgYCzM3sxfI68fteHgqtb/1bir86BC4oMQRK4kIvs7pSN3/BQ+atIBFx2MIsd/MeIZOtu5AxV8eBUpZ4oESBvp8El8ENASCiNJIE3kggYMOJSWs5oVZjZWjVB5IauwcVCbmsPHZAKBWhfsDf162Ppd46yGAgd/HvMpnXnuTTyxaWs+sBgOA0cBd1cdQ8NRf1Qv3/CLncIRYmGIj4X/oVgzc/BE/MHzqflW5/5cIxzMGUdHaLwaWHs+10QzL2knyIRqYNDnPauCRWNhILgMHzX+k8sRQDYTMAxW41BRlWrD43Gd/O3yi/Y8UyL1oq9kGmoFRF+Rywdc+Ff5OqT8fe/Flfvec7KPuSen7Z9/HB1P+6ztnlB7/zZ4T0V9dCdUQOezO1vetXsvdZy6+Wc2xZK6fsPrXNfdSwZqt4Et5gkVrSsRiRV2aI79TEvhsq10pgyc6RSyiMCNuE5T8HUqy/7HxQMYhAKeE2M8NX7c0pH63lb9qNcd0+IYXHrRo+tTBvR+kvOXbUPrHRbsGqL93N0+Bt3vLAx3nLGHblDQCcj0T6GRuOyra9LWEl7a6R811QVNrpB10wXxbNZVdcMm3qSc2FYfseWECQGsAejn0ZwAOPJCFgk7LQrWYCET0a4ddHT/gjUdmzHqhGawJQwCefXk6Pdv5Dir6cD/4SqFjVZrm88LX8xZ02LWLm4yewyaWC8/sXk/TqTatqXjbNzbMBggBEGvspAcKfRBkVGC1xlctnWNL6XGmL6K3I6Vm+zGARyhemZyLnB2UcXdyFcQMum1i4uJXmV1s22/61Geoa+vb3MVfHLUwWxp5BKoUC/+j3ZG+YRPXvnfGfKu0kE2ynf3sYAqcOiNELKEL5oJWrCGo8EBVT2Ryk9OULZaKyfyqaUremdhB59O9syT3kH07vtks1nDKiRiY7uvaGBv2bedVU+azOgHyViCwaOQQyn/ry94lh06buRLVm7vqxCNiwJ1jk+54k5v1yY2xRpJ+xNKAErFoAAI+jUU117AClSc68cDr4YmiR3ao2VZlcjW+FmeCSpgrWTeAG6Lg/087rNyxhZ8fPrlY5ZcrFozbkPXYQ1Sw4rN3Atnn5PMxttM0uNs1xpX83y/X/uVlRkPZWpwmTGhqNRWJ+Q/ZvYZXrJkCBq9y3J/E+im1FkcpcVbywlzmRBqxIsPCXFe1iogc1tOz8J31PGPyC7cav99D/43cpdP6vXd3Typ4axuCf1+S2AkZTCQqCt77OqHOll0cN2zqXwCBPB4Js8nARNJI5oGquEBcavE7kqzAuopcAjUSCTrnWCQe6DQnBjJvBR1UEuPW9yVHcxC8lG/LiRjbudOT4L6n9VfjZ77EDOAzBnYCMPKpW1+YQFs7d6KizfvA+UVC1CPwwOqVETHkP5UT3/yQER0lYTYDcAXh1cxqLxL5D1vxM5NbijSUvLOOZX6b91NpkoN3JLVmmwA7b4UgFst6YMmhLJy4pSsV7zimjCIh0vB54e/VFs9+toUHPzVtl8gJjfdfT3ySklq38pV8dcSBB+rqTuN60KrcaK/gkHiiLcdiDrGisuqx1dJ423bC6Lbrger0RArDSe0xtVHZ+/hzQPebhlDeWzsfKT6cGTYn4qp1EyIH39XhiWVv8WKGR8XLtYTiH0Y8SkWrP36u9Odse64nXB2mIUCIPUsa2WY92ev+FMmMLduxKss0BcpU9dzYTs1hK5UWofkQjiqLWLff+5GJb/+nfz8qWLa5OPjHv7ZIxchje9qk4cjefcX3jVvIYjWr8f7XTybNO73+Lip6+1MEL14Jq18aviQQSlTJ1sVB54jFKUPnFLEYPFCe5qV6V5L4ozrPhR3mvuh0y3E0iDmWx1+Z5Xu8azcq3LAHwauFSk5Er+WJiYTvoa7o9cnn3CljpnQ4rxGxRI2jXzu2puJd34VWBFBZiH5MDSCNSO5pOccCaBQMOEYittBO1gOJ2SFikfPCJnQI82hUHsh0QCgqUHM4LHUgCwCQMW00+aIKK5TsOeY4C5VIgyu+GvwD7sFtn+3gm0fPlWMFArAByL7jMSpYs/HV4OkzUmWGNWNWKy4/YgGxnd85r4bBHGbupBA3SzzQYR6xygMlCUyJf6XZTQ7Xdlh6l0uThj9GhW9sHlfyY1ZYbNOqV4Hv4Z5oumk717x92gGVTZ1dOmn46d5dKfj7efvsAQS9mnUpNXtUIuZPJB6oCNdBuUY6ZEGazbGo/M5u4A4xPDcPNV5TcyKabTiHm2U/Z9HkBQv73keFqz4B/3XJVtNtWJYrvgYiBj1wc9JdGzju0vwB4loUAMB5BXIe21S2dQlEqiNzSkKxUsMoh1alKg9UhzM75ESMWQnmMyjOStDPyxjODjxQxcNw8bbxePWlybSsa0cq/Gg3uKBI4bpWH7iaNID/kXtW1856g8WpbggEHfPYmqiOSCqssXNQ89kwhUiZ00VuFXOY5ByLyuHIvMrC2NWsvLYZieiWaLIEtT6wjOHsvOYDY+3Upymw+2hq6bfHrFmvYrSiW6qnUxskZx/g+FELQrtrmt3rA9Bs3CzgYIkcdpK9Ld41+zVon+qKcJxUMBt7Dvx7+Tck/GVLS6TrWzRj/fiBJz8a+hAVrtq4LpB5NiwPpIo3wPvwvUj67zam6GjH3I9GLPNAkydaNTn5UgRhVP0r8wDV+kA1x0KKHgjjtxwyfqKCzNxCnn2qWrwkyorzBsVISV1Iw7KS7a9M6b/z/m5UtPYT8IVLjjO0CBq01GRo1as6Ziw1u9e0ialFNh7o4J0NTLHNlVNVbamSQgXKsrN8qh4IRdV2tEDlVG9Xvq+nv/9u0Tg60LkVFX++B1xUbPLAsLU8Ql2n28AfiSQJYiTAPggWGJoUo8z6ETCPCc45FlN/s6oS7KsCKBZmvgqoSKIQQvIyBvbLIgaOyhIxDsOdCLn1QAn5i9pQfOJed9NGFqdV1RQherMiFmVmqNCyIjUPy3b3bMtB2LJ9DnlhGyYaq32IvNXARDUuZ2tCebnWWIbDsX1GQObJ0fuyzvWiwpXvnAjk/i5HdCxHThR0saZWLlCEV64fBGy8yiHvXGYtTthtbGkGp/pxS8VRs23GeZTdgeE1SbYtpCGf3pmeU+plNW1PJR98Ar6cZ/vt0OyGoFeTQSv0kpz3EssaIDlHFKIoW9ZlJjtIhXggSyvY2UaEsHyB4bnFWJilJNa1WeBW5fPjyvd5JIsmTEDO3JFUvH5jtsmnBVwOQit2q5OcCYC/QzJSs97m/JW/7IdGP6jfh86YBUvi0lB+2raskQSzId4nr0oHh4JQa9IQKW5FsRrBCTpZozMGctnDWSLwjLnx0F578Z2Ab3BbiKukGH7A7fNluQN/XoWraowtonDVroSYYW1uKc28cItaOxOmPlOVapWIhcvOrQgem5TtbKq6adRcTgdeKwF3joDi97/CnuiOcN/aFk4ruAXz8pCzMGOHlrf550mB3y7b9UAdl9xJlW3zRGyLxICKbDXS6qSBcHP7lE5Ua7ZZ8d72yEgczuF5otOEcZUzst7+2rEzODntW/beeycoKlpWj/TzD2bnouTDj4YDgPvM/FmzMR+za8+YxRF3NQRFei39jRBmbp9tZd5g2Ll9ZB0H7ADyJAe4HG7NWiKHuX0kLcrrVCopog8A9NA/2udglU1GzB3uapa+1NeovskDbdrmlaso2bIduc9nhMBnibAuTvaaiVR8vuSmoq8yJSXHVhtDBG96TdR+Y2mCcAoxjnPloNIqux4oYyI5zhMRLUiq5THwTpzQKWIgCw5L6K6dSv0NM6PtonXse6TPUnejBo7VaSBC6Ze7kdmpPhkdaPyENO5OL3vg79NnnqK81/a/VHLivFUFpdQoupKrwpeWmJ0w2VyHJk+tD1RzLE7zhctXyB2WeVOjGged+HowsPtzL/Ptu4+xu31rm4pvPEuP/YTit9YPzBnb34nbwW3jRwBy2mAk6mFkwqqp7O/VBK6K0bJUBoIW5Udk31uQ0nEjl574Q6lsJXVtIisWJtirck2vIsTM5vECci2PwQ35f1NxjB36DJl22dOza4y3ek+FnegWyEDwz3Mo3rwVZ5dPIQwIv5KpG06VYEZnzptOACPxpcXsu60+yOsWsFIvya1eAd7qFW0lZUHl4rCoB4bx9LxMmScCANwSTD+H1sdmpS7cyP+WpeIoi5XHjVl4/8CGqR/40hso6Q7BKV3NQ+mO3ciZMZTQvKV0okQybuuLUFqLL0p1iYIYmZUxkgre/e6hkqNnlRpph5lYhh7ITnRR1QNlUZbYHtUwfWs20l4fyNcsgwHA6OffYl/fez9wN26o1OJYGFi6/3vElsTF5twwlLDdlhC2J8mkxcrLWXwxZ/bk9b/2eYyuLttxMZB7wVYjreqF7gZxiHt68kE1xyIrIuKPzJMjJ9OCWoFR3xGvjOW2GM75M+P9tAkv8aTdR9ndsa1NJTKOGTiZicJV6xYdW9Obvl0bfeV6ltJ1m1HINS4wdual2RUBIGHSbPbf2Qx0Q6QUyRjW4kqujqjkGs3qtE/jq8m1KtCGrxRvr0L9eIDrQ11nm/EtgBgrByOss62uJM9CHpYBLBo2/ay3R6ea3t49dRQi5eIRcOFfFG3Zjn2Lx5HPAyBtgrKwuj1yunZMLGfZuxxMJMxiJL6whL1d0gC320aOGYCrXhxiLuZdDDatY4s6bHrYK7Ct8fCb/lWcMmaN2un/jrM+y9APtnrs4q6ulNrb/IP6hdEvAS4uRemXXyN34uOmsldVuiAkR6AiJiqQ7pbX/BLq8ehaFicnZAEUP//FJu7KNxz2tKxrzlYSuZ1WMQZahRi7HqgpZ7QMSs0PUJNbwUfHUarE1Ma/BxdatxJBdcb6BW+wr0MrwOOVRggLuBI4+hOCp0+3/2Buxp6WGIAT+s+fI0JVAgrFkFKxQmaZ5bBsiaysp8q41iXdc8eNOgKA4kdOWetpn97PnVJDXrnTWfkJW5soXrWQY4mx5sHIqT/TsWxZspg9XW+Fu0u7sDw0eP4fFH/0WemaFVM8PieOarT5OhagFEBGXZC2nIV4w+Bm7uIZ/U/f15sK3tiB4LnLYarABC5WIcamPjjVbANyFYW47s7e09OP7snfxd7ed4AqxDrkhQkoKETJps+x4I7m9NuKqR6nmzeIi5WzzcFez2Ll75VzBa5h5XwAyH1hMp3q0p0KN+0H5xdJqrbIA3092yHpvd5ca3iVXyBlYclei+OgjLs7tob/iQfTtfga+j5ky4mUfncEBbuP1p09YxgBoQXbxOYcVVTtf6XJS3ZDCn9TGwMSHyzL0q7/Bg45k0dR7RtXJmqaN9N9S0NByLCulLtebbjrJaYmNjvO2o0VbZENQ63lsTDVVau6BfjKKsbBs7+jeOvOH8ctn5LmZ0HcIC5bBhP0STOribJv4FBmxGI3w3IAwmGT7OWDspAOijs+fYm3Q9OnXMk1hQZZ5+du3tCW45YOpc+FDqtfGh11NR+lX3yFwTOHk++edsDy68i7qIrQ9S5WTuXe0OZ/uIGDsNuZWvOfPh01iArXbUPw3yvSumJOkYOoBGVyA7ia1IdTJYaIgaX7D2JuhzTtkZnDyemGDWLFrlNtojWPxaGM5pqa3QihxWLmwrpbWhz+3x4uCHdfiwzdMa3bOQBAwrxl7O3cAvB4YAs7hLWwS745Bk+DZCAmWtqOBdE2mHkWxV9+ve63Vyf3d8YcLluWNx5RMO+SFkgHtHSA0gCuoOjCCoJZPJEI6GcvHwmfcLo247Td2+TPukDVGOTgXUqcdKUrUpK2eRqnWuoOy4qNt1XjUMKIIbEIYgJfvorirV+iY7dR5JvREf5XJsGn32JOvKmNeMu5PsTYCvlmNta2hBpGssrATrpengjhTjj0v/ZaGGYkdqZ+zKxZe7YDRyjuqRT23H0bXFVulBV0Nf43sDIQQMneg0gf2Y/8PzS5DhmsvO/ZEjauGxMpzA1dyiOG14qR5ZDXM0v/pMzbN1Pxp3uAohLnuYb6OQVP56J47cZxKev7EQbJiww5dxA55KHLxkNWCfe13OjL3G4tgAVhNFNcG6yUa41V1Q3eATBUj8f/pupFX7XxJdXa625cX/a6V/JQvHUXzswbQbdGdgbSQh33wQig/y7rN14I5+CER49yLnr0cqB0mX2Cp4SJ8o2+rNCJHi4LE9V1H9gZZcsczgycB3CTSDL6Sj/0BwX3gS9SrSfX53nv6RapRUeheNe38E/qRhUwANWU1GbvJbIoO5oVvBNu9GVipBMeQrht55Mi5SmfJ/4fzE2OofoE4vQAAAAASUVORK5CYII=";
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -699,7 +699,7 @@ function getLocalBackend() {
   if (!localBackendPromise) localBackendPromise = (async () => {
     if (location.protocol === "file:") throw new Error("Demo mode needs a web address: open the app through GitHub Pages, Cloudflare Pages or dev\\serve.ps1 (http://localhost:8787), not as a file.");
     const [lib, worker] = await Promise.all([import("./lib/local-backend.js"), import("./worker.js")]);
-    return lib.createLocalBackend({ worker: worker.default, env: { DEMO: true, BOOTSTRAP_EMAIL: DEMO_SUPERVISOR.email, BOOTSTRAP_PASSWORD: DEMO_SUPERVISOR.password, ALLOWED_DOMAINS: ALLOWED_DOMAINS.join(",") } });
+    return lib.createLocalBackend({ worker: worker.default, env: { DEMO: true, ADMIN_EMAILS: DEMO_SUPERVISOR.email, BOOTSTRAP_EMAIL: DEMO_SUPERVISOR.email, BOOTSTRAP_PASSWORD: DEMO_SUPERVISOR.password, ALLOWED_DOMAINS: ALLOWED_DOMAINS.join(",") } });
   })().catch((e) => { localBackendPromise = null; throw e; });
   return localBackendPromise;
 }
@@ -1045,20 +1045,22 @@ function DeleteMyAccount({ me, onClose, onDeleted }) {
     </Modal>
   );
 }
+const navFor = (me) => (me.role === "supervisor" ? (me.is_admin ? [...SUPERVISOR_NAV, ["roster", "Roster"]] : SUPERVISOR_NAV) : USER_NAV);
+const roleLabel = (me) => (me.is_admin ? "Admin" : me.role === "supervisor" ? "Team lead" : "Biller");
 function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount, children }) {
   const [menu, setMenu] = useState(false);
-  const nav = me.role === "supervisor" ? SUPERVISOR_NAV : USER_NAV;
+  const nav = navFor(me);
   useEffect(() => { if (!menu) return; const h = () => setMenu(false); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu]);
   return (
     <div>
       {DEMO && <div className="banner">Demo mode: the server runs inside this browser and nothing is shared. Set <span className="mono">API_BASE</span> in index.html to go live.</div>}
       <div className="topbar"><div className="topbar-in">
-        <Wordmark size={20} tag={me.role === "supervisor" ? "team lead" : "biller"} />
+        <Wordmark size={20} tag={roleLabel(me).toLowerCase()} />
         <div className="nav" style={{ flex: 1 }}>{nav.map(([k, l]) => <button key={k} className={view === k ? "active" : ""} onClick={() => setView(k)}>{l}</button>)}</div>
         <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
           <button className="btn sm" onClick={() => setMenu(!menu)}>{me.name || me.email} ▾</button>
           {menu && <div className="menu">
-            <div className="small muted" style={{ padding: "6px 10px" }}>{me.email}<br />{me.role === "supervisor" ? "Team lead" : "Biller"}</div>
+            <div className="small muted" style={{ padding: "6px 10px" }}>{me.email}<br />{roleLabel(me)}{me.access_all ? " · every project" : me.scope_projects && me.scope_projects.length && me.role === "supervisor" ? " · " + me.scope_projects.join(", ") : ""}</div>
             <div className="tiny muted" style={{ padding: "0 10px 6px" }}>{me.designation ? me.designation + " · " : ""}signed in with {me.via === "otp" ? "a code" : "password"}</div>
             <button onClick={() => { setMenu(false); onChangePassword(); }}>{me.has_password ? "Change password" : "Set a password"}</button>
             <button onClick={() => { setMenu(false); onSignOut(); }}>Sign out</button>
@@ -1538,19 +1540,197 @@ function PinFolderModal({ me, current, onClose, onSaved }) {
 /* ---------- automatic allocation: every open claim of a client / location goes to the billers mapped to it ---------- */
 async function autoAllocate({ ctx, client, loc }) {
   const teamIds = loc && loc.team && loc.team.length ? loc.team : (client.team || []);
-  const users = ctx.users.filter((u) => u.active && teamIds.includes(u.id));
-  if (!users.length) return { applied: 0, perUser: [], reason: "no billers mapped" };
+  // Today's team for the project: people unticked today are left out; a number set for someone caps what they get.
+  let dt = null; try { dt = await rpc("team.today", { client_id: client.id, day: todayISO() }); } catch (e) {}
+  const offToday = new Set(dt ? dt.members.filter((m) => !m.on).map((m) => m.id) : []);
+  const capOf = dt ? Object.fromEntries(dt.members.filter((m) => m.cap_set).map((m) => [m.id, Number(m.cap) || 0])) : {};
+  const users = ctx.users.filter((u) => u.active && teamIds.includes(u.id) && !offToday.has(u.id));
+  if (!users.length) return { applied: 0, perUser: [], reason: offToday.size ? "nobody on today's team" : "no billers mapped" };
   const today = todayISO();
   const el = await rpc("claims.eligible", { client_id: client.id, location_id: loc ? loc.id : undefined });
   const pool = rescore(el.claims.filter((c) => (loc ? c.location_id === loc.id : !c.location_id)), today);
   if (!pool.length) return { applied: 0, perUser: [], reason: "no open claims" };
   const cap = Math.ceil(pool.length / users.length) + 1;
-  const plan = planAllocation({ claims: pool, users: users.map((u) => ({ id: u.id, name: u.name, capacity: cap })), strategy: "smart" });
+  const plan = planAllocation({ claims: pool, users: users.map((u) => ({ id: u.id, name: u.name, capacity: capOf[u.id] != null ? capOf[u.id] : cap })), strategy: "smart" });
   let applied = 0;
   for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: client.id, location_id: loc ? loc.id : undefined, strategy: "auto", assignments: part, summary: { auto: true, perUser: plan.perUser } }); applied += r.applied; }
   return { applied, perUser: plan.perUser };
 }
 
+
+/* ---------- the day's team for a project: who receives claims today, and how many ---------- */
+const STATUS_TONE = { working: "green", ojt: "blue", training: "blue", sabbatical: "amber", "serving notice": "red" };
+function TodayTeamModal({ clientId, onClose, onSaved, left = 0 }) {
+  const q = useRpc("team.today", { client_id: clientId, day: todayISO() }, [clientId]);
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (q.data) setRows(q.data.members.map((m) => ({ ...m }))); }, [q.data]);
+  const set = (id, patch) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const save = async () => {
+    setBusy(true);
+    try {
+      await rpc("team.saveToday", { client_id: clientId, day: todayISO(), on: rows.filter((r) => r.on).map((r) => r.id), caps: Object.fromEntries(rows.map((r) => [r.id, Math.max(0, Math.round(Number(r.cap) || 0))])) });
+      toast("Today's team saved for " + q.data.client.name + ".");
+      onSaved && onSaved();
+    } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const on = rows ? rows.filter((r) => r.on) : [];
+  return (
+    <Modal title={q.data ? `Who works ${q.data.client.name} today?` : "Today's team"} sub={"Everyone is ticked. Untick anyone on leave or busy elsewhere, and set how many claims each person should receive on this project."} onClose={onClose} wide
+      footer={<><span className="small muted" style={{ marginRight: "auto" }}>{rows ? `${on.length} of ${rows.length} people · ${fmtInt(sum(on, (r) => Number(r.cap) || 0))} claims` : ""}{left > 0 ? ` · ${left} more project${left > 1 ? "s" : ""} after this` : ""}</span><button className="btn" onClick={onClose} disabled={busy}>Later</button><button className="btn primary" onClick={save} disabled={busy || !rows}>{busy ? "Saving…" : "Save for today"}</button></>}>
+      <ErrorBox error={q.error} />
+      {!rows && !q.error && <Spinner />}
+      {q.data && q.data.saved && <div className="alert info mb">Already set today by {q.data.saved.by_name || "a team lead"} at {fmtWhen(q.data.saved.at)}. Changes replace it.</div>}
+      {rows && !rows.length && <Empty>Nobody is mapped to this project yet. Add billers on Locations, or load the roster.</Empty>}
+      {rows && rows.length > 0 && (
+        <div className="table-wrap" style={{ maxHeight: 440 }}><table className="t"><thead><tr><th><input type="checkbox" checked={on.length === rows.length} onChange={(e) => setRows(rows.map((r) => ({ ...r, on: e.target.checked })))} /></th><th>Name</th><th>Status</th><th>On this project</th><th className="r">Claims today</th></tr></thead>
+          <tbody>{rows.map((r) => { const st = String(r.status || "").toLowerCase(); return (
+            <tr key={r.id} style={r.on ? undefined : { opacity: 0.55 }}>
+              <td><input type="checkbox" checked={r.on} onChange={(e) => set(r.id, { on: e.target.checked })} /></td>
+              <td><b>{r.name}</b><div className="tiny muted">{r.designation}</div></td>
+              <td>{r.status ? <span className={"badge " + (STATUS_TONE[st] || "gray")}>{r.status}</span> : <span className="muted">–</span>}{r.exit_date ? <div className="tiny muted">leaving {fmtDate(r.exit_date)}</div> : null}</td>
+              <td className="small">{r.primary ? "main project" : r.share != null ? `${r.share}% (roster)` : "added by hand"}</td>
+              <td className="r"><input className="input sm" type="number" min={0} max={500} style={{ width: 80, textAlign: "right" }} value={r.cap} onChange={(e) => set(r.id, { cap: e.target.value })} /></td>
+            </tr>); })}</tbody></table></div>
+      )}
+      <div className="tiny muted mt8">The numbers are kept for this project until someone changes them. Automatic allocation and the Allocate screen use today's ticks and numbers.</div>
+    </Modal>
+  );
+}
+/* ---------- roster projects that are not yet a Brahmastra client: a team lead confirms which client each one is ---------- */
+function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
+  const guess = (n) => { const k = String(n).toLowerCase().replace(/[^a-z0-9]/g, ""); const hit = clients.filter((c) => { const a = c.name.toLowerCase().replace(/[^a-z0-9]/g, ""), b = String(c.code || "").toLowerCase().replace(/[^a-z0-9]/g, ""); return a.includes(k) || k.includes(a) || (b && (b === k || a.startsWith(k))); }); return hit.length === 1 ? hit[0].id : ""; };
+  const [pick, setPick] = useState(() => Object.fromEntries(names.map((n) => [n, guess(n)])));
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      let n = 0;
+      for (const name of names) { const v = pick[name]; if (!v) continue; await rpc("projects.map", v === "__new" ? { name, create: true } : { name, client_id: v }); n++; }
+      toast(n ? `${n} project${n > 1 ? "s" : ""} matched.` : "Nothing matched yet.");
+      onDone && onDone();
+    } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  return (
+    <Modal title="Match roster projects to clients" sub="These projects come from the Purview Shastra roster but do not match a client here by name. Pick the client each one is, or create it. People on a project get its claims and access once it is matched." onClose={onClose}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Later</button><button className="btn primary" onClick={save} disabled={busy || !Object.values(pick).some(Boolean)}>{busy ? "Saving…" : "Confirm"}</button></>}>
+      <table className="t"><thead><tr><th>Roster project</th><th>Brahmastra client</th></tr></thead>
+        <tbody>{names.map((n) => <tr key={n}><td><b>{n}</b></td><td><select className="select" value={pick[n] || ""} onChange={(e) => setPick({ ...pick, [n]: e.target.value })}>
+          <option value="">Not sure yet</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}{c.code ? ` (${c.code})` : ""}</option>)}{canCreate && <option value="__new">+ Create a new client called "{n}"</option>}
+        </select>{pick[n] && pick[n] !== "__new" && guess(n) === pick[n] && <div className="tiny muted">suggested from the name, please confirm</div>}</td></tr>)}</tbody></table>
+    </Modal>
+  );
+}
+/* ---------- admin: load the Purview Shastra roster, allow extra sign-in emails, match projects ---------- */
+function parseCsvText(t) {
+  const out = []; let row = [], f = "", q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += ch; }
+    else if (ch === '"') q = true; else if (ch === ",") { row.push(f); f = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && t[i + 1] === "\n") i++; row.push(f); out.push(row); row = []; f = ""; }
+    else f += ch;
+  }
+  if (f || row.length) { row.push(f); out.push(row); }
+  const grid = out.filter((r) => r.some((x) => String(x).trim()));
+  const head = (grid[0] || []).map((h) => String(h).replace(/^﻿/, "").trim());
+  return grid.slice(1).map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] == null ? "" : r[i]])));
+}
+async function readRosterFile(file) {
+  if (/\.csv$/i.test(file.name) || file.type === "text/csv") return parseCsvText(await file.text());
+  const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array", cellDates: true });
+  return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false, dateNF: "yyyy-mm-dd" });
+}
+const ACCESS_LABEL = { agent: "Biller", lead: "TL / SME", manager: "Manager", all: "Every project" };
+const ACTION_TONE = { new: "green", update: "blue", same: "gray" };
+function RosterView({ ctx, reload, me }) {
+  const meta = useRpc("roster.meta", {}, []);
+  const input = useRef(null);
+  const [file, setFile] = useState(null);
+  const [rows, setRows] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [tab, setTab] = useState("people");
+  const [busy, setBusy] = useState(null);
+  const [emails, setEmails] = useState(null);
+  const [mapOpen, setMapOpen] = useState(false);
+  useEffect(() => { if (meta.data && emails == null) setEmails(meta.data.extra_emails.join("\n")); }, [meta.data]);
+  const pickFile = async (f) => {
+    if (input.current) input.current.value = "";
+    if (!f) return;
+    setBusy("Reading " + f.name + "…"); setPreview(null);
+    try { const r = await readRosterFile(f); setFile(f); setRows(r); const p = await rpc("roster.import", { rows: r, dry_run: true, file_name: f.name }); setPreview(p); setTab("people"); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(null);
+  };
+  const apply = async () => {
+    setBusy("Loading the roster…");
+    try { const p = await rpc("roster.import", { rows, file_name: file.name }); toast(`Roster loaded: ${p.summary.new} new, ${p.summary.updated} updated, ${p.summary.deactivated} switched off.`); setPreview(null); setRows(null); setFile(null); meta.reload(); await reload(); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(null);
+  };
+  const saveEmails = async () => { setBusy("Saving…"); try { const r = await rpc("roster.saveEmails", { emails }); setEmails(r.extra_emails.join("\n")); toast("Saved: " + r.extra_emails.length + " extra email(s) can sign in."); meta.reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
+  const remap = async (name, v) => { setBusy("Saving…"); try { await rpc("projects.map", v === "__new" ? { name, create: true } : { name, client_id: v }); toast(name + " matched."); meta.reload(); await reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
+  const m = meta.data && meta.data.meta;
+  const sm = preview && preview.summary;
+  const projOptions = ctx.clients;
+  return (
+    <div className="stack">
+      <div><h1>Roster</h1><div className="sub">Load the Purview Shastra export. People, who reports to whom, departments and projects come from it; team leads and managers get their projects automatically.</div></div>
+      <div className="card stack">
+        <div className="row between"><div><h3>Load the roster</h3><div className="small muted">{m ? <>Last loaded {fmtWhen(m.at)} by {m.by}{m.file ? <> from <span className="mono">{m.file}</span></> : null}: {m.summary.agents} billers, {m.summary.leads} team leads / managers.</> : "Not loaded yet."}</div></div>
+          <button className="btn primary" disabled={!!busy} onClick={() => input.current && input.current.click()}>Choose roster file (CSV or Excel)</button>
+          <input ref={input} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }} onChange={(e) => pickFile(e.target.files[0])} /></div>
+        {busy && <Spinner label={busy} />}
+        <div className="tiny muted">Access: Agents work claims; SMEs, Team Leads and Sr Team Leads lead their own projects; Assistant Managers, Managers and Sr Managers also see their people's projects; the Vice President sees every project. CEO, Director, HR, IT, Administration, QA, MIS and Tech Support get no access. Only AR agents receive AR claims. Nothing changes until you press Apply.</div>
+      </div>
+      {preview && (
+        <div className="card stack">
+          <div className="row between"><h3>Preview · {file && file.name}</h3><div className="row"><button className="btn" disabled={!!busy} onClick={() => { setPreview(null); setRows(null); }}>Cancel</button><button className="btn primary" disabled={!!busy} onClick={apply}>Apply</button></div></div>
+          <div className="grid g5">
+            <Kpi label="People with access" value={fmtInt(sm.people)} sub={`${sm.agents} billers · ${sm.leads} leads`} />
+            <Kpi label="New" value={fmtInt(sm.new)} tone="good" />
+            <Kpi label="Changed" value={fmtInt(sm.updated)} sub={`${sm.same} unchanged`} />
+            <Kpi label="Switched off" value={fmtInt(sm.deactivated)} sub="left, exit date passed, or no longer given access" />
+            <Kpi label="To check" value={fmtInt(sm.warnings)} sub="email problems" tone={sm.warnings ? "warn" : undefined} />
+          </div>
+          <div className="row" style={{ gap: 6 }}>{[["people", `People (${preview.people.length})`], ["warnings", `Emails to fix (${preview.warnings.length})`], ["projects", `Projects (${preview.projects.length})`], ["excluded", `No access (${preview.excluded.length})`], ["leaving", `Leaving (${preview.leaving.length})`]].map(([k, l]) => <button key={k} className={"chip " + (tab === k ? "on" : "")} onClick={() => setTab(k)}>{l}</button>)}</div>
+          {tab === "people" && <div className="table-wrap" style={{ maxHeight: 520 }}><table className="t"><thead><tr><th></th><th>Name</th><th>Position · dept</th><th>Access</th><th>Projects</th><th>Reports to</th><th>Status</th><th>Email</th></tr></thead>
+            <tbody>{preview.people.map((p, i) => <tr key={i} style={p.active ? undefined : { opacity: 0.55 }}><td><span className={"badge " + (ACTION_TONE[p.action] || "gray")}>{p.action}</span>{p.changes.length ? <div className="tiny muted">{p.changes.join(", ")}</div> : null}</td>
+              <td><b>{p.name}</b><div className="tiny muted mono">{p.emp_id || "no emp id"}</div></td><td className="small">{p.position}<div className="tiny muted">{p.department}</div></td><td className="small">{ACCESS_LABEL[p.access] || p.access}</td>
+              <td className="small">{p.projects.map((x) => x.name + (x.share != null ? ` ${x.share}%` : "")).join(", ") || "–"}</td><td className="small">{p.reports_to || "–"}</td><td className="small">{p.active ? p.status : <span className="badge red">off</span>}</td>
+              <td className="small">{p.email || <span className="badge amber">no email</span>}{p.issues.length ? <div className="tiny" style={{ color: "#854F0B" }}>{p.issues.join("; ")}</div> : null}</td></tr>)}</tbody></table></div>}
+          {tab === "warnings" && <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Emp ID</th><th>Project</th><th>Reports to</th><th>Problem</th></tr></thead>
+            <tbody>{preview.warnings.map((w, i) => <tr key={i}><td><b>{w.name}</b></td><td className="mono small">{w.emp_id || "–"}</td><td className="small">{w.project}</td><td className="small">{w.reports_to}</td><td className="small">{w.issues.join("; ")}</td></tr>)}
+              {!preview.warnings.length && <tr><td colSpan={5} className="muted">No email problems.</td></tr>}</tbody></table><div className="tiny muted mt8">These people are still loaded with their team and manager; they can sign in once the email is fixed in Shastra (and the roster reloaded), set on the Team screen, or a non-Purview address is allowed below.</div></div>}
+          {tab === "projects" && <table className="t"><thead><tr><th>Roster project</th><th>Brahmastra client</th></tr></thead>
+            <tbody>{preview.projects.map((p) => <tr key={p.name}><td><b>{p.name}</b></td><td>{p.client ? <>{p.client} {p.state === "auto" && <span className="tiny muted">(same name, matched automatically)</span>}</> : <span className="badge amber">a team lead will be asked to match it</span>}</td></tr>)}</tbody></table>}
+          {tab === "excluded" && <table className="t"><thead><tr><th>Name</th><th>Position</th><th>Department</th><th>Why no access</th></tr></thead>
+            <tbody>{preview.excluded.map((x, i) => <tr key={i}><td><b>{x.name}</b></td><td className="small">{x.position}</td><td className="small">{x.department}</td><td className="small">{x.reason}{x.existing ? <span className="badge red" style={{ marginLeft: 6 }}>will be switched off</span> : null}</td></tr>)}</tbody></table>}
+          {tab === "leaving" && <div>{preview.leaving.length ? <ul>{preview.leaving.map((x, i) => <li key={i}>{x.name} <span className="muted mono small">{x.emp_id}</span></li>)}</ul> : <div className="muted small">Nobody: everyone loaded before is still in this file.</div>}<div className="tiny muted">People loaded from an earlier roster who are missing from this file are switched off; their open claims go back to the pool.</div></div>}
+        </div>
+      )}
+      <div className="grid g2">
+        <div className="card stack">
+          <h3>Projects and clients</h3>
+          <div className="small muted">Each roster project is one Brahmastra client. Change a match here; team leads are asked about any project that is not matched.</div>
+          {meta.data && <table className="t"><thead><tr><th>Roster project</th><th>Client</th></tr></thead>
+            <tbody>{meta.data.projects.map((p) => <tr key={p.name}><td><b>{p.name}</b></td><td><select className="select sm" value={p.client_id || ""} disabled={!!busy} onChange={(e) => e.target.value && remap(p.name, e.target.value)}>
+              <option value="">Not matched yet</option>{projOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="__new">+ Create a client called "{p.name}"</option></select></td></tr>)}
+              {!meta.data.projects.length && <tr><td colSpan={2} className="muted">Load the roster first.</td></tr>}</tbody></table>}
+        </div>
+        <div className="card stack">
+          <h3>Extra sign-in emails</h3>
+          <div className="small muted">People from the roster sign in with a Purview address. List any other address (for example a Gmail) that may sign in, one per line.</div>
+          <textarea className="textarea" style={{ minHeight: 140 }} value={emails || ""} onChange={(e) => setEmails(e.target.value)} placeholder="name@gmail.com" />
+          <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn primary" disabled={!!busy || emails == null} onClick={saveEmails}>Save emails</button></div>
+          {meta.data && meta.data.admins.length > 0 && <div className="tiny muted">Admins: {meta.data.admins.join(", ")} (set in the Worker settings, ADMIN_EMAILS).</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
 /* ---------- locations: which billers work which client and location ---------- */
 function LocationsView({ ctx, reload, go }) {
   const people = [...ctx.users].filter((u) => u.active).sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name) : a.role === "user" ? -1 : 1));
@@ -1571,6 +1751,7 @@ function LocationsView({ ctx, reload, go }) {
     catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
+  const [todayFor, setTodayFor] = useState(null);
   const allocateNow = async (r) => {
     setBusy(r.key);
     try {
@@ -1593,11 +1774,12 @@ function LocationsView({ ctx, reload, go }) {
                 <td>{r.loc ? <b>{r.loc.name}</b> : <span className="tiny muted">client level · used when a location has no billers of its own</span>}</td>
                 <td><div className="pill-list">{people.map((u) => <button key={u.id} className={"chip " + (g.team.includes(u.id) ? "on" : "")} onClick={() => toggle(r, u.id)} title={u.role === "supervisor" ? "team lead" : "biller"}>{u.name}{u.role === "supervisor" ? " (TL)" : ""}</button>)}{!people.length && <span className="muted small">No active people yet.</span>}</div></td>
                 <td><label className="check small"><input type="checkbox" checked={g.auto} onChange={(e) => setAuto(r, e.target.checked)} /> yes</label></td>
-                <td className="r" style={{ whiteSpace: "nowrap" }}>{dirty(r) && <button className="btn sm primary" disabled={busy === r.key} onClick={() => save(r)}>Save</button>} <button className="btn sm" disabled={busy === r.key || !g.team.length || dirty(r)} title={dirty(r) ? "Save first" : "Hand every open claim here to these billers now"} onClick={() => allocateNow(r)}>Allocate open claims now</button></td>
+                <td className="r" style={{ whiteSpace: "nowrap" }}>{dirty(r) && <button className="btn sm primary" disabled={busy === r.key} onClick={() => save(r)}>Save</button>} {!r.loc && g.team.length > 0 && <button className="btn sm" disabled={dirty(r)} title="Who works this project today, and how many claims each" onClick={() => setTodayFor(r.client.id)}>Today's team</button>} <button className="btn sm" disabled={busy === r.key || !g.team.length || dirty(r)} title={dirty(r) ? "Save first" : "Hand every open claim here to these billers now"} onClick={() => allocateNow(r)}>Allocate open claims now</button></td>
               </tr>); })}</tbody></table></div>
         </div>
       )}
-      <div className="small muted">Tip: a location without billers falls back to the client-level billers. Claims already on someone's desk are never moved by automatic allocation.</div>
+      <div className="small muted">Tip: a location without billers falls back to the client-level billers. Claims already on someone's desk are never moved by automatic allocation. Billers from the roster are added to their projects automatically; Today's team sets who works a project today.</div>
+      {todayFor && <TodayTeamModal clientId={todayFor} onClose={() => setTodayFor(null)} onSaved={() => setTodayFor(null)} />}
     </div>
   );
 }
@@ -2356,6 +2538,17 @@ function AllocateView({ ctx, params, go }) {
     setLoading(false);
   };
   useEffect(() => { setPool(null); setPlan(null); setApplied(null); if (clientId) loadPool(); }, [clientId, locId]);
+  // Ticks and numbers start from today's team for the project, when it has one.
+  useEffect(() => {
+    if (!clientId) return;
+    let alive = true;
+    rpc("team.today", { client_id: clientId, day: todayISO() }).then((dt) => {
+      if (!alive || !dt.members.length) return;
+      const t = {}; ctx.users.filter((u) => u.active).forEach((u) => { const m = dt.members.find((x) => x.id === u.id); t[u.id] = m ? { on: m.on, capacity: m.cap } : { on: false, capacity: u.capacity || 35 }; });
+      setTeam(t);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [clientId, ctx.users]);
   const payersAll = useMemo(() => { if (!pool) return []; const m = {}; pool.forEach((c) => { const k = c.payer || "Unknown"; m[k] = m[k] || { payer: k, n: 0, amt: 0 }; m[k].n++; m[k].amt += c.balance; }); return Object.values(m).sort((a, b) => b.amt - a.amt); }, [pool]);
   const filtered = useMemo(() => {
     if (!pool) return [];
@@ -2442,8 +2635,11 @@ function AllocateView({ ctx, params, go }) {
 }
 
 /* ---------- team ---------- */
+const projectsText = (list) => (list || []).map((p) => p.name + (p.share != null ? " " + p.share + "%" : "")).join("; ");
+const parseProjectsText = (t) => String(t || "").split(/[;,]/).map((x) => x.trim()).filter(Boolean).map((x) => { const m = x.match(/^(.*?)\s*([\d.]+)\s*%$/); return m ? { name: m[1].trim(), share: Number(m[2]) } : { name: x, share: null }; });
 function TeamView({ ctx, reload, me }) {
   const [edit, setEdit] = useState(null);
+  const [find, setFind] = useState("");
   const [tempPw, setTempPw] = useState(null);
   const [busy, setBusy] = useState(false);
   const [resetFor, setResetFor] = useState(null);
@@ -2460,7 +2656,9 @@ function TeamView({ ctx, reload, me }) {
   const save = async () => {
     setBusy(true);
     try {
-      const payload = { ...edit };
+      const { projects_text, email_missing, ...payload } = edit;
+      payload.projects = parseProjectsText(projects_text);
+      if (edit.id && (!(me.is_admin || email_missing) || !String(edit.email || "").trim())) delete payload.email;
       if (!edit.id && edit.tempPw) { const pw = randomPassword(); payload.passHash = await sha256Hex(pw); const r = await rpc("users.save", payload); setTempPw({ user: r.user, pw }); }
       else if (!edit.id) { await rpc("users.save", payload); toast("Account created. They sign in with a code sent to their email."); }
       else { await rpc("users.save", payload); toast("Saved."); }
@@ -2488,7 +2686,7 @@ function TeamView({ ctx, reload, me }) {
   return (
     <div className="stack">
       <div className="row between"><div><h1>Team</h1><div className="sub">Team leads upload and allocate; billers work their day list one claim at a time.</div></div>
-        <button className="btn primary" onClick={() => setEdit({ first_name: "", last_name: "", email: "", designation: "SME", role: "user", capacity: 35, active: true, tempPw: false })}>Add team member</button></div>
+        <div className="row"><input className="input sm" style={{ width: 220 }} placeholder="find a person, project, manager…" value={find} onChange={(e) => setFind(e.target.value)} /><button className="btn primary" onClick={() => setEdit({ first_name: "", last_name: "", email: "", designation: "SME", role: "user", capacity: 35, active: true, tempPw: false, projects_text: "", reports_to: "" })}>Add team member</button></div></div>
       <div className={"card tight row between " + (info.data && !info.data.email ? "" : "")} style={info.data && !info.data.email ? { borderLeft: "4px solid var(--amber)" } : { borderLeft: "4px solid var(--green)" }}>
         <div className="small">
           <b>Sign-in emails:</b> {!info.data ? "checking…" : info.data.email ? <>sent through <b>{PROVIDER_LABEL[info.data.email_provider] || info.data.email_provider}</b>{info.data.email_sender ? <> from <span className="mono">{info.data.email_sender}</span></> : info.data.email_from ? <> as <span className="mono">{info.data.email_from}</span></> : null}.</> : DEMO ? <>demo mode sends nothing; codes are shown on screen.</> : <>not set up on the Worker yet (EMAIL_PROVIDER). Billers cannot receive codes until it is; hand out codes from this list meanwhile. Setup steps are in the README.</>}
@@ -2496,9 +2694,9 @@ function TeamView({ ctx, reload, me }) {
         {info.data && (info.data.email || DEMO) && <div className="row"><input className="input sm" style={{ width: 240 }} type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} /><button className="btn sm" disabled={testing || !mailOk(testTo)} onClick={sendTest}>{testing ? "Sending…" : "Send a test email"}</button></div>}
       </div>
       <div className="card">
-        <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Designation</th><th>Email</th><th>Role</th><th className="r">Claims / day</th><th>Status</th><th>Last sign in</th><th></th></tr></thead>
-          <tbody>{ctx.users.map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}</td><td className="small">{u.designation || "–"}</td><td className="small">{u.email}</td><td>{u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}{u.has_password ? null : <div className="tiny muted">code sign-in only</div>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>
-            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}{u.id !== me.id && <> <button className="btn sm link" style={{ color: "#A32D2D" }} onClick={() => setDelFor(u)}>Delete</button></>}</td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Designation</th><th>Email</th><th>Role</th><th>Projects</th><th>Reports to</th><th className="r">Claims / day</th><th>Status</th><th>Last sign in</th><th></th></tr></thead>
+          <tbody>{ctx.users.filter((u) => { const q = find.trim().toLowerCase(); return !q || [u.name, u.email, u.emp_id, u.designation, u.department, u.reports_to_name, projectsText(u.projects)].join(" ").toLowerCase().includes(q); }).map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}{u.emp_id ? <div className="tiny muted mono">{u.emp_id}{u.source === "roster" ? " · roster" : ""}</div> : null}</td><td className="small">{u.designation || "–"}{u.department ? <div className="tiny muted">{u.department}</div> : null}</td><td className="small">{u.email_missing ? <span className="badge amber">no email</span> : u.email}</td><td>{u.is_admin ? <span className="badge purple">Admin</span> : u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}{u.access_all ? <div className="tiny muted">every project</div> : null}</td><td className="small">{projectsText(u.projects) || "–"}</td><td className="small">{u.reports_to_name || "–"}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}{u.roster_status && u.roster_status !== "Working" ? <div><span className={"badge " + (STATUS_TONE[u.roster_status.toLowerCase()] || "gray")}>{u.roster_status}</span></div> : null}{u.has_password ? null : <div className="tiny muted">code sign-in only</div>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>
+            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email_missing ? "" : u.email, email_missing: u.email_missing, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active, projects_text: projectsText(u.projects), reports_to: u.reports_to || "", is_admin: u.is_admin })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}{u.id !== me.id && <> <button className="btn sm link" style={{ color: "#A32D2D" }} onClick={() => setDelFor(u)}>Delete</button></>}</td></tr>)}</tbody></table></div>
       </div>
       <div className="card">
         <div className="row between"><div><h3>Productivity</h3><div className="sub">Claims worked per person per day (one note per claim worked)</div></div>
@@ -2510,18 +2708,21 @@ function TeamView({ ctx, reload, me }) {
       </div>
       {delFor && <Confirm title={"Delete " + delFor.name + "?"} text="Their sign-in is removed and they are signed out. Claims on their desk go back to the pool. Notes they wrote stay in the claim history." confirmLabel="Delete" danger busy={busy} onYes={doDelete} onNo={() => setDelFor(null)} />}
       {edit && (
-        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || !String(edit.last_name || "").trim() || (!edit.id && !mailOk(edit.email))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
+        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || (!edit.id && !String(edit.last_name || "").trim()) || ((!edit.id || edit.email) && !mailOk(edit.email))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
           <div className="stack">
             <div className="grid g2">
               <Field label="First name"><input className="input" value={edit.first_name} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} autoFocus /></Field>
               <Field label="Last name"><input className="input" value={edit.last_name} onChange={(e) => setEdit({ ...edit, last_name: e.target.value })} /></Field>
             </div>
-            <Field label="Email" hint={"Allowed: " + domainHint()}><input className="input" type="email" value={edit.email} disabled={!!edit.id} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
+            <Field label="Email" hint={edit.email_missing ? "The roster had no usable email for this person: add it here so they can sign in." : "Allowed: " + domainHint()}><input className="input" type="email" value={edit.email} disabled={!!edit.id && !me.is_admin && !edit.email_missing} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
             {!edit.id && edit.email && mailOk(edit.email) && !domainOk(edit.email) && <div className="alert warn">That email's domain is not allowed (allowed: {domainHint()}).</div>}
             <div className="grid g2">
               <Field label="Designation"><select className="select" value={edit.designation} onChange={(e) => setEdit({ ...edit, designation: e.target.value })}><option value="">Pick…</option>{DESIGNATIONS.map((d) => <option key={d} value={d}>{d}</option>)}</select></Field>
               <Field label="Role in Brahmastra"><select className="select" value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })}><option value="user">Biller (works claims)</option><option value="supervisor">Team lead (allocates)</option></select></Field>
             </div>
+            <Field label="Projects" hint={"Separate with ; and add a share if any, e.g. VEC; NAEC 33%. Billers get these projects' claims; team leads see these projects."}><input className="input" value={edit.projects_text || ""} onChange={(e) => setEdit({ ...edit, projects_text: e.target.value })} /></Field>
+            <Field label="Reports to"><select className="select" value={edit.reports_to || ""} onChange={(e) => setEdit({ ...edit, reports_to: e.target.value })}><option value="">Nobody here</option>{ctx.users.filter((u) => u.id !== edit.id && u.role === "supervisor").map((u) => <option key={u.id} value={u.id}>{u.name}{u.designation ? ` (${u.designation})` : ""}</option>)}</select></Field>
+            {edit.id && <div className="tiny muted">People from the roster: changes here last until the next roster load, which shows any difference before applying.</div>}
             <Field label="Claims per day" hint="Default capacity for allocation"><input className="input" type="number" min={1} max={500} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></Field>
             {edit.id && <label className="check"><input type="checkbox" checked={!!edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active (inactive people cannot sign in or receive claims)</label>}
             {!edit.id && <label className="check"><input type="checkbox" checked={!!edit.tempPw} onChange={(e) => setEdit({ ...edit, tempPw: e.target.checked })} /> Also give them a temporary password (shown once)</label>}
@@ -2822,13 +3023,29 @@ function App() {
     } catch (e) { toast(e.message, "err"); }
   }, [me && me.id, me && me.must_change, me && me.role]);
   useEffect(() => { reload(); }, [reload]);
+  /* After sign-in, a team lead first matches any roster project that is not yet a client, then (TLs and SMEs) sets who works each project today. */
+  const [mapAsk, setMapAsk] = useState(null);
+  const [teamAsk, setTeamAsk] = useState([]);
+  const askedKey = "brahmastra.dayteam." + todayISO();
+  const checkPending = useCallback(async () => {
+    if (!me || me.role !== "supervisor") return;
+    try {
+      const um = await rpc("projects.unmapped");
+      if (um.names.length) { setMapAsk(um); return; }
+      let later = false; try { later = sessionStorage.getItem(askedKey) === "later"; } catch (e) {}
+      if (later) return;
+      const tp = await rpc("team.pending", { day: todayISO() });
+      setTeamAsk(tp.clients || []);
+    } catch (e) {}
+  }, [me && me.id, me && me.role]);
+  useEffect(() => { if (ctx.loaded) checkPending(); }, [ctx.loaded, checkPending]);
   const signOut = async () => { try { await rpc("auth.logout"); } catch (e) {} setToken(null); setMe(null); setCtx({ clients: [], codes: [], users: [], loaded: false }); };
   if (me === undefined) return <div className="login"><Spinner label="Starting…" /></div>;
   if (!me) return <><LoginScreen onSignedIn={(u) => { setMe(u); go(u.role === "supervisor" ? "dashboard" : "queue"); }} /><Toaster /></>;
   if (me.must_change) return (
     <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
-  const allowed = (me.role === "supervisor" ? SUPERVISOR_NAV : USER_NAV).map((x) => x[0]);
+  const allowed = navFor(me).map((x) => x[0]);
   const view = allowed.includes(nav.view) ? nav.view : (me.role === "supervisor" ? "dashboard" : "queue");
   const props = { ctx, me, reload, go, params: nav.params };
   const body = !ctx.loaded ? <Spinner label="Loading…" />
@@ -2842,12 +3059,16 @@ function App() {
     : view === "saag" ? <SaagView {...props} />
     : view === "reports" ? <ReportsView {...props} />
     : view === "history" ? <HistoryView {...props} />
+    : view === "roster" ? <RosterView {...props} />
     : <QueueView {...props} />;
   return (
     <>
       <Shell me={me} view={view} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)} onDeleteAccount={() => setDelOpen(true)}>
         <React.Fragment key={view + JSON.stringify(nav.params || {})}>{body}</React.Fragment>
       </Shell>
+      {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
+      {!mapAsk && teamAsk.length > 0 && <TodayTeamModal key={teamAsk[0].id} clientId={teamAsk[0].id} left={teamAsk.length - 1}
+        onClose={() => { try { sessionStorage.setItem(askedKey, "later"); } catch (e) {} setTeamAsk([]); }} onSaved={() => setTeamAsk((q) => q.slice(1))} />}
       {delOpen && <DeleteMyAccount me={me} onClose={() => setDelOpen(false)} onDeleted={() => { setDelOpen(false); signOut(); }} />}
       {pwOpen && <Modal title={me.has_password ? "Change password" : "Set a password"} onClose={() => setPwOpen(false)} narrow><ChangePasswordForm me={me} onDone={() => { setPwOpen(false); setMe({ ...me, has_password: true }); }} onCancel={() => setPwOpen(false)} /></Modal>}
       <Toaster />

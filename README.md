@@ -110,6 +110,30 @@ sign-in), then **Clients** and **Inventory**.
   Reports, and a day list of their own.
 - **Biller**: My day (the allocations, one claim at a time) and My work (their
   history).
+- **Admin** (`ADMIN_EMAILS` in `wrangler.toml`, signs in with an email code):
+  everything a team lead has, plus the **Roster** screen.
+
+### Roster (Purview Shastra)
+
+The admin loads the Shastra export (CSV or Excel) on the Roster screen, checks
+the preview and applies it. People are matched by Emp ID (then email, then
+name) and their department, projects, manager and status are kept.
+
+- Agents become billers; SMEs, Team Leads and Sr Team Leads become team leads
+  for their own projects; Assistant Managers, Managers and Sr Managers become
+  team leads for their projects and every project of the people below them;
+  the Vice President sees every project. CEO, Director, HR, IT, Administration,
+  QA, MIS and Tech Support get no access.
+- Each roster project is matched to a client (same name or code automatically;
+  otherwise a team lead is asked once). Active AR agents on a project become
+  that client's billers.
+- After sign-in, a TL or SME is asked who works each of their projects today and
+  how many claims each person should get. Automatic allocation and the Allocate
+  screen use those ticks and numbers.
+- Roster people sign in only with a Purview email, or an address the admin
+  lists under Extra sign-in emails. Once a roster is loaded, self sign-up is
+  closed. People missing from a later roster, or past their exit date, are
+  switched off and their open claims go back to the pool.
 
 ### Accounts and sign-in
 
