@@ -2091,7 +2091,7 @@ function ClaimFacts({ c }) {
   );
 }
 /* The work entry: SAAG selection + the standard note. Used on the desk and to edit a note within 24 hours. */
-function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact }) {
+function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact, attachments }) {
   const today = todayISO();
   const init = initial || {};
   const [saag, setSaag] = useState(() => ({ status: "", sub_status: "", action: "", effective: "", bucket: "", ...(init.saag || {}) }));
@@ -2145,6 +2145,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
           <div className="pill-list mt8">{PRECHECKS.map((p) => <button key={p} type="button" className={"chip " + (note.precheck.includes(p) ? "on" : "")} onClick={() => togglePre(p)}>{p}</button>)}</div>
           <input className="input sm mt8" placeholder="anything else you verified" value={note.precheck_text} onChange={(e) => { const v = e.target.value; setNote((n) => ({ ...n, precheck_text: v })); }} /></div>
         <Field label="RCA / findings" style={{ marginTop: 8 }}><textarea className="textarea" value={note.findings} onChange={(e) => { const v = e.target.value; setNote((n) => ({ ...n, findings: v })); }} placeholder="What the payer or portal said, the root cause, and what happens next." /></Field>
+        {attachments && <div className="mt8">{attachments}</div>}
       </div>
       {!closed && <Field label="Follow-up date" hint={autoFollow ? `Auto ${fmtDate(autoFollow)} from the effective matrix${EFFECTIVE_DAYS[saag.effective] ? ` (${EFFECTIVE_DAYS[saag.effective]} days)` : ""}. Change it if the payer gave a date.` : "set once you pick the action"}><input className="input" type="date" value={fu} min={today} onChange={(e) => setFollowUp(e.target.value)} /></Field>}
       {closed && saag.status && <div className="alert info">This entry closes the claim: it leaves the desk and the follow-up list.</div>}
@@ -2204,7 +2205,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 function base64Blob(data, type) { const bin = atob(data); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Blob([bytes], { type: type || "application/octet-stream" }); }
-function Attachments({ claimId, files, onChanged }) {
+function Attachments({ claimId, files, onChanged, plain }) {
   const input = useRef(null);
   const [busy, setBusy] = useState(null);
   const [del, setDel] = useState(null);
@@ -2244,7 +2245,7 @@ function Attachments({ claimId, files, onChanged }) {
   };
   const viewable = (a) => /^(image\/|application\/pdf|text\/plain)/.test(a.type || "");
   return (
-    <div className="card tight" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (!busy) attach(e.dataTransfer.files); }}>
+    <div className={plain ? "" : "card tight"} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (!busy) attach(e.dataTransfer.files); }}>
       <div className="row between">
         <div className="b small">Attachments ({list.length}) <span className="tiny muted" style={{ fontWeight: 400 }}>· EOBs, letters, screenshots; up to {fmtBytes(ATTACH_MAX)} each</span></div>
         <button className="btn sm" disabled={!!busy} onClick={() => input.current && input.current.click()}>📎 Attach file</button>
@@ -2748,12 +2749,11 @@ function WorkPanel({ bundle, ctx, me, onDone, onPatient }) {
         <Suggestions claim={c} subStatus={sub || c.last_sub_status} />
         <ClaimFacts c={c} />
         <Siblings rows={bundle.siblings} users={ctx.users} selectable selected={sibs} onToggle={(id) => setSibs((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; })} meId={me.id} />
-        <Attachments claimId={c.id} files={bundle.attachments} onChanged={() => onDone(null)} />
         <NotesList notes={bundle.notes} me={me} claim={c} onChanged={() => onDone(null)} />
       </div>
       <div className="card stack" style={{ alignSelf: "start" }}>
         <h2>Work this claim</h2>
-        <WorkForm claim={c} onChange={(s) => setSub(s.saag.sub_status)} buttons={[{ key: "stay", label: "Save" }, { key: "next", label: "Save & next claim", primary: true }]} onSave={save} />
+        <WorkForm claim={c} attachments={<Attachments plain claimId={c.id} files={bundle.attachments} onChanged={() => onDone(null)} />} onChange={(s) => setSub(s.saag.sub_status)} buttons={[{ key: "stay", label: "Save" }, { key: "next", label: "Save & next claim", primary: true }]} onSave={save} />
         {sibs.size > 0 && <div className="alert info">The same entry will also be saved on {sibs.size} other claim{sibs.size > 1 ? "s" : ""} of this patient.</div>}
         <div className="row"><button className="btn sm" onClick={() => setSkipAsk(true)} disabled={busy}>Skip for now</button></div>
       </div>
