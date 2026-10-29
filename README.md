@@ -235,6 +235,24 @@ Settings → Variables and secrets):
 
 Save, and deploy if the editor asks.
 
+## Drishti and Sasha's Third Eye inside My day & reports
+
+Team leads and above open both apps from **My day & reports** (Team quality & production, and Client SLA & KPI).
+They run from their own addresses (`THIRD_EYE_URL`, `DRISHTI_URL` in the config block of `index.html`), so their
+formulas, Google Sheet and OneDrive files are unchanged. Report files come only from the Purviewautomate OneDrive,
+as both apps already enforce. Third Eye has no sign-in.
+
+**Drishti opens signed in** as the Brahmastra user once one Worker secret is set:
+
+| Name | Type | Value |
+|---|---|---|
+| `DRISHTI_TOKEN_SECRET` | **secret** | the value of `TOKEN_SECRET` in Drishti's Apps Script → Project Settings → Script properties |
+| `DRISHTI_API` | text (optional) | Drishti's Apps Script web app URL, only if it changes |
+
+Brahmastra then signs people in to Drishti with Drishti's own 12-hour session token. Someone who has no Drishti
+account yet gets one, created from their Brahmastra profile under the manager they report to (that manager must
+be on Drishti's People tab). Brahmastra's admin opens Drishti as its Admin. Never put the secret in the repository.
+
 **E. Test.** Sign in as a team lead → Team → **Send a test email**. When it
 arrives, sign out and try **Sign in with a code**.
 

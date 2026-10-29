@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.22.0";
+const VERSION = "2.23.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -327,6 +327,17 @@ async function openSession(env, u, via) {
 }
 const fullName = (first, last, fallback) => [first, last].map((s) => String(s || "").trim()).filter(Boolean).join(" ") || fallback || "";
 const parseTeam = (s) => { try { const a = JSON.parse(s || "[]"); return Array.isArray(a) ? a.map((x) => String(x)).slice(0, 100) : []; } catch { return []; } };
+
+/* ---- Drishti session tokens: the same format and signature as makeToken() in Drishti's Code.gs ----
+   base64url(id|role|expiry) + "." + base64url(HMAC-SHA256(payload, TOKEN_SECRET)), padding kept, valid 12 hours. */
+const DRISHTI_API_DEFAULT = "https://script.google.com/macros/s/AKfycbyS6jIwVM0gIhMHS9woiCdDqBQUQWsujZaM2X1h9d1KZIvfMwIwBqhXMNhJEpvhMAgu/exec";
+const b64webSafe = (bytes) => { let s = ""; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_"); };
+async function drishtiToken(env, id, role) {
+  const payload = id + "|" + role + "|" + (Date.now() + 12 * 3600000);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.DRISHTI_TOKEN_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
+  return b64webSafe(new TextEncoder().encode(payload)) + "." + b64webSafe(sig);
+}
 
 /* ---- the SAAG entry and the standard note ----
    A worked claim carries a SAAG selection (Status > Sub-status > Action, with
@@ -1998,6 +2009,48 @@ const OPS = {
         : [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "", [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
     });
     return { scope, header, rows };
+  },
+  /* Drishti without a second sign-in: Brahmastra mints Drishti's own session token for the signed-in team lead, so the
+     Drishti page inside My day & reports opens already signed in. Needs the Worker secret DRISHTI_TOKEN_SECRET (the same
+     value as TOKEN_SECRET in Drishti's Apps Script settings); Drishti's backend and its Google Sheet are not changed. */
+  "reports.drishtiSession": async ({ env, user }) => {
+    if (!env.DRISHTI_TOKEN_SECRET) throw new ApiError(503, "Drishti single sign-in is not switched on yet. Until it is, sign in on the Drishti page itself.");
+    const api = env.DRISHTI_API || DRISHTI_API_DEFAULT;
+    const call = async (body) => {
+      let r; try { r = await fetch(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
+      catch (e) { throw new ApiError(502, "Drishti's server did not answer. Try again in a minute."); }
+      let j = null; try { j = await r.json(); } catch (e) {}
+      if (!j) throw new ApiError(502, "Drishti's server sent an answer Brahmastra could not read.");
+      if (!j.ok) throw new ApiError(j.code === "auth" ? 503 : 400, j.code === "auth" ? "Drishti did not accept Brahmastra's sign-in. The DRISHTI_TOKEN_SECRET does not match Drishti's TOKEN_SECRET." : "Drishti: " + (j.error || "it refused."));
+      return j;
+    };
+    const admin = await drishtiToken(env, "admin", "admin");
+    const email = String(user.email || "").toLowerCase();
+    const adminEmail = String(((await call({ a: "me", t: admin })).user || {}).email || "").toLowerCase();
+    // Brahmastra's admin and Drishti's own Admin open Drishti as its Admin.
+    if (user.is_admin || (email && email === adminEmail)) return { token: admin, name: "Admin", role: "admin", created: false };
+    const find = async () => ((await call({ a: "users.list", t: admin })).users || []).find((u) => String(u.email || "").toLowerCase() === email);
+    let du = await find(), created = false;
+    if (!du) {
+      // First time: create their Drishti account (as Drishti's own sign-up would), under the manager they report to in Brahmastra.
+      const mgrs = (await call({ a: "managers.list", t: admin })).managers || [];
+      const asManager = mgrs.find((m) => String(m.email || "").toLowerCase() === email);
+      let managerId = "";
+      if (!asManager) {
+        let cur = await one(env, "SELECT reports_to FROM users WHERE id = ?", user.id);
+        for (let i = 0; i < 6 && cur && cur.reports_to && !managerId; i++) {
+          const up = await one(env, "SELECT id, email, reports_to FROM users WHERE id = ?", cur.reports_to);
+          const m = up && mgrs.find((x) => String(x.email || "").toLowerCase() === String(up.email || "").toLowerCase());
+          if (m) managerId = m.id; cur = up;
+        }
+        if (!managerId) throw bad("Nobody you report to in Brahmastra is a manager in Drishti yet, so Drishti cannot place you. Ask Drishti's Admin to add your manager on Drishti's People tab.");
+      }
+      const role = asManager ? "manager" : /\bsme\b/i.test(user.designation || "") ? "sme" : /team lead|\btl\b/i.test(user.designation || "") ? "tl" : "supervisor";
+      await call({ a: "signup", email, name: user.name || email, role, managerId, password: randomHex(24) });
+      du = await find(); created = true;
+      if (!du) throw new ApiError(502, "Drishti created the account but did not list it. Try again.");
+    }
+    return { token: await drishtiToken(env, du.id, du.role), name: du.name, role: du.role, created };
   },
   /* The AR inventory as it stands now (open, on desks and worked claims), in the columns Drishti's AR Inventory report reads. */
   "reports.arInventory": async ({ env, user, payload }) => {
