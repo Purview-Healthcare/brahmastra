@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.21.0";
+const VERSION = "2.22.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1957,6 +1957,62 @@ const OPS = {
         c.balance, c.billed, c.age_days, c.bucket, c.tier, c.status_class, c.state, c.inventory_kind, c.worked_before, c.file_status, c.file_sub_status, cl.name AS client_name, l.name AS location_name
       FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")} ORDER BY nt.created_at DESC LIMIT 5000`, ...params);
     return { rows };
+  },
+  /* ---- data for the reporting apps inside My day & reports (team leads and above) ----
+     Production: one row per entry in the Production Conso layout (AR), or one row per completed posting / submission
+     hand-off (Payment Posting, Submission), so Third Eye reads Brahmastra's work without anyone exporting a conso. */
+  "reports.production": async ({ env, user, payload }) => {
+    const scope = ["pp", "sub"].includes(payload.scope) ? payload.scope : "ar";
+    const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
+    const people = await all(env, "SELECT id, name, emp_id, city, reports_to FROM users");
+    const byId = new Map(people.map((p) => [p.id, p]));
+    const person = (id, name) => { const p = byId.get(id) || { name: name || "" }; return { ...p, name: p.name || name || "", reports_to_name: (byId.get(p.reports_to) || {}).name || "" }; };
+    const where = [], args = [];
+    if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
+    if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
+    const extra = where.length ? " AND " + where.join(" AND ") : "";
+    if (scope === "ar") {
+      const notes = await all(env, `SELECT nt.user_id, nt.user_name, nt.created_at, nt.comment, nt.status, nt.sub_status, nt.action, nt.bucket AS work_bucket, nt.fields_json,
+          c.*, cl.name AS client_name, l.name AS location_name FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
+        WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY nt.created_at LIMIT 60000`, from, to, ...args, ...scopeArgs(user));
+      const iDos = WORKBOOK_HEADER.indexOf("DOS"), iWorked = WORKBOOK_HEADER.indexOf("Date Worked");
+      const rows = notes.map((n, i) => {
+        const row = productionRow({ ...n, last_note: n.comment, last_status_code: n.status, last_sub_status: n.sub_status, last_action_code: n.action, last_bucket: n.work_bucket },
+          person(n.user_id, n.user_name), { ended_at: n.created_at, fields: noteFields(n) });
+        row[0] = i + 1; row[iDos] = n.dos || ""; row[iWorked] = istISO(n.created_at);
+        return row;
+      });
+      return { scope, header: WORKBOOK_HEADER, rows };
+    }
+    const dept = scope === "pp" ? "posting" : "submission";
+    const hs = await all(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.billed, c.balance, cl.name AS client_name, l.name AS location_name
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
+      WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY h.done_at LIMIT 60000`, dept, from, to, ...args, ...scopeArgs(user));
+    const header = scope === "pp"
+      ? ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "DOS", "Billed Amount", "Check Number", "Posted", "Comment"]
+      : ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "Service Date", "Billed Amount", "Status", "Submission Type", "Comment"];
+    const rows = hs.map((h) => {
+      const p = person(h.done_by, h.done_by_name), proof = jsonObj(h.proof_json);
+      return scope === "pp"
+        ? [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, proof.ref || "", proof.amount == null ? "" : proof.amount, h.note || ""]
+        : [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "", [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
+    });
+    return { scope, header, rows };
+  },
+  /* The AR inventory as it stands now (open, on desks and worked claims), in the columns Drishti's AR Inventory report reads. */
+  "reports.arInventory": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (!clientId) throw bad("Pick the client.");
+    if (!inScope(user, clientId)) throw outOfScope();
+    const loc = payload.location_id ? " AND c.location_id = ?" : "", locArgs = payload.location_id ? [str(payload.location_id, 60)] : [];
+    const rows = await all(env, `SELECT c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.billed, c.balance, c.age_days, c.state, c.file_status, c.file_sub_status, c.file_action,
+        c.last_status_code, c.last_sub_status, c.last_action_code, c.last_note, c.file_comments, c.last_worked_on, l.name AS location_name
+      FROM claims c LEFT JOIN locations l ON l.id = c.location_id WHERE c.client_id = ? AND c.state IN ${WORKABLE}${loc} ORDER BY c.age_days DESC LIMIT 60000`, clientId, ...locArgs);
+    const header = ["Claim ID", "Account No", "Patient Name", "Payer", "Date of Service", "CPT", "Provider", "Location", "Charges", "Balance", "Aging Bucket", "Status", "Sub Status", "Action", "Comment", "Last Worked"];
+    const label = (age) => { const b = ageBucketLetter(age); return b ? b.replace(/^[A-G]: /, "").replace(" Days", "").replace(" plus", "+") : ""; };
+    return { header, rows: rows.map((c) => [c.claim_no || "", c.account_no || "", c.patient || "", c.payer || "", c.dos || "", c.cpt || "", c.provider || "", c.location_name || "",
+      c.billed == null ? "" : c.billed, Number(c.balance) || 0, label(c.age_days), c.last_status_code || c.file_status || "", c.last_sub_status || c.file_sub_status || "",
+      c.last_action_code || c.file_action || "", c.last_note || c.file_comments || "", c.last_worked_on || ""]) };
   },
   "supervisor.productivity": async ({ env, user, payload }) => {
     const off = Math.round(num(payload.tz_offset_min, 0)) * 60;
