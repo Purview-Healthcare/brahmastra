@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.10.0";
+const VERSION = "2.11.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -88,6 +88,12 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS claim_events (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '',
      kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', data_json TEXT NOT NULL DEFAULT '{}')`,
   `CREATE INDEX IF NOT EXISTS idx_claim_events_claim ON claim_events (claim_id, at)`,
+  `CREATE TABLE IF NOT EXISTS handoffs (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, client_id TEXT NOT NULL, dept TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+     created_at INTEGER NOT NULL, created_by TEXT, created_by_name TEXT NOT NULL DEFAULT '', saag_action TEXT NOT NULL DEFAULT '', due_at INTEGER NOT NULL,
+     lead_id TEXT, backup_id TEXT, assigned_to TEXT, assigned_at INTEGER, done_at INTEGER, done_by TEXT, done_by_name TEXT NOT NULL DEFAULT '',
+     proof_json TEXT NOT NULL DEFAULT '{}', reason TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs (status, dept, due_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_handoffs_claim ON handoffs (claim_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS availability (client_id TEXT NOT NULL, day TEXT NOT NULL, on_json TEXT NOT NULL DEFAULT '[]', by_user TEXT, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
 ];
 
@@ -99,10 +105,15 @@ const EXTRA_COLUMNS = {
   claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"],
     ["alt_key", "TEXT NOT NULL DEFAULT ''"], ["fp_key", "TEXT NOT NULL DEFAULT ''"],
     // Escalations: when the biller flagged it, and when / by whom a team lead answered.
-    ["escalated_at", "INTEGER"], ["escalated_by", "TEXT"], ["escalation_answered_at", "INTEGER"], ["escalation_answered_by", "TEXT"]],
+    ["escalated_at", "INTEGER"], ["escalated_by", "TEXT"], ["escalation_answered_at", "INTEGER"], ["escalation_answered_by", "TEXT"],
+    // with_posting | posted | with_submission | submitted | posting_assist | submission_assist
+    ["handoff_status", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
-    ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"]],
+    ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
+    // Who does payment posting / submission for this client: a person (with a backup), the client itself, or the biller.
+    ["posting_mode", "TEXT NOT NULL DEFAULT ''"], ["posting_lead", "TEXT"], ["posting_backup", "TEXT"],
+    ["submission_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_lead", "TEXT"], ["submission_backup", "TEXT"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
   users: [["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
@@ -658,6 +669,39 @@ async function unassignOpen(env, userId) {
 }
 const placeholderEmail = (row) => (row.emp_id || row.name).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "") + "@no-email.invalid";
 
+/* ---- payment posting & submission hand-offs ----
+   A biller's SAAG action sends the claim to the department that does that work for the client
+   (set on the client profile): Need to Post / Posting Correction -> Payment Posting; resubmission,
+   paper claim and correction actions -> Submission. TAT: 24 working hours, Saturday and Sunday skipped (IST). */
+const HANDOFF_TAT_HOURS = 24;
+const DEPT_LABEL = { posting: "Payment Posting", submission: "Submission" };
+const HANDOFF_ROUTES = [[/^Need to Post\/Posting Correction$/i, "posting"], [/^(Need to Resubmit|Need to Submit Paper Claim|Correction, Resubmission & Reprocessing)$/i, "submission"]];
+const handoffDeptOf = (action) => { for (const [re, d] of HANDOFF_ROUTES) if (re.test(String(action || "").trim())) return d; return ""; };
+const ASSIST_REASONS = { posting: ["No EOB / ERA", "Amount mismatch", "Patient / account not found", "Payer not set up", "Duplicate payment", "Other"],
+  submission: ["Missing claim data", "Clearinghouse rejection", "No payer ID / address", "Authorization missing", "Duplicate claim", "Other"] };
+function addWorkingHours(ms, hours) {
+  let t = ms, left = hours * 3600000;
+  for (let guard = 0; left > 0 && guard < 60; guard++) {
+    const d = new Date(t + IST_MIN * 60000), dow = d.getUTCDay();
+    const dayStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - IST_MIN * 60000;
+    if (dow === 0 || dow === 6) { t = dayStart + (dow === 6 ? 2 : 1) * 86400000; continue; }
+    const step = Math.min(left, dayStart + 86400000 - t);
+    t += step; left -= step;
+  }
+  return t;
+}
+/* Who may see and act on a claim through a hand-off: the department lead, the backup, and the person it is assigned to. */
+async function handoffRole(env, user, claimId) {
+  const rows = await all(env, "SELECT lead_id, backup_id, assigned_to FROM handoffs WHERE claim_id = ?", claimId);
+  if (rows.some((h) => h.lead_id === user.id || h.backup_id === user.id)) return "lead";
+  if (rows.some((h) => h.assigned_to === user.id)) return "member";
+  return "";
+}
+async function canSeeClaim(env, user, c) {
+  if (leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id) return true;
+  return !!(await handoffRole(env, user, c.id));
+}
+
 /* --------------------------------------------------------- the ops */
 /* ---- how a claim is recognised across uploads ----
    alt_key: the claim number with everything but letters and digits removed, lower case, no leading
@@ -970,6 +1014,22 @@ const OPS = {
     return { clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape) })) };
   },
   /* Billers mapped to a client (used when a location has no team of its own) or to a location. */
+  /* Payment posting / submission responsibility on the client profile. */
+  "clients.saveResponsibility": async ({ env, user, payload }) => {
+    const dept = payload.dept === "submission" ? "submission" : payload.dept === "posting" ? "posting" : "";
+    if (!dept) throw bad("Pick payment posting or submission.");
+    const c = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
+    if (!c) throw bad("Unknown client.");
+    if (!inScope(user, c.id)) throw outOfScope();
+    const mode = ["person", "client", "biller", ""].includes(payload.mode) ? payload.mode : "";
+    const lead = mode === "person" ? str(payload.lead, 60) || null : null, backup = mode === "person" ? str(payload.backup, 60) || null : null;
+    if (mode === "person" && !lead) throw bad("Pick the person responsible.");
+    for (const id of [lead, backup].filter(Boolean)) if (!(await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", id))) throw bad("That person is not active.");
+    await run(env, `UPDATE clients SET ${dept}_mode = ?, ${dept}_lead = ?, ${dept}_backup = ? WHERE id = ?`, mode, lead, backup, c.id);
+    // Open hand-offs follow the new lead / backup.
+    if (mode === "person") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned')", lead, backup, c.id, dept);
+    return { ok: true };
+  },
   "clients.saveTeam": async ({ env, user, payload }) => {
     const table = payload.location_id ? "locations" : "clients";
     const id = str(payload.location_id || payload.client_id, 60);
@@ -1246,6 +1306,7 @@ const OPS = {
     if (payload.worked_before === true) where.push("c.worked_before = 1");
     if (payload.worked_before === false) where.push("c.worked_before = 0");
     if (payload.escalated) where.push("c.escalated = 1");
+    if (payload.handoff_status) { where.push("c.handoff_status = ?"); params.push(str(payload.handoff_status, 30)); }
     if (payload.provider) { where.push("c.provider LIKE ?"); params.push("%" + str(payload.provider, 80).trim() + "%"); }
     if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
     if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
@@ -1269,7 +1330,7 @@ const OPS = {
     const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.balance, c.billed, c.lines, c.age_days, c.bucket, c.tier,
         c.status_class, c.file_status, c.file_sub_status, c.inventory_kind, c.worked_before, c.last_worked_on, c.follow_up_on, c.priority, c.priority_reason, c.state, c.state_reason,
         c.assigned_to, c.assigned_at, c.completed_at, c.skips, c.escalated, c.touches, c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action,
-        c.last_note, c.updated_at, u.name AS assigned_name, l.name AS location_name
+        c.last_note, c.updated_at, c.handoff_status, u.name AS assigned_name, l.name AS location_name
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id ${w} ORDER BY ${sort} ${dir}, c.balance DESC LIMIT ? OFFSET ?`, ...params, size, (page - 1) * size);
     return { rows, total: total.n, amount: total.amt, page, page_size: size };
   },
@@ -1367,7 +1428,7 @@ const OPS = {
   "claims.get": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     return claimBundle(env, user, c);
   },
   /* Everything that happened to one claim, newest first: loads and refreshes, assignments, openings, work entries
@@ -1375,7 +1436,7 @@ const OPS = {
   "claims.timeline": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT c.*, u.name AS assigned_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const [notes, files, events] = await Promise.all([
       all(env, "SELECT * FROM notes WHERE claim_id = ? ORDER BY created_at DESC LIMIT 300", c.id),
       all(env, "SELECT id, user_name, name, type, size, created_at FROM attachments WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id),
@@ -1577,9 +1638,32 @@ const OPS = {
         .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, f.action, text.slice(0, 600), user.id, today, followUp, escalate, now, escalate, now, escalate, escalate, user.id, t.id));
     }
     await batchAll(env, stmts);
+    // Payment posting / submission: send the claim to the department set on the client profile.
+    const dept = handoffDeptOf(saag.action);
+    let handoff = null;
+    if (dept) {
+      const cl = await one(env, "SELECT * FROM clients WHERE id = ?", c.client_id);
+      const mode = cl ? cl[dept + "_mode"] : "";
+      const lead = cl && mode === "person" ? cl[dept + "_lead"] : null;
+      const hs = [];
+      for (const t of targets) {
+        if (mode === "person" && lead) {
+          const open = await one(env, "SELECT id FROM handoffs WHERE claim_id = ? AND dept = ? AND status IN ('pending','assigned')", t.id, dept);
+          if (open) continue;
+          const due = addWorkingHours(now, HANDOFF_TAT_HOURS);
+          hs.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?)`)
+            .bind(uuid(), t.id, c.client_id, dept, now, user.id, user.name, saag.action, due, lead, cl[dept + "_backup"] || null));
+          hs.push(env.DB.prepare("UPDATE claims SET handoff_status = ? WHERE id = ?").bind("with_" + dept, t.id));
+          hs.push(claimEvent(env, t.id, user, "handoff_sent", DEPT_LABEL[dept], { dept, due_at: due }));
+        } else hs.push(claimEvent(env, t.id, user, "handoff_none", DEPT_LABEL[dept], { dept, mode: mode || "unset" }));
+      }
+      if (hs.length) await batchAll(env, hs, 40);
+      const leadName = lead ? (await one(env, "SELECT name FROM users WHERE id = ?", lead) || {}).name : "";
+      handoff = { dept, label: DEPT_LABEL[dept], mode: mode || "unset", to: leadName || "" };
+    }
     // Copy the entry into the client's / location's OneDrive workbook in the background (when a link is set and Microsoft 365 is configured).
     if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user, { started_at: t.started_at, ended_at: now }); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
-    return { completed: targets.length, closed, follow_up_on: followUp, state: newState, comment };
+    return { completed: targets.length, closed, follow_up_on: followUp, state: newState, comment, handoff };
   },
   /* Open a specific claim from the day list (instead of "next"). Any other claim open on the desk goes back to assigned. */
   "queue.open": async ({ env, user, payload }) => {
@@ -1614,7 +1698,7 @@ const OPS = {
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(str(payload.location_id, 60)); }
     const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.balance, c.age_days, c.bucket, c.tier, c.status_class,
         c.file_status, c.file_sub_status, c.inventory_kind, c.worked_before, c.follow_up_on, c.priority, c.priority_reason, c.state, c.assigned_at, c.started_at, c.completed_at, c.skips, c.escalated,
-        c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action, c.last_worked_on, cl.name AS client_name, l.name AS location_name
+        c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action, c.last_worked_on, c.handoff_status, cl.name AS client_name, l.name AS location_name
       FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")}
       ORDER BY CASE c.state WHEN 'in_progress' THEN 0 WHEN 'assigned' THEN 1 ELSE 2 END, CASE WHEN c.skipped_at IS NULL THEN 0 ELSE 1 END, c.priority DESC, c.balance DESC LIMIT 1000`, ...params);
     return { rows };
@@ -1662,7 +1746,7 @@ const OPS = {
   "notes.add": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
-    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     // A note in the standard format (DOS, CLM#, DENIAL, SOURCE/REF, PRE CALL CHECK, RCA/FINDINGS, ACTION) without a SAAG entry; plain text still works.
     let comment, fields = null;
     if (payload.note) {
@@ -1687,7 +1771,7 @@ const OPS = {
   "attachments.add": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
-    if (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id) throw denied("This claim is not in your queue.");
+    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const name = str(payload.name, 200).replace(/[\\/\u0000-\u001f]/g, "_").trim();
     if (!name) throw bad("The file has no name.");
     const data = String(payload.data || "");
@@ -1709,8 +1793,8 @@ const OPS = {
   "attachments.get": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
-    const c = await one(env, "SELECT client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", a.claim_id);
-    if (!c || (!leadFor(user, c.client_id) && c.assigned_to !== user.id && c.last_worked_by !== user.id)) throw denied("This claim is not in your queue.");
+    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", a.claim_id);
+    if (!c || !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", a.id);
     return { name: a.name, type: a.type, size: a.size, data: parts.map((p) => p.data).join("") };
   },
@@ -1755,6 +1839,94 @@ const OPS = {
       ? await all(env, "SELECT a.*, u.name AS by_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ?" + tail + " ORDER BY a.at DESC LIMIT 50", payload.client_id, ...range)
       : await all(env, `SELECT a.*, u.name AS by_name, c.name AS client_name FROM allocations a LEFT JOIN users u ON u.id = a.by_user LEFT JOIN clients c ON c.id = a.client_id WHERE 1 = 1${scopeSql(user, "a.client_id")}${tail} ORDER BY a.at DESC LIMIT 50`, ...scopeArgs(user), ...range);
     return { rows: rows.map((r) => { let s = {}; try { s = JSON.parse(r.summary_json); } catch {} return { ...r, summary: s, summary_json: undefined }; }) };
+  },
+
+  /* ---- payment posting & submission: the departments' queue ---- */
+  "handoffs.list": async ({ env, user, payload }) => {
+    // Who sees what: the admin and all-project leads everything; others their own hand-offs (lead, backup, assignee) and their projects'.
+    let vis = "1 = 1"; const vargs = [];
+    if (!(user.is_admin || (user.role === "supervisor" && !user.scope))) {
+      const or = ["h.lead_id = ?", "h.backup_id = ?", "h.assigned_to = ?"]; vargs.push(user.id, user.id, user.id);
+      if (user.role === "supervisor" && user.scope && user.scope.length) { or.push(`h.client_id IN (${user.scope.map(() => "?").join(",")})`); vargs.push(...user.scope); }
+      vis = "(" + or.join(" OR ") + ")";
+    }
+    const dept = ["posting", "submission"].includes(payload.dept) ? payload.dept : "";
+    const base = vis + (dept ? " AND h.dept = ?" : ""), bargs = [...vargs, ...(dept ? [dept] : [])];
+    const now = Date.now(), month = now - 30 * 86400000;
+    const view = str(payload.view, 20) || "open";
+    const vw = view === "mine" ? " AND h.status IN ('pending','assigned') AND h.assigned_to = ?" : view === "done" ? " AND h.status = 'complete' AND h.done_at > ?" : view === "assist" ? " AND h.status = 'assistance' AND h.done_at > ?" : " AND h.status IN ('pending','assigned')";
+    const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : [];
+    const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name,
+        a.name AS assigned_name, l.name AS lead_name, b.name AS backup_name
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations lo ON lo.id = c.location_id
+      LEFT JOIN users a ON a.id = h.assigned_to LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
+      WHERE ${base}${vw} ORDER BY CASE WHEN h.status IN ('pending','assigned') THEN h.due_at ELSE -h.done_at END LIMIT 500`, ...bargs, ...vwArgs);
+    const out = rows.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && now > h.due_at,
+      can_assign: user.is_admin || h.lead_id === user.id || h.backup_id === user.id, can_close: user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id }));
+    const st = await one(env, `SELECT SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_n, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue,
+        SUM(CASE WHEN h.status IN ('complete','assistance') AND h.done_at > ? THEN 1 ELSE 0 END) AS done_n, SUM(CASE WHEN h.status IN ('complete','assistance') AND h.done_at > ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
+        SUM(CASE WHEN h.status = 'assistance' AND h.done_at > ? THEN 1 ELSE 0 END) AS assist_n FROM handoffs h WHERE ${base}`, now, month, month, month, ...bargs);
+    return { rows: out, reasons: ASSIST_REASONS, tat_hours: HANDOFF_TAT_HOURS, stats: st || {} };
+  },
+  /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
+  "handoffs.count": async ({ env, user }) => {
+    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN due_at < ? THEN 1 ELSE 0 END) AS overdue FROM handoffs WHERE status IN ('pending','assigned') AND (lead_id = ? OR backup_id = ? OR assigned_to = ?)`, Date.now(), user.id, user.id, user.id);
+    const any = await one(env, "SELECT 1 AS x FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ? LIMIT 1", user.id, user.id, user.id);
+    const isLead = await one(env, "SELECT 1 AS x FROM clients WHERE posting_lead = ? OR posting_backup = ? OR submission_lead = ? OR submission_backup = ? LIMIT 1", user.id, user.id, user.id, user.id);
+    return { n: (r && r.n) || 0, overdue: (r && r.overdue) || 0, involved: !!(any || isLead) };
+  },
+  "handoffs.assign": async ({ env, user, payload }) => {
+    const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
+    if (!h || !["pending", "assigned"].includes(h.status)) throw bad("This hand-off is already closed.");
+    if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id)) throw denied("Only the department lead or backup assigns these.");
+    const to = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", payload.user_id);
+    if (!to) throw bad("Pick an active team member.");
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE handoffs SET status = 'assigned', assigned_to = ?, assigned_at = ? WHERE id = ?").bind(to.id, now, h.id),
+      claimEvent(env, h.claim_id, user, "handoff_assigned", to.name, { dept: h.dept }),
+    ]);
+    return { ok: true };
+  },
+  /* Complete (with proof) or Need assistance (with a reason): the same status then shows to the TL, the biller and the department. */
+  "handoffs.close": async ({ env, user, payload }) => {
+    const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
+    if (!h || !["pending", "assigned"].includes(h.status)) throw bad("This hand-off is already closed.");
+    if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id)) throw denied("This hand-off is not yours.");
+    const c = await one(env, "SELECT * FROM claims WHERE id = ?", h.claim_id);
+    const now = Date.now(), today = isoDate(payload.today) || isoToday();
+    const note = str(payload.note, 2000).trim();
+    const stmts = [];
+    if (payload.outcome === "complete") {
+      const p = payload.proof || {};
+      const proof = h.dept === "posting"
+        ? { date: isoDate(p.date), ref: str(p.ref, 80).trim(), amount: p.amount === "" || p.amount == null ? null : num(p.amount, 0) }
+        : { date: isoDate(p.date), ref: str(p.ref, 80).trim(), mode: str(p.mode, 40).trim() };
+      if (!proof.date || !proof.ref) throw bad(h.dept === "posting" ? "Enter the posted date and the check / EFT number." : "Enter the submitted date and the batch or claim ID.");
+      stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, JSON.stringify(proof), note, h.id));
+      if (h.dept === "posting") {
+        // Payment posted, not closed: posting QA audits it later.
+        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'posted', updated_at = ? WHERE id = ?").bind(now, c.id));
+      } else {
+        // Submitted: back to the biller to check the payer received it.
+        const fu = addDays(today, 15);
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned') THEN 'completed' ELSE state END, updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
+      }
+      stmts.push(claimEvent(env, c.id, user, "handoff_done", DEPT_LABEL[h.dept], { dept: h.dept, proof, note, within_tat: now <= h.due_at }));
+    } else if (payload.outcome === "assistance") {
+      const reason = str(payload.reason, 80).trim();
+      if (!reason) throw bad("Pick the reason.");
+      if (!commentOk(note)) throw bad("Explain what is needed, a few words at least.");
+      const text = `${DEPT_LABEL[h.dept]} needs assistance (${reason}): ${note}`;
+      stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'assistance', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, reason, note, h.id));
+      // Back on the biller's list today, and flagged in the AR team lead's Needs attention.
+      stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned') THEN 'assigned' ELSE state END, follow_up_on = ?,
+          escalated = 1, escalated_at = ?, escalated_by = ?, last_note = ?, skipped_at = NULL, updated_at = ? WHERE id = ?`).bind(h.dept + "_assist", today, now, user.id, text.slice(0, 600), now, c.id));
+      stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
+      stmts.push(claimEvent(env, c.id, user, "handoff_assist", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at }));
+    } else throw bad("Mark it complete or need assistance.");
+    await env.DB.batch(stmts);
+    return { ok: true };
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
@@ -2006,8 +2178,12 @@ async function claimBundle(env, user, c) {
   const { raw_json, lines_json, ...rest } = c;
   const now = Date.now();
   const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: n.kind === "work" && now - n.created_at <= EDIT_WINDOW_MS && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
+  const handoffs = await all(env, `SELECT h.*, l.name AS lead_name, b.name AS backup_name, a.name AS assigned_name FROM handoffs h LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
+      LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
+  const role = await handoffRole(env, user, c.id);
   const attachments = files.map((a) => ({ ...a, deletable: leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
-  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id }, notes: shaped, attachments, siblings };
+  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id }, notes: shaped, attachments, siblings,
+    handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role };
 }
 
 /* ------------------------------------------------------------ fetch */
