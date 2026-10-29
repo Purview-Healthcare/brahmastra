@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.12.0";
+const VERSION = "2.13.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1913,6 +1913,9 @@ const OPS = {
       const proof = h.dept === "posting"
         ? { date: isoDate(p.date), ref: str(p.ref, 80).trim(), amount: p.amount === "" || p.amount == null ? null : num(p.amount, 0) }
         : { date: isoDate(p.date), ref: str(p.ref, 80).trim(), mode: str(p.mode, 40).trim() };
+      // Names of the proof files attached to the claim with this step (optional), so the history shows what backs it.
+      const files = (Array.isArray(p.files) ? p.files : []).slice(0, 10).map((f) => str(f, 200).trim()).filter(Boolean);
+      if (files.length) proof.files = files;
       if (h.dept === "subcheck" && !proof.date) throw bad("Enter the date the payer accepted it.");
       if (h.dept !== "subcheck" && (!proof.date || !proof.ref)) throw bad(h.dept === "posting" ? "Enter the posted date and the check / EFT number." : "Enter the submitted date and the batch or claim ID.");
       stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, JSON.stringify(proof), note, h.id));
