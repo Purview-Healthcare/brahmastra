@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.24.0";
+const VERSION = "2.25.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -278,7 +278,7 @@ const PROD_TEMPLATE_B64 = "UEsDBBQAAAAIANOIXV1Gx01IlQAAAM0AAAAQAAAAZG9jUHJvcHMvY
 const MONTHS_LONG = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // OneDrive does not allow these in file or folder names.
 const odName = (s) => String(s || "").replace(/["*:<>?/\\|#%]+/g, " ").replace(/\s+/g, " ").trim().replace(/\.+$/, "").slice(0, 80) || "Unnamed";
-/* The team lead(s) of a client: roster team leads whose projects are matched to it. Nobody matched: the lead of the person who saved. */
+/* The team lead(s) of a client: roster team leads whose projects are matched to it. Nobody matched: the lead most of its billers report to. */
 async function clientTeamLeads(env, clientId, byUserId) {
   const c = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", clientId);
   const names = new Set(jsonList(c && c.roster_names_json).map(projKey));
@@ -286,8 +286,10 @@ async function clientTeamLeads(env, clientId, byUserId) {
     .filter((u) => /\b(sr\.? )?tl\b|team lead/i.test(u.designation || "") && jsonList(u.projects_json).some((p) => names.has(projKey(p && p.name != null ? p.name : p))))
     .map((u) => u.name) : [];
   if (leads.length) return [...new Set(leads)].sort();
-  const by = byUserId ? await one(env, "SELECT r.name FROM users u JOIN users r ON r.id = u.reports_to WHERE u.id = ?", byUserId) : null;
-  return [by && by.name ? by.name : "No team lead"];
+  // No roster team lead matched: the lead most of the client's billers report to, so every save (and Third Eye) picks the same folder.
+  const top = await one(env, `SELECT r.name, COUNT(*) AS n FROM claims c JOIN users u ON u.id = c.assigned_to JOIN users r ON r.id = u.reports_to
+    WHERE c.client_id = ? GROUP BY r.id ORDER BY n DESC, r.name LIMIT 1`, clientId);
+  return [top && top.name ? top.name : "No team lead"];
 }
 function b64Bytes(b64) { const s = atob(b64); const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
 /* The month's Production workbook for one lead and client: found, or made from the template the first time. */
@@ -2117,6 +2119,13 @@ const OPS = {
       if (!du) throw new ApiError(502, "Drishti created the account but did not list it. Try again.");
     }
     return { token: await drishtiToken(env, du.id, du.role), name: du.name, role: du.role, created };
+  },
+  /* Each client's team lead(s), by client name, for the Brahmastra Reports folders Third Eye and Drishti save to. */
+  "reports.clientLeads": async ({ env, user }) => {
+    const clients = await all(env, `SELECT id, name FROM clients WHERE active = 1${scopeSql(user, "id")} ORDER BY name`, ...scopeArgs(user));
+    const leads = {};
+    for (const c of clients) leads[c.name] = await clientTeamLeads(env, c.id, null);
+    return { root: REPORTS_ROOT, leads };
   },
   /* The AR inventory as it stands now (open, on desks and worked claims), in the columns Drishti's AR Inventory report reads. */
   "reports.arInventory": async ({ env, user, payload }) => {
