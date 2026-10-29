@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.13.0";
+const VERSION = "2.14.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -94,6 +94,8 @@ const SCHEMA = [
      proof_json TEXT NOT NULL DEFAULT '{}', reason TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs (status, dept, due_at)`,
   `CREATE INDEX IF NOT EXISTS idx_handoffs_claim ON handoffs (claim_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS payer_limits (client_id TEXT NOT NULL, payer_key TEXT NOT NULL, payer TEXT NOT NULL DEFAULT '', tfl_days INTEGER, afl_days INTEGER,
+     note TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL, updated_by TEXT, updated_by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (client_id, payer_key))`,
   `CREATE TABLE IF NOT EXISTS availability (client_id TEXT NOT NULL, day TEXT NOT NULL, on_json TEXT NOT NULL DEFAULT '[]', by_user TEXT, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
 ];
 
@@ -336,14 +338,28 @@ function cleanNoteFields(f, claim) {
     dos: mmdd(isoDate(f.dos) || claim.dos) || t(f.dos, 20), clm: t(f.clm || claim.claim_no, 80), denial: t(f.denial, 200),
     source: NOTE_SOURCES.includes(f.source) ? f.source : t(f.source, 40), ref: t(f.ref, 80),
     precheck: pre, precheck_text: t(f.precheck_text, 300), findings: t(f.findings, 2000), action: NOTE_ACTIONS.includes(action) ? action : t(f.action, 120),
+    tfl: limitDays(f.tfl), afl: limitDays(f.afl),
   };
+}
+/* ---- TFL / AFL: the payer's timely filing limit (days from DOS) and appeal filing limit (days from the denial / EOB date).
+   Billers enter them in the note; the latest value is kept per client and insurance in payer_limits for inventory analysis. */
+const limitDays = (v) => { const m = /^\s*(\d{1,4})\s*(d|days?)?\s*$/i.exec(String(v == null ? "" : v)); const n = m ? Number(m[1]) : 0; return n > 0 && n <= 3650 ? n : null; };
+const payerKey = (p) => String(p || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+const limitLine = (f) => [f.tfl ? `TFL: ${f.tfl} days` : "", f.afl ? `AFL: ${f.afl} days` : ""].filter(Boolean);
+function saveLimitsStmt(env, user, clientId, payer, f, source) {
+  const key = payerKey(payer);
+  if (!key || !clientId || (!f.tfl && !f.afl)) return null;
+  return env.DB.prepare(`INSERT INTO payer_limits (client_id, payer_key, payer, tfl_days, afl_days, source, updated_at, updated_by, updated_by_name) VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT (client_id, payer_key) DO UPDATE SET tfl_days = COALESCE(excluded.tfl_days, tfl_days), afl_days = COALESCE(excluded.afl_days, afl_days),
+      source = excluded.source, updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_name = excluded.updated_by_name`)
+    .bind(clientId, key, String(payer).trim(), f.tfl || null, f.afl || null, source, Date.now(), user.id, user.name);
 }
 function composeNote(fields, saag, followUp) {
   const parts = [
     `DOS: ${fields.dos || "-"}`, `CLM#: ${fields.clm || "-"}`, `DENIAL: ${fields.denial || "-"}`,
     `SOURCE: ${fields.source || "-"}${fields.ref ? ", REF: " + fields.ref : (fields.source === "Call" ? ", REF: none" : "")}`,
     `PRE CALL CHECK: ${[...(fields.precheck || []), fields.precheck_text].filter(Boolean).join("; ") || "-"}`,
-    `RCA/FINDINGS: ${fields.findings || "-"}`, `ACTION: ${fields.action || "-"}`,
+    `RCA/FINDINGS: ${fields.findings || "-"}`, `ACTION: ${fields.action || "-"}`, ...limitLine(fields),
     ...(saag ? [`SAAG: ${saag.status} > ${saag.sub_status} > ${saag.action}`, `BUCKET: ${saag.bucket}`, `EFFECTIVE: ${saag.effective || "-"}`] : []),
   ];
   if (followUp) parts.push(`FOLLOW-UP: ${mmdd(followUp)}`);
@@ -749,7 +765,7 @@ async function removeUser(env, id) {
 }
 
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.)/;
+const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
@@ -1645,6 +1661,8 @@ const OPS = {
           escalated_at = CASE WHEN ? = 1 AND (escalated = 0 OR escalated_at IS NULL) THEN ? WHEN ? = 1 THEN escalated_at ELSE NULL END, escalated_by = CASE WHEN ? = 1 THEN ? ELSE NULL END WHERE id = ?`)
         .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, f.action, text.slice(0, 600), user.id, today, followUp, escalate, now, escalate, now, escalate, escalate, user.id, t.id));
     }
+    const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
+    if (lim) stmts.push(lim);
     await batchAll(env, stmts);
     // Payment posting / submission: send the claim to the department set on the client profile.
     const dept = handoffDeptOf(saag.action);
@@ -1742,6 +1760,8 @@ const OPS = {
         .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, fields.action, comment.slice(0, 600), followUp, now, c.id));
     }
     stmts.push(claimEvent(env, c.id, user, "edited", "", { note_id: n.id }));
+    const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
+    if (lim) stmts.push(lim);
     await env.DB.batch(stmts);
     return { ok: true, comment, closed };
   },
@@ -1760,7 +1780,8 @@ const OPS = {
     // A note in the standard format (DOS, CLM#, DENIAL, SOURCE/REF, PRE CALL CHECK, RCA/FINDINGS, ACTION) without a SAAG entry; plain text still works.
     let comment, fields = null;
     if (payload.note) {
-      const full = await one(env, "SELECT dos, claim_no FROM claims WHERE id = ?", c.id);
+      const full = await one(env, "SELECT dos, claim_no, payer FROM claims WHERE id = ?", c.id);
+      c.payer = full.payer;
       fields = cleanNoteFields(payload.note, full);
       if (!commentOk(fields.findings)) throw bad("Write what you found (RCA / findings), a few words at least.");
       if (fields.source === "Call" && !fields.ref) throw bad("A call needs its reference number (REF).");
@@ -1773,6 +1794,7 @@ const OPS = {
     await env.DB.batch([
       env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at, note_action, fields_json) VALUES (?,?,?,?,'note',?,?,?,?)").bind(id, c.id, user.id, user.name, comment, now, fields ? fields.action : "", JSON.stringify(fields || {})),
       env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
+      ...[fields && saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note")].filter(Boolean),
     ]);
     return { note: { id, claim_id: c.id, user_id: user.id, user_name: user.name, kind: "note", comment, created_at: now, fields } };
   },
@@ -1975,6 +1997,46 @@ const OPS = {
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
+  /* ---- insurance TFL / AFL: one row per client and insurance with open claims or saved limits, and how much is near or past the TFL ---- */
+  "payers.limits": async ({ env, user, payload }) => {
+    const today = isoDate(payload.today) || isoToday();
+    const lims = await all(env, `SELECT p.*, cl.name AS client_name FROM payer_limits p LEFT JOIN clients cl ON cl.id = p.client_id WHERE 1 = 1${scopeSql(user, "p.client_id")}`, ...scopeArgs(user));
+    const groups = await all(env, `SELECT c.client_id, cl.name AS client_name, c.payer, c.dos, COUNT(*) AS n, SUM(c.balance) AS bal FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
+      WHERE c.state IN ${WORKABLE}${scopeSql(user, "c.client_id")} GROUP BY c.client_id, c.payer, c.dos`, ...scopeArgs(user));
+    const rows = new Map();
+    const row = (client_id, client_name, payer) => {
+      const k = client_id + "|" + payerKey(payer);
+      if (!rows.has(k)) rows.set(k, { client_id, client_name: client_name || "", payer: payer || "", payer_key: payerKey(payer), tfl_days: null, afl_days: null, note: "", updated_at: null, updated_by_name: "", source: "",
+        open_n: 0, open_bal: 0, past_n: 0, past_bal: 0, soon_n: 0, soon_bal: 0, no_dos_n: 0 });
+      return rows.get(k);
+    };
+    for (const l of lims) Object.assign(row(l.client_id, l.client_name, l.payer), { tfl_days: l.tfl_days, afl_days: l.afl_days, note: l.note, updated_at: l.updated_at, updated_by_name: l.updated_by_name, source: l.source });
+    const day = (iso) => Date.parse(iso + "T00:00:00Z") / 86400000;
+    for (const g of groups) {
+      if (!payerKey(g.payer)) continue;
+      const r = row(g.client_id, g.client_name, g.payer);
+      r.open_n += g.n; r.open_bal += g.bal || 0;
+      if (!r.tfl_days) continue;
+      if (!isoDate(g.dos)) { r.no_dos_n += g.n; continue; }
+      const left = day(g.dos) + r.tfl_days - day(today);
+      if (left < 0) { r.past_n += g.n; r.past_bal += g.bal || 0; } else if (left <= 30) { r.soon_n += g.n; r.soon_bal += g.bal || 0; }
+    }
+    return { rows: [...rows.values()], today };
+  },
+  "payers.saveLimit": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (!inScope(user, clientId)) throw outOfScope();
+    const payer = str(payload.payer, 160).trim();
+    if (!payerKey(payer)) throw bad("Pick the insurance.");
+    const tfl = limitDays(payload.tfl_days), afl = limitDays(payload.afl_days);
+    if (String(payload.tfl_days || "").trim() && !tfl) throw bad("TFL must be a number of days (1 to 3650).");
+    if (String(payload.afl_days || "").trim() && !afl) throw bad("AFL must be a number of days (1 to 3650).");
+    await run(env, `INSERT INTO payer_limits (client_id, payer_key, payer, tfl_days, afl_days, note, source, updated_at, updated_by, updated_by_name) VALUES (?,?,?,?,?,?,'team lead',?,?,?)
+        ON CONFLICT (client_id, payer_key) DO UPDATE SET payer = excluded.payer, tfl_days = excluded.tfl_days, afl_days = excluded.afl_days, note = excluded.note, source = excluded.source,
+        updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_name = excluded.updated_by_name`,
+      clientId, payerKey(payer), payer, tfl, afl, str(payload.note, 300).trim(), Date.now(), user.id, user.name);
+    return { ok: true };
+  },
   "attention.list": async ({ env, user }) => {
     const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.state, c.follow_up_on,
         c.last_status_code, c.last_sub_status, c.last_action_code, c.last_note, c.escalated_at, c.assigned_to, u.name AS assigned_name, e.name AS escalated_by_name, cl.name AS client_name, l.name AS location_name
@@ -2226,9 +2288,10 @@ async function claimBundle(env, user, c) {
   const handoffs = await all(env, `SELECT h.*, l.name AS lead_name, b.name AS backup_name, a.name AS assigned_name FROM handoffs h LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
       LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
   const role = await handoffRole(env, user, c.id);
+  const limits = payerKey(c.payer) ? await one(env, "SELECT tfl_days, afl_days, note, updated_at, updated_by_name FROM payer_limits WHERE client_id = ? AND payer_key = ?", c.client_id, payerKey(c.payer)) : null;
   const attachments = files.map((a) => ({ ...a, deletable: leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
-  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id }, notes: shaped, attachments, siblings,
-    handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role };
+  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null }, notes: shaped, attachments, siblings,
+    handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role, payer_limits: limits || null };
 }
 
 /* ------------------------------------------------------------ fetch */
