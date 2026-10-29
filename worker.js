@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.18.0";
+const VERSION = "2.19.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -792,7 +792,7 @@ async function removeUser(env, id) {
   ]);
 }
 
-const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify"]);
+const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
 const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
@@ -919,6 +919,19 @@ const OPS = {
       env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0 WHERE id = ?").bind(salt, hash, u.id),
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id),
     ]);
+    return openSession(env, { ...u, pass_hash: hash, must_change: 0 }, "password");
+  },
+  /* First sign-in: someone from the roster with no password yet just chooses one (no code). Only while no password is set;
+     after that, changing it needs a code (Forgot it?) or a team lead's reset. */
+  "auth.firstPassword": async ({ env, payload }) => {
+    const u = await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(payload.user_id, 60));
+    if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
+    if (!isHash(payload.passHash)) throw bad("Set a password.");
+    if (u.pass_hash) throw bad("You already have a password. Sign in with it, or use Forgot it? to reset it.");
+    const salt = randomHex(16);
+    const hash = await makeHash(env, salt, payload.passHash);
+    const r = await run(env, "UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0 WHERE id = ? AND pass_hash = ''", salt, hash, u.id);
+    if (!changesOf(r)) throw bad("You already have a password. Sign in with it, or use Forgot it? to reset it.");
     return openSession(env, { ...u, pass_hash: hash, must_change: 0 }, "password");
   },
   "auth.loginById": async ({ env, payload }) => {
