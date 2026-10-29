@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.19.0";
+const VERSION = "2.20.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -193,7 +193,6 @@ const ageBucketLetter = (age) => { if (age == null || age === "") return ""; for
 const IST_MIN = 330;
 const istDate = (ms) => new Date(ms + IST_MIN * 60000);
 const istISO = (ms) => istDate(ms).toISOString().slice(0, 10);
-const istHM = (ms) => (ms ? istDate(ms).toISOString().slice(11, 16) : "");
 const mdy = (iso) => { const [y, m, d] = iso.split("-"); return `${m}/${d}/${y}`; };
 /* Week ending Saturday; the range starts on the Sunday before, clamped to the 1st when the week crosses a month. */
 function weekOf(ms) {
@@ -207,15 +206,16 @@ function weekOf(ms) {
 }
 function productionRow(c, by, extra) {
   const now = (extra && extra.ended_at) || Date.now();
-  const started = extra && extra.started_at;
-  const mins = started && now > started ? Math.round((now - started) / 60000) : null;
+  // Start / End Time and Total Duration are the call's, as the biller entered them; empty when the work was not a call.
+  const f = (extra && extra.fields) || {};
+  const mins = callMinutes(f.call_start, f.call_end);
   const wk = weekOf(now);
   const dosSerial = excelSerial(c.dos);
   return [SR_NO, (by && by.city) || "", c.client_name || "", c.location_name || "",
     [c.patient, dosSerial, c.payer, c.cpt].map((x) => (x == null ? "" : x)).join(""), c.claim_no || "", c.patient || "", dosSerial === "" ? (c.dos || "") : dosSerial, c.payer || "",
     c.age_days == null ? "" : c.age_days, ageBucketLetter(c.age_days), c.billed == null ? "" : Number(c.billed), Number(c.balance) || 0, c.cpt || "",
-    c.last_note || "", c.last_status_code || "", c.last_sub_status || "", c.last_action_code || "", c.last_bucket || "", "",
-    istHM(started), started ? istHM(now) : "", mins == null ? "" : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, "0")}`, excelSerial(istISO(now)),
+    c.last_note || "", c.last_status_code || "", c.last_sub_status || "", c.last_action_code || "", c.last_bucket || "", f.source || "",
+    f.call_start || "", f.call_end || "", mins == null ? "" : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, "0")}`, excelSerial(istISO(now)),
     (by && by.emp_id) || "", (by && by.name) || "", "Production", "", (by && by.reports_to_name) || "", wk.range, wk.week];
 }
 function workbookLinkOf(v) { if (v == null) return null; const s = str(v, 1000).trim(); if (!s) return ""; if (!/^https:\/\//i.test(s)) throw bad("Paste the whole OneDrive link, starting with https://"); return s; }
@@ -348,6 +348,7 @@ function cleanNoteFields(f, claim) {
     source: NOTE_SOURCES.includes(f.source) ? f.source : t(f.source, 40), ref: t(f.ref, 80),
     precheck: pre, precheck_text: t(f.precheck_text, 300), findings: t(f.findings, 2000), action: NOTE_ACTIONS.includes(action) ? action : t(f.action, 120),
     tfl: limitDays(f.tfl), afl: limitDays(f.afl), denial_date: isoDate(f.denial_date) || "",
+    call_start: hhmm(f.call_start), call_end: hhmm(f.call_end),
   };
 }
 /* ---- TFL / AFL: the payer's timely filing limit (days from DOS) and appeal filing limit (days from the denial / EOB date).
@@ -367,10 +368,14 @@ function saveLimitsStmt(env, user, clientId, payer, f, source) {
       source = excluded.source, updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_name = excluded.updated_by_name`)
     .bind(clientId, key, String(payer).trim(), f.tfl || null, f.afl || null, source, Date.now(), user.id, user.name);
 }
+/* Call start / end: the clock times the biller enters for a call (HH:MM, 24-hour). They go into the note and the Production Excel. */
+const hhmm = (v) => { const m = /^\s*(\d{1,2}):(\d{2})/.exec(String(v || "")); return m && +m[1] < 24 && +m[2] < 60 ? String(+m[1]).padStart(2, "0") + ":" + m[2] : ""; };
+const callMinutes = (a, b) => { if (!a || !b) return null; const t = (x) => +x.slice(0, 2) * 60 + +x.slice(3, 5); let d = t(b) - t(a); if (d < 0) d += 1440; return d; };
+const callText = (f) => (f.call_start && f.call_end ? `, CALL: ${f.call_start}-${f.call_end} (${callMinutes(f.call_start, f.call_end)} min)` : "");
 function composeNote(fields, saag, followUp) {
   const parts = [
     `DOS: ${fields.dos || "-"}`, `CLM#: ${fields.clm || "-"}`, `DENIAL: ${fields.denial || "-"}`,
-    `SOURCE: ${fields.source || "-"}${fields.ref ? ", REF: " + fields.ref : (fields.source === "Call" ? ", REF: none" : "")}`,
+    `SOURCE: ${fields.source || "-"}${fields.ref ? ", REF: " + fields.ref : (fields.source === "Call" ? ", REF: none" : "")}${callText(fields)}`,
     `PRE CALL CHECK: ${[...(fields.precheck || []), fields.precheck_text].filter(Boolean).join("; ") || "-"}`,
     `RCA/FINDINGS: ${fields.findings || "-"}`, `ACTION: ${fields.action || "-"}`, ...limitLine(fields),
     ...(saag ? [`SAAG: ${saag.status} > ${saag.sub_status} > ${saag.action}`, `BUCKET: ${saag.bucket}`, `EFFECTIVE: ${saag.effective || "-"}`] : []),
@@ -387,6 +392,7 @@ function validateWork(payload) {
   if (!commentOk(f.findings)) throw bad("Write what you found (RCA / findings), a few words at least.");
   if (!String(f.action || "").trim()) throw bad("Pick the note ACTION from the list, or type it under Other.");
   if (f.source === "Call" && !String(f.ref || "").trim()) throw bad("A call needs its reference number (REF).");
+  if (f.source === "Call" && (!hhmm(f.call_start) || !hhmm(f.call_end))) throw bad("Enter the call's start and end time.");
   return saag;
 }
 /* Entries that say an EOB is in hand, ask for posting, or file an appeal / reconsideration must carry the document:
@@ -1779,7 +1785,7 @@ const OPS = {
       handoff = { dept, label: DEPT_LABEL[dept], mode: mode || "unset", to: leadName || "" };
     }
     // Copy the entry into the client's / location's OneDrive workbook in the background (when a link is set and Microsoft 365 is configured).
-    if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user, { started_at: t.started_at, ended_at: now }); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
+    if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user, { ended_at: now, fields: t.id === c.id ? fields : { ...fields, call_start: "", call_end: "" } }); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
     return { completed: targets.length, closed, follow_up_on: followUp, state: newState, comment, handoff };
   },
   /* Open a specific claim from the day list (instead of "next"). Any other claim open on the desk goes back to assigned. */
@@ -1876,6 +1882,7 @@ const OPS = {
       fields = cleanNoteFields(payload.note, full);
       if (!commentOk(fields.findings)) throw bad("Write what you found (RCA / findings), a few words at least.");
       if (fields.source === "Call" && !fields.ref) throw bad("A call needs its reference number (REF).");
+      if (fields.source === "Call" && (!fields.call_start || !fields.call_end)) throw bad("Enter the call's start and end time.");
       comment = composeNote(fields, null, "");
     } else {
       comment = str(payload.comment, 4000).trim();
