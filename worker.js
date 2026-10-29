@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.20.0";
+const VERSION = "2.21.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -106,7 +106,9 @@ const SCHEMA = [
    existing database is missing, so upgrades need no manual migration. */
 const EXTRA_COLUMNS = {
   notes: [["status", "TEXT NOT NULL DEFAULT ''"], ["sub_status", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT NOT NULL DEFAULT ''"], ["bucket", "TEXT NOT NULL DEFAULT ''"],
-    ["effective", "TEXT NOT NULL DEFAULT ''"], ["note_action", "TEXT NOT NULL DEFAULT ''"], ["fields_json", "TEXT NOT NULL DEFAULT '{}'"], ["edited_at", "INTEGER"], ["edited_by", "TEXT"]],
+    ["effective", "TEXT NOT NULL DEFAULT ''"], ["note_action", "TEXT NOT NULL DEFAULT ''"], ["fields_json", "TEXT NOT NULL DEFAULT '{}'"], ["edited_at", "INTEGER"], ["edited_by", "TEXT"],
+    // Minutes on the phone for this entry (from the call start / end times), for the dashboard's call time.
+    ["call_min", "INTEGER"]],
   claims: [["last_sub_status", "TEXT NOT NULL DEFAULT ''"], ["last_bucket", "TEXT NOT NULL DEFAULT ''"], ["last_effective", "TEXT NOT NULL DEFAULT ''"], ["last_note_action", "TEXT NOT NULL DEFAULT ''"],
     ["alt_key", "TEXT NOT NULL DEFAULT ''"], ["fp_key", "TEXT NOT NULL DEFAULT ''"],
     // Escalations: when the biller flagged it, and when / by whom a team lead answered.
@@ -368,14 +370,15 @@ function saveLimitsStmt(env, user, clientId, payer, f, source) {
       source = excluded.source, updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_name = excluded.updated_by_name`)
     .bind(clientId, key, String(payer).trim(), f.tfl || null, f.afl || null, source, Date.now(), user.id, user.name);
 }
-/* Call start / end: the clock times the biller enters for a call (HH:MM, 24-hour). They go into the note and the Production Excel. */
+/* Call start / end: the clock times the biller enters for a call (HH:MM, 24-hour). They go to the Production Excel and the dashboard, not the note text. */
 const hhmm = (v) => { const m = /^\s*(\d{1,2}):(\d{2})/.exec(String(v || "")); return m && +m[1] < 24 && +m[2] < 60 ? String(+m[1]).padStart(2, "0") + ":" + m[2] : ""; };
 const callMinutes = (a, b) => { if (!a || !b) return null; const t = (x) => +x.slice(0, 2) * 60 + +x.slice(3, 5); let d = t(b) - t(a); if (d < 0) d += 1440; return d; };
-const callText = (f) => (f.call_start && f.call_end ? `, CALL: ${f.call_start}-${f.call_end} (${callMinutes(f.call_start, f.call_end)} min)` : "");
+// Minutes of a note's call, kept in notes.call_min for the dashboard (not written into the note text).
+const callMinOf = (f) => (f && f.source === "Call" ? callMinutes(f.call_start, f.call_end) : null);
 function composeNote(fields, saag, followUp) {
   const parts = [
     `DOS: ${fields.dos || "-"}`, `CLM#: ${fields.clm || "-"}`, `DENIAL: ${fields.denial || "-"}`,
-    `SOURCE: ${fields.source || "-"}${fields.ref ? ", REF: " + fields.ref : (fields.source === "Call" ? ", REF: none" : "")}${callText(fields)}`,
+    `SOURCE: ${fields.source || "-"}${fields.ref ? ", REF: " + fields.ref : (fields.source === "Call" ? ", REF: none" : "")}`,
     `PRE CALL CHECK: ${[...(fields.precheck || []), fields.precheck_text].filter(Boolean).join("; ") || "-"}`,
     `RCA/FINDINGS: ${fields.findings || "-"}`, `ACTION: ${fields.action || "-"}`, ...limitLine(fields),
     ...(saag ? [`SAAG: ${saag.status} > ${saag.sub_status} > ${saag.action}`, `BUCKET: ${saag.bucket}`, `EFFECTIVE: ${saag.effective || "-"}`] : []),
@@ -1746,9 +1749,9 @@ const OPS = {
       stmts.push(claimEvent(env, t.id, user, "worked", "", { changes: ch, escalated: !!escalate, siblings: t.id === c.id ? targets.length - 1 : 0 }));
       const f = t.id === c.id ? fields : { ...fields, dos: mmdd(t.dos) || fields.dos, clm: t.claim_no || fields.clm, findings: fields.findings + " (applied with claim " + (c.claim_no || c.id.slice(0, 8)) + ")" };
       const text = t.id === c.id ? comment : composeNote(f, saag, followUp);
-      stmts.push(env.DB.prepare(`INSERT INTO notes (id, claim_id, user_id, user_name, kind, status_code, action_code, comment, follow_up_on, created_at, status, sub_status, action, bucket, effective, note_action, fields_json)
-          VALUES (?,?,?,?,'work',?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .bind(uuid(), t.id, user.id, user.name, saag.status, saag.action, text, followUp, now, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, f.action, JSON.stringify(f)));
+      stmts.push(env.DB.prepare(`INSERT INTO notes (id, claim_id, user_id, user_name, kind, status_code, action_code, comment, follow_up_on, created_at, status, sub_status, action, bucket, effective, note_action, fields_json, call_min)
+          VALUES (?,?,?,?,'work',?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(uuid(), t.id, user.id, user.name, saag.status, saag.action, text, followUp, now, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, f.action, JSON.stringify(f), t.id === c.id ? callMinOf(f) : null));
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, started_at = NULL, completed_at = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?,
           last_note = ?, last_worked_by = ?, last_worked_on = ?, follow_up_on = ?, touches = touches + 1, worked_before = 1, escalated = ?, skipped_at = NULL, updated_at = ?,
           escalated_at = CASE WHEN ? = 1 AND (escalated = 0 OR escalated_at IS NULL) THEN ? WHEN ? = 1 THEN escalated_at ELSE NULL END, escalated_by = CASE WHEN ? = 1 THEN ? ELSE NULL END WHERE id = ?`)
@@ -1846,8 +1849,8 @@ const OPS = {
     const followUp = closed ? "" : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
     const comment = composeNote(fields, saag, followUp);
     const now = Date.now();
-    const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
-      .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, fields.action, JSON.stringify(fields), now, user.id, n.id)];
+    const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, call_min = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
+      .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, fields.action, JSON.stringify(fields), callMinOf(fields), now, user.id, n.id)];
     const latest = await one(env, "SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id);
     if (latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned") {
       const newState = closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
@@ -1890,7 +1893,7 @@ const OPS = {
     }
     const now = Date.now(), id = uuid();
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at, note_action, fields_json) VALUES (?,?,?,?,'note',?,?,?,?)").bind(id, c.id, user.id, user.name, comment, now, fields ? fields.action : "", JSON.stringify(fields || {})),
+      env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at, note_action, fields_json, call_min) VALUES (?,?,?,?,'note',?,?,?,?,?)").bind(id, c.id, user.id, user.name, comment, now, fields ? fields.action : "", JSON.stringify(fields || {}), callMinOf(fields)),
       env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
       ...[fields && saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note"), denialDateStmt(env, c.id, fields)].filter(Boolean),
     ]);
@@ -1961,6 +1964,17 @@ const OPS = {
         SUM(c.state = 'closed') AS resolved FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${scopeSql(user, "c.client_id")} GROUP BY nt.user_id, day ORDER BY day DESC, n DESC`,
       off, num(payload.from_ms, 0), num(payload.to_ms, Date.now()), ...scopeArgs(user));
     return { rows };
+  },
+  /* Time on calls: the call minutes billers entered, by person and by payer, for the dashboard. */
+  "supervisor.callTime": async ({ env, user, payload }) => {
+    const where = ["nt.call_min IS NOT NULL", "nt.created_at BETWEEN ? AND ?"], args = [num(payload.from_ms, 0), num(payload.to_ms, Date.now())];
+    if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
+    if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
+    const w = `FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE ${where.join(" AND ")}${scopeSql(user, "c.client_id")}`, a = [...args, ...scopeArgs(user)];
+    const total = await one(env, `SELECT COUNT(*) AS calls, COALESCE(SUM(nt.call_min), 0) AS minutes, COUNT(DISTINCT nt.user_id) AS people ${w}`, ...a);
+    const byUser = await all(env, `SELECT nt.user_id, nt.user_name, COUNT(*) AS calls, SUM(nt.call_min) AS minutes, MAX(nt.call_min) AS longest ${w} GROUP BY nt.user_id ORDER BY minutes DESC`, ...a);
+    const byPayer = await all(env, `SELECT COALESCE(NULLIF(c.payer, ''), 'Unknown') AS payer, COUNT(*) AS calls, SUM(nt.call_min) AS minutes ${w} GROUP BY 1 ORDER BY minutes DESC LIMIT 15`, ...a);
+    return { total, by_user: byUser, by_payer: byPayer };
   },
   "supervisor.allocations": async ({ env, user, payload }) => {
     const range = payload.from_ms != null || payload.to_ms != null ? [num(payload.from_ms, 0), num(payload.to_ms, Date.now())] : [];
