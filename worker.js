@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.17.0";
+const VERSION = "2.18.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -763,6 +763,13 @@ const PRIO_REASON_SQL = "CASE WHEN priority_set <> '' THEN priority_set_label ||
 function fpKeyOf(patient, dos) { const p = normText(patient), d = isoDate(dos); return p && d ? p + "|" + d : ""; }
 function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, "0"); }
 const generatedClaimNo = (fp) => "BR-" + fnv1a(fp).toUpperCase();
+/* What one worked-file row said about a claim, kept with that upload. "Worked by" is read from the file's own column when it has one. */
+function fileSnapshot(kind, vals, c, lastWorked, followUp) {
+  const raw = c.raw && typeof c.raw === "object" ? c.raw : {};
+  const pick = (re) => { const k = Object.keys(raw).find((h) => re.test(h)); return k ? str(raw[k], 120) : ""; };
+  return { kind, status: vals.file_status, sub_status: vals.file_sub_status, action: vals.file_action, comments: str(vals.file_comments, 2000), balance: vals.balance,
+    worked_on: lastWorked, follow_up: followUp, worked_by: pick(/^(worked\s*by|work(ed)?\s*user|biller|agent|user\s*name|employee)$/i), move_to: pick(/^move\s*to$/i) };
+}
 /* Fill alt_key / fp_key on claims loaded before these columns existed. */
 async function backfillKeys(env) {
   for (let round = 0; round < 50; round++) {
@@ -1219,15 +1226,20 @@ const OPS = {
       };
       const lastWorked = kind === "worked" ? isoDate(c.last_worked_on) : "";
       const followUp = kind === "worked" ? (isoDate(c.follow_up_on) || (lastWorked ? addDays(lastWorked, client.follow_up_days || 30) : "")) : "";
+      // Each upload's own copy of what the file said (status, action, comment, who worked it and when), so a claim in both the
+      // September and the October worked file keeps both entries in its history even though the claim shows the latest file.
+      const fileWork = (id) => (kind === "worked" || vals.file_comments ? claimEvent(env, id, user, "file_work", str(file_name, 200), fileSnapshot(kind, vals, c, lastWorked, followUp)) : null);
       if (!ex) {
         const state = !exclude ? "open" : closedInFile ? "closed" : "excluded";
         const reason = !exclude ? "" : closedInFile ? "Closed in " + kind + " file" + (vals.file_status ? ": " + vals.file_status : "") : exclude;
         if (state === "open") counts.inserted++; else if (state === "closed") counts.closed++; else counts.excluded++;
+        const nid = uuid();
+        const fw = fileWork(nid); if (fw) stmts.push(fw);
         stmts.push(env.DB.prepare(`INSERT INTO claims (id, client_id, location_id, batch_id, first_batch_id, match_key, claim_no, account_no, patient, payer, dos, cpt, provider,
             billed, balance, lines, lines_json, age_days, bucket, tier, status_class, file_status, file_sub_status, file_action, file_comments, file_bucket,
             inventory_kind, worked_before, last_worked_on, follow_up_on, priority, priority_reason, state, state_reason, raw_json, created_at, updated_at, alt_key, fp_key)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-          uuid(), client.id, location_id || null, bid, bid, key, vals.claim_no, vals.account_no, vals.patient, vals.payer, vals.dos, vals.cpt, vals.provider,
+          nid, client.id, location_id || null, bid, bid, key, vals.claim_no, vals.account_no, vals.patient, vals.payer, vals.dos, vals.cpt, vals.provider,
           vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class, vals.file_status, vals.file_sub_status,
           vals.file_action, vals.file_comments, vals.file_bucket, kind, kind === "worked" ? 1 : 0, lastWorked, followUp, vals.priority, vals.priority_reason,
           state, reason, vals.raw_json, now, now, c._alt, c._fp));
@@ -1241,6 +1253,7 @@ const OPS = {
         else counts.updated++;
       } else if (ex.state === "closed" || ex.state === "excluded") { newState = "open"; reason = "Reopened by " + kind + " upload"; clearAssign = 1; counts.reopened++; }
       else counts.updated++;
+      { const fw = fileWork(ex.id); if (fw) stmts.push(fw); }
       stmts.push(claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), { kind, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance, ...(newState !== ex.state ? { changes: { state: [ex.state, newState] } } : {}) }));
       stmts.push(env.DB.prepare(`UPDATE claims SET location_id = COALESCE(?, location_id), batch_id = ?, claim_no = CASE WHEN ? <> '' THEN ? ELSE claim_no END,
           account_no = CASE WHEN ? <> '' THEN ? ELSE account_no END, patient = CASE WHEN ? <> '' THEN ? ELSE patient END, payer = CASE WHEN ? <> '' THEN ? ELSE payer END,
