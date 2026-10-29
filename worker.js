@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.14.0";
+const VERSION = "2.15.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -94,6 +94,9 @@ const SCHEMA = [
      proof_json TEXT NOT NULL DEFAULT '{}', reason TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs (status, dept, due_at)`,
   `CREATE INDEX IF NOT EXISTS idx_handoffs_claim ON handoffs (claim_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS detail_uploads (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, location_id TEXT, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+     file_name TEXT NOT NULL DEFAULT '', purpose TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', overwrite INTEGER NOT NULL DEFAULT 0, rows_read INTEGER NOT NULL DEFAULT 0,
+     rows_matched INTEGER NOT NULL DEFAULT 0, claims_updated INTEGER NOT NULL DEFAULT 0, fields_json TEXT NOT NULL DEFAULT '{}', unmatched_json TEXT NOT NULL DEFAULT '[]')`,
   `CREATE TABLE IF NOT EXISTS payer_limits (client_id TEXT NOT NULL, payer_key TEXT NOT NULL, payer TEXT NOT NULL DEFAULT '', tfl_days INTEGER, afl_days INTEGER,
      note TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL, updated_by TEXT, updated_by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (client_id, payer_key))`,
   `CREATE TABLE IF NOT EXISTS availability (client_id TEXT NOT NULL, day TEXT NOT NULL, on_json TEXT NOT NULL DEFAULT '[]', by_user TEXT, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
@@ -109,7 +112,11 @@ const EXTRA_COLUMNS = {
     // Escalations: when the biller flagged it, and when / by whom a team lead answered.
     ["escalated_at", "INTEGER"], ["escalated_by", "TEXT"], ["escalation_answered_at", "INTEGER"], ["escalation_answered_by", "TEXT"],
     // with_posting | posted | with_submission | submitted | posting_assist | submission_assist
-    ["handoff_status", "TEXT NOT NULL DEFAULT ''"]],
+    ["handoff_status", "TEXT NOT NULL DEFAULT ''"],
+    // Priority set by a team lead (top | high | low; '' = automatic), the automatic score underneath, and why.
+    ["priority_set", "TEXT NOT NULL DEFAULT ''"], ["priority_base", "REAL"], ["priority_set_label", "TEXT NOT NULL DEFAULT ''"], ["priority_set_by", "TEXT"], ["priority_set_at", "INTEGER"],
+    // Filled from a patient details report when the inventory file does not carry them.
+    ["patient_dob", "TEXT NOT NULL DEFAULT ''"], ["member_id", "TEXT NOT NULL DEFAULT ''"], ["patient_phone", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
     ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -739,6 +746,14 @@ function altKeyOf(claimNo) {
   return /\d/.test(s) ? s.slice(0, 80) : "";
 }
 const normText = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+/* ---- priority set by a team lead: applied on top of the automatic score, and kept through uploads and allocation.
+   Keep PRIORITY_LEVELS in step with index.html. */
+const PRIORITY_LEVELS = { top: { label: "Top: work first", add: 200, mul: 1 }, high: { label: "Raised", add: 60, mul: 1 }, low: { label: "Lowered", add: 0, mul: 0.3 } };
+const applyLevel = (base, level) => { const l = PRIORITY_LEVELS[level]; return l ? Math.round(((Number(base) || 0) * l.mul + l.add) * 10) / 10 : Number(base) || 0; };
+// SQL for "the automatic score ?, with this claim's team lead setting applied"; bind prioArgs(score) in its place.
+const PRIO_SQL = "CASE priority_set WHEN 'top' THEN ROUND(? + 200, 1) WHEN 'high' THEN ROUND(? + 60, 1) WHEN 'low' THEN ROUND(? * 0.3, 1) ELSE ? END";
+const prioArgs = (v) => [v, v, v, v];
+const PRIO_REASON_SQL = "CASE WHEN priority_set <> '' THEN priority_set_label || ' · ' || ? ELSE ? END";
 function fpKeyOf(patient, dos) { const p = normText(patient), d = isoDate(dos); return p && d ? p + "|" + d : ""; }
 function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, "0"); }
 const generatedClaimNo = (fp) => "BR-" + fnv1a(fp).toUpperCase();
@@ -765,7 +780,7 @@ async function removeUser(env, id) {
 }
 
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
@@ -1228,14 +1243,14 @@ const OPS = {
           file_status = ?, file_sub_status = ?, file_action = ?, file_comments = CASE WHEN ? <> '' THEN ? ELSE file_comments END, file_bucket = ?,
           inventory_kind = CASE WHEN ? = 'worked' THEN 'worked' ELSE inventory_kind END, worked_before = CASE WHEN ? = 'worked' THEN 1 ELSE worked_before END,
           last_worked_on = CASE WHEN ? <> '' THEN ? ELSE last_worked_on END, follow_up_on = CASE WHEN ? <> '' THEN ? ELSE follow_up_on END,
-          priority = ?, priority_reason = ?, state = ?, state_reason = COALESCE(?, state_reason),
+          priority = ${PRIO_SQL}, priority_base = ?, priority_reason = ${PRIO_REASON_SQL}, state = ?, state_reason = COALESCE(?, state_reason),
           assigned_to = CASE WHEN ? = 1 THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 1 THEN NULL ELSE assigned_at END,
           skipped_at = CASE WHEN ? = 1 THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ?,
           alt_key = CASE WHEN alt_key = '' THEN ? ELSE alt_key END, fp_key = CASE WHEN fp_key = '' THEN ? ELSE fp_key END WHERE id = ?`).bind(
           location_id || null, bid, vals.claim_no, vals.claim_no, vals.account_no, vals.account_no, vals.patient, vals.patient, vals.payer, vals.payer,
           vals.dos, vals.dos, vals.cpt, vals.cpt, vals.provider, vals.provider, vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class,
           vals.file_status, vals.file_sub_status, vals.file_action, vals.file_comments, vals.file_comments, vals.file_bucket,
-          kind, kind, lastWorked, lastWorked, followUp, followUp, vals.priority, vals.priority_reason, newState, reason,
+          kind, kind, lastWorked, lastWorked, followUp, followUp, ...prioArgs(vals.priority), vals.priority, vals.priority_reason, vals.priority_reason, newState, reason,
           clearAssign, clearAssign, clearAssign, vals.raw_json, now, c._alt, c._fp, ex.id));
     }
     if (stmts.length) await batchAll(env, stmts, 40);
@@ -1352,7 +1367,7 @@ const OPS = {
     const w = where.length ? "WHERE " + where.join(" AND ") : "";
     const total = (await one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt FROM claims c ${w}`, ...params)) || { n: 0, amt: 0 };
     const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.balance, c.billed, c.lines, c.age_days, c.bucket, c.tier,
-        c.status_class, c.file_status, c.file_sub_status, c.inventory_kind, c.worked_before, c.last_worked_on, c.follow_up_on, c.priority, c.priority_reason, c.state, c.state_reason,
+        c.status_class, c.file_status, c.file_sub_status, c.inventory_kind, c.worked_before, c.last_worked_on, c.follow_up_on, c.priority, c.priority_reason, c.priority_set, c.priority_set_label, c.state, c.state_reason,
         c.assigned_to, c.assigned_at, c.completed_at, c.skips, c.escalated, c.touches, c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action,
         c.last_note, c.updated_at, c.handoff_status, u.name AS assigned_name, l.name AS location_name
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id ${w} ORDER BY ${sort} ${dir}, c.balance DESC LIMIT ? OFFSET ?`, ...params, size, (page - 1) * size);
@@ -1446,7 +1461,7 @@ const OPS = {
     const today = isoDate(payload.today) || isoToday();
     where.push("((state = 'open') OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?))"); params.push(today);
     const rows = await all(env, `SELECT id, location_id, claim_no, account_no, patient, payer, dos, cpt, balance, age_days, bucket, tier, status_class, inventory_kind, worked_before,
-        last_worked_on, follow_up_on, priority, priority_reason, state, skips, escalated, touches FROM claims WHERE ${where.join(" AND ")} ORDER BY priority DESC LIMIT 20000`, ...params);
+        last_worked_on, follow_up_on, priority, priority_reason, state, skips, escalated, touches, priority_set, priority_set_label FROM claims WHERE ${where.join(" AND ")} ORDER BY priority DESC LIMIT 20000`, ...params);
     return { claims: rows };
   },
   "claims.get": async ({ env, user, payload }) => {
@@ -1489,6 +1504,43 @@ const OPS = {
     out.sort((a, b) => b.at - a.at);
     return { claim: { id: c.id, claim_no: c.claim_no, patient: c.patient, payer: c.payer }, items: out };
   },
+  /* A team lead raises or lowers claims, always with the reason: the reasons show what the automatic score misses, to improve allocation. */
+  "claims.setPriority": async ({ env, user, payload }) => {
+    const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
+    const level = ["top", "high", "low", ""].includes(payload.level) ? payload.level : null;
+    if (!ids.length || level == null) throw bad("Pick claims and a priority.");
+    const category = str(payload.category, 80).trim(), comment = str(payload.comment, 600).trim();
+    if (!category) throw bad("Pick why you are changing the priority.");
+    if (!commentOk(comment)) throw bad("Write a short comment on why, a few words at least.");
+    const label = level ? `TL ${PRIORITY_LEVELS[level].label} (${category})` : "";
+    const now = Date.now();
+    let changed = 0;
+    for (const part of chunks(ids, 80)) {
+      const rows = await all(env, `SELECT id, priority, priority_base, priority_set, priority_reason FROM claims WHERE id IN (${part.map(() => "?").join(",")})${scopeSql(user, "client_id")}`, ...part, ...scopeArgs(user));
+      const stmts = [];
+      for (const r of rows) {
+        const base = r.priority_set ? (r.priority_base != null ? r.priority_base : r.priority) : r.priority;
+        const to = applyLevel(base, level);
+        const autoReason = r.priority_set ? String(r.priority_reason || "").replace(/^TL [^·]*· /, "") : r.priority_reason;
+        stmts.push(env.DB.prepare(`UPDATE claims SET priority = ?, priority_base = ?, priority_set = ?, priority_set_label = ?, priority_set_by = ?, priority_set_at = ?, priority_reason = ?, updated_at = ? WHERE id = ?`)
+          .bind(to, base, level, label, level ? user.id : null, level ? now : null, label ? label + " · " + autoReason : autoReason, now, r.id));
+        stmts.push(claimEvent(env, r.id, user, "priority", level ? PRIORITY_LEVELS[level].label : "Automatic", { from: r.priority, to, from_level: r.priority_set || "", level, category, comment, n: ids.length }));
+        changed++;
+      }
+      if (stmts.length) await batchAll(env, stmts, 50);
+    }
+    return { changed };
+  },
+  /* Every priority change with its reason, for reviewing how allocation can be better. */
+  "claims.priorityLog": async ({ env, user, payload }) => {
+    const since = Date.now() - Math.min(365, Math.max(1, Math.round(num(payload.days, 90)))) * 86400000;
+    const rows = await all(env, `SELECT e.at, e.user_name, e.text, e.data_json, c.id AS claim_id, c.claim_no, c.patient, c.payer, c.balance, c.age_days, c.state, cl.name AS client_name
+      FROM claim_events e JOIN claims c ON c.id = e.claim_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE e.kind = 'priority' AND e.at >= ?${scopeSql(user, "c.client_id")} ORDER BY e.at DESC LIMIT 1000`, since, ...scopeArgs(user));
+    const out = rows.map((r) => { const d = jsonObj(r.data_json); return { ...r, data_json: undefined, level: d.level || "", category: d.category || "", comment: d.comment || "", from: d.from, to: d.to }; });
+    const byCat = {};
+    for (const r of out) { const k = r.category || "Other"; byCat[k] = byCat[k] || { category: k, n: 0, top: 0, high: 0, low: 0, auto: 0, balance: 0 }; byCat[k].n++; byCat[k][r.level || "auto"]++; byCat[k].balance += r.balance || 0; }
+    return { rows: out, categories: Object.values(byCat).sort((a, b) => b.n - a.n) };
+  },
   "claims.setState": async ({ env, user, payload }) => {
     const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
     const state = ["open", "excluded", "closed"].includes(payload.state) ? payload.state : null;
@@ -1524,10 +1576,10 @@ const OPS = {
     const prevNames = new Map((await all(env, `SELECT id, name FROM users WHERE id IN (${[...new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean)), ""].map(() => "?").join(",")})`, ...[...new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean)), ""])).map((u) => [u.id, u.name]));
     const evs = items.filter((a) => ok.has(str(a.user_id, 60)) && eligible(a)).map((a) => { const b = before.get(str(a.id, 60)); return claimEvent(env, b.id, user, "assigned", names.get(str(a.user_id, 60)) || "", { from: b.assigned_to ? prevNames.get(b.assigned_to) || "" : "", via: str(strategy, 40) || "allocate" }); });
     const stmts = items.filter((a) => ok.has(str(a.user_id, 60))).map((a) =>
-      env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = ?, state = 'assigned', state_reason = '', priority = ?, priority_reason = ?, tier = CASE WHEN ? <> '' THEN ? ELSE tier END,
+      env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = ?, state = 'assigned', state_reason = '', priority = ${PRIO_SQL}, priority_base = ?, priority_reason = ${PRIO_REASON_SQL}, tier = CASE WHEN ? <> '' THEN ? ELSE tier END,
           age_days = COALESCE(?, age_days), bucket = CASE WHEN ? <> '' THEN ? ELSE bucket END, skipped_at = NULL, skips = 0, updated_at = ?
         WHERE id = ? AND client_id = ? AND (state = 'open' OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?))`)
-        .bind(str(a.user_id, 60), now, num(a.priority, 0), str(a.priority_reason, 300), str(a.tier, 10), str(a.tier, 10), a.age_days == null ? null : Math.round(num(a.age_days, 0)),
+        .bind(str(a.user_id, 60), now, ...prioArgs(num(a.priority, 0)), num(a.priority, 0), str(a.priority_reason, 300), str(a.priority_reason, 300), str(a.tier, 10), str(a.tier, 10), a.age_days == null ? null : Math.round(num(a.age_days, 0)),
           str(a.bucket, 20), str(a.bucket, 20), now, str(a.id, 60), client_id, today));
     const results = await batchAll(env, stmts, 50);
     const applied = results.reduce((s, r) => s + changesOf(r), 0);
@@ -1997,6 +2049,83 @@ const OPS = {
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
+  /* ---- patient details from another report: some inventory files lack patient details; a second report (demographics / PM report)
+     is matched to the claims already loaded by claim # or account # and fills them, so the team does not VLOOKUP in Excel before allocating. */
+  "inventory.enrich": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60), locId = payload.location_id ? str(payload.location_id, 60) : null;
+    if (!clientId) throw bad("Pick the client.");
+    if (!inScope(user, clientId)) throw outOfScope();
+    const purpose = str(payload.purpose, 120).trim();
+    if (!purpose) throw bad("Say why you are uploading this report.");
+    const overwrite = payload.overwrite ? 1 : 0;
+    const rows = (Array.isArray(payload.rows) ? payload.rows : []).slice(0, 2000);
+    const now = Date.now();
+    let up = payload.upload_id ? await one(env, "SELECT * FROM detail_uploads WHERE id = ? AND client_id = ?", str(payload.upload_id, 60), clientId) : null;
+    if (!up) {
+      up = { id: uuid() };
+      await run(env, "INSERT INTO detail_uploads (id, client_id, location_id, user_id, user_name, created_at, file_name, purpose, note, overwrite) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        up.id, clientId, locId, user.id, user.name, now, str(payload.file_name, 200), purpose, str(payload.note, 500).trim(), overwrite);
+      up = await one(env, "SELECT * FROM detail_uploads WHERE id = ?", up.id);
+    }
+    const FIELDS_E = ["patient", "account_no", "payer", "provider", "patient_dob", "member_id", "patient_phone"];
+    const clean = rows.map((r) => {
+      const o = { claim_no: str(r.claim_no, 80).trim(), account_no: str(r.account_no, 80).trim().replace(/\.0+$/, "") };
+      for (const k of FIELDS_E) if (k !== "account_no") o[k] = str(r[k], 160).trim();
+      if (o.patient_dob) o.patient_dob = isoDate(o.patient_dob) || o.patient_dob;
+      o.extra = {}; if (r.extra && typeof r.extra === "object") for (const [k, v] of Object.entries(r.extra).slice(0, 40)) { const t = str(v, 200).trim(); if (t) o.extra[str(k, 80)] = t; }
+      o._alt = altKeyOf(o.claim_no);
+      return o;
+    }).filter((o) => o._alt || o.account_no);
+    // Find the claims: by claim # first, then every claim of the account.
+    const loc = locId ? " AND location_id = ?" : "", locArgs = locId ? [locId] : [];
+    const cols = "id, claim_no, alt_key, account_no, patient, payer, provider, patient_dob, member_id, patient_phone, raw_json";
+    const byAlt = new Map(), byAcct = new Map();
+    const alts = [...new Set(clean.map((o) => o._alt).filter(Boolean))], accts = [...new Set(clean.map((o) => o.account_no).filter(Boolean))];
+    for (const part of chunks(alts, 80)) for (const c of await all(env, `SELECT ${cols} FROM claims WHERE client_id = ?${loc} AND alt_key IN (${part.map(() => "?").join(",")})`, clientId, ...locArgs, ...part)) byAlt.set(c.alt_key, c);
+    for (const part of chunks(accts, 80)) for (const c of await all(env, `SELECT ${cols} FROM claims WHERE client_id = ?${loc} AND account_no IN (${part.map(() => "?").join(",")})`, clientId, ...locArgs, ...part)) { if (!byAcct.has(c.account_no)) byAcct.set(c.account_no, []); byAcct.get(c.account_no).push(c); }
+    const fieldCounts = jsonObj(up.fields_json);
+    const unmatched = (() => { try { return JSON.parse(up.unmatched_json || "[]"); } catch { return []; } })();
+    const touched = new Map();
+    let matched = 0;
+    for (const o of clean) {
+      const hit = o._alt && byAlt.get(o._alt) ? [byAlt.get(o._alt)] : (o.account_no && byAcct.get(o.account_no)) || [];
+      if (!hit.length) { if (unmatched.length < 500) unmatched.push({ claim_no: o.claim_no, account_no: o.account_no, patient: o.patient }); continue; }
+      matched++;
+      for (const c0 of hit) {
+        const c = touched.get(c0.id) || { ...c0, _set: {}, _raw: null };
+        for (const k of FIELDS_E) {
+          const v = o[k];
+          if (!v || String(c[k] || "") === v || (!overwrite && String(c[k] || "").trim())) continue;
+          c._set[k] = v; c[k] = v;
+        }
+        const ex = Object.entries(o.extra);
+        if (ex.length) { const raw = c._raw || jsonObj(c.raw_json); let ch = false; for (const [k, v] of ex) { const key = "Details · " + k; if (raw[key] !== v && (overwrite || !raw[key])) { raw[key] = v; ch = true; } } if (ch) c._raw = raw; }
+        touched.set(c.id, c);
+      }
+    }
+    const stmts = [];
+    let updated = 0;
+    for (const c of touched.values()) {
+      const keys = Object.keys(c._set);
+      if (!keys.length && !c._raw) continue;
+      updated++;
+      for (const k of keys) fieldCounts[k] = (fieldCounts[k] || 0) + 1;
+      if (c._raw) fieldCounts.other = (fieldCounts.other || 0) + 1;
+      const sets = keys.map((k) => k + " = ?"), args = keys.map((k) => c._set[k]);
+      if (c._raw) { sets.push("raw_json = ?"); args.push(str(JSON.stringify(c._raw), 20000)); }
+      stmts.push(env.DB.prepare(`UPDATE claims SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).bind(...args, now, c.id));
+      stmts.push(claimEvent(env, c.id, user, "enriched", str(payload.file_name, 200), { purpose, fields: keys, other: !!c._raw }));
+    }
+    if (stmts.length) await batchAll(env, stmts, 40);
+    await run(env, "UPDATE detail_uploads SET rows_read = rows_read + ?, rows_matched = rows_matched + ?, claims_updated = claims_updated + ?, fields_json = ?, unmatched_json = ? WHERE id = ?",
+      rows.length, matched, updated, JSON.stringify(fieldCounts), JSON.stringify(unmatched), up.id);
+    return { upload_id: up.id, rows: rows.length, matched, updated, fields: fieldCounts };
+  },
+  "inventory.enrichList": async ({ env, user, payload }) => {
+    const rows = await all(env, `SELECT d.*, c.name AS client_name, l.name AS location_name FROM detail_uploads d LEFT JOIN clients c ON c.id = d.client_id LEFT JOIN locations l ON l.id = d.location_id
+      WHERE 1 = 1${scopeSql(user, "d.client_id")} ORDER BY d.created_at DESC LIMIT ?`, ...scopeArgs(user), Math.min(200, Math.max(1, Math.round(num(payload.limit, 30)))));
+    return { rows: rows.map((r) => ({ ...r, fields: jsonObj(r.fields_json), unmatched: (() => { try { return JSON.parse(r.unmatched_json || "[]"); } catch { return []; } })(), fields_json: undefined, unmatched_json: undefined })) };
+  },
   /* ---- insurance TFL / AFL: one row per client and insurance with open claims or saved limits, and how much is near or past the TFL ---- */
   "payers.limits": async ({ env, user, payload }) => {
     const today = isoDate(payload.today) || isoToday();

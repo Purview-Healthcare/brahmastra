@@ -64,7 +64,7 @@ a{color:var(--tealink)}
 .main{max-width:1360px;margin:0 auto;padding:22px 20px 70px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(10,14,36,.04);padding:18px 20px}
 .card.tight{padding:12px 14px}
-.mt{margin-top:14px}.mb{margin-bottom:14px}.mt8{margin-top:8px}
+.mt{margin-top:14px}.mb{margin-bottom:14px}.mt8{margin-top:8px}.mt16{margin-top:16px}
 h1,h2,h3{margin:0;font-family:'Fraunces',serif;font-weight:600;line-height:1.2}
 h1{font-size:24px}h2{font-size:18px}h3{font-size:15px}
 .sub{color:var(--slate);font-size:13px;margin-top:2px}
@@ -224,7 +224,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.17.0";
+const APP_VERSION = "2.18.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -557,6 +557,10 @@ function scoreClaim(c, today) {
   const parts = [STATUS_LABEL[cls] || cls, age == null ? "no DOS" : `${age}d (${bucketOf(age)})`, urg.label, `${tier} value ${fmtMoney(bal)}`, fu].filter(Boolean);
   return { priority: Math.round(pts * 10) / 10, reason: parts.join(" · "), urgency: urg };
 }
+/* Priority set by a team lead (Claims tab). Keep in step with PRIORITY_LEVELS in worker.js. */
+const PRIORITY_LEVELS_UI = { top: { label: "Top: work first", add: 200, mul: 1, short: "⇈ Top" }, high: { label: "Raised", add: 60, mul: 1, short: "↑ Raised" }, low: { label: "Lowered", add: 0, mul: 0.3, short: "↓ Lowered" } };
+const applyLevelUI = (base, level) => { const l = PRIORITY_LEVELS_UI[level]; return l ? Math.round(((Number(base) || 0) * l.mul + l.add) * 10) / 10 : Number(base) || 0; };
+const PRIORITY_WHY = ["Client asked for it", "Near / past timely filing (TFL)", "Appeal deadline (AFL)", "High dollar / big balance", "Payer issue: work with the payer's other claims", "Patient call back / complaint", "Escalation or audit follow-up", "Waiting on client / documents", "Not workable yet (hold)", "Score was wrong for this claim", "Other"];
 /* Re-age and re-score a set of claims as of today (used before allocation). */
 function rescore(claims, today) {
   const cut = tierCut(claims);
@@ -565,6 +569,9 @@ function rescore(claims, today) {
     const n = { ...c, age_days: age, bucket: bucketOf(age), tier: tierOf(Number(c.balance) || 0, cut) };
     const s = scoreClaim(n, today);
     n.priority = s.priority; n.priority_reason = s.reason;
+    // A team lead's setting goes on top of the automatic score; the server applies it again when the plan is saved, so it is sent without it.
+    n.priority_auto = s.priority; n.priority_reason_auto = s.reason;
+    if (PRIORITY_LEVELS_UI[c.priority_set]) { n.priority = applyLevelUI(s.priority, c.priority_set); n.priority_reason = (c.priority_set_label || PRIORITY_LEVELS_UI[c.priority_set].label) + " · " + s.reason; }
     return n;
   });
 }
@@ -681,7 +688,7 @@ function planAllocation({ claims, users, strategy }) {
     if (t && t.left <= 0) t = null;
     if (!t) { t = pick(); if (!t) { leftover.push(c); continue; } if (key) owners.set(key, t); }
     t.left--; t.count++; t.amt += Number(c.balance) || 0; if (key) t.keys.add(key); t.payers[c.payer || "Unknown"] = (t.payers[c.payer || "Unknown"] || 0) + 1; t.claims.push(c);
-    assignments.push({ id: c.id, user_id: t.id, priority: c.priority, priority_reason: c.priority_reason, tier: c.tier, bucket: c.bucket, age_days: c.age_days });
+    assignments.push({ id: c.id, user_id: t.id, priority: c.priority_auto ?? c.priority, priority_reason: c.priority_reason_auto ?? c.priority_reason, tier: c.tier, bucket: c.bucket, age_days: c.age_days });
   }
   const perUser = team.map((t) => ({ id: t.id, name: t.name, capacity: t.capacity, count: t.count, amt: t.amt, batches: t.keys.size, topPayers: Object.entries(t.payers).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([p, n]) => `${p} (${n})`), high: t.claims.filter((c) => c.tier === "High").length, urgent: t.claims.filter((c) => (c.age_days || 0) >= 75 && (c.age_days || 0) <= 120).length }));
   return { assignments, perUser, leftover: leftover.length, leftoverAmt: sum(leftover, (c) => c.balance) };
@@ -2045,16 +2052,148 @@ const INV_TABS = [
   ["upload", "1 · Upload inventory", "Open the client's claim file straight from OneDrive (Excel or CSV) and load it. New claims are added, claims already on file are refreshed, and the location's billers can receive them at once."],
   ["batches", "2 · Upload history", "Every file loaded so far and exactly what it changed: rows read, new, refreshed, reopened, closed. Re-read the same OneDrive file after the client updates it, or undo a wrong upload."],
   ["allocate", "3 · Allocate", "Hand out the day's work: filter the pool (tier, age, payer, balance), pick who works today and how many claims each person gets, preview the split, then apply it."],
+  ["details", "+ Patient details report", "Inventory missing patient details? Upload the other report (demographics / PM report): it is matched by claim # or account # and fills the gaps, so there is no VLOOKUP in Excel before allocating."],
 ];
+/* ---------- patient details report ----------
+   Some inventory files lack patient details. A second report (demographics / PM system report) is matched to the claims already loaded
+   by claim # (or by account #, which fills every claim of that patient) and fills what is missing. */
+const DETAIL_FIELD_LABEL = { patient: "Patient name", account_no: "Account # / MRN", payer: "Payer / Insurance", provider: "Provider", patient_dob: "Date of birth", member_id: "Member / subscriber ID", patient_phone: "Phone" };
+const DETAIL_TARGETS = ["patient", "account_no", "payer", "provider", "patient_dob", "member_id", "patient_phone"];
+const DETAIL_RULES = {
+  patient_dob: ["dob", "date of birth", "birth date", "birthdate", "patient dob", "pt dob"],
+  member_id: ["member id", "subscriber id", "member number", "policy number", "policy id", "insurance id", "ins id", "id number", "member no", "subscriber number", "medicaid id", "medicare id", "mbi", "hicn"],
+  patient_phone: ["phone", "phone number", "patient phone", "home phone", "cell phone", "mobile", "contact number", "telephone"],
+};
+const DETAIL_WHY = ["Patient names missing", "Account # / MRN missing", "Payer / insurance missing", "DOB / member ID needed for calls", "Provider missing", "Other"];
+function detailAutoMap(headers) {
+  const m = autoMap(headers);
+  const out = { claim_no: m.claim_no || "", account_no: m.account_no || "", patient: m.patient || "", payer: m.payer || "", provider: m.provider || "" };
+  const used = new Set(Object.values(out).filter(Boolean));
+  for (const [k, names] of Object.entries(DETAIL_RULES)) {
+    const hit = headers.find((h) => !used.has(h) && names.includes(normHeader(h))) || headers.find((h) => !used.has(h) && names.filter((n) => n.length >= 5).some((n) => normHeader(h).includes(n)));
+    out[k] = hit || ""; if (hit) used.add(hit);
+  }
+  return out;
+}
+function DetailsReport({ ctx, go }) {
+  const [clientId, setClientId] = useState("");
+  const [locId, setLocId] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [note, setNote] = useState("");
+  const [file, setFile] = useState(null);
+  const [table, setTable] = useState(null);
+  const [map, setMap] = useState({});
+  const [keepOther, setKeepOther] = useState(true);
+  const [overwrite, setOverwrite] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const [result, setResult] = useState(null);
+  const inputRef = useRef();
+  const hist = useRpc("inventory.enrichList", { limit: 20 }, []);
+  const onFile = async (f) => {
+    if (!f) return;
+    try {
+      const sheets = readWorkbook(await f.arrayBuffer(), f.name);
+      if (!sheets.length) throw new Error("No rows were found in this file.");
+      const t = tableFromSheet(sheets[0].rows);
+      setFile({ name: f.name }); setTable(t); setMap(detailAutoMap(t.headers)); setResult(null);
+    } catch (e) { toast("Could not read the file: " + e.message, "err"); }
+    if (inputRef.current) inputRef.current.value = "";
+  };
+  const headerOpts = [{ id: "", label: "— not in this report —" }, ...((table && table.headers) || []).map((h) => ({ id: h, label: h }))];
+  const mapped = new Set(Object.values(map).filter(Boolean));
+  const others = table ? table.headers.filter((h) => !mapped.has(h)) : [];
+  const keyed = table ? table.rows.filter((r) => (map.claim_no && String(r[map.claim_no] ?? "").trim()) || (map.account_no && String(r[map.account_no] ?? "").trim())).length : 0;
+  const fills = DETAIL_TARGETS.filter((k) => map[k] && !(k === "account_no" && !map.claim_no));
+  const ready = clientId && purpose && table && (map.claim_no || map.account_no) && (fills.length || (keepOther && others.length)) && keyed > 0;
+  const run = async () => {
+    setBusy("Matching…"); setResult(null);
+    const cell = (r, h) => (h ? r[h] : "");
+    const rows = table.rows.map((r) => {
+      const o = { claim_no: String(cell(r, map.claim_no) ?? "").trim(), account_no: String(cell(r, map.account_no) ?? "").trim() };
+      for (const k of DETAIL_TARGETS) if (k !== "account_no" && map[k]) o[k] = String(cell(r, map[k]) ?? "").trim();
+      if (o.patient_dob) o.patient_dob = parseDateAny(cell(r, map.patient_dob)) || o.patient_dob;
+      if (keepOther) { o.extra = {}; for (const h of others.slice(0, 40)) { const v = r[h]; if (v !== "" && v != null) o.extra[h] = typeof v === "number" && /date|dob/i.test(h) ? (parseDateAny(v) || String(v)) : String(v); } }
+      return o;
+    }).filter((o) => o.claim_no || o.account_no);
+    let uploadId = null, tot = { rows: 0, matched: 0, updated: 0, fields: {} };
+    try {
+      for (let i = 0; i < rows.length; i += 1000) {
+        setBusy(`Filling details… ${fmtInt(Math.min(rows.length, i + 1000))} of ${fmtInt(rows.length)} rows`);
+        const r = await rpc("inventory.enrich", { client_id: clientId, location_id: locId || undefined, upload_id: uploadId, file_name: file.name, purpose, note, overwrite, rows: rows.slice(i, i + 1000) });
+        uploadId = r.upload_id; tot = { rows: tot.rows + r.rows, matched: tot.matched + r.matched, updated: tot.updated + r.updated, fields: r.fields };
+      }
+      setResult({ ...tot, upload_id: uploadId }); hist.reload();
+      toast(`${fmtInt(tot.updated)} claims filled from ${file.name}.`);
+    } catch (e) { toast(e.message, "err"); }
+    setBusy(null);
+  };
+  const lastUnmatched = result && hist.data ? (hist.data.rows.find((h) => h.id === result.upload_id) || {}).unmatched || [] : [];
+  return (
+    <div className="stack">
+      <div className="card">
+        <div className="b">Why upload a patient details report?</div>
+        <div className="small mt8" style={{ lineHeight: 1.6 }}>Some clients' inventory files do not carry the full patient details (patient name, account #, payer, DOB, member ID…). Until now that meant pulling a second report and matching it in Excel before allocating. Upload that report here instead:
+          <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
+            <li><b>Better allocation:</b> with the patient and account filled, all of a patient's claims are kept with one biller and payers are batched, so one call covers several claims.</li>
+            <li><b>Faster work:</b> the biller sees DOB, member ID and phone on the claim, without opening another report before calling the payer.</li>
+            <li><b>No VLOOKUP:</b> rows are matched by claim # first, otherwise by account # (which fills every claim of that patient). Nothing else on the claim changes, and each claim's history shows what was filled and why.</li>
+          </ul></div>
+        <div className="tiny muted mt8">Load the inventory first (step 1), then this report for the same client. Rows that match no claim are listed so you can check them.</div>
+      </div>
+      <div className="card">
+        <div className="grid g4">
+          <ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={setLocId} />
+          <Field label="Why are you uploading this report?"><Combo value={purpose} onChange={setPurpose} placeholder="Pick the reason…" options={DETAIL_WHY.map((x) => ({ id: x, label: x }))} /></Field>
+          <Field label="Note (optional)"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Kareo demographics report, Oct 29" /></Field>
+        </div>
+        <div className="row mt8" style={{ gap: 10, flexWrap: "wrap" }}>
+          <button className="btn" onClick={() => inputRef.current && inputRef.current.click()}>📄 {file ? "Pick another report" : "Pick the report (Excel or CSV)"}</button>
+          <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
+          {file && table && <span className="small">{file.name} · {fmtInt(table.rows.length)} rows · {fmtInt(keyed)} with a claim # or account #</span>}
+        </div>
+        {table && <>
+          <div className="b small mt16 mb">Columns in this report</div>
+          <div className="grid g4">
+            <Field label="Claim # (to match)"><Combo value={map.claim_no} onChange={(v) => setMap({ ...map, claim_no: v })} options={headerOpts} /></Field>
+            {DETAIL_TARGETS.map((k) => <Field key={k} label={k === "account_no" ? "Account # / MRN (to match, and fill)" : DETAIL_FIELD_LABEL[k]}><Combo value={map[k]} onChange={(v) => setMap({ ...map, [k]: v })} options={headerOpts} /></Field>)}
+          </div>
+          <div className="row mt8" style={{ gap: 18, flexWrap: "wrap" }}>
+            <label className="check small"><input type="checkbox" checked={keepOther} onChange={(e) => setKeepOther(e.target.checked)} /> Also keep the other {others.length} column{others.length === 1 ? "" : "s"} on the claim (shown under Full claim details)</label>
+            <label className="check small"><input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} /> Replace values the claim already has (normally only empty fields are filled)</label>
+          </div>
+          {!map.claim_no && !map.account_no && <div className="alert warn mt8">Pick the claim # or account # column so the rows can be matched to claims.</div>}
+          <div className="row mt16" style={{ gap: 10 }}>
+            <button className="btn primary" disabled={!ready || !!busy} onClick={run}>{busy || "Fill the details"}</button>
+            {!clientId && <span className="small muted">Pick the client.</span>}{clientId && !purpose && <span className="small muted">Pick why you are uploading it.</span>}
+          </div>
+        </>}
+        {result && <div className="alert info mt16"><b>{fmtInt(result.updated)} claims filled</b> from {fmtInt(result.matched)} of {fmtInt(result.rows)} rows. {Object.entries(result.fields || {}).map(([k, n]) => `${DETAIL_FIELD_LABEL[k] || "other columns"}: ${fmtInt(n)}`).join(" · ")}
+          {result.rows - result.matched > 0 && <> · <b>{fmtInt(result.rows - result.matched)} rows matched no claim</b> <button className="btn sm link" onClick={() => downloadText(toCSV(lastUnmatched, [{ key: "claim_no", label: "Claim #" }, { key: "account_no", label: "Account #" }, { key: "patient", label: "Patient" }]), "unmatched-rows.csv")}>Download them</button></>}
+          {" "}<button className="btn sm link" onClick={() => go("claims", { clientId })}>See the claims</button></div>}
+      </div>
+      <div className="card tight">
+        <div className="b small mb">Reports uploaded</div>
+        <ErrorBox error={hist.error} />
+        <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client</th><th>File</th><th>Why</th><th className="r">Rows</th><th className="r">Matched</th><th className="r">Claims filled</th><th>Fields</th></tr></thead>
+          <tbody>{(hist.data ? hist.data.rows : []).map((h) => (
+            <tr key={h.id}><td className="small">{fmtWhen(h.created_at)}<div className="tiny muted">{h.user_name}</div></td><td className="small">{h.client_name}{h.location_name ? " · " + h.location_name : ""}</td><td className="small">{h.file_name}</td>
+              <td className="small"><b>{h.purpose}</b>{h.note ? <div className="tiny muted">{h.note}</div> : null}</td><td className="num">{fmtInt(h.rows_read)}</td><td className="num">{fmtInt(h.rows_matched)}</td><td className="num">{fmtInt(h.claims_updated)}</td>
+              <td className="tiny">{Object.entries(h.fields || {}).map(([k, n]) => `${DETAIL_FIELD_LABEL[k] || "other"} ${n}`).join(" · ")}</td></tr>))}
+            {hist.data && !hist.data.rows.length && <tr><td colSpan={8}><Empty>No patient details reports yet.</Empty></td></tr>}</tbody></table></div>
+      </div>
+    </div>
+  );
+}
 function InventoryView({ ctx, reload, go, params, me, initialTab }) {
   const [tab, setTab] = useState(initialTab || "upload");
   const [refresh, setRefresh] = useState(null);
   return (
     <div className="stack">
       <div><h1>Inventory & allocation</h1><div className="sub">From the client's file to every biller's day list: upload, check what changed, and hand the work out.</div></div>
-      <div className="grid g3">{INV_TABS.map(([k, t, d]) => <button key={k} type="button" className={"card tight tabcard" + (tab === k ? " on" : "")} onClick={() => setTab(k)}><div className="tc-t">{t}</div><div className="small muted mt8">{d}</div></button>)}</div>
+      <div className="grid g4">{INV_TABS.map(([k, t, d]) => <button key={k} type="button" className={"card tight tabcard" + (tab === k ? " on" : "")} onClick={() => setTab(k)}><div className="tc-t">{t}</div><div className="small muted mt8">{d}</div></button>)}</div>
       {tab === "upload" ? <UploadWizard key={refresh ? refresh.id : "new"} ctx={ctx} reload={reload} go={go} params={params} me={me} folderLink="" refreshBatch={refresh} />
         : tab === "batches" ? <BatchesTable ctx={ctx} onRefresh={(b) => { setRefresh(b); setTab("upload"); }} />
+        : tab === "details" ? <DetailsReport ctx={ctx} go={go} />
         : <AllocateView ctx={ctx} params={params} go={go} embedded />}
     </div>
   );
@@ -2363,6 +2502,8 @@ function ClaimsView({ ctx, params, me }) {
   const [open, setOpen] = useState(null);
   const [bulkUser, setBulkUser] = useState("");
   const [busy, setBusy] = useState(false);
+  const [prio, setPrio] = useState(null);
+  const [prioLog, setPrioLog] = useState(false);
   const rows = q.data ? q.data.rows : [];
   const toggle = (id) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allOn = rows.length > 0 && rows.every((r) => sel.has(r.id));
@@ -2386,7 +2527,7 @@ function ClaimsView({ ctx, params, me }) {
   const users = ctx.users.filter((u) => u.active);
   return (
     <div className="stack">
-      <div className="row between"><div><h1>Claims</h1><div className="sub">Every claim on file, with filters, bulk actions and export.</div></div><div className="row"><AllocationLogicButton /><button className="btn" onClick={exportCSV} disabled={busy || !rows.length}>Download CSV</button></div></div>
+      <div className="row between"><div><h1>Claims</h1><div className="sub">Every claim on file, with filters, bulk actions and export.</div></div><div className="row"><AllocationLogicButton /><button className="btn" onClick={() => setPrioLog(true)} title="Every priority change with its reason">Priority changes</button><button className="btn" onClick={exportCSV} disabled={busy || !rows.length}>Download CSV</button></div></div>
       <div className="card tight">
         <div className="grid g5">
           <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF((x) => ({ ...x, client_id: v, location_id: "", page: 1 }))} locId={f.location_id} setLocId={(v) => set("location_id", v)} allowAll />
@@ -2419,6 +2560,7 @@ function ClaimsView({ ctx, params, me }) {
           <Combo sm width={220} value={bulkUser} onChange={setBulkUser} placeholder="Assign to…" options={users.map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
           <button className="btn sm primary" disabled={!bulkUser || busy} onClick={() => bulk("Assigned", (ids) => rpc("alloc.reassign", { ids, user_id: bulkUser }))}>Assign</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Unassigned", (ids) => rpc("alloc.unassign", { ids }))}>Unassign</button>
+          <button className="btn sm" disabled={busy} onClick={() => setPrio({ ids: [...sel], rows: rows.filter((r) => sel.has(r.id)) })}>Change priority</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Reopened", (ids) => rpc("claims.setState", { ids, state: "open" }))}>Reopen</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Excluded", (ids) => rpc("claims.setState", { ids, state: "excluded" }))}>Exclude</button>
           <button className="btn sm danger" disabled={busy} onClick={() => bulk("Closed", (ids) => rpc("claims.setState", { ids, state: "closed" }))}>Close</button>
@@ -2434,14 +2576,76 @@ function ClaimsView({ ctx, params, me }) {
           <tbody>{rows.map((r) => (
             <tr key={r.id} className="click" onClick={() => setOpen(r.id)}>
               <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
-              <td className="num" title={r.priority_reason}>{r.priority}</td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td>{r.payer}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{r.age_days ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
+              <td className="num" title={r.priority_reason + "\nClick to change the priority"} onClick={(e) => { e.stopPropagation(); setPrio({ ids: [r.id], rows: [r] }); }} style={{ cursor: "pointer", whiteSpace: "nowrap" }}>{r.priority}{PRIORITY_LEVELS_UI[r.priority_set] ? <div><span className={"badge " + (r.priority_set === "low" ? "gray" : "purple")} title={r.priority_set_label}>{PRIORITY_LEVELS_UI[r.priority_set].short}</span></div> : <div className="tiny muted">✎ change</div>}</td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td>{r.payer}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{r.age_days ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td><TierBadge tier={r.tier} /></td><td><ClassBadge cls={r.status_class} /></td><td><KindBadge claim={r} /></td><td><StateBadge state={r.state} />{r.escalated ? <span className="badge red" style={{ marginLeft: 4 }}>esc</span> : null}{r.skips ? <span className="badge amber" style={{ marginLeft: 4 }}>skipped ×{r.skips}</span> : null}<HandoffBadge status={r.handoff_status} /></td><td className="small">{r.assigned_name || "–"}</td><td className="small">{r.follow_up_on ? fmtDate(r.follow_up_on) : "–"}</td>
             </tr>))}
             {q.data && !rows.length && <tr><td colSpan={14}><Empty>No claims match these filters.</Empty></td></tr>}</tbody></table></div>
         {q.data && <div className="mt8"><Pager page={q.data.page} pageSize={q.data.page_size} total={q.data.total} onPage={(pg) => set("page", pg)} /></div>}
       </div>
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
+      {prio && <PriorityModal ids={prio.ids} rows={prio.rows} onClose={() => setPrio(null)} onDone={() => { setPrio(null); setSel(new Set()); q.reload(); }} />}
+      {prioLog && <PriorityLogModal onClose={() => setPrioLog(false)} onOpen={(id) => { setPrioLog(false); setOpen(id); }} />}
     </div>
+  );
+}
+/* A team lead changes the priority of one or more claims, always with the reason. */
+function PriorityModal({ ids, rows, onClose, onDone }) {
+  const one = rows.length === 1 ? rows[0] : null;
+  const [level, setLevel] = useState(one && one.priority_set ? one.priority_set : "top");
+  const [category, setCategory] = useState("");
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const ok = category && comment.trim().length >= 8;
+  const base = (r) => (r.priority_set ? null : r.priority);
+  const go = async () => {
+    setBusy(true); setErr(null);
+    try { const r = await rpc("claims.setPriority", { ids, level, category, comment }); toast(`Priority changed on ${fmtInt(r.changed)} claim${r.changed === 1 ? "" : "s"}.`); onDone(); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const LEVELS = [["top", "⇈ Top: work first", "goes to the top of the biller's list and of the next allocation"], ["high", "↑ Raise", "ahead of similar claims"], ["low", "↓ Lower", "behind other claims until you change it back"], ["", "⟲ Automatic", "back to the score from age, value and status"]];
+  return (
+    <Modal title={"Change priority · " + (one ? (one.claim_no || one.patient || "claim") : ids.length + " claims")} sub={one ? [one.patient, one.payer, "score now " + one.priority + (one.priority_set_label ? " (" + one.priority_set_label + ")" : "")].filter(Boolean).join(" · ") : "The reason is saved on each claim."} onClose={onClose} narrow
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={go} disabled={busy || !ok}>{busy ? "Saving…" : "Save priority"}</button></>}>
+      <div className="stack">
+        <div className="field"><span>New priority</span>
+          <div className="stack mt8" style={{ gap: 6 }}>{LEVELS.map(([k, l, d]) => (
+            <label key={k || "auto"} className="check" style={{ alignItems: "flex-start" }}><input type="radio" name="prio-level" checked={level === k} onChange={() => setLevel(k)} /> <span><b>{l}</b> <span className="tiny muted">· {d}{one && base(one) != null && k ? " (score " + applyLevelUI(one.priority, k) + ")" : ""}</span></span></label>))}</div></div>
+        <Field label="Why are you changing it?"><Combo value={category} onChange={setCategory} placeholder="Pick the reason…" options={PRIORITY_WHY.map((x) => ({ id: x, label: x }))} /></Field>
+        <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="e.g. Client escalated these on today's call; TFL ends next week for this payer." /></Field>
+        <div className="alert info" style={{ fontSize: 12.5 }}><b>Why we ask:</b> every change and its reason is kept on the claim's history and in <b>Priority changes</b>. Reviewing them shows what the automatic score misses (a payer, a client request, deadlines), so the allocation rules can be improved and fewer claims need moving by hand.</div>
+        <ErrorBox error={err} />
+      </div>
+    </Modal>
+  );
+}
+/* All priority changes with their reasons, grouped by reason, to review what the automatic allocation should learn. */
+function PriorityLogModal({ onClose, onOpen }) {
+  const [days, setDays] = useState(30);
+  const q = useRpc("claims.priorityLog", { days }, [days]);
+  const sort = useTableSort("at", "desc");
+  const rows = sort.sortRows(q.data ? q.data.rows : []);
+  const cats = q.data ? q.data.categories : [];
+  const exportCSV = () => downloadText(toCSV(rows, [{ key: "at", label: "When", get: (r) => new Date(r.at).toLocaleString() }, { key: "user_name", label: "Changed by" }, { key: "client_name", label: "Client" }, { key: "claim_no", label: "Claim #" }, { key: "patient", label: "Patient" }, { key: "payer", label: "Payer" }, { key: "balance", label: "Balance" }, { key: "age_days", label: "Age" }, { key: "text", label: "New priority" }, { key: "category", label: "Why" }, { key: "comment", label: "Comment" }, { key: "from", label: "Score before" }, { key: "to", label: "Score after" }]), `brahmastra-priority-changes-${todayISO()}.csv`);
+  return (
+    <Modal title="Priority changes" sub="Every claim a team lead moved up or down, and why. The most common reasons are what the automatic allocation should start doing by itself." onClose={onClose}
+      footer={<><button className="btn" onClick={exportCSV} disabled={!rows.length}>Download CSV</button><button className="btn primary" onClick={onClose}>Close</button></>}>
+      <div className="stack">
+        <div className="pill-list">{[7, 30, 90, 365].map((d) => <button key={d} className={"chip " + (days === d ? "on" : "")} onClick={() => setDays(d)}>Last {d} days</button>)}</div>
+        <ErrorBox error={q.error} />
+        {q.loading && !q.data && <Spinner />}
+        {cats.length > 0 && <div className="table-wrap"><table className="t"><thead><tr><th>Reason</th><th className="r">Claims</th><th className="r">Top</th><th className="r">Raised</th><th className="r">Lowered</th><th className="r">Back to auto</th><th className="r">Balance</th></tr></thead>
+          <tbody>{cats.map((c) => <tr key={c.category}><td className="b small">{c.category}</td><td className="num">{fmtInt(c.n)}</td><td className="num">{c.top || ""}</td><td className="num">{c.high || ""}</td><td className="num">{c.low || ""}</td><td className="num">{c.auto || ""}</td><td className="num">{fmtMoney(c.balance)}</td></tr>)}</tbody></table></div>}
+        <div className="table-wrap"><table className="t"><thead><tr>{sort.Th("at", "When")}{sort.Th("user_name", "By")}{sort.Th("claim_no", "Claim")}{sort.Th("payer", "Payer")}{sort.Th("balance", "Balance", "r")}{sort.Th("text", "Priority")}{sort.Th("category", "Why")}</tr></thead>
+          <tbody>{rows.map((r, i) => (
+            <tr key={i} className="click" onClick={() => onOpen(r.claim_id)}>
+              <td className="small">{fmtWhen(r.at)}</td><td className="small">{r.user_name}</td><td className="small"><span className="mono">{r.claim_no || "–"}</span><div className="tiny muted">{r.patient} · {r.client_name}</div></td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
+              <td className="small">{r.text}<div className="tiny muted">{r.from} → {r.to}</div></td><td className="small" style={{ maxWidth: 320 }}><b>{r.category}</b>{r.comment ? <div className="tiny">{r.comment}</div> : null}</td>
+            </tr>))}
+            {q.data && !rows.length && <tr><td colSpan={7}><Empty>No priority changes in this period. Change a claim's priority from the Priority column on Claims.</Empty></td></tr>}</tbody></table></div>
+      </div>
+    </Modal>
   );
 }
 
@@ -2597,6 +2801,8 @@ function ClaimInfo({ c, siblings }) {
         <div className="card tight"><div className="cv-sec">👤 Patient</div>
           <dl className="cv-kv">
             <dt>Patient</dt><dd>{c.patient || "–"}</dd><dt>Account #</dt><dd className="mono">{c.account_no || "–"}</dd>
+            {(c.patient_dob || c.member_id) && <><dt>DOB</dt><dd>{c.patient_dob ? (/^\d{4}-\d{2}-\d{2}$/.test(c.patient_dob) ? fmtDate(c.patient_dob) : c.patient_dob) : "–"}</dd><dt>Member ID</dt><dd className="mono">{c.member_id || "–"}</dd></>}
+            {c.patient_phone && <><dt>Phone</dt><dd>{c.patient_phone}</dd><dt></dt><dd></dd></>}
             <dt>Client</dt><dd>{c.client_name || "–"}</dd><dt>Location</dt><dd>{c.location_name || "–"}</dd>
             <dt>Provider</dt><dd>{c.provider || "–"}</dd><dt>Assigned to</dt><dd>{c.assigned_name || "–"}{c.assigned_at ? <div className="tiny muted" style={{ fontWeight: 400 }}>{fmtWhen(c.assigned_at)}</div> : null}</dd>
             <dt>Other claims</dt><dd>{siblings && siblings.length ? `${siblings.length} open for this patient` : "none open"}</dd><dt>Suggested</dt><dd style={{ fontWeight: 400 }}>{STATUS_ACTION[c.status_class] || STATUS_ACTION.unknown}</dd>
@@ -2693,6 +2899,10 @@ function HistEvent({ it, onEdit, onFile }) {
     case "unassigned": dot = D("#EEF1F0", "👤"); title = "Unassigned" + (it.text ? " from " + it.text : "") + who; break;
     case "state": dot = D("#EEF1F0", "⇄"); title = "State changed" + who; body = <><Changes changes={it.changes} />{it.text ? <div className="m">{it.text}</div> : null}</>; break;
     case "loaded": dot = D("#EEF1F0", "⤴"); title = "Loaded from inventory"; body = <><div className="m">{[it.text, it.who ? "by " + it.who : ""].filter(Boolean).join(" · ")}</div>{it.data && it.data.file_status ? <div className="x">File said: {it.data.file_status}</div> : null}</>; break;
+    case "priority": { const d = it.data || {}; dot = D("#EEE7FB", d.level === "low" ? "↓" : d.level ? "↑" : "⟲"); title = "Priority " + (d.level ? (PRIORITY_LEVELS_UI[d.level] || {}).label : "back to automatic") + who;
+      body = <><div className="x"><b>{d.category}</b>{d.comment ? ": " + d.comment : ""}</div><div className="m">{d.from != null ? "score " + d.from + " → " + d.to : ""}{d.n > 1 ? " · with " + (d.n - 1) + " other claims" : ""}</div></>; break; }
+    case "enriched": { const d = it.data || {}; dot = D("#E0F7F4", "＋"); title = "Details filled from a report" + who;
+      body = <><div className="x">{(d.fields || []).map((f) => DETAIL_FIELD_LABEL[f] || f).concat(d.other ? ["other columns"] : []).join(", ")}</div><div className="m">{[it.text, d.purpose ? "why: " + d.purpose : ""].filter(Boolean).join(" · ")}</div></>; break; }
     case "refreshed": dot = D("#EEF1F0", "⟳"); title = "Refreshed from inventory"; body = <><div className="m">{[it.text, it.who ? "by " + it.who : ""].filter(Boolean).join(" · ")}</div>{it.data && it.data.file_status ? <div className="x">File said: {it.data.file_status}{it.data.balance != null ? " · balance " + fmtMoney(it.data.balance, 2) : ""}</div> : null}<Changes changes={it.changes} /></>; break;
     case "handoff_sent": dot = D("#EEE7FB", "➜"); title = "Sent to " + (it.text || "the department") + who; body = it.data && it.data.due_at ? <div className="m">due {fmtWhen(it.data.due_at)} (24 working hours)</div> : null; break;
     case "handoff_none": dot = D("#EEF1F0", "ⓘ"); title = (it.text || "Hand-off") + ": " + ({ client: "done by the client", biller: "done by the biller", unset: "nobody set for this client" }[it.data && it.data.mode] || "not sent"); break;
