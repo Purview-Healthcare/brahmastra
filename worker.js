@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.16.0";
+const VERSION = "2.17.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -2363,16 +2363,18 @@ const OPS = {
     const members = users.map((u) => { const p = jsonList(u.projects_json).find((x) => names.has(projKey(x.name)));
       return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
         cap: caps[u.id] != null ? caps[u.id] : u.capacity, cap_set: caps[u.id] != null, on: on ? on.includes(u.id) : true }; });
-    return { client: { id: c.id, name: c.name }, day, members, saved: saved ? { at: saved.at, by_name: saved.by_name || "" } : null };
+    // on_ids: everyone ticked for the day (Allocate can tick people outside the project team too); caps: numbers set per person.
+    return { client: { id: c.id, name: c.name }, day, members, on_ids: on, caps, saved: saved ? { at: saved.at, by_name: saved.by_name || "" } : null };
   },
   "team.saveToday": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT id, team_json, caps_json FROM clients WHERE id = ?", payload.client_id);
     if (!c) throw bad("Unknown client.");
     const day = isoDate(payload.day) || isoToday();
-    const team = new Set(parseTeam(c.team_json));
-    const on = [...new Set((Array.isArray(payload.on) ? payload.on : []).map((x) => str(x, 60)))].filter((x) => team.has(x));
+    // Anyone active can be ticked for the day: the project team from the pop-up, or anyone the team lead picks on Allocate.
+    const active = new Set((await all(env, "SELECT id FROM users WHERE active = 1")).map((u) => u.id));
+    const on = [...new Set((Array.isArray(payload.on) ? payload.on : []).map((x) => str(x, 60)))].filter((x) => active.has(x));
     const caps = jsonObj(c.caps_json);
-    for (const [id, v] of Object.entries(payload.caps || {})) if (team.has(id)) caps[id] = Math.max(0, Math.min(500, Math.round(num(v, 35))));
+    for (const [id, v] of Object.entries(payload.caps || {})) if (active.has(id)) caps[id] = Math.max(0, Math.min(500, Math.round(num(v, 35))));
     await env.DB.batch([
       env.DB.prepare("INSERT INTO availability (client_id, day, on_json, by_user, at) VALUES (?,?,?,?,?) ON CONFLICT(client_id, day) DO UPDATE SET on_json = excluded.on_json, by_user = excluded.by_user, at = excluded.at").bind(c.id, day, JSON.stringify(on), user.id, Date.now()),
       env.DB.prepare("UPDATE clients SET caps_json = ? WHERE id = ?").bind(JSON.stringify(caps), c.id),
