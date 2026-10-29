@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.15.0";
+const VERSION = "2.16.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -116,6 +116,8 @@ const EXTRA_COLUMNS = {
     // Priority set by a team lead (top | high | low; '' = automatic), the automatic score underneath, and why.
     ["priority_set", "TEXT NOT NULL DEFAULT ''"], ["priority_base", "REAL"], ["priority_set_label", "TEXT NOT NULL DEFAULT ''"], ["priority_set_by", "TEXT"], ["priority_set_at", "INTEGER"],
     // Filled from a patient details report when the inventory file does not carry them.
+    // Date of the denial / EOB, from the biller's note: the appeal filing limit (AFL) counts from it.
+    ["denial_date", "TEXT NOT NULL DEFAULT ''"],
     ["patient_dob", "TEXT NOT NULL DEFAULT ''"], ["member_id", "TEXT NOT NULL DEFAULT ''"], ["patient_phone", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
@@ -345,14 +347,18 @@ function cleanNoteFields(f, claim) {
     dos: mmdd(isoDate(f.dos) || claim.dos) || t(f.dos, 20), clm: t(f.clm || claim.claim_no, 80), denial: t(f.denial, 200),
     source: NOTE_SOURCES.includes(f.source) ? f.source : t(f.source, 40), ref: t(f.ref, 80),
     precheck: pre, precheck_text: t(f.precheck_text, 300), findings: t(f.findings, 2000), action: NOTE_ACTIONS.includes(action) ? action : t(f.action, 120),
-    tfl: limitDays(f.tfl), afl: limitDays(f.afl),
+    tfl: limitDays(f.tfl), afl: limitDays(f.afl), denial_date: isoDate(f.denial_date) || "",
   };
 }
 /* ---- TFL / AFL: the payer's timely filing limit (days from DOS) and appeal filing limit (days from the denial / EOB date).
    Billers enter them in the note; the latest value is kept per client and insurance in payer_limits for inventory analysis. */
 const limitDays = (v) => { const m = /^\s*(\d{1,4})\s*(d|days?)?\s*$/i.exec(String(v == null ? "" : v)); const n = m ? Number(m[1]) : 0; return n > 0 && n <= 3650 ? n : null; };
 const payerKey = (p) => String(p || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-const limitLine = (f) => [f.tfl ? `TFL: ${f.tfl} days` : "", f.afl ? `AFL: ${f.afl} days` : ""].filter(Boolean);
+const limitLine = (f) => [f.denial_date ? `DENIAL DATE: ${mmdd(f.denial_date)}` : "", f.tfl ? `TFL: ${f.tfl} days` : "", f.afl ? `AFL: ${f.afl} days` : ""].filter(Boolean);
+const denialDateStmt = (env, claimId, f) => (f && f.denial_date ? env.DB.prepare("UPDATE claims SET denial_date = ? WHERE id = ?").bind(f.denial_date, claimId) : null);
+/* Which claims each limit matters for: the TFL while the payer has not accepted the claim yet, the AFL once it is denied or underpaid.
+   Keep in step with TFL_CLASSES / AFL_CLASSES in index.html. */
+const TFL_CLASSES = ["rejected", "awaiting", "secondary", "other", "unknown"], AFL_CLASSES = ["denied", "partial"];
 function saveLimitsStmt(env, user, clientId, payer, f, source) {
   const key = payerKey(payer);
   if (!key || !clientId || (!f.tfl && !f.afl)) return null;
@@ -1461,7 +1467,10 @@ const OPS = {
     const today = isoDate(payload.today) || isoToday();
     where.push("((state = 'open') OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?))"); params.push(today);
     const rows = await all(env, `SELECT id, location_id, claim_no, account_no, patient, payer, dos, cpt, balance, age_days, bucket, tier, status_class, inventory_kind, worked_before,
-        last_worked_on, follow_up_on, priority, priority_reason, state, skips, escalated, touches, priority_set, priority_set_label FROM claims WHERE ${where.join(" AND ")} ORDER BY priority DESC LIMIT 20000`, ...params);
+        last_worked_on, follow_up_on, priority, priority_reason, state, skips, escalated, touches, priority_set, priority_set_label, denial_date FROM claims WHERE ${where.join(" AND ")} ORDER BY priority DESC LIMIT 20000`, ...params);
+    // The insurance's TFL / AFL go with each claim, so the score can count the days left.
+    const lims = new Map((await all(env, "SELECT payer_key, tfl_days, afl_days FROM payer_limits WHERE client_id = ?", payload.client_id)).map((l) => [l.payer_key, l]));
+    for (const r of rows) { const l = lims.get(payerKey(r.payer)); r.tfl_days = l ? l.tfl_days : null; r.afl_days = l ? l.afl_days : null; }
     return { claims: rows };
   },
   "claims.get": async ({ env, user, payload }) => {
@@ -1715,6 +1724,8 @@ const OPS = {
     }
     const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
     if (lim) stmts.push(lim);
+    const dd = denialDateStmt(env, c.id, fields);
+    if (dd) stmts.push(dd);
     await batchAll(env, stmts);
     // Payment posting / submission: send the claim to the department set on the client profile.
     const dept = handoffDeptOf(saag.action);
@@ -1814,6 +1825,8 @@ const OPS = {
     stmts.push(claimEvent(env, c.id, user, "edited", "", { note_id: n.id }));
     const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
     if (lim) stmts.push(lim);
+    const dd = denialDateStmt(env, c.id, fields);
+    if (dd) stmts.push(dd);
     await env.DB.batch(stmts);
     return { ok: true, comment, closed };
   },
@@ -1846,7 +1859,7 @@ const OPS = {
     await env.DB.batch([
       env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at, note_action, fields_json) VALUES (?,?,?,?,'note',?,?,?,?)").bind(id, c.id, user.id, user.name, comment, now, fields ? fields.action : "", JSON.stringify(fields || {})),
       env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
-      ...[fields && saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note")].filter(Boolean),
+      ...[fields && saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note"), denialDateStmt(env, c.id, fields)].filter(Boolean),
     ]);
     return { note: { id, claim_id: c.id, user_id: user.id, user_name: user.name, kind: "note", comment, created_at: now, fields } };
   },
@@ -2130,13 +2143,13 @@ const OPS = {
   "payers.limits": async ({ env, user, payload }) => {
     const today = isoDate(payload.today) || isoToday();
     const lims = await all(env, `SELECT p.*, cl.name AS client_name FROM payer_limits p LEFT JOIN clients cl ON cl.id = p.client_id WHERE 1 = 1${scopeSql(user, "p.client_id")}`, ...scopeArgs(user));
-    const groups = await all(env, `SELECT c.client_id, cl.name AS client_name, c.payer, c.dos, COUNT(*) AS n, SUM(c.balance) AS bal FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
-      WHERE c.state IN ${WORKABLE}${scopeSql(user, "c.client_id")} GROUP BY c.client_id, c.payer, c.dos`, ...scopeArgs(user));
+    const groups = await all(env, `SELECT c.client_id, cl.name AS client_name, c.payer, c.dos, c.status_class, c.denial_date, COUNT(*) AS n, SUM(c.balance) AS bal FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
+      WHERE c.state IN ${WORKABLE}${scopeSql(user, "c.client_id")} GROUP BY c.client_id, c.payer, c.dos, c.status_class, c.denial_date`, ...scopeArgs(user));
     const rows = new Map();
     const row = (client_id, client_name, payer) => {
       const k = client_id + "|" + payerKey(payer);
       if (!rows.has(k)) rows.set(k, { client_id, client_name: client_name || "", payer: payer || "", payer_key: payerKey(payer), tfl_days: null, afl_days: null, note: "", updated_at: null, updated_by_name: "", source: "",
-        open_n: 0, open_bal: 0, past_n: 0, past_bal: 0, soon_n: 0, soon_bal: 0, no_dos_n: 0 });
+        open_n: 0, open_bal: 0, past_n: 0, past_bal: 0, soon_n: 0, soon_bal: 0, no_dos_n: 0, afl_past_n: 0, afl_past_bal: 0, afl_soon_n: 0, afl_soon_bal: 0, afl_no_date_n: 0 });
       return rows.get(k);
     };
     for (const l of lims) Object.assign(row(l.client_id, l.client_name, l.payer), { tfl_days: l.tfl_days, afl_days: l.afl_days, note: l.note, updated_at: l.updated_at, updated_by_name: l.updated_by_name, source: l.source });
@@ -2145,7 +2158,11 @@ const OPS = {
       if (!payerKey(g.payer)) continue;
       const r = row(g.client_id, g.client_name, g.payer);
       r.open_n += g.n; r.open_bal += g.bal || 0;
-      if (!r.tfl_days) continue;
+      if (r.afl_days && AFL_CLASSES.includes(g.status_class)) {
+        if (!isoDate(g.denial_date)) r.afl_no_date_n += g.n;
+        else { const left = day(g.denial_date) + r.afl_days - day(today); if (left < 0) { r.afl_past_n += g.n; r.afl_past_bal += g.bal || 0; } else if (left <= 30) { r.afl_soon_n += g.n; r.afl_soon_bal += g.bal || 0; } }
+      }
+      if (!r.tfl_days || !TFL_CLASSES.includes(g.status_class)) continue;
       if (!isoDate(g.dos)) { r.no_dos_n += g.n; continue; }
       const left = day(g.dos) + r.tfl_days - day(today);
       if (left < 0) { r.past_n += g.n; r.past_bal += g.bal || 0; } else if (left <= 30) { r.soon_n += g.n; r.soon_bal += g.bal || 0; }
