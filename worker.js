@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.23.0";
+const VERSION = "2.24.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -248,6 +248,9 @@ async function appendWorkbookRow(env, link, values) {
     loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name };
     await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", key, JSON.stringify(loc), Date.now());
   }
+  return appendRowTo(tok, loc, values);
+}
+async function appendRowTo(tok, loc, values) {
   const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
   const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
   const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
@@ -263,6 +266,54 @@ async function appendWorkbookRow(env, link, values) {
   await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows });
   return loc.name;
 }
+/* ---- the team's report files in OneDrive ----
+   Every lead's clients keep their files in one place, in the Purviewautomate OneDrive (REPORTS_OWNER):
+     Brahmastra Reports / <Team lead> / <Client> / Production | QA tracker | Quality insights | SLA & KPI
+   Brahmastra writes Production itself: one workbook per client per month, "Production - <Client> - Oct 2026.xlsx",
+   one row per saved entry in the Production Conso layout. A client or location with its own workbook link keeps
+   using that link instead. Needs the Files.ReadWrite.All application permission on the Microsoft 365 app. */
+const REPORTS_ROOT = "Brahmastra Reports";
+const REPORTS_OWNER_DEFAULT = "Purviewautomate@purview-healthcare.com";
+const PROD_TEMPLATE_B64 = "UEsDBBQAAAAIANOIXV1Gx01IlQAAAM0AAAAQAAAAZG9jUHJvcHMvYXBwLnhtbE3PTQvCMAwG4L9SdreZih6kDkQ9ip68zy51hbYpbYT67+0EP255ecgboi6JIia2mEXxLuRtMzLHDUDWI/o+y8qhiqHke64x3YGMsRoPpB8eA8OibdeAhTEMOMzit7Dp1C5GZ3XPlkJ3sjpRJsPiWDQ6sScfq9wcChDneiU+ixNLOZcrBf+LU8sVU57mym/8ZAW/B7oXUEsDBBQAAAAIANOIXV3XyS6E7wAAACsCAAARAAAAZG9jUHJvcHMvY29yZS54bWzNkttKxDAQhl9Fct9OD1DZ0O2N4pWC4ILiXUhmd4PNgWSk3bc3jbtdRB/Ay8z8+eYbmF56Ll3A5+A8BtIYb2Yz2sil37IjkecAUR7RiFimhE3NvQtGUHqGA3ghP8QBoamqDgySUIIELMDCr0Q29EpyGVCQC2e8kivef4Yxw5QEHNGgpQh1WQMblon+NI89XAELjDCY+F1AtRJz9U9s7gA7J+eo19Q0TeXU5lzaoYa3p8eXvG6hbSRhJaZfUXM6edyyy+TX9u5+98CGpmq6oq6KZrOrb3nV8Xbzvrj+8LsKG6f0Xv9j44vg0MOvuxi+AFBLAwQUAAAACADTiF1dmVycIxAGAACcJwAAEwAAAHhsL3RoZW1lL3RoZW1lMS54bWztWltz2jgUfu+v0Hhn9m0LxjaBtrQTc2l227SZhO1OH4URWI1seWSRhH+/RzYQy5YN7ZJNups8BCzp+85FR+foOHnz7i5i6IaIlPJ4YNkv29a7ty/e4FcyJBFBMBmnr/DACqVMXrVaaQDDOH3JExLD3IKLCEt4FMvWXOBbGi8j1uq0291WhGlsoRhHZGB9XixoQNBUUVpvXyC05R8z+BXLVI1lowETV0EmuYi08vlsxfza3j5lz+k6HTKBbjAbWCB/zm+n5E5aiOFUwsTAamc/VmvH0dJIgILJfZQFukn2o9MVCDINOzqdWM52fPbE7Z+Mytp0NG0a4OPxeDi2y9KLcBwE4FG7nsKd9Gy/pEEJtKNp0GTY9tqukaaqjVNP0/d93+ubaJwKjVtP02t33dOOicat0HgNvvFPh8Ouicar0HTraSYn/a5rpOkWaEJG4+t6EhW15UDTIABYcHbWzNIDll4p+nWUGtkdu91BXPBY7jmJEf7GxQTWadIZljRGcp2QBQ4AN8TRTFB8r0G2iuDCktJckNbPKbVQGgiayIH1R4Ihxdyv/fWXu8mkM3qdfTrOa5R/aasBp+27m8+T/HPo5J+nk9dNQs5wvCwJ8fsjW2GHJ247E3I6HGdCfM/29pGlJTLP7/kK6048Zx9WlrBdz8/knoxyI7vd9lh99k9HbiPXqcCzIteURiRFn8gtuuQROLVJDTITPwidhphqUBwCpAkxlqGG+LTGrBHgE323vgjI342I96tvmj1XoVhJ2oT4EEYa4pxz5nPRbPsHpUbR9lW83KOXWBUBlxjfNKo1LMXWeJXA8a2cPB0TEs2UCwZBhpckJhKpOX5NSBP+K6Xa/pzTQPCULyT6SpGPabMjp3QmzegzGsFGrxt1h2jSPHr+BfmcNQockRsdAmcbs0YhhGm78B6vJI6arcIRK0I+Yhk2GnK1FoG2camEYFoSxtF4TtK0EfxZrDWTPmDI7M2Rdc7WkQ4Rkl43Qj5izouQEb8ehjhKmu2icVgE/Z5ew0nB6ILLZv24fobVM2wsjvdH1BdK5A8mpz/pMjQHo5pZCb2EVmqfqoc0PqgeMgoF8bkePuV6eAo3lsa8UK6CewH/0do3wqv4gsA5fy59z6XvufQ9odK3NyN9Z8HTi1veRm5bxPuuMdrXNC4oY1dyzcjHVK+TKdg5n8Ds/Wg+nvHt+tkkhK+aWS0jFpBLgbNBJLj8i8rwKsQJ6GRbJQnLVNNlN4oSnkIbbulT9UqV1+WvuSi4PFvk6a+hdD4sz/k8X+e0zQszQ7dyS+q2lL61JjhK9LHMcE4eyww7ZzySHbZ3oB01+/ZdduQjpTBTl0O4GkK+A226ndw6OJ6YkbkK01KQb8P56cV4GuI52QS5fZhXbefY0dH758FRsKPvPJYdx4jyoiHuoYaYz8NDh3l7X5hnlcZQNBRtbKwkLEa3YLjX8SwU4GRgLaAHg69RAvJSVWAxW8YDK5CifEyMRehw55dcX+PRkuPbpmW1bq8pdxltIlI5wmmYE2eryt5lscFVHc9VW/Kwvmo9tBVOz/5ZrcifDBFOFgsSSGOUF6ZKovMZU77nK0nEVTi/RTO2EpcYvOPmx3FOU7gSdrYPAjK5uzmpemUxZ6by3y0MCSxbiFkS4k1d7dXnm5yueiJ2+pd3wWDy/XDJRw/lO+df9F1Drn723eP6bpM7SEycecURAXRFAiOVHAYWFzLkUO6SkAYTAc2UyUTwAoJkphyAmPoLvfIMuSkVzq0+OX9FLIOGTl7SJRIUirAMBSEXcuPv75Nqd4zX+iyBbYRUMmTVF8pDicE9M3JD2FQl867aJguF2+JUzbsaviZgS8N6bp0tJ//bXtQ9tBc9RvOjmeAes4dzm3q4wkWs/1jWHvky3zlw2zreA17mEyxDpH7BfYqKgBGrYr66r0/5JZw7tHvxgSCb/NbbpPbd4Ax81KtapWQrET9LB3wfkgZjjFv0NF+PFGKtprGtxtoxDHmAWPMMoWY434dFmhoz1YusOY0Kb0HVQOU/29QNaPYNNByRBV4xmbY2o+ROCjzc/u8NsMLEjuHti78BUEsDBBQAAAAIANOIXV0KCG+osAMAAJwPAAAYAAAAeGwvd29ya3NoZWV0cy9zaGVldDEueG1snZddc9soFED/CqPdh/YlsnC+2rE949hpm90k9cZOs+0bka5tNgi0CK2b/fULkvBkZBCefUksiXO5cARXjHZCvpRbAIV+5oyX42irVPExjst0CzkpT0QBXD9ZC5kTpS/lJi4LCSSroZzFeDA4j3NCeTQZ1fcWcjISlWKUw0KisspzIl+vgIndOEoie+OBbrbK3Igno4JsYAnqsVhIfRXvo2Q0B15SwZGE9TiaJh+n1zVQt/hGYVe++Y3MUJ6FeDEXN9k4GkQmNAf0uiwYrTtDShS3sFYzYEwHxBEiqaL/wEI3G0fPQimRm+c6TUWUvrWW4l/gdZ/AQLfVyRQHjZsgbVAzxr/bhKP9eExSb3/bzD/VE6sn6pmUMBPsiWZqO44uI5TBmlRMPYjdF2gn68zESwUr679o17S9iFBalTqZltUJ5JQ3/8nPdo7ftE+wB8AtgLvApQcYtsCwC5x7gNMWOO0AeOABzlrg7NiUzlvgvNuDb9AXLXDR7SHxAJctcHlsSh9a4EMH8E1SMrDiBt0uTn3I3vXRshNrOznQ7UWs7+RAuBexxpOu8jOf8sQ6Tw6ke4dvrSdHa0+s96QrHnt7seaTA/XesVj3SVe+fxFa+/jAvq8XbO3jA/teZL/Wj7aPrX18tH1s7eOufX9i1j7u2vfuEdjax137/sSsfdy171vE2MrHR697bOXjrnzvKza08odHL/2hlT9sqk1THuraMieKTEZS7JCs25saMtzP4r6q6DKZmhZ15Wqq5Dii3BTwpZL6KdUB1WQpT9C9GMVKd2LuxGnLXfVztyIlpm46yFk/uZDiL11zHeA8BJqKnIKDvO4nHzl1QJ/6oZvPaMYIzdHN/Jd4tiVyA+anI9DnQN56ooArdE9yV+5f+un516UDugl1+QrSgf3Wj003rgR/74euqvQFXDpvAxxlDDI0zUXF1btf3zsi3AUiEEZ4Cr0h7vtDzBYrB/Q1AIlcf8KqMr4XCkoHvwisOf0VWrm4PwJc9Yy87ENAbepZrcv/aXfVz92JDJBYoyf9+e6gH4MzJBVaUeeC+dbPXvPMRz71kyuhCEPzSvp2tj8DS1UfLuoBQ+aAvwfSzosTvb84wB8Bs2UpUmq69mww01AJ8L1S00ANuJZSSCcYKAErIDm61cdNFxuoAvUkPxDu3KqmgULwBNB5G2NdSO0Jrqms5tx6p3d7ykvE9EFQHzlPLvT3i2wKa3OhT5x1L815sanDejwgTQP9fC301tBemPq9P5BP/gNQSwMEFAAAAAgA04hdXQ/tnnu2AgAALwsAAA0AAAB4bC9zdHlsZXMueG1s3VbbjpswEP0VxAeUEFoUqiRSlypSpbZaafehr04wxJIv1JiU7NfXYxNIdj2r7T4WlGDP8TkznhmHrDtz5vThSKmJBsFlt4mPxrSfk6Q7HKkg3QfVUmmRWmlBjJ3qJulaTUnVAUnwZLlY5IkgTMbbtezFTpguOqhemk28iJPtulZytixjb7BLiaDRifBNXBLO9pq5tUQwfvbmJRgOiisdGRsK3cQpWLonD6d+BlGOOoJJpcGYeA/+ez8un9V0s7ehLXbuulrvHp3lMc6ngLPYG7brlhhDtdzZieM44wsoGseP59ZG3GhyTpef4jcTOsVZBS6b8jrWNE3vPn51MlfUSdQ9bOR7pSuqp9jT+GLarjmtjaVr1hzhaVSbAGiMEnZQMdIoSdzGLoxxYGUPlPMH6JNf9Y32UEe+4N8qqHUE+bsMbUDj0Mv4Cehfq3ntK9nlu2Sjlp2UuevtbqSb/+6Vofea1mxw86Ge/GPq6ay+fKZO2pafv3DWSEH93t/scLsmF150VJo9WW/QjgdroDqOTlQbdri2/NGkfaSDGVs2GeoxZ1O6XPJuCjFZIzhVm/gnHFY+RxHte8YNk+PsyKqKyhf1sPKG7O2vwY2+XV/RmvTcPE7gJp7HP2jFelFMq+4hM+Oqefwd+i7Np0NofTFZ0YFW5Ti1nX7T8v4CwnNkPrgvEYzjsTACGOYHiwDjeBbm53/azwrdj8ew2FZBZIVyVijHs0JI6W7MT5hT2Cu806LIsjzHMlqWwQhKLG95Dp+wGhYbMDA/4Onfco1XG++Q1/sAq+lrHYLtFO9EbKd4rgEJ5w0YRRGuNuYHGFgVsN4B/2E/0FNhTpZBVbHYsBOMI0WBIdCL4R7NcyQ7Odzh+mCnJMuKIowAFo4gyzAETiOOYBFADBiSZe49+Ox9lFzeU8n8F3n7F1BLAwQUAAAACADTiF1dl4q7HMAAAAATAgAACwAAAF9yZWxzLy5yZWxznZK5bsMwDEB/xdCeMAfQIYgzZfEWBPkBVqIP2BIFikWdv6/apXGQCxl5PTwS3B5pQO04pLaLqRj9EFJpWtW4AUi2JY9pzpFCrtQsHjWH0kBE22NDsFosPkAuGWa3vWQWp3OkV4hc152lPdsvT0FvgK86THFCaUhLMw7wzdJ/MvfzDDVF5UojlVsaeNPl/nbgSdGhIlgWmkXJ06IdpX8dx/aQ0+mvYyK0elvo+XFoVAqO3GMljHFitP41gskP7H4AUEsDBBQAAAAIANOIXV25FXp2NgEAACcCAAAPAAAAeGwvd29ya2Jvb2sueG1sjZHRSsNAEEV/JewHmFS0YGn6YlELosVK3zfJpBm6uxNmJ632650kBAu++LSZO8vde0+WZ+JjQXRMvrwLMTeNSLtI01g24G28oRaCbmpib0VHPqSxZbBVbADEu/Q2y+aptxjMajl5bTm9HkigFKSgYi/sEc7xd9+PyQkjFuhQvnMzfDswiceAHi9Q5SYzSWzo/EKMFwpi3a5kci43s3GxBxYs/8i7PuSnLeKgiC0+rAbJzTxTwxo5ynBj8Lea8QR6eZw6oSd0Ary2As9MXYvh0Ntoi/SqxsBhOkeIC/4PRqprLGFNZechyMiRwfUBQ2ywjSYJ1kNuFGDVDQD7UvrKphoLiia7wsUL1AVvqjHjFKyCGgNUb+oVVVdI5ZaT/hh8bu/uZw8Ko3PuUbX38Eq2mnpO/2j1A1BLAwQUAAAACADTiF1dJB6boq0AAAD4AQAAGgAAAHhsL19yZWxzL3dvcmtib29rLnhtbC5yZWxztZE9DoMwDIWvEuUANVCpQwVMXVgrLhAF8yMSEsWuCrcvhQGQOnRhsp4tf+/JTp9oFHduoLbzJEZrBspky+zvAKRbtIouzuMwT2oXrOJZhga80r1qEJIoukHYM2Se7pminDz+Q3R13Wl8OP2yOPAPMLxd6KlFZClKFRrkTMJotjbBUuLLTJaiqDIZiiqWcFog4skgbWlWfbBPTrTneRc390WuzeMJrt8McHh0/gFQSwMEFAAAAAgA04hdXWWQeZIZAQAAzwMAABMAAABbQ29udGVudF9UeXBlc10ueG1srZNNTsMwEIWvEmVbJS4sWKCmG2ALXXABY08aq/6TZ1rS2zNO2kqgEhWFTax43rzPnpes3o8RsOid9diUHVF8FAJVB05iHSJ4rrQhOUn8mrYiSrWTWxD3y+WDUMETeKooe5Tr1TO0cm+peOl5G03wTZnAYlk8jcLMakoZozVKEtfFwesflOpEqLlz0GBnIi5YUIqrhFz5HXDqeztASkZDsZGJXqVjleitQDpawHra4soZQ9saBTqoveOWGmMCqbEDIGfr0XQxTSaeMIzPu9n8wWYKyMpNChE5sQR/x50jyd1VZCNIZKaveCGy9ez7QU5bg76RzeP9DGk35IFiWObP+HvGF/8bzvERwu6/P7G81k4af+aL4T9efwFQSwECFAMUAAAACADTiF1dRsdNSJUAAADNAAAAEAAAAAAAAAAAAAAAgAEAAAAAZG9jUHJvcHMvYXBwLnhtbFBLAQIUAxQAAAAIANOIXV3XyS6E7wAAACsCAAARAAAAAAAAAAAAAACAAcMAAABkb2NQcm9wcy9jb3JlLnhtbFBLAQIUAxQAAAAIANOIXV2ZXJwjEAYAAJwnAAATAAAAAAAAAAAAAACAAeEBAAB4bC90aGVtZS90aGVtZTEueG1sUEsBAhQDFAAAAAgA04hdXQoIb6iwAwAAnA8AABgAAAAAAAAAAAAAAICBIggAAHhsL3dvcmtzaGVldHMvc2hlZXQxLnhtbFBLAQIUAxQAAAAIANOIXV0P7Z57tgIAAC8LAAANAAAAAAAAAAAAAACAAQgMAAB4bC9zdHlsZXMueG1sUEsBAhQDFAAAAAgA04hdXZeKuxzAAAAAEwIAAAsAAAAAAAAAAAAAAIAB6Q4AAF9yZWxzLy5yZWxzUEsBAhQDFAAAAAgA04hdXbkVenY2AQAAJwIAAA8AAAAAAAAAAAAAAIAB0g8AAHhsL3dvcmtib29rLnhtbFBLAQIUAxQAAAAIANOIXV0kHpuirQAAAPgBAAAaAAAAAAAAAAAAAACAATURAAB4bC9fcmVscy93b3JrYm9vay54bWwucmVsc1BLAQIUAxQAAAAIANOIXV1lkHmSGQEAAM8DAAATAAAAAAAAAAAAAACAARoSAABbQ29udGVudF9UeXBlc10ueG1sUEsFBgAAAAAJAAkAPgIAAGQTAAAAAA==";
+const MONTHS_LONG = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// OneDrive does not allow these in file or folder names.
+const odName = (s) => String(s || "").replace(/["*:<>?/\\|#%]+/g, " ").replace(/\s+/g, " ").trim().replace(/\.+$/, "").slice(0, 80) || "Unnamed";
+/* The team lead(s) of a client: roster team leads whose projects are matched to it. Nobody matched: the lead of the person who saved. */
+async function clientTeamLeads(env, clientId, byUserId) {
+  const c = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", clientId);
+  const names = new Set(jsonList(c && c.roster_names_json).map(projKey));
+  const leads = names.size ? (await all(env, "SELECT name, designation, projects_json FROM users WHERE active = 1 AND role IN ('supervisor','admin') AND roster_kind = 'lead'"))
+    .filter((u) => /\b(sr\.? )?tl\b|team lead/i.test(u.designation || "") && jsonList(u.projects_json).some((p) => names.has(projKey(p && p.name != null ? p.name : p))))
+    .map((u) => u.name) : [];
+  if (leads.length) return [...new Set(leads)].sort();
+  const by = byUserId ? await one(env, "SELECT r.name FROM users u JOIN users r ON r.id = u.reports_to WHERE u.id = ?", byUserId) : null;
+  return [by && by.name ? by.name : "No team lead"];
+}
+function b64Bytes(b64) { const s = atob(b64); const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+/* The month's Production workbook for one lead and client: found, or made from the template the first time. */
+async function productionWorkbook(env, tok, lead, client, ms) {
+  const d = istDate(ms), month = MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear();
+  const path = [REPORTS_ROOT, odName(lead), odName(client), "Production", odName("Production - " + client + " - " + month) + ".xlsx"];
+  const key = "rp:" + (await sha256Hex(path.join("/").toLowerCase())).slice(0, 24);
+  const cached = await one(env, "SELECT value_json FROM settings WHERE key = ?", key);
+  if (cached) { try { const loc = JSON.parse(cached.value_json); if (loc.driveId) return loc; } catch {} }
+  const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT);
+  const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
+  let it = null;
+  try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference"); }
+  catch (e) {
+    if (!/\(404/.test(String(e.message))) throw e;
+    // Folders on the way are made by OneDrive; "fail" keeps a file another save made a moment ago.
+    const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
+      headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(PROD_TEMPLATE_B64) });
+    if (r.ok) it = await r.json();
+    else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference");
+    else throw new ApiError(502, "OneDrive did not create " + path[path.length - 1] + " (" + r.status + ").");
+  }
+  const loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name, path: path.join(" › ") };
+  await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", key, JSON.stringify(loc), Date.now());
+  return loc;
+}
 async function recordWorkbookStatus(env, targetId, status) {
   await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", "workbook_status:" + targetId, JSON.stringify(status), Date.now());
 }
@@ -271,9 +322,24 @@ async function syncEntryToWorkbook(env, claimId, by, extra) {
   const c = await one(env, `SELECT c.*, cl.name AS client_name, cl.workbook_link AS client_link, l.name AS location_name, l.workbook_link AS location_link
       FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE c.id = ?`, claimId);
   if (!c) return;
-  const link = c.location_link || c.client_link; if (!link) return;
-  const targetId = c.location_link ? c.location_id : c.client_id;
+  const link = c.location_link || c.client_link;
+  // The Team Lead column: the person the biller reports to, when the session did not carry the name.
+  if (by && by.reports_to && !by.reports_to_name) { const r = await one(env, "SELECT name FROM users WHERE id = ?", by.reports_to); if (r) by = { ...by, reports_to_name: r.name }; }
   const row = productionRow(c, by, extra);
+  if (!link) {
+    // No workbook of its own: the month's Production file in Brahmastra Reports, under each of the client's team leads.
+    if (String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
+    try {
+      const tok = await graphAppToken(env), at = (extra && extra.ended_at) || Date.now(), files = [];
+      for (const lead of await clientTeamLeads(env, c.client_id, by && by.id)) {
+        const loc = await productionWorkbook(env, tok, lead, c.client_name || "Client", at);
+        await appendRowTo(tok, loc, row); files.push(loc.path);
+      }
+      await recordWorkbookStatus(env, c.client_id, { ok: true, auto: true, at: Date.now(), file: files.join(" · "), claim_no: c.claim_no });
+    } catch (e) { await recordWorkbookStatus(env, c.client_id, { ok: false, auto: true, at: Date.now(), error: String(e && e.message || e).slice(0, 300), claim_no: c.claim_no }); }
+    return;
+  }
+  const targetId = c.location_link ? c.location_id : c.client_id;
   try { const name = await appendWorkbookRow(env, link, row); await recordWorkbookStatus(env, targetId, { ok: true, at: Date.now(), file: name, claim_no: c.claim_no }); }
   catch (e) { await recordWorkbookStatus(env, targetId, { ok: false, at: Date.now(), error: String(e && e.message || e).slice(0, 300), claim_no: c.claim_no }); }
 }

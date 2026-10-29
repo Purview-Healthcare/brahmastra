@@ -235,6 +235,24 @@ Settings → Variables and secrets):
 
 Save, and deploy if the editor asks.
 
+## Report files in OneDrive (Brahmastra Reports)
+
+Every team lead's clients keep their files in one folder tree in the Purviewautomate OneDrive:
+
+```
+Brahmastra Reports / <Team lead> / <Client> /
+   Production        Brahmastra, automatic: "Production - <Client> - Oct 2026.xlsx", one row per saved entry
+   QA tracker        the QA file the lead keeps (input to Third Eye)
+   Quality insights  Third Eye, automatic
+   SLA & KPI         Drishti, automatic
+```
+
+Brahmastra writes the Production file itself, a new one each month, for every client and location that has no
+workbook link of its own (those keep using their link). The team lead is the roster TL whose projects are matched to
+the client; a client with two TLs gets the file under each. It uses the same Microsoft 365 app as the sign-in emails,
+which needs the **Files.ReadWrite.All application permission** (admin consent). Optional Worker variables:
+`REPORTS_OWNER` (default `Purviewautomate@purview-healthcare.com`) and `REPORTS_AUTO=off` to stop it.
+
 ## Drishti and Sasha's Third Eye inside My day & reports
 
 Team leads and above open both apps from **My day & reports** (Team quality & production, and Client SLA & KPI).
