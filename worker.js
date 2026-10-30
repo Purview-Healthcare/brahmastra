@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.25.0";
+const VERSION = "2.26.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -130,7 +130,7 @@ const EXTRA_COLUMNS = {
     // Who checks a submitted claim for acceptance / rejection 24 working hours after it was submitted.
     ["submission_check_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_check_person", "TEXT"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
-  users: [["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
+  users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
     ["department", "TEXT NOT NULL DEFAULT ''"], ["departments_also", "TEXT NOT NULL DEFAULT ''"], ["roster_status", "TEXT NOT NULL DEFAULT ''"], ["exit_date", "TEXT NOT NULL DEFAULT ''"],
@@ -568,7 +568,10 @@ const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_
   must_change: !!u.must_change, has_password: !!u.pass_hash, via: u.via || undefined, created_at: u.created_at, last_login: u.last_login,
   source: u.source || "manual", emp_id: u.emp_id || "", position: u.position || "", roster_kind: u.roster_kind || "", department: u.department || "", departments_also: u.departments_also || "",
   roster_status: u.roster_status || "", exit_date: u.exit_date || "", reports_to: u.reports_to || null, reports_to_name: u.reports_to_name || "", projects: jsonList(u.projects_json),
-  scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "", city: u.city || "" });
+  scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "", city: u.city || "", prefs: userPrefs(u.prefs_json) });
+// Settings a person picks for themselves (theme, text size); unknown keys are dropped.
+const PREF_KEYS = { theme: ["light", "navy", "gold", "auto"], text: ["normal", "large"] };
+function userPrefs(j) { let o = {}; try { o = JSON.parse(j || "{}") || {}; } catch (e) { o = {}; } const out = {}; for (const k in PREF_KEYS) if (PREF_KEYS[k].includes(o[k])) out[k] = o[k]; return out; }
 
 const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).first();
 const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...p).all()).results || [];
@@ -1042,6 +1045,22 @@ const OPS = {
     }
     await removeUser(env, user.id);
     return { ok: true };
+  },
+  "auth.savePrefs": async ({ env, user, payload }) => {
+    const u = await one(env, "SELECT prefs_json FROM users WHERE id = ?", user.id);
+    const next = { ...userPrefs(u && u.prefs_json) };
+    for (const k in PREF_KEYS) if (payload[k] !== undefined) { if (!PREF_KEYS[k].includes(payload[k])) throw bad("Unknown setting."); next[k] = payload[k]; }
+    await run(env, "UPDATE users SET prefs_json = ? WHERE id = ?", JSON.stringify(next), user.id);
+    return { prefs: next };
+  },
+  "auth.sessions": async ({ env, user, token }) => {
+    const r = await one(env, "SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND token <> ? AND expires_at > ?", user.id, token || "", Date.now());
+    return { others: r ? r.n : 0 };
+  },
+  "auth.signOutOthers": async ({ env, user, token }) => {
+    const r = await one(env, "SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND token <> ?", user.id, token || "");
+    await run(env, "DELETE FROM sessions WHERE user_id = ? AND token <> ?", user.id, token || "");
+    return { ended: r ? r.n : 0 };
   },
   "auth.changePassword": async ({ env, user, token, payload }) => {
     if (!isHash(payload.newHash)) throw bad("Enter the new password.");
@@ -2126,6 +2145,28 @@ const OPS = {
     const leads = {};
     for (const c of clients) leads[c.name] = await clientTeamLeads(env, c.id, null);
     return { root: REPORTS_ROOT, leads };
+  },
+  /* The AR Inventory report, written straight into the client's SLA & KPI folder in the Purviewautomate OneDrive (under each
+     of its team leads), so Drishti picks it from OneDrive like every other report. Brahmastra builds the file in the browser. */
+  "reports.saveArInventory": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    const c = await one(env, `SELECT id, name FROM clients WHERE id = ?${scopeSql(user, "id")}`, clientId, ...scopeArgs(user));
+    if (!c) throw bad("Pick the client.");
+    const b64 = String(payload.file_b64 || "");
+    if (!b64 || b64.length > 14_000_000) throw bad("The report is empty or too large.");
+    const name = odName(str(payload.name, 160) || "AR Inventory report - " + c.name).replace(/\.xlsx$/i, "") + ".xlsx";
+    const tok = await graphAppToken(env);
+    const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT);
+    const saved = [];
+    for (const lead of await clientTeamLeads(env, c.id, null)) {
+      const path = [REPORTS_ROOT, odName(lead), odName(c.name), "SLA & KPI", name];
+      const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
+      const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=replace", { method: "PUT",
+        headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(b64) });
+      if (!r.ok) throw new ApiError(502, "OneDrive did not save " + name + " (" + r.status + ").");
+      saved.push(path.slice(0, -1).join(" › "));
+    }
+    return { name, folders: saved };
   },
   /* The AR inventory as it stands now (open, on desks and worked claims), in the columns Drishti's AR Inventory report reads. */
   "reports.arInventory": async ({ env, user, payload }) => {

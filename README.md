@@ -235,6 +235,13 @@ Settings → Variables and secrets):
 
 Save, and deploy if the editor asks.
 
+## Settings and themes
+
+Everyone opens **Settings** from their name (top right): the theme (Light, Navy or Gold, the same as Purview
+Shastra, or Match my computer), the text size, their password, signing out on every other device, their roster
+profile (Emp ID, designation, department, who they report to, projects, shift, daily target) and the connected apps.
+The theme is saved to the account (`users.prefs_json`), so it follows the person to any computer.
+
 ## Report files in OneDrive (Brahmastra Reports)
 
 Every team lead's clients keep their files in one folder tree in the Purviewautomate OneDrive:
@@ -244,7 +251,7 @@ Brahmastra Reports / <Team lead> / <Client> /
    Production        Brahmastra, automatic: "Production - <Client> - Oct 2026.xlsx", one row per saved entry
    QA tracker        the QA file the lead keeps (input to Third Eye)
    Quality insights  Third Eye, automatic
-   SLA & KPI         Drishti, automatic
+   SLA & KPI         Drishti, automatic; and the AR Inventory report Brahmastra saves for Drishti
 ```
 
 Brahmastra writes the Production file itself, a new one each month, for every client and location that has no
@@ -255,10 +262,19 @@ which needs the **Files.ReadWrite.All application permission** (admin consent). 
 
 ## Drishti and Sasha's Third Eye inside My day & reports
 
-Team leads and above open both apps from **My day & reports** (Team quality & production, and Client SLA & KPI).
-They run from their own addresses (`THIRD_EYE_URL`, `DRISHTI_URL` in the config block of `index.html`), so their
-formulas, Google Sheet and OneDrive files are unchanged. Report files come only from the Purviewautomate OneDrive,
-as both apps already enforce. Third Eye has no sign-in.
+Team leads and above get a side menu in **My day & reports**, grouped by who the report is for:
+
+| Group | Page | What it is |
+|---|---|---|
+| Internal | Team work | the day list and the team's notes (Brahmastra) |
+| Internal | Quality & production | Sasha's Third Eye, Internal Reporting. **Load production** puts Brahmastra's entries and the roster straight in |
+| For clients | Client reports | Third Eye's Client Reporting. **Fill from Brahmastra** puts today's AR inventory and the month's AR, submission and posting production in its boxes |
+| For clients | SLA scorecard | Drishti, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
+
+Both apps run from their own addresses (`THIRD_EYE_URL`, `DRISHTI_URL` in the config block of `index.html`) with
+`?embed=1&theme=…`, which hides their own header and takes Brahmastra's theme; their formulas, Google Sheet and
+OneDrive files are unchanged. Every upload comes only from the Purviewautomate OneDrive: nothing is picked from the
+computer or downloaded to be uploaded again. Third Eye has no sign-in. **How it works** on each page explains it.
 
 **Drishti opens signed in** as the Brahmastra user once one Worker secret is set:
 

@@ -49,27 +49,59 @@ window.BRAHMASTRA_CONFIG = {
   DRISHTI_URL: "https://purview-healthcare.github.io/Drishti/",
 };
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script>
+/* The saved theme and text size, applied before the page draws so it never flashes the wrong colours. */
+(function () { try { var p = JSON.parse(localStorage.getItem("brahmastra:prefs") || "{}") || {}, t = p.theme || "light";
+  if (t === "auto") t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+  if (t !== "light") document.documentElement.setAttribute("data-theme", t);
+  if (p.text === "large") document.documentElement.setAttribute("data-text", "large"); } catch (e) {} })();
+</script>
 <style>
-:root{--ink:#0A0E24;--paper:#F6F9F8;--card:#fff;--green:#2FE08D;--teal:#20D0B8;--cyan:#22CAE4;--amber:#F5B93C;--red:#E85C5C;--slate:#5A6178;--line:#E3E9E7;--tealink:#0E7A5F;--blue:#185FA5;--soft:#EFFBF7}
+/* Themes, from Purview Shastra: Light (default), Navy and Gold. Every colour below is a token, so a theme only redefines tokens. */
+:root{--font:"Helvetica Neue",Helvetica,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;--mono:var(--font);
+--paper:#EEF1F4;--card:#FFFFFF;--card2:#F5F7F9;--hover:#EDF1F4;--chipbg:#EDF1F4;--input:#FFFFFF;
+--ink:#0F1B24;--body:#3B4A55;--slate:#627079;--faint:#9BA8B0;--line:#DFE4EA;--line2:#C5CDD6;--on-ink:#FFFFFF;
+--teal:#17B39A;--brand-strong:#0E8C74;--tealink:#0B7A63;--soft:rgba(23,179,154,.10);--soft2:rgba(23,179,154,.20);--brand-line:rgba(23,179,154,.30);--ring:rgba(23,179,154,.22);
+--pri-bg:linear-gradient(120deg,#22CAE4 0%,#2FD1B4 48%,#30E494 100%);--pri-ink:#06231C;--cyan:#22CAE4;
+--green:#2FBF71;--green-ink:#1E7A34;--green-soft:rgba(30,122,52,.10);
+--amber:#E5A030;--amber-ink:#A8620A;--amber-soft:rgba(168,98,10,.10);--amber-line:rgba(168,98,10,.28);
+--red:#D9363E;--red-ink:#B4232A;--red-soft:rgba(215,0,21,.08);--red-line:rgba(215,0,21,.24);
+--blue:#2A78D6;--blue-ink:#1F5FAE;--blue-soft:rgba(42,120,214,.12);--purple-ink:#5B37B7;--purple-soft:rgba(91,55,183,.10);
+--hl:rgba(237,161,0,.16);--overlay:rgba(10,18,32,.45);--shadow:0 1px 2px rgba(10,18,32,.05);--shadow-lg:0 14px 36px rgba(10,18,32,.16);color-scheme:light}
+:root[data-theme="navy"]{--paper:#071E33;--card:#0B2740;--card2:#09223A;--hover:#113253;--chipbg:rgba(255,255,255,.07);--input:#09223A;
+--ink:#FFFFFF;--body:rgba(255,255,255,.80);--slate:rgba(255,255,255,.62);--faint:rgba(255,255,255,.42);--line:rgba(255,255,255,.10);--line2:rgba(255,255,255,.18);--on-ink:#071E33;
+--teal:#2FD9B3;--brand-strong:#1FA58A;--tealink:#5DE6C9;--soft:rgba(47,217,179,.12);--soft2:rgba(47,217,179,.22);--brand-line:rgba(47,217,179,.36);--ring:rgba(47,217,179,.30);
+--pri-bg:#2FD9B3;--pri-ink:#06231C;--cyan:#38BDF8;
+--green:#34D399;--green-ink:#34D399;--green-soft:rgba(52,211,153,.15);--amber:#F5B14B;--amber-ink:#F5B14B;--amber-soft:rgba(245,177,75,.15);--amber-line:rgba(245,177,75,.35);
+--red:#FF6B6B;--red-ink:#FF8A8A;--red-soft:rgba(255,107,107,.15);--red-line:rgba(255,107,107,.35);--blue:#60A5FA;--blue-ink:#8CC0FB;--blue-soft:rgba(96,165,250,.15);--purple-ink:#C4B5FD;--purple-soft:rgba(167,139,250,.16);
+--hl:rgba(245,177,75,.20);--overlay:rgba(0,6,14,.6);--shadow:none;--shadow-lg:0 18px 48px rgba(0,0,0,.5);color-scheme:dark}
+:root[data-theme="gold"]{--paper:#0A0A0B;--card:#141416;--card2:#101012;--hover:#1B1B1F;--chipbg:rgba(255,255,255,.06);--input:#101012;
+--ink:#F5F0E4;--body:rgba(245,240,228,.80);--slate:rgba(245,240,228,.62);--faint:rgba(245,240,228,.40);--line:rgba(212,175,55,.16);--line2:rgba(212,175,55,.30);--on-ink:#0A0A0B;
+--teal:#D4AF37;--brand-strong:#B8962A;--tealink:#E6C766;--soft:rgba(212,175,55,.12);--soft2:rgba(212,175,55,.22);--brand-line:rgba(212,175,55,.38);--ring:rgba(212,175,55,.32);
+--pri-bg:linear-gradient(120deg,#F1D77C 0%,#D4AF37 55%,#B8860B 100%);--pri-ink:#1A1400;--cyan:#E6C766;
+--green:#34D399;--green-ink:#34D399;--green-soft:rgba(52,211,153,.14);--amber:#F5B14B;--amber-ink:#F5B14B;--amber-soft:rgba(245,177,75,.14);--amber-line:rgba(245,177,75,.35);
+--red:#FF6B6B;--red-ink:#FF8A8A;--red-soft:rgba(255,107,107,.14);--red-line:rgba(255,107,107,.35);--blue:#60A5FA;--blue-ink:#8CC0FB;--blue-soft:rgba(96,165,250,.14);--purple-ink:#C4B5FD;--purple-soft:rgba(167,139,250,.15);
+--hl:rgba(241,215,124,.16);--overlay:rgba(0,0,0,.65);--shadow:none;--shadow-lg:0 18px 48px rgba(0,0,0,.6);color-scheme:dark}
+
 *{box-sizing:border-box}
 html,body,#root{margin:0;padding:0;min-height:100vh;background:var(--paper)}
-body{font-family:'Inter',system-ui,sans-serif;color:var(--ink);font-size:14px;line-height:1.45}
-.display{font-family:'Fraunces',serif}
-.mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+body{font-family:var(--font);color:var(--ink);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.input::placeholder,.textarea::placeholder{color:var(--faint)}
+select option{background:var(--card);color:var(--ink)}
+.display{font-family:var(--font)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 a{color:var(--tealink)}
-.topbar{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.topbar{background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
 .topbar-in{max-width:1360px;margin:0 auto;padding:8px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
 .nav{display:flex;gap:2px;flex-wrap:wrap}
 .nav button{padding:9px 13px;font-weight:600;font-size:13.5px;color:var(--slate);background:transparent;border:none;border-bottom:3px solid transparent;cursor:pointer;border-radius:8px 8px 0 0;font-family:inherit}
 .nav button.active{color:var(--tealink);border-bottom-color:var(--teal);background:var(--soft)}
-.nav button:not(.active):hover{color:var(--ink);background:#F4F7F6}
+.nav button:not(.active):hover{color:var(--ink);background:var(--hover)}
 .main{max-width:1360px;margin:0 auto;padding:22px 20px 70px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(10,14,36,.04);padding:18px 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:18px 20px}
 .card.tight{padding:12px 14px}
 .mt{margin-top:14px}.mb{margin-bottom:14px}.mt8{margin-top:8px}.mt16{margin-top:16px}
-h1,h2,h3{margin:0;font-family:'Fraunces',serif;font-weight:600;line-height:1.2}
+h1,h2,h3{margin:0;font-family:var(--font);font-weight:700;line-height:1.2;letter-spacing:-.01em}
 h1{font-size:24px}h2{font-size:18px}h3{font-size:15px}
 .sub{color:var(--slate);font-size:13px;margin-top:2px}
 .muted{color:var(--slate)}.small{font-size:12px}.tiny{font-size:11px}.b{font-weight:600}
@@ -81,18 +113,18 @@ h1{font-size:24px}h2{font-size:18px}h3{font-size:15px}
 .g2-1{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}
 @media(max-width:980px){.g3,.g4,.g5{grid-template-columns:repeat(2,minmax(0,1fr))}.g2-1{grid-template-columns:1fr}}
 @media(max-width:600px){.g2,.g3,.g4,.g5{grid-template-columns:1fr}}
-.btn{border:none;border-radius:10px;padding:9px 16px;font-weight:600;font-size:13.5px;cursor:pointer;background:#EEF1F0;color:var(--ink);transition:transform .08s,box-shadow .12s;white-space:nowrap;font-family:inherit}
-.btn:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(10,14,36,.12)}
+.btn{border:1px solid var(--line2);border-radius:8px;padding:8px 15px;font-weight:600;font-size:13.5px;cursor:pointer;background:var(--card);color:var(--ink);transition:background .12s,border-color .12s,box-shadow .12s;white-space:nowrap;font-family:inherit}
+.btn:hover{background:var(--hover);border-color:var(--line2)}
 .btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
-.btn.primary{background:linear-gradient(90deg,var(--green),var(--teal),var(--cyan));color:var(--ink)}
-.btn.ghost{background:transparent;border:1.5px solid var(--ink)}
-.btn.danger{background:#FDEAEA;color:#A32D2D}
+.btn.primary{background:var(--pri-bg);color:var(--pri-ink);border-color:transparent}.btn.primary:hover{background:var(--pri-bg);filter:brightness(1.05);box-shadow:0 4px 14px var(--ring)}
+.btn.ghost{background:transparent;border:1px solid var(--line2)}
+.btn.danger{background:var(--red-soft);color:var(--red-ink);border-color:var(--red-line)}
 .btn.sm{padding:6px 11px;font-size:12.5px;border-radius:8px}
 .btn.lg{padding:14px 26px;font-size:16px;border-radius:12px}
-.btn.link{background:transparent;color:var(--tealink);padding:4px 6px}
+.btn.link{background:transparent;color:var(--tealink);padding:4px 6px;border-color:transparent}
 .btn.link:hover{box-shadow:none;transform:none;text-decoration:underline}
-.input,.select,.textarea{width:100%;padding:8px 10px;border-radius:9px;border:1.5px solid var(--line);font-size:13.5px;background:#fff;font-family:inherit;color:var(--ink)}
-.input:focus,.select:focus,.textarea:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px rgba(32,208,184,.18)}
+.input,.select,.textarea{width:100%;padding:8px 10px;border-radius:9px;border:1px solid var(--line2);font-size:13.5px;background:var(--input);font-family:inherit;color:var(--ink)}
+.input:focus,.select:focus,.textarea:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--ring)}
 .input.sm,.select.sm{padding:5px 8px;font-size:12.5px;border-radius:7px}
 .textarea{min-height:96px;resize:vertical}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -100,120 +132,155 @@ h1{font-size:24px}h2{font-size:18px}h3{font-size:15px}
 table.t{width:100%;border-collapse:collapse}
 .t th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--slate);font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
 .t td{font-size:13px;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-.t tbody tr:hover td{background:#FAFCFB}
+.t tbody tr:hover td{background:var(--card2)}
 .t .r{text-align:right}
-.t .num{text-align:right;font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.t .num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .t tr.click{cursor:pointer}
 .t th.sort{cursor:pointer;user-select:none}
 .table-wrap{overflow:auto;max-width:100%}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;background:#EEF1F0;color:var(--slate);white-space:nowrap;line-height:1.5}
-.badge.green{background:#E3FBEF;color:#0E7A5F}.badge.teal{background:#E0F7F4;color:#0E7A5F}.badge.amber{background:#FDF2D9;color:#854F0B}.badge.red{background:#FDEAEA;color:#A32D2D}.badge.blue{background:#E4EEFA;color:#185FA5}.badge.ink{background:var(--ink);color:#fff}.badge.gray{background:#EEF1F0;color:#5F5E5A}.badge.purple{background:#EEE7FB;color:#5B37B7}
-.kpi{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff;min-width:0}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;background:var(--chipbg);color:var(--slate);white-space:nowrap;line-height:1.5}
+.badge.green{background:var(--green-soft);color:var(--tealink)}.badge.teal{background:var(--soft);color:var(--tealink)}.badge.amber{background:var(--amber-soft);color:var(--amber-ink)}.badge.red{background:var(--red-soft);color:var(--red-ink)}.badge.blue{background:var(--blue-soft);color:var(--blue-ink)}.badge.ink{background:var(--ink);color:var(--on-ink)}.badge.gray{background:var(--chipbg);color:var(--slate)}.badge.purple{background:var(--purple-soft);color:var(--purple-ink)}
+.kpi{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--card);min-width:0}
 .kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--slate);font-weight:700}
-.kpi .v{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:600;margin-top:2px;line-height:1.2}
+.kpi .v{font-family:var(--mono);font-size:24px;font-weight:600;margin-top:2px;line-height:1.2}
 .kpi .s{font-size:12px;color:var(--slate);margin-top:2px}
 .kpi.accent{border-left:4px solid var(--teal)}.kpi.warn{border-left:4px solid var(--amber)}.kpi.bad{border-left:4px solid var(--red)}.kpi.good{border-left:4px solid var(--green)}
 .alert{padding:10px 14px;border-radius:10px;font-size:13px;border:1px solid}
 .g6{display:grid;gap:12px;grid-template-columns:repeat(6,minmax(0,1fr))}@media(max-width:1100px){.g6{grid-template-columns:repeat(3,minmax(0,1fr))}}
-.cv-sec{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--tealink,#0E7A5F);margin-bottom:10px;display:flex;align-items:center;gap:8px}
-.cv-kv{display:grid;grid-template-columns:118px minmax(0,1fr) 118px minmax(0,1fr);gap:6px 10px;font-size:13.5px}.cv-kv dt{color:#5A6178}.cv-kv dd{margin:0;font-weight:600;min-width:0;overflow-wrap:anywhere}
+.cv-sec{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--tealink,var(--tealink));margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.cv-kv{display:grid;grid-template-columns:118px minmax(0,1fr) 118px minmax(0,1fr);gap:6px 10px;font-size:13.5px}.cv-kv dt{color:var(--slate)}.cv-kv dd{margin:0;font-weight:600;min-width:0;overflow-wrap:anywhere}
 @media(max-width:700px){.cv-kv{grid-template-columns:110px minmax(0,1fr)}}
-.cv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.cv-head .no{font:700 22px 'IBM Plex Mono',monospace}
+.cv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.cv-head .no{font:700 22px var(--mono)}
 .sug-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}.sug-grid .sug{margin-top:0}
-.stepn{display:inline-flex;width:20px;height:20px;border-radius:50%;background:#0E7A5F;color:#fff;font-size:11px;font-weight:700;align-items:center;justify-content:center}
-.wf-bar{position:sticky;bottom:0;z-index:5;background:#fff;border-top:1px solid var(--line,#E3E6E4);box-shadow:0 -6px 18px rgba(10,14,36,.06);padding:10px 12px;border-radius:0 0 12px 12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.stepn{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--brand-strong);color:var(--on-ink);font-size:11px;font-weight:700;align-items:center;justify-content:center}
+.wf-bar{position:sticky;bottom:0;z-index:5;background:var(--card);border-top:1px solid var(--line,var(--line));box-shadow:0 -6px 18px rgba(10,14,36,.06);padding:10px 12px;border-radius:0 0 12px 12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .wf-bar .cell{flex:1;min-width:260px;max-height:64px;overflow:auto;margin:0}
-.hist-tab{position:fixed;right:0;top:170px;z-index:70;width:44px;background:#0E7A5F;color:#fff;border:0;border-radius:12px 0 0 12px;padding:14px 0;display:flex;flex-direction:column;align-items:center;gap:8px;font:700 12px Inter,system-ui,sans-serif;cursor:pointer;box-shadow:-4px 4px 14px rgba(10,14,36,.18)}
-.hist-tab span{writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.06em}.hist-tab i{font-style:normal;background:#fff;color:#0E7A5F;border-radius:9px;padding:1px 6px;font-size:11px}.hist-tab:hover{background:#0B6650}
+.hist-tab{position:fixed;right:0;top:170px;z-index:70;width:44px;background:var(--brand-strong);color:var(--on-ink);border:0;border-radius:12px 0 0 12px;padding:14px 0;display:flex;flex-direction:column;align-items:center;gap:8px;font:700 12px var(--font);cursor:pointer;box-shadow:-4px 4px 14px rgba(10,14,36,.18)}
+.hist-tab span{writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.06em}.hist-tab i{font-style:normal;background:var(--card);color:var(--tealink);border-radius:9px;padding:1px 6px;font-size:11px}.hist-tab:hover{background:var(--brand-strong)}
 .hist-shade{position:fixed;inset:0;z-index:71;background:rgba(10,14,36,.18)}
-.hist{position:fixed;top:0;right:0;bottom:0;z-index:72;width:min(500px,100vw);background:#fff;box-shadow:-14px 0 40px rgba(10,14,36,.18);display:flex;flex-direction:column;animation:histin .18s ease-out}
+.hist{position:fixed;top:0;right:0;bottom:0;z-index:72;width:min(500px,100vw);background:var(--card);box-shadow:-14px 0 40px rgba(10,14,36,.18);display:flex;flex-direction:column;animation:histin .18s ease-out}
 @keyframes histin{from{transform:translateX(40px);opacity:.4}to{transform:none;opacity:1}}
-.hist-top{padding:18px 20px 10px;border-bottom:1px solid var(--line,#E3E6E4)}.hist-body{overflow:auto;padding:4px 20px 30px;flex:1}
-.hist-day{font-size:11.5px;font-weight:700;letter-spacing:.06em;color:#5A6178;text-transform:uppercase;margin:16px 0 8px 40px}
-.hist-tl{position:relative}.hist-tl::before{content:"";position:absolute;left:13px;top:0;bottom:0;width:2px;background:#E3E6E4}
-.hev{position:relative;padding:0 0 14px 40px}.hev .dot{position:absolute;left:1px;top:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12.5px;border:2px solid #fff;box-shadow:0 0 0 1px #E3E6E4}
-.hev .r1{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.hev .t{font-size:13.5px;font-weight:600}.hev .tm{font:600 12px 'IBM Plex Mono',monospace;color:#0E7A5F;white-space:nowrap;background:#E6F7F4;border-radius:6px;padding:1px 6px}
-.hev .m{font-size:12px;color:#5A6178;margin-top:2px}.hev .x{font-size:12.5px;margin-top:5px;background:#F6F8F7;border-radius:8px;padding:6px 9px;white-space:pre-wrap}
-.hev .chg{font-size:12px;margin-top:4px}.hev .chg s{color:#A32D2D}.hev .chg b{color:#0E7A5F}
-.nf{display:grid;grid-template-columns:100px minmax(0,1fr);gap:3px 8px;font-size:12.5px;margin-top:6px;background:#F6F8F7;border-radius:8px;padding:8px 10px}.nf dt{color:#5A6178;font-weight:600;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;padding-top:2px}.nf dd{margin:0;overflow-wrap:anywhere}
-.hub-intro{background:linear-gradient(135deg,#F6FCFA 0%,#fff 60%)}.hub-icon{width:44px;height:44px;border-radius:12px;background:#E6F7F2;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}.hub-icon.sm{width:32px;height:32px;font-size:17px;border-radius:9px}
-.hub-kicker{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0E7A5F}.hub-label{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5F6B7A}
-.hub-box{background:#fff;border:1px solid var(--line,#E3E8EE);border-radius:10px;padding:12px 14px}.hub-box .hub-label{margin-bottom:4px}
-.hub-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.hub-step{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--line,#E3E8EE);border-radius:10px;padding:12px}
-.hub-area{min-height:96px}.hub-frame{padding:0;overflow:hidden}.hub-frame-bar{padding:8px 12px;border-bottom:1px solid var(--line,#E3E8EE);background:#FAFBFC;flex-wrap:wrap;gap:8px}
-.hub-dot{width:8px;height:8px;border-radius:50%;display:inline-block}.hub-iframe{display:block;width:100%;height:calc(100vh - 150px);min-height:640px;border:0;background:#fff}
-.hub-frame.full{position:fixed;inset:0;z-index:300;border-radius:0;margin:0}.hub-frame.full .hub-iframe{height:calc(100vh - 50px)}
-.tabcard{text-align:left;cursor:pointer;font:inherit;color:inherit}.tabcard .tc-t{font-weight:700;font-size:15px}.tabcard:hover{border-color:#9ED9CB}.tabcard.on{border-color:#12B886;box-shadow:0 0 0 2px #C9F2E6;background:#F6FCFA}
+.hist-top{padding:18px 20px 10px;border-bottom:1px solid var(--line,var(--line))}.hist-body{overflow:auto;padding:4px 20px 30px;flex:1}
+.hist-day{font-size:11.5px;font-weight:700;letter-spacing:.06em;color:var(--slate);text-transform:uppercase;margin:16px 0 8px 40px}
+.hist-tl{position:relative}.hist-tl::before{content:"";position:absolute;left:13px;top:0;bottom:0;width:2px;background:var(--line)}
+.hev{position:relative;padding:0 0 14px 40px}.hev .dot{position:absolute;left:1px;top:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12.5px;border:2px solid var(--card);box-shadow:0 0 0 1px var(--line)}
+.hev .r1{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.hev .t{font-size:13.5px;font-weight:600}.hev .tm{font:600 12px var(--mono);color:var(--tealink);white-space:nowrap;background:var(--soft);border-radius:6px;padding:1px 6px}
+.hev .m{font-size:12px;color:var(--slate);margin-top:2px}.hev .x{font-size:12.5px;margin-top:5px;background:var(--card2);border-radius:8px;padding:6px 9px;white-space:pre-wrap}
+.hev .chg{font-size:12px;margin-top:4px}.hev .chg s{color:var(--red-ink)}.hev .chg b{color:var(--tealink)}
+.nf{display:grid;grid-template-columns:100px minmax(0,1fr);gap:3px 8px;font-size:12.5px;margin-top:6px;background:var(--card2);border-radius:8px;padding:8px 10px}.nf dt{color:var(--slate);font-weight:600;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;padding-top:2px}.nf dd{margin:0;overflow-wrap:anywhere}
+.tabcard{text-align:left;cursor:pointer;font:inherit;color:inherit}.tabcard .tc-t{font-weight:700;font-size:15px}.tabcard:hover{border-color:var(--brand-line)}.tabcard.on{border-color:var(--teal);box-shadow:0 0 0 2px var(--soft2);background:var(--card2)}
 .combo{position:relative;min-width:0}
-.combo-ctl{display:flex;align-items:center;gap:6px;width:100%;text-align:left;background:#fff;border:1px solid #D8DEDC;border-radius:10px;padding:9px 10px;font:inherit;font-size:14px;cursor:pointer;color:inherit}
-.combo-ctl:disabled{background:#F4F6F5;color:#9AA3A0;cursor:not-allowed}
+.combo-ctl{display:flex;align-items:center;gap:6px;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 10px;font:inherit;font-size:14px;cursor:pointer;color:inherit}
+.combo-ctl:disabled{background:var(--chipbg);color:var(--faint);cursor:not-allowed}
 .combo.sm .combo-ctl{padding:5px 8px;font-size:13px;border-radius:8px}
-.combo-val{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.combo-val.ph{color:#8A938F;font-weight:400}
-.combo-x{color:#8A938F;padding:0 2px;line-height:1}.combo-x:hover{color:#A32D2D}
-.combo-caret{color:#8A938F;font-size:10px}
-.combo-list{position:absolute;z-index:60;top:calc(100% + 4px);left:0;min-width:100%;max-width:400px;background:#fff;border:1px solid #E3E6E4;border-radius:10px;box-shadow:0 10px 30px rgba(10,14,36,.12);padding:4px;display:flex;flex-direction:column;max-height:320px}
+.combo-val{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.combo-val.ph{color:var(--faint);font-weight:400}
+.combo-x{color:var(--faint);padding:0 2px;line-height:1}.combo-x:hover{color:var(--red-ink)}
+.combo-caret{color:var(--faint);font-size:10px}
+.combo-list{position:absolute;z-index:60;top:calc(100% + 4px);left:0;min-width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(10,14,36,.12);padding:4px;display:flex;flex-direction:column;max-height:320px}
 .combo-q{margin:2px 2px 4px;flex-shrink:0}
 .combo-opts{overflow:auto}
 .combo-item{display:block;width:100%;text-align:left;border:0;background:none;padding:7px 10px;border-radius:7px;cursor:pointer;font:inherit;font-size:13.5px}
-.combo-item:hover{background:#F0F6F4}.combo-item.on{background:#E6F7F4;font-weight:600}.combo-empty{padding:8px 10px}
+.combo-item:hover{background:var(--hover)}.combo-item.on{background:var(--soft);font-weight:600}.combo-empty{padding:8px 10px}
 .t th.sort{cursor:pointer;user-select:none;white-space:nowrap}.t th.sort:hover{color:var(--ink)}
-.tat-bar{background:#A32D2D;color:#fff;font-weight:600;font-size:13.5px;text-align:center;padding:9px 16px;cursor:pointer}.tat-bar:hover{background:#8E2424}
-tr.tat-missed td{background:#FDEAEA}tr.tat-missed td:first-child{box-shadow:inset 4px 0 0 #A32D2D}
-.alert.info{background:#EFFBF7;border-color:#BFEFE2;color:#0E6B55}.alert.warn{background:#FFF7E6;border-color:#F5DFA8;color:#7A4B07}.alert.err{background:#FDEAEA;border-color:#F3BDBD;color:#A32D2D}
-.overlay{position:fixed;inset:0;background:rgba(10,14,36,.45);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto}
-.modal{background:#fff;border-radius:16px;max-width:720px;width:100%;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.25);margin-bottom:34px}
+.tat-bar{background:var(--red);color:var(--on-ink);font-weight:600;font-size:13.5px;text-align:center;padding:9px 16px;cursor:pointer}.tat-bar:hover{background:var(--red)}
+tr.tat-missed td{background:var(--red-soft)}tr.tat-missed td:first-child{box-shadow:inset 4px 0 0 var(--red)}
+.alert.info{background:var(--soft);border-color:var(--brand-line);color:var(--tealink)}.alert.warn{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber-ink)}.alert.err{background:var(--red-soft);border-color:var(--red-line);color:var(--red-ink)}
+.overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto}
+.modal{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;max-width:720px;width:100%;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.25);margin-bottom:34px}
 .modal.wide{max-width:1150px}.modal.narrow{max-width:480px}
-.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:10px;font-size:13.5px;z-index:100;box-shadow:0 10px 30px rgba(0,0,0,.3);max-width:90vw}
-.toast.err{background:#A32D2D}
-.bar{height:8px;border-radius:99px;background:#EEF1F0;overflow:hidden;min-width:60px}.bar>i{display:block;height:100%;background:var(--teal)}
-.chip{padding:5px 11px;border-radius:999px;border:1.5px solid var(--line);background:#fff;font-size:12.5px;font-weight:600;color:var(--slate);cursor:pointer;font-family:inherit}
-.chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
-.drop{border:2px dashed #C9D4D0;border-radius:14px;padding:34px 20px;text-align:center;color:var(--slate);background:#FAFCFB;cursor:pointer}
-.drop.over{border-color:var(--teal);background:#EFFBF7}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--on-ink);padding:10px 18px;border-radius:10px;font-size:13.5px;z-index:100;box-shadow:0 10px 30px rgba(0,0,0,.3);max-width:90vw}
+.toast.err{background:var(--red)}
+.bar{height:8px;border-radius:99px;background:var(--chipbg);overflow:hidden;min-width:60px}.bar>i{display:block;height:100%;background:var(--teal)}
+.chip{padding:5px 11px;border-radius:999px;border:1px solid var(--line2);background:var(--card);font-size:12.5px;font-weight:600;color:var(--slate);cursor:pointer;font-family:inherit}
+.chip.on{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
+.drop{border:2px dashed var(--line2);border-radius:14px;padding:34px 20px;text-align:center;color:var(--slate);background:var(--card2);cursor:pointer}
+.drop.over{border-color:var(--teal);background:var(--soft)}
 .kv{display:grid;grid-template-columns:130px 1fr;gap:5px 12px;font-size:13.5px;margin:0}
 .kv dt{color:var(--slate);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
 .kv dd{margin:0;word-break:break-word}
-.note{border-left:3px solid var(--line);padding:6px 12px;margin:8px 0;background:#FAFCFB;border-radius:0 8px 8px 0}
+.note{border-left:3px solid var(--line);padding:6px 12px;margin:8px 0;background:var(--card2);border-radius:0 8px 8px 0}
 .note.work{border-left-color:var(--teal)}.note.skip{border-left-color:var(--amber)}.note.note{border-left-color:#8B93B0}
 .steps{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px}
 .step{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate);font-weight:600}
-.step .n{width:24px;height:24px;border-radius:99px;background:#EEF1F0;display:inline-flex;align-items:center;justify-content:center;font-size:12px}
-.step.on{color:var(--ink)}.step.on .n{background:var(--ink);color:#fff}.step.done .n{background:var(--green);color:var(--ink)}
-.spin{display:inline-block;width:16px;height:16px;border:2px solid #C9D4D0;border-top-color:var(--teal);border-radius:50%;animation:sp .8s linear infinite;vertical-align:middle}
+.step .n{width:24px;height:24px;border-radius:99px;background:var(--chipbg);display:inline-flex;align-items:center;justify-content:center;font-size:12px}
+.step.on{color:var(--ink)}.step.on .n{background:var(--ink);color:var(--on-ink)}.step.done .n{background:var(--green);color:var(--ink)}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid var(--line2);border-top-color:var(--teal);border-radius:50%;animation:sp .8s linear infinite;vertical-align:middle}
 @keyframes sp{to{transform:rotate(360deg)}}
 .login{min-height:100vh;display:grid;place-items:center;padding:20px}
 .login .box{width:100%;max-width:460px}
-.menu{position:absolute;right:0;top:42px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);min-width:220px;z-index:30;padding:6px}
+.menu{position:absolute;right:0;top:42px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);min-width:220px;z-index:30;padding:6px}
 .menu button{display:block;width:100%;text-align:left;background:none;border:none;padding:8px 10px;font-size:13.5px;cursor:pointer;border-radius:6px;font-family:inherit}
-.menu button:hover{background:#F4F7F6}
-.pre{white-space:pre-wrap;font-family:'IBM Plex Mono',monospace;font-size:12px;background:#F5F8F7;padding:10px;border-radius:8px;word-break:break-word}
+.menu button:hover{background:var(--hover)}
+.pre{white-space:pre-wrap;font-family:var(--mono);font-size:12px;background:var(--card2);padding:10px;border-radius:8px;word-break:break-word}
 .pill-list{display:flex;gap:6px;flex-wrap:wrap}
 .code-row td{padding:4px 6px}
-.hl{background:#FFF7D6}
+.hl{background:var(--hl)}
 .check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
 .check input{width:16px;height:16px}
 .banner{background:linear-gradient(90deg,#0A0E24,#1a2250);color:#fff;font-size:12.5px;padding:6px 20px;text-align:center}
 .banner a,.banner button{color:#9FF0D8;background:none;border:none;cursor:pointer;font:inherit;text-decoration:underline;padding:0}
 .claim-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-.claim-head .no{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600}
+.claim-head .no{font-family:var(--mono);font-size:20px;font-weight:600}
 .empty{padding:34px;text-align:center;color:var(--slate)}
 .wordmark{display:flex;align-items:center;gap:11px}
 .wordmark img{display:block;flex-shrink:0}
-.wordmark .t1{font-size:10px;letter-spacing:3px;color:#7d93a6;font-weight:600;line-height:1}
-.wordmark .t2{font-weight:800;font-size:22px;letter-spacing:.2px;line-height:1.05;font-family:'Inter',sans-serif}
+.wordmark .t1{font-size:10px;letter-spacing:3px;color:var(--faint);font-weight:600;line-height:1}
+.wordmark .t2{font-weight:800;font-size:22px;letter-spacing:.2px;line-height:1.05;font-family:var(--font)}
 .wordmark .t2 .b{color:var(--ink)}
-.wordmark .t2 .g{background:linear-gradient(90deg,#3ECF7C 0%,#2CC9B0 50%,#38C8E8 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
-.wordmark .t3{font-size:10.5px;color:#7d93a6;font-weight:600;margin-top:3px}
-.t tbody tr.tr-green td,.t tbody tr.tr-green:hover td{background:#DDF7EA}
-.t tbody tr.tr-yellow td,.t tbody tr.tr-yellow:hover td{background:#FFF4CC}
-.group{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#FBFDFC}
+.wordmark .t2 .g{background:var(--pri-bg);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wordmark .t3{font-size:10.5px;color:var(--faint);font-weight:600;margin-top:3px}
+.t tbody tr.tr-green td,.t tbody tr.tr-green:hover td{background:var(--green-soft)}
+.t tbody tr.tr-yellow td,.t tbody tr.tr-yellow:hover td{background:var(--hl)}
+.group{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--card2)}
 .group>.gt{font-size:11.5px;font-weight:700;color:var(--tealink);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
-.cell{font-family:'IBM Plex Mono',monospace;font-size:11.5px;background:#F5F8F7;border:1px solid var(--line);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-word}
+.cell{font-family:var(--mono);font-size:11.5px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-word}
 .legend{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--slate)}
 .legend i{display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid var(--line)}
-.sug{border-left:3px solid var(--cyan);padding:8px 12px;background:#F4FBFD;border-radius:0 10px 10px 0;margin-top:8px}
+.sug{border-left:3px solid var(--cyan);padding:8px 12px;background:var(--card2);border-radius:0 10px 10px 0;margin-top:8px}
 .sug ol,.sug ul{margin:4px 0 0 18px;padding:0;font-size:12.5px}
 @media print{.topbar,.banner,.no-print{display:none !important}.main{padding:0}}
+html[data-text="large"] body{zoom:1.1}
+.rh{display:grid;grid-template-columns:228px minmax(0,1fr);gap:28px;align-items:start}
+@media(max-width:980px){.rh{grid-template-columns:1fr}.rh-rail{position:static !important}}
+.rh-rail{position:sticky;top:84px}.rh-rail h1{font-size:20px;margin:2px 10px 10px}
+.rh-grp{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700;margin:18px 10px 6px}
+.rh-it{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;border:1px solid transparent;background:none;padding:9px 10px;border-radius:9px;color:var(--body);cursor:pointer;font:inherit;margin-bottom:2px}
+.rh-it svg{flex:none;margin-top:2px;color:var(--slate)}.rh-it .t{display:block;font-weight:600;font-size:13.5px;color:var(--ink)}.rh-it .s{display:block;font-size:11.5px;color:var(--slate);margin-top:1px}
+.rh-it:hover{background:var(--hover)}.rh-it.on{background:var(--card);border-color:var(--line);box-shadow:var(--shadow)}.rh-it.on svg{color:var(--teal)}
+.rh-foot{margin:22px 10px 0;padding-top:14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--slate);line-height:1.5}.rh-foot b{display:block;color:var(--body);margin-bottom:3px}
+.rh-head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.rh-eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;font-weight:700;color:var(--slate)}
+.rh-tag{font-size:10.5px;letter-spacing:.06em;padding:2px 8px;border-radius:20px}.rh-tag.int{background:var(--blue-soft);color:var(--blue-ink)}.rh-tag.cli{background:var(--purple-soft);color:var(--purple-ink)}
+.rh-head h1{font-size:26px;margin:6px 0 3px}.rh-head p{margin:0;color:var(--slate);max-width:720px}
+.rh-acts{margin-left:auto;display:flex;gap:8px}.btn.icon{width:36px;height:36px;padding:0;display:inline-flex;align-items:center;justify-content:center}.rh-acts .btn{display:inline-flex;align-items:center;gap:7px}
+.rh-bar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:12px 14px}.rh-bar>.field{flex:1 1 120px;max-width:220px}.rh-bar>.field:has(input[type=date]),.rh-bar>.field:has(input[type=month]){flex:0 1 150px}.rh-bar .seg2 button{padding:6px 11px}.rh-bar>.field:has(.seg2),.rh-bar>.field:has(.rh-checks){flex:0 0 auto;max-width:none}
+.rh-bar .seg2{height:38px;align-items:center}.rh-go{margin-left:auto;height:38px}
+.rh-checks{display:flex;gap:12px;flex-wrap:wrap;min-height:38px;align-items:center}.rh-checks .check{gap:6px}
+.rh-signed{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--slate);height:38px}
+.rh-status{display:flex;gap:8px 20px;flex-wrap:wrap;margin:10px 4px 14px;font-size:12.5px;color:var(--slate);align-items:center}.rh-status>span{display:inline-flex;align-items:center;gap:7px}
+.rh-dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;flex:none}.rh-dot.off{background:var(--line2)}.rh-dot.wait{background:var(--amber)}
+.rh-frame{padding:0;overflow:hidden;position:relative}.rh-iframe{display:block;width:100%;height:calc(100vh - 110px);min-height:680px;border:0;background:var(--card)}
+.rh-loading{position:absolute;inset:0;display:grid;place-items:center;z-index:1}
+.rh-frame.full{position:fixed;inset:0;z-index:300;border-radius:0;margin:0;border:0}.rh-frame.full .rh-iframe{height:calc(100vh - 45px)}
+.rh-fullbar{display:flex;align-items:center;gap:10px;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--card2);font-size:13px}
+.rh-how-sec{margin-top:18px}.rh-how-l{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--slate);margin-bottom:6px}
+.rh-how-step{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+.set-wrap{display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px;align-items:start}
+@media(max-width:860px){.set-wrap{grid-template-columns:1fr}.set-nav{position:static !important;flex-direction:row !important;flex-wrap:wrap}}
+.set-nav{position:sticky;top:84px;display:flex;flex-direction:column;gap:2px}
+.set-nav a{padding:8px 12px;border-radius:8px;color:var(--body);text-decoration:none;font-size:13.5px;font-weight:500}
+.set-nav a:hover{background:var(--hover);color:var(--ink)}
+.set-sec{scroll-margin-top:84px}.set-sec h2{font-size:16px}.set-sec .sub{margin-bottom:14px}
+.theme-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.theme-opt{border:1px solid var(--line2);border-radius:10px;padding:10px;background:var(--card);cursor:pointer;text-align:left;font:inherit;color:var(--ink)}
+.theme-opt:hover{border-color:var(--teal)}.theme-opt.on{border-color:var(--teal);box-shadow:0 0 0 3px var(--ring)}
+.theme-opt .pv{height:74px;border-radius:7px;display:grid;grid-template-columns:28% 1fr;overflow:hidden;margin-bottom:9px;border:1px solid rgba(127,127,127,.18)}
+.theme-opt .pv i{display:block}.theme-opt .pv .pc{padding:9px;display:flex;flex-direction:column;gap:6px}
+.theme-opt .pv .pc b{display:block;height:7px;border-radius:4px}.theme-opt .pv .pc b.s{width:60%;opacity:.5}
+.theme-opt .nm{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:6px}.theme-opt .ds{font-size:12px;color:var(--slate);margin-top:2px}
+.seg2{display:inline-flex;background:var(--chipbg);border-radius:8px;padding:3px;gap:2px}
+.seg2 button{border:0;background:transparent;padding:6px 14px;border-radius:6px;font:inherit;font-size:13px;font-weight:600;color:var(--slate);cursor:pointer}
+.seg2 button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 </style>
 </head><body><div id="root"></div>
 <script type="text/babel" data-presets="react">
@@ -235,7 +302,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.28.0";
+const APP_VERSION = "2.29.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -895,7 +962,7 @@ function Bars({ rows, labelOf, valueOf, fmt = fmtMoney, subOf, onClick, isOn, co
   return (
     <div className="stack" style={{ gap: 6 }}>
       {rows.map((r, i) => { const on = isOn ? isOn(r) : false; return (
-        <div key={i} className={"row" + (onClick ? " click" : "")} style={{ gap: 8, borderRadius: 6, cursor: onClick ? "pointer" : undefined, opacity: anyOn && !on ? 0.45 : 1, background: on ? "var(--teal-soft, #E6F7F4)" : undefined, padding: on ? "2px 4px" : undefined }} title={tip(r)} onClick={onClick ? () => onClick(r) : undefined}>
+        <div key={i} className={"row" + (onClick ? " click" : "")} style={{ gap: 8, borderRadius: 6, cursor: onClick ? "pointer" : undefined, opacity: anyOn && !on ? 0.45 : 1, background: on ? "var(--soft)" : undefined, padding: on ? "2px 4px" : undefined }} title={tip(r)} onClick={onClick ? () => onClick(r) : undefined}>
           <div style={{ width: 140, fontSize: 12.5, fontWeight: 600, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{labelOf(r)}</div>
           <div className="bar" style={{ flex: 1 }}><i style={{ width: (valueOf(r) / max * 100) + "%" }} /></div>
           <div className="mono small" style={{ width: 86, textAlign: "right" }}>{fmt(valueOf(r))}</div>
@@ -1284,6 +1351,109 @@ function ChangePasswordForm({ forced, onDone, onCancel, me }) {
   );
 }
 
+/* ---------- settings: theme, text size, password, profile ---------- */
+const PREFS_KEY = "brahmastra:prefs";
+const THEMES = [
+  ["light", "Light", "Cool off-white, as on the Purview site", ["#EEF1F4", "#FFFFFF", "#0F1B24", "#17B39A"]],
+  ["navy", "Navy", "Purview navy, easy on the eyes", ["#071E33", "#0B2740", "#FFFFFF", "#2FD9B3"]],
+  ["gold", "Gold", "Black and gold", ["#0A0A0B", "#141416", "#F5F0E4", "#D4AF37"]],
+  ["auto", "Match my computer", "Light by day, Navy when the computer is dark", null],
+];
+function readPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch (e) { return {}; } }
+function applyPrefs(p) {
+  const el = document.documentElement;
+  let t = p.theme || "light";
+  if (t === "auto") t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+  if (t === "light") el.removeAttribute("data-theme"); else el.setAttribute("data-theme", t);
+  if (p.text === "large") el.setAttribute("data-text", "large"); else el.removeAttribute("data-text");
+}
+function storePrefs(p) { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch (e) {} applyPrefs(p); }
+// "Match my computer" follows the computer when it switches between light and dark
+if (window.matchMedia) { try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (readPrefs().theme === "auto") applyPrefs(readPrefs()); }); } catch (e) {} }
+function ThemePreview({ c }) {
+  if (!c) return <div className="pv" style={{ gridTemplateColumns: "1fr 1fr" }}><ThemePreviewHalf c={THEMES[0][3]} /><ThemePreviewHalf c={THEMES[1][3]} /></div>;
+  return <div className="pv" style={{ background: c[0] }}><i style={{ background: c[1], borderRight: "1px solid rgba(127,127,127,.15)" }} /><div className="pc"><b style={{ background: c[2], width: "70%" }} /><b className="s" style={{ background: c[2] }} /><b style={{ background: c[3], width: "40%", marginTop: "auto" }} /></div></div>;
+}
+function ThemePreviewHalf({ c }) { return <div style={{ background: c[0], padding: 9, display: "flex", flexDirection: "column", gap: 6 }}><b style={{ display: "block", height: 7, borderRadius: 4, background: c[2], width: "80%" }} /><b style={{ display: "block", height: 7, borderRadius: 4, background: c[3], width: "45%", marginTop: "auto" }} /></div>; }
+function SettingsView({ me, setMe, ctx }) {
+  const [prefs, setPrefs] = useState(() => ({ theme: "light", text: "normal", ...readPrefs(), ...(me.prefs || {}) }));
+  const [others, setOthers] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState(null);
+  useEffect(() => { rpc("auth.sessions").then((r) => setOthers(r.others)).catch(() => {}); rpc("meta.info").then(setInfo).catch(() => {}); }, []);
+  const save = async (patch) => {
+    const next = { ...prefs, ...patch };
+    setPrefs(next); storePrefs(next);
+    try { const r = await rpc("auth.savePrefs", patch); setMe((m) => ({ ...m, prefs: r.prefs })); } catch (e) { toast("Saved on this computer only: " + e.message, "err"); }
+  };
+  const endOthers = async () => {
+    setBusy(true);
+    try { const r = await rpc("auth.signOutOthers"); setOthers(0); toast(r.ended ? `Signed out on ${r.ended} other ${r.ended === 1 ? "device" : "devices"}.` : "No other devices were signed in."); } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const lead = me.role === "supervisor";
+  const projects = (me.projects || []).map((p) => p.name || p).filter(Boolean);
+  const myClients = lead ? (me.access_all ? ["Every project"] : (me.scope_projects || [])) : projects;
+  const dash = <span className="muted" style={{ fontWeight: 400 }}>not on the roster</span>;
+  const secs = [["appearance", "Appearance"], ["password", "Password & sign-in"], ["profile", "My profile"], ...(lead ? [["apps", "Connected apps"]] : []), ["about", "About"]];
+  return (
+    <div className="stack" style={{ gap: 18 }}>
+      <div><h1>Settings</h1><div className="sub">How Brahmastra looks for you, your password, and what Brahmastra knows about you.</div></div>
+      <div className="set-wrap">
+        <nav className="set-nav">{secs.map(([k, l]) => <a key={k} href={"#/settings"} onClick={(e) => { e.preventDefault(); const el = document.getElementById("set-" + k); if (el) el.scrollIntoView({ behavior: "smooth" }); }}>{l}</a>)}</nav>
+        <div className="stack" style={{ gap: 16 }}>
+          <div className="card set-sec" id="set-appearance">
+            <h2>Appearance</h2><div className="sub">The same themes as Purview Shastra. Your choice is saved to your account, so it follows you to any computer.</div>
+            <div className="theme-grid">{THEMES.map(([k, l, d, c]) => (
+              <button key={k} type="button" className={"theme-opt" + (prefs.theme === k ? " on" : "")} onClick={() => save({ theme: k })}>
+                <ThemePreview c={c} /><div className="nm">{l}{prefs.theme === k && <span className="badge teal">In use</span>}</div><div className="ds">{d}</div></button>))}</div>
+            <div className="row between mt16" style={{ borderTop: "1px solid var(--line)", paddingTop: 14 }}>
+              <div><div className="b">Text size</div><div className="small muted">Larger makes every screen about 10% bigger.</div></div>
+              <div className="seg2">{[["normal", "Normal"], ["large", "Larger"]].map(([k, l]) => <button key={k} className={prefs.text === k ? "on" : ""} onClick={() => save({ text: k })}>{l}</button>)}</div>
+            </div>
+          </div>
+          <div className="card set-sec" id="set-password">
+            <h2>Password &amp; sign-in</h2><div className="sub">You signed in {me.via === "otp" ? "with a code" : "with your password"}{me.last_login ? <> · last sign-in {fmtWhen(me.last_login)}</> : null}. Saving a new password signs you out everywhere else.</div>
+            <div style={{ maxWidth: 440 }}><ChangePasswordForm me={me} onDone={() => { setMe((m) => ({ ...m, has_password: true })); setOthers(0); }} /></div>
+            <div className="row between mt16" style={{ borderTop: "1px solid var(--line)", paddingTop: 14 }}>
+              <div><div className="b">Other devices</div><div className="small muted">{others === null ? "Checking…" : others ? `You are also signed in on ${others} other ${others === 1 ? "device or browser" : "devices or browsers"}.` : "You are signed in only here."} Use this if you signed in on a shared computer.</div></div>
+              <button className="btn" disabled={busy || !others} onClick={endOthers}>Sign out everywhere else</button>
+            </div>
+          </div>
+          <div className="card set-sec" id="set-profile">
+            <h2>My profile</h2><div className="sub">From the Purview Shastra roster. If something is wrong, ask your team lead or the admin to correct it on the roster.</div>
+            <dl className="cv-kv">
+              <dt>Name</dt><dd>{me.name}</dd><dt>Email</dt><dd>{me.email}</dd>
+              <dt>Emp ID</dt><dd>{me.emp_id || dash}</dd><dt>Designation</dt><dd>{me.designation || me.position || dash}</dd>
+              <dt>Department</dt><dd>{me.department || dash}{me.departments_also ? <span className="muted" style={{ fontWeight: 400 }}> · also {me.departments_also}</span> : null}</dd><dt>Brahmastra role</dt><dd>{roleLabel(me)}</dd>
+              <dt>Reports to</dt><dd>{me.reports_to_name || dash}</dd><dt>Shift</dt><dd>{me.shift || dash}</dd>
+              <dt>{lead ? "Projects I lead" : "My projects"}</dt><dd>{myClients.length ? myClients.join(", ") : dash}</dd><dt>Status</dt><dd>{me.roster_status || "Production"}</dd>
+              {!lead && <><dt>Daily target</dt><dd>{me.capacity ? me.capacity + " claims a day" : dash}</dd></>}
+              <dt>Member since</dt><dd>{me.created_at ? new Date(me.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : dash}</dd>
+            </dl>
+          </div>
+          {lead && <div className="card set-sec" id="set-apps">
+            <h2>Connected apps</h2><div className="sub">Open from My day &amp; reports. You never sign in to them separately.</div>
+            <dl className="cv-kv" style={{ gridTemplateColumns: "150px minmax(0,1fr)" }}>
+              <dt>Drishti</dt><dd>Opens signed in as you, from your Brahmastra sign-in</dd>
+              <dt>Sasha's Third Eye</dt><dd>No sign-in needed</dd>
+              <dt>OneDrive</dt><dd>Every upload and saved report uses <span className="mono">Purviewautomate@purview-healthcare.com</span> only</dd>
+              <dt>Report files</dt><dd>OneDrive › Brahmastra Reports › team lead › client</dd>
+            </dl>
+          </div>}
+          <div className="card set-sec" id="set-about">
+            <h2>About</h2>
+            <dl className="cv-kv" style={{ gridTemplateColumns: "150px minmax(0,1fr)" }}>
+              <dt>Brahmastra</dt><dd>App {APP_VERSION}{info ? " · server " + info.version : ""}{DEMO ? " · demo" : ""}</dd>
+              <dt>Need help?</dt><dd>Ask your team lead, or the admin for sign-in and roster questions.</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- shell ---------- */
 const SUPERVISOR_NAV = [["dashboard", "Dashboard"], ["attention", "Needs attention"], ["inventory", "Inventory & allocation"], ["claims", "Claims"], ["team", "Team"], ["clients", "Clients & locations"], ["saag", "SAAG"], ["limits", "TFL / AFL"], ["reports", "My day & reports"]];
 // Older screen names still open, inside the merged tabs.
@@ -1331,7 +1501,8 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
           {menu && <div className="menu">
             <div className="small muted" style={{ padding: "6px 10px" }}>{me.email}<br />{roleLabel(me)}{me.access_all ? " · every project" : me.scope_projects && me.scope_projects.length && me.role === "supervisor" ? " · " + me.scope_projects.join(", ") : ""}</div>
             <div className="tiny muted" style={{ padding: "0 10px 6px" }}>{me.designation ? me.designation + " · " : ""}signed in with {me.via === "otp" ? "a code" : "password"}</div>
-            <button onClick={() => { setMenu(false); onChangePassword(); }}>{me.has_password ? "Change password" : "Set a password"}</button>
+            <button onClick={() => { setMenu(false); setView("settings"); }}>Settings</button>
+            <button onClick={() => { setMenu(false); setView("settings"); setTimeout(() => { const el = document.getElementById("set-password"); if (el) el.scrollIntoView(); }, 80); }}>{me.has_password ? "Change password" : "Set a password"}</button>
             <button onClick={() => { setMenu(false); onSignOut(); }}>Sign out</button>
           </div>}
         </div>
@@ -1374,7 +1545,7 @@ function OverdueModal({ ctx, clientId, locId, onClose, onChanged }) {
       {!q.data && !q.error && <Spinner />}
       {q.data && (
         <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th><input type="checkbox" checked={chosen.size === rows.length && rows.length > 0} onChange={(e) => setSel(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())} /></th><th>Claim #</th><th>Patient</th><th>Payer</th><th className="r">Balance</th><th>Follow-up was</th><th>Last entry</th><th>Last worked by</th></tr></thead>
-          <tbody>{rows.map((r) => <tr key={r.id}><td><input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} /></td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.location_name || ""}</div></td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td><td className="small" style={{ color: "#A32D2D" }}>{fmtDate(r.follow_up_on)}</td><td className="small">{r.last_status_code}{r.last_sub_status ? <div className="tiny muted">{r.last_sub_status}</div> : null}</td><td className="small">{r.assigned_name || "–"}</td></tr>)}
+          <tbody>{rows.map((r) => <tr key={r.id}><td><input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} /></td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.location_name || ""}</div></td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td><td className="small" style={{ color: "var(--red-ink)" }}>{fmtDate(r.follow_up_on)}</td><td className="small">{r.last_status_code}{r.last_sub_status ? <div className="tiny muted">{r.last_sub_status}</div> : null}</td><td className="small">{r.assigned_name || "–"}</td></tr>)}
             {!rows.length && <tr><td colSpan={8}><Empty>No overdue follow-ups.</Empty></td></tr>}</tbody></table></div>
       )}
     </Modal>
@@ -1463,8 +1634,8 @@ function Dashboard({ ctx, go }) {
     <div className="stack">
       {overdueOpen && <OverdueModal ctx={ctx} clientId={clientId} locId={locId} onClose={() => setOverdueOpen(false)} onChanged={() => stats.reload()} />}
       {d && d.overdue && d.overdue.n > 0 && (
-        <div className="card tight row between" style={{ borderLeft: "4px solid #A32D2D", background: "#FDEAEA" }}>
-          <div className="small"><b style={{ color: "#A32D2D" }}>{fmtInt(d.overdue.n)} claims are past their follow-up date with no new entry</b> · {fmtMoney(d.overdue.amt)}. They sit with nobody until a biller gets them again.</div>
+        <div className="card tight row between" style={{ borderLeft: "4px solid var(--red)", background: "var(--red-soft)" }}>
+          <div className="small"><b style={{ color: "var(--red-ink)" }}>{fmtInt(d.overdue.n)} claims are past their follow-up date with no new entry</b> · {fmtMoney(d.overdue.amt)}. They sit with nobody until a biller gets them again.</div>
           <div className="row"><button className="btn sm" onClick={() => openClaims({ overdue: true })}>See them</button><button className="btn sm primary" onClick={() => setOverdueOpen(true)}>Assign to a biller</button></div>
         </div>
       )}
@@ -1478,7 +1649,7 @@ function Dashboard({ ctx, go }) {
         </div>
       </div>
       {(flCount > 0 || clientId || rangeMs) && (
-        <div className="card tight row between" style={{ background: "var(--teal-soft, #E6F7F4)" }}>
+        <div className="card tight row between" style={{ background: "var(--soft)" }}>
           <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><span className="small b">Showing:</span>
             {clientId && <span className="chip on">{(ctx.clients.find((c) => c.id === clientId) || {}).name}{locId ? " · " + locName(locId) : ""}</span>}
             {rangeMs && <button className="chip on" title="Claims with activity in this window: loaded, worked or closed then. Click to go back to all time." onClick={() => setRange({ ...range, key: "all" })}>{rangeLabel} ✕</button>}
@@ -1507,10 +1678,10 @@ function Dashboard({ ctx, go }) {
           <div className="card"><h3>By client and location</h3><div className="sub mb">Where the inventory stands at each location. Click a row to focus the dashboard on it.</div>
             <div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Location</th><th className="r">Unassigned</th><th className="r">On desks</th><th className="r">Worked, awaiting follow-up</th><th className="r">Overdue</th><th className="r">Closed</th><th className="r">Workable $</th></tr></thead>
               <tbody>{(d.by_location || []).map((r, i) => { const on = clientId === r.client_id && (locId || "") === (r.location_id || ""); return (
-                <tr key={i} className="click" style={on ? { background: "var(--teal-soft, #E6F7F4)" } : undefined} title={`${r.client_name}${r.location_name ? " · " + r.location_name : ""}\n${fmtInt(r.n)} claims on file · ${fmtMoney(r.amt)} workable\nClick to focus the dashboard here; click again to go back.`} onClick={() => { if (on) { setClientId(""); setLocId(""); } else { setClientId(r.client_id); setLocId(r.location_id || ""); } }}>
+                <tr key={i} className="click" style={on ? { background: "var(--soft)" } : undefined} title={`${r.client_name}${r.location_name ? " · " + r.location_name : ""}\n${fmtInt(r.n)} claims on file · ${fmtMoney(r.amt)} workable\nClick to focus the dashboard here; click again to go back.`} onClick={() => { if (on) { setClientId(""); setLocId(""); } else { setClientId(r.client_id); setLocId(r.location_id || ""); } }}>
                   <td><b>{r.client_name}</b></td><td>{r.location_name || <span className="muted">(no location)</span>}</td>
                   <td className="num" title={fmtMoney(r.open_amt)}>{fmtInt(r.open_n)}</td><td className="num" title={fmtMoney(r.desk_amt)}>{fmtInt(r.desk_n)}</td><td className="num" title={fmtMoney(r.worked_amt)}>{fmtInt(r.worked_n)}</td>
-                  <td className="num" style={r.overdue_n ? { color: "#A32D2D", fontWeight: 700 } : undefined}>{fmtInt(r.overdue_n)}</td><td className="num" title={fmtMoney(r.closed_amt)}>{fmtInt(r.closed_n)}</td><td className="num">{fmtMoney(r.amt)}</td>
+                  <td className="num" style={r.overdue_n ? { color: "var(--red-ink)", fontWeight: 700 } : undefined}>{fmtInt(r.overdue_n)}</td><td className="num" title={fmtMoney(r.closed_amt)}>{fmtInt(r.closed_n)}</td><td className="num">{fmtMoney(r.amt)}</td>
                 </tr>); })}
                 {!(d.by_location || []).length && <tr><td colSpan={8} className="muted">No claims yet.</td></tr>}</tbody></table></div></div>
           <div className="grid g3">
@@ -1530,7 +1701,7 @@ function Dashboard({ ctx, go }) {
           <div className="grid g2">
             <div className="card"><h3>Team workload</h3><div className="sub mb">Claims on each desk for this selection. Click a person to focus on them.</div>
               <div className="table-wrap"><table className="t"><thead><tr><th>Team member</th><th className="r">Assigned</th><th className="r">In progress</th><th className="r">Worked</th><th className="r">Closed</th><th className="r">On desk $</th></tr></thead>
-                <tbody>{d.users.map((u) => <tr key={u.user_id} className="click" style={fl.assigned_to === u.user_id ? { background: "var(--teal-soft, #E6F7F4)" } : undefined} title={`${u.name || nameOf(u.user_id)}: ${fmtInt(u.assigned)} assigned, ${fmtInt(u.in_progress)} open now, ${fmtInt(u.completed)} worked, ${fmtInt(u.closed)} closed · ${fmtMoney(u.amt)} on the desk`} onClick={() => toggleFl("assigned_to", u.user_id)}><td>{u.name || nameOf(u.user_id)}</td><td className="num">{fmtInt(u.assigned)}</td><td className="num">{fmtInt(u.in_progress)}</td><td className="num">{fmtInt(u.completed)}</td><td className="num">{fmtInt(u.closed)}</td><td className="num">{fmtMoney(u.amt)}</td></tr>)}
+                <tbody>{d.users.map((u) => <tr key={u.user_id} className="click" style={fl.assigned_to === u.user_id ? { background: "var(--soft)" } : undefined} title={`${u.name || nameOf(u.user_id)}: ${fmtInt(u.assigned)} assigned, ${fmtInt(u.in_progress)} open now, ${fmtInt(u.completed)} worked, ${fmtInt(u.closed)} closed · ${fmtMoney(u.amt)} on the desk`} onClick={() => toggleFl("assigned_to", u.user_id)}><td>{u.name || nameOf(u.user_id)}</td><td className="num">{fmtInt(u.assigned)}</td><td className="num">{fmtInt(u.in_progress)}</td><td className="num">{fmtInt(u.completed)}</td><td className="num">{fmtInt(u.closed)}</td><td className="num">{fmtMoney(u.amt)}</td></tr>)}
                   {!d.users.length && <tr><td colSpan={6} className="muted">Nothing allocated yet. <button className="btn link sm" onClick={() => go("allocate", { clientId })}>Allocate claims</button></td></tr>}</tbody></table></div></div>
             <div className="card"><h3>Payer concentration</h3><div className="sub mb">Fewest payers holding the most balance: fewest calls for the most money</div>
               <Bars rows={d.payers} labelOf={(r) => r.payer || "Unknown"} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => toggleFl("payer", r.payer)} isOn={(r) => fl.payer === r.payer} /></div>
@@ -1593,10 +1764,10 @@ function ClientsView({ ctx, reload, embedded, me }) {
     setBusy(false);
   };
   const wbStatus = (id) => (ctx.settings && ctx.settings["workbook_status:" + id]) || null;
-  const WbLine = ({ id, link }) => { const s = wbStatus(id); if (!link) return null; return <span className="tiny" style={{ marginLeft: 6 }}>{s ? (s.ok ? <span style={{ color: "var(--tealink)" }}>✓ last copied {fmtWhen(s.at)}{s.file ? " to " + s.file : ""}</span> : <span style={{ color: "#A32D2D" }} title={s.error}>✗ last copy failed {fmtWhen(s.at)}: {String(s.error).slice(0, 90)}</span>) : <span className="muted">no entry copied yet</span>}</span>; };
+  const WbLine = ({ id, link }) => { const s = wbStatus(id); if (!link) return null; return <span className="tiny" style={{ marginLeft: 6 }}>{s ? (s.ok ? <span style={{ color: "var(--tealink)" }}>✓ last copied {fmtWhen(s.at)}{s.file ? " to " + s.file : ""}</span> : <span style={{ color: "var(--red-ink)" }} title={s.error}>✗ last copy failed {fmtWhen(s.at)}: {String(s.error).slice(0, 90)}</span>) : <span className="muted">no entry copied yet</span>}</span>; };
   /* No workbook link: Brahmastra keeps the month's Production file in the Purviewautomate OneDrive by itself. */
   const AutoWbLine = ({ s, name }) => <span><span title="Saved by Brahmastra in the Purviewautomate OneDrive, one file per month">automatic: <b>Brahmastra Reports › team lead › {name} › Production</b> (Production - {name} - month.xlsx)</span>
-    {s && s.auto ? <span className="tiny" style={{ marginLeft: 6 }}>{s.ok ? <span style={{ color: "var(--tealink)" }} title={s.file}>✓ last saved {fmtWhen(s.at)}</span> : <span style={{ color: "#A32D2D" }} title={s.error}>✗ last save failed {fmtWhen(s.at)}: {String(s.error || "").slice(0, 120)}</span>}</span> : null}</span>;
+    {s && s.auto ? <span className="tiny" style={{ marginLeft: 6 }}>{s.ok ? <span style={{ color: "var(--tealink)" }} title={s.file}>✓ last saved {fmtWhen(s.at)}</span> : <span style={{ color: "var(--red-ink)" }} title={s.error}>✗ last save failed {fmtWhen(s.at)}: {String(s.error || "").slice(0, 120)}</span>}</span> : null}</span>;
   const [del, setDel] = useState(null);
   const [delTyped, setDelTyped] = useState("");
   const doDelete = async () => {
@@ -1620,7 +1791,7 @@ function ClientsView({ ctx, reload, embedded, me }) {
           <div className="row between top">
             <div><h2>{c.name} {c.code && <span className="badge ink">{c.code}</span>} {!c.active && <span className="badge red">inactive</span>}</h2>
               <div className="sub">Default follow-up after a claim is worked: {c.follow_up_days} days · added {fmtDate(new Date(c.created_at).toISOString().slice(0, 10))}</div></div>
-            <div className="row" style={{ gap: 6 }}><button className="btn sm" onClick={() => setEdit({ id: c.id, name: c.name, code: c.code, follow_up_days: c.follow_up_days, active: c.active, workbook_link: c.workbook_link || "" })}>Edit</button><button className="btn sm link" style={{ color: "#A32D2D" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button></div>
+            <div className="row" style={{ gap: 6 }}><button className="btn sm" onClick={() => setEdit({ id: c.id, name: c.name, code: c.code, follow_up_days: c.follow_up_days, active: c.active, workbook_link: c.workbook_link || "" })}>Edit</button><button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button></div>
           </div>
           <div className="small mt8">
             <b>Billers' work is copied to:</b> {c.workbook_link ? <><a href={c.workbook_link} target="_blank" rel="noopener">client workbook</a><WbLine id={c.id} link={c.workbook_link} /></> : <AutoWbLine s={wbStatus(c.id)} name={c.name} />}{" "}
@@ -2033,7 +2204,7 @@ function RosterView({ ctx, reload, me }) {
             <tbody>{preview.people.map((p, i) => <tr key={i} style={p.active ? undefined : { opacity: 0.55 }}><td><span className={"badge " + (ACTION_TONE[p.action] || "gray")}>{p.action}</span>{p.changes.length ? <div className="tiny muted">{p.changes.join(", ")}</div> : null}</td>
               <td><b>{p.name}</b><div className="tiny muted mono">{p.emp_id || "no emp id"}</div></td><td className="small">{p.position}<div className="tiny muted">{p.department}</div></td><td className="small">{ACCESS_LABEL[p.access] || p.access}</td>
               <td className="small">{p.projects.map((x) => x.name + (x.share != null ? ` ${x.share}%` : "")).join(", ") || "–"}</td><td className="small">{p.reports_to || "–"}</td><td className="small">{p.active ? p.status : <span className="badge red">off</span>}</td>
-              <td className="small">{p.email || <span className="badge amber">no email</span>}{p.issues.length ? <div className="tiny" style={{ color: "#854F0B" }}>{p.issues.join("; ")}</div> : null}</td></tr>)}</tbody></table></div>}
+              <td className="small">{p.email || <span className="badge amber">no email</span>}{p.issues.length ? <div className="tiny" style={{ color: "var(--amber-ink)" }}>{p.issues.join("; ")}</div> : null}</td></tr>)}</tbody></table></div>}
           {tab === "warnings" && <div className="table-wrap"><table className="t"><thead><tr><th>Name</th><th>Emp ID</th><th>Project</th><th>Reports to</th><th>Problem</th></tr></thead>
             <tbody>{preview.warnings.map((w, i) => <tr key={i}><td><b>{w.name}</b></td><td className="mono small">{w.emp_id || "–"}</td><td className="small">{w.project}</td><td className="small">{w.reports_to}</td><td className="small">{w.issues.join("; ")}</td></tr>)}
               {!preview.warnings.length && <tr><td colSpan={5} className="muted">No email problems.</td></tr>}</tbody></table><div className="tiny muted mt8">These people are still loaded with their team and manager; they can sign in once the email is fixed in Shastra (and the roster reloaded), set on the Team screen, or a non-Purview address is allowed below.</div></div>}
@@ -2620,14 +2791,14 @@ function ClaimsView({ ctx, params, me }) {
           <Combo sm width={140} value={f.saag_bucket} onChange={(v) => set("saag_bucket", v)} placeholder="Any bucket" options={[{ id: "", label: "Any bucket" }, ...BUCKETS4.map((b) => ({ id: b, label: b }))]} />
           <Combo sm width={200} value={f.handoff_status || ""} onChange={(v) => setF((x) => ({ ...x, handoff_status: v, state: v ? "" : x.state, page: 1 }))} placeholder="Any posting / submission" options={[{ id: "", label: "Any posting / submission" }, ...Object.entries(HANDOFF_META).map(([k, m]) => ({ id: k, label: m[1] }))]} />
           <label className="check small"><input type="checkbox" checked={f.follow_up_due} onChange={(e) => set("follow_up_due", e.target.checked)} /> Follow-up due</label>
-          <label className="check small" style={{ color: "#A32D2D" }}><input type="checkbox" checked={f.overdue} onChange={(e) => set("overdue", e.target.checked)} /> Overdue, no new entry</label>
+          <label className="check small" style={{ color: "var(--red-ink)" }}><input type="checkbox" checked={f.overdue} onChange={(e) => set("overdue", e.target.checked)} /> Overdue, no new entry</label>
           <label className="check small"><input type="checkbox" checked={f.escalated} onChange={(e) => set("escalated", e.target.checked)} /> Escalated</label>
           <span style={{ flex: 1 }} />
           {q.data && <span className="small muted">{fmtInt(q.data.total)} claims · {fmtMoney(q.data.amount)}</span>}
         </div>
       </div>
       {sel.size > 0 && (
-        <div className="card tight row" style={{ background: "#EFFBF7" }}>
+        <div className="card tight row" style={{ background: "var(--soft)" }}>
           <b>{sel.size} selected</b>
           <Combo sm width={220} value={bulkUser} onChange={setBulkUser} placeholder="Assign to…" options={users.map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
           <button className="btn sm primary" disabled={!bulkUser || busy} onClick={() => bulk("Assigned", (ids) => rpc("alloc.reassign", { ids, user_id: bulkUser }))}>Assign</button>
@@ -2945,7 +3116,7 @@ function NoteForm({ c, files, onChanged }) {
       <ErrorBox error={err} />
       <div className="wf-bar" style={{ position: "static", boxShadow: "none", padding: "8px 0 0", borderRadius: 0 }}>
         <span className="tiny muted b" style={{ whiteSpace: "nowrap" }}>ONE-CELL NOTE PREVIEW</span><div className="cell">{preview}</div>
-        {missing.length > 0 && <span className="tiny" style={{ color: "#854F0B" }}>Still needed: {missing.join(", ")}.</span>}
+        {missing.length > 0 && <span className="tiny" style={{ color: "var(--amber-ink)" }}>Still needed: {missing.join(", ")}.</span>}
         <button className="btn primary" disabled={busy || missing.length > 0} onClick={add}>{busy ? "Saving…" : "Add note"}</button>
       </div>
       <datalist id="saag-subs">{SAAG.subStatuses.map((x) => <option key={x} value={x} />)}</datalist>
@@ -3103,7 +3274,7 @@ function HandoffCard({ handoffs, role, onChanged, compact }) {
     <div className="card tight" style={{ borderLeft: "4px solid " + (h.status === "complete" ? "#12B886" : h.status === "assistance" || h.overdue ? "#A32D2D" : "#7C5CD6") }}>
       <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
         <div className="small"><span className="cv-sec" style={{ display: "inline-flex", margin: 0 }}>{DEPT_NAME[h.dept]}</span>{" "}
-          {open ? <><span className={"badge " + (h.overdue ? "red" : "purple")}>{h.status === "assigned" ? "assigned to " + (h.assigned_name || "") : "waiting for " + (h.lead_name || "the lead")}</span> <span className={h.overdue ? "b" : "muted"} style={h.overdue ? { color: "#A32D2D" } : undefined}>{fmtDue(h)}</span></>
+          {open ? <><span className={"badge " + (h.overdue ? "red" : "purple")}>{h.status === "assigned" ? "assigned to " + (h.assigned_name || "") : "waiting for " + (h.lead_name || "the lead")}</span> <span className={h.overdue ? "b" : "muted"} style={h.overdue ? { color: "var(--red-ink)" } : undefined}>{fmtDue(h)}</span></>
             : h.status === "rejected" ? <><span className="badge red">Rejected</span> <span className="muted">{h.reason} · by {h.done_by_name} · {fmtWhen(h.done_at)}</span></>
             : h.status === "complete" ? <><span className="badge green">{h.dept === "posting" ? "Payment posted" : h.dept === "subcheck" ? "Accepted by payer" : "Submitted"}</span> <span className="muted">by {h.done_by_name} · {fmtWhen(h.done_at)} · {h.dept === "posting" ? "check / EFT" : "batch / claim ID"} <b>{h.proof.ref}</b>{h.proof.date ? " · " + fmtDate(h.proof.date) : ""}{h.proof.amount != null ? " · " + fmtMoney(h.proof.amount, 2) : ""}{h.proof.mode ? " · " + h.proof.mode : ""}{h.proof.files && h.proof.files.length ? " · 📎 " + h.proof.files.length + " proof file" + (h.proof.files.length > 1 ? "s" : "") : " · no proof file"}</span></>
             : <><span className="badge red">Needs assistance</span> <span className="muted">{h.reason} · by {h.done_by_name} · {fmtWhen(h.done_at)}</span></>}
@@ -3243,14 +3414,14 @@ function HandoffsView({ ctx, me, refreshHandoffs }) {
           <tbody>{shown.map((h) => { const isOpen = ["pending", "assigned"].includes(h.status); return (
             <tr key={h.id} className={h.overdue ? "tat-missed" : ""}>
               <td>{isOpen ? (h.available_at && Date.now() < h.available_at ? <span className="badge gray">check from {fmtWhen(h.available_at)}</span> : <span className={"badge " + (h.overdue ? "red" : "gray")}>{fmtDue(h)}</span>) : h.status === "complete" ? <span className="badge green">{h.dept === "posting" ? "posted" : h.dept === "subcheck" ? "accepted" : "submitted"}</span> : h.status === "rejected" ? <span className="badge red">rejected</span> : <span className="badge red">assistance</span>}<div className="tiny muted">{isOpen ? "sent " + fmtWhen(h.created_at) : fmtWhen(h.done_at)}</div></td>
-              <td><span className={"badge " + (h.dept === "posting" ? "purple" : h.dept === "subcheck" ? "teal" : "blue")}>{DEPT_NAME[h.dept]}</span>{h.dept === "submission" && /^Rejected/.test(h.saag_action) ? <div className="tiny" style={{ color: "#A32D2D" }}>resubmit</div> : null}</td>
+              <td><span className={"badge " + (h.dept === "posting" ? "purple" : h.dept === "subcheck" ? "teal" : "blue")}>{DEPT_NAME[h.dept]}</span>{h.dept === "submission" && /^Rejected/.test(h.saag_action) ? <div className="tiny" style={{ color: "var(--red-ink)" }}>resubmit</div> : null}</td>
               <td className="mono small">{h.claim_no || "–"}</td><td>{h.patient}</td><td className="small">{h.client_name}{h.location_name ? " · " + h.location_name : ""}</td><td className="small">{h.payer}</td><td className="num">{fmtMoney(h.balance)}</td>
               <td className="small">{h.created_by_name}<div className="tiny muted">{h.saag_action}</div></td>
               <td className="small">{isOpen && h.can_assign ? <Combo sm width={170} value={h.assigned_to || ""} onChange={(v) => assign(h, v)} placeholder="Assign to team…" disabled={busy}
                   options={[...team(h.dept), ...ctx.users.filter((u) => u.id === me.id)].filter((u, i, a) => a.findIndex((x) => x.id === u.id) === i).map((u) => ({ id: u.id, label: u.id === me.id ? u.name + " (me)" : u.name }))} />
                 : h.assigned_name || (isOpen ? <span className="muted">with {h.lead_name}</span> : h.done_by_name)}
                 {!isOpen && h.status === "complete" && <div className="tiny muted">{h.proof.ref}{h.proof.date ? " · " + fmtDate(h.proof.date) : ""}{h.proof.files && h.proof.files.length ? " · 📎 proof" : ""}</div>}
-                {!isOpen && (h.status === "assistance" || h.status === "rejected") && <div className="tiny" style={{ color: "#A32D2D" }}>{h.reason}</div>}</td>
+                {!isOpen && (h.status === "assistance" || h.status === "rejected") && <div className="tiny" style={{ color: "var(--red-ink)" }}>{h.reason}</div>}</td>
               <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(h.claim_id)}>Open claim</button>{isOpen && h.can_close && (h.dept === "subcheck"
                 ? <> <button className="btn sm primary" onClick={() => setAct({ h, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h, outcome: "rejected" })}>Rejected</button> <button className="btn sm" onClick={() => setAct({ h, outcome: "assistance" })}>Need assistance</button></>
                 : <> <button className="btn sm primary" onClick={() => setAct({ h, outcome: "complete" })}>✓ Complete</button> <button className="btn sm" onClick={() => setAct({ h, outcome: "assistance" })}>Need assistance</button></>)}</td>
@@ -3275,7 +3446,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   const sup = me.role === "supervisor";
   return (
     <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal wide" style={{ maxWidth: 1240, background: "#F9FBFA", position: "relative" }}>
+      <div className="modal wide" style={{ maxWidth: 1240, background: "var(--card2)", position: "relative" }}>
         <ErrorBox error={q.error} />
         {!c && !q.error && <Spinner />}
         {c && (
@@ -3500,7 +3671,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
       <div className="wf-bar">
         <span className="tiny muted b" style={{ whiteSpace: "nowrap" }}>NOTE PREVIEW</span>
         <div className="cell">{preview}</div>
-        {!ready && <span className="tiny" style={{ color: "#854F0B", maxWidth: 220 }}>Still needed: {missing.join(", ")}.</span>}
+        {!ready && <span className="tiny" style={{ color: "var(--amber-ink)", maxWidth: 220 }}>Still needed: {missing.join(", ")}.</span>}
         {onCancel && <button className="btn" type="button" onClick={onCancel} disabled={!!busy}>Cancel</button>}
         {(buttons || [{ key: "save", label: "Save", primary: true }]).map((b) => <button key={b.key} type="button" title={b.title} className={"btn " + (b.primary ? "primary" : "")} disabled={(b.noSaag ? noteMissing.length > 0 : !ready) || !!busy} onClick={() => submit(b.key)}>{busy === b.key ? "Saving…" : b.label}</button>)}
       </div>
@@ -3889,7 +4060,7 @@ function TeamView({ ctx, reload, me }) {
       <div className="card">
         <div className="table-wrap"><table className="t"><thead><tr>{tSort.Th("name", "Name")}{tSort.Th("designation", "Designation")}{tSort.Th("email", "Email")}{tSort.Th("role", "Role")}{tSort.Th("projects", "Projects")}{tSort.Th("reports_to_name", "Reports to")}{tSort.Th("capacity", "Claims / day", "r")}{tSort.Th("status", "Status")}{tSort.Th("last_login", "Last sign in")}<th></th></tr></thead>
           <tbody>{shownUsers.map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}{u.emp_id ? <div className="tiny muted mono">{u.emp_id}{u.source === "roster" ? " · roster" : ""}</div> : null}</td><td className="small">{u.designation || "–"}{u.department ? <div className="tiny muted">{u.department}</div> : null}</td><td className="small">{u.email_missing ? <span className="badge amber">no email</span> : u.email}</td><td>{u.is_admin ? <span className="badge purple">Admin</span> : u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}{u.access_all ? <div className="tiny muted">every project</div> : null}</td><td className="small">{projectsText(u.projects) || "–"}</td><td className="small">{u.reports_to_name || "–"}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}{u.roster_status && u.roster_status !== "Working" ? <div><span className={"badge " + (STATUS_TONE[u.roster_status.toLowerCase()] || "gray")}>{u.roster_status}</span></div> : null}{u.has_password ? null : <div className="tiny muted">code sign-in only</div>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>
-            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email_missing ? "" : u.email, email_missing: u.email_missing, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active, projects_text: projectsText(u.projects), reports_to: u.reports_to || "", emp_id: u.emp_id || "", is_admin: u.is_admin })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}{me.is_admin && u.id !== me.id && <> <button className="btn sm link" style={{ color: "#A32D2D" }} onClick={() => setDelFor(u)}>Delete</button></>}</td></tr>)}</tbody></table></div>
+            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email_missing ? "" : u.email, email_missing: u.email_missing, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active, projects_text: projectsText(u.projects), reports_to: u.reports_to || "", emp_id: u.emp_id || "", is_admin: u.is_admin })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}{me.is_admin && u.id !== me.id && <> <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => setDelFor(u)}>Delete</button></>}</td></tr>)}</tbody></table></div>
       </div>
       <div className="card">
         <div className="row between"><div><h3>Productivity</h3><div className="sub">Claims worked per person per day (one note per claim worked)</div></div>
@@ -3982,46 +4153,72 @@ const REPORT_COLS = [
   { key: "follow_up_on", label: "Follow-up" }, { key: "comment", label: "Note (one cell)" }, { key: "edited_at", label: "Edited", get: (r) => (r.edited_at ? new Date(r.edited_at).toLocaleString() : "") }, { key: "state", label: "Claim state now" },
 ];
 const reportRow = (r) => { let f = {}; try { f = JSON.parse(r.fields_json || "{}"); } catch (e) {} return { ...r, f: f || {} }; };
-/* My day & reports: Today (my day list and the team's work today), Weekly (last 7 days) and Monthly (this month). */
 /* ---------- My day & reports ----------
-   Three areas, one place: the team's work in Brahmastra, team quality and production (Sasha's Third Eye) and
-   client SLA and KPI (Drishti). The two reporting apps run inside Brahmastra, from their own web addresses, so their
-   formulas, sign-ins, OneDrive files and Google Sheet stay exactly as their owners keep them. Team leads and above only. */
-const REPORT_APPS = {
-  thirdeye: {
-    name: "Sasha's Third Eye", title: "Team quality & production", icon: "👁", url: CFG.THIRD_EYE_URL || "https://purview-healthcare.github.io/Sashas-third-eye/",
-    short: "How well and how much each person works: QA scores, errors, production against target, outliers and RCA.",
-    what: "QA audit scores and errors per biller, team and client; production against the daily target; outliers below 95% for 2 weeks; Pareto of errors with RCA and mitigation; sampling coverage; SAAG checks; call handling time; this period against the last.",
+   Grouped by who the report is for. Internal: the team's work in Brahmastra, and quality & production (Sasha's Third Eye).
+   For clients: the monthly client report pack (Third Eye's Client Reporting) and the SLA scorecard (Drishti). Team leads and
+   above only. Both apps run inside Brahmastra from their own web addresses with ?embed=1, which hides their own headers so
+   the page reads as one product; their formulas, files and data stay as their owners keep them. Every upload inside them
+   comes from the Purviewautomate OneDrive, and what Brahmastra hands them goes in directly or through that OneDrive. */
+const TE_BASE = CFG.THIRD_EYE_URL || "https://purview-healthcare.github.io/Sashas-third-eye/";
+const DR_BASE = CFG.DRISHTI_URL || "https://purview-healthcare.github.io/Drishti/";
+const withQuery = (u, q) => u + (u.includes("?") ? "&" : "?") + q;
+const themeNow = () => document.documentElement.getAttribute("data-theme") || "light";
+const embedUrl = (base, extra) => withQuery(base, "embed=1&theme=" + themeNow() + (extra ? "&" + extra : ""));
+const Ico = ({ d, size = 17 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
+const HUB_ICONS = {
+  work: <><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /></>,
+  quality: <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />,
+  client: <><path d="M7 3h7l5 5v13H7z" /><path d="M14 3v5h5M10 13h6M10 17h6" /></>,
+  sla: <><circle cx="12" cy="12" r="9" /><path d="M8 12.5l2.5 2.5L16 9.5" /></>,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></>,
+  ext: <path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6" />,
+  full: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
+  reload: <path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7" />,
+};
+const HUB_PAGES = {
+  work: { group: "int", title: "Team work", short: "Today, week, month",
+    desc: "Your own day list, and every note the team wrote today, this week or this month." },
+  quality: { group: "int", title: "Quality & production", short: "QA, targets, outliers, RCA", app: "Sasha's Third Eye",
+    desc: "How well and how much each person works, against target, with the reasons behind the misses.",
+    what: "QA scores and errors per biller, team and client; production against the daily target; outliers below the QA line for 2 weeks; the top errors with RCA and mitigation; sampling coverage against each person's band; this period against the last.",
     when: "Weekly and monthly team reviews, QA feedback, deciding who needs coaching, a QIP or a PIP.",
     steps: [
-      ["Pick the work", "AR, Payment Posting or Submission. Third Eye needs no sign-in; its OneDrive uploads use the Purviewautomate account."],
-      ["Bring in Brahmastra's production", "One click loads every entry for the dates you choose, and the team roster, straight into Third Eye. No conso export needed."],
-      ["Add the QA sheet", "Inside Third Eye, upload the QA team's tracker (Upload QA Sheet, from OneDrive or the computer). A previous period is optional, for the comparison tab."],
-      ["Read and act", "Use the report index in Third Eye. Its Quality insights (QA, sampling, attainment, RCA, targets) save by themselves to Brahmastra Reports › team lead › client › Quality insights."],
-    ],
-  },
-  drishti: {
-    name: "Drishti", title: "Client SLA & KPI", icon: "🎯", url: CFG.DRISHTI_URL || "https://purview-healthcare.github.io/Drishti/",
-    short: "Whether each client's agreed KPI and SLA targets are met, with a score per client and what is pulling it down.",
-    what: "A green, amber or red score per client (90% and above is healthy), every KPI and SLA row against its target, the reasons for misses, month-by-month history and the leadership overview, worst client first.",
+      ["Pick the work and the dates", "AR, Payment Posting or Submission, a client (or all of yours) and the dates."],
+      ["Load production", "Brahmastra's entries and the team roster go straight into Third Eye. No conso export."],
+      ["Add the QA tracker", "Inside Third Eye, the QA box opens the client's QA tracker folder in the Purviewautomate OneDrive. Pick the file."],
+      ["Read and act", "Overview first, then the tabs. Targets, RCA and the Quality insights file save to OneDrive by themselves."],
+    ] },
+  client: { group: "cli", title: "Client reports", short: "The monthly pack to send", app: "Sasha's Third Eye · Client Reporting",
+    desc: "What a client sees each month: inventory, AR production, denials, submission and payment posting.",
+    what: "One dashboard page per report the client gets: inventory and its aging against last month, AR production by status and action, denial reasons, submission, payment posting, rejections, eligibility checks and the items waiting on the client.",
+    when: "Month-end (or week-end) reporting to the client, and before a client call.",
+    steps: [
+      ["Pick the client and the month", "The report is built for one client and one month."],
+      ["Fill from Brahmastra", "Today's AR inventory, AR production, submission and payment posting go straight into the report's boxes."],
+      ["Add the rest from OneDrive", "Last month's inventory, rejections and EV, if you have them: each box opens the Purviewautomate OneDrive."],
+      ["Build and send", "Build dashboards, check each page, then Export PDF for the client."],
+    ] },
+  sla: { group: "cli", title: "SLA scorecard", short: "Met or missed, per client", app: "Drishti",
+    desc: "Did we meet what each client signed for? One score per client, and what is pulling it down.",
+    what: "A green, amber or red score per client (90% and above is healthy), every KPI and SLA against its target, the reasons for misses, month-by-month history and the leadership overview, worst client first.",
     when: "Week-end and month-end client reporting, leadership reviews, preparing for client calls.",
     steps: [
-      ["Nothing to sign in to", "Drishti opens signed in as you, from your Brahmastra sign-in. Report files still come from the Purviewautomate OneDrive."],
-      ["Open the client and the period", "Pick the client, then the month or week with the Month or Week tab."],
-      ["Upload the period's reports", "From OneDrive as usual. The AR Inventory report can come straight from Brahmastra: download it here and drop it into Drishti."],
-      ["Fill in and read", "Type the values that do not come from reports, add reasons for any red, then check the score on the Overview."],
-    ],
-  },
+      ["Nothing to sign in to", "Drishti opens signed in as you, from your Brahmastra sign-in."],
+      ["Put the AR Inventory in OneDrive", "Save AR Inventory to OneDrive writes today's inventory into the client's SLA & KPI folder."],
+      ["Upload the period's reports", "In Drishti, Upload from OneDrive: pick the period's files, the AR Inventory report included."],
+      ["Fill in and read", "Type the values that do not come from reports, add reasons for any red, then read the score."],
+    ] },
 };
-const reportAppUrl = (key, scope) => { const u = REPORT_APPS[key].url; return key === "thirdeye" && scope && scope !== "ar" ? u + (u.includes("?") ? "&" : "?") + "scope=" + scope : u; };
 const TE_SCOPES = [["ar", "AR"], ["pp", "Payment Posting"], ["sub", "Submission"]];
-function xlsxBlob(header, rows, sheet) {
+function xlsxBook(header, rows, sheet) {
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
   ws["!cols"] = header.map((h) => ({ wch: Math.min(40, Math.max(10, String(h).length + 2)) }));
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheet);
-  return new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  return wb;
 }
-function saveBlob(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+function xlsxBlob(header, rows, sheet) {
+  return new Blob([XLSX.write(xlsxBook(header, rows, sheet), { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
 const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, " ").trim();
 /* The team roster in the columns Third Eye's roster reads (the same as the Purview roster CSV). */
 function rosterSheet(users) {
@@ -4031,141 +4228,190 @@ function rosterSheet(users) {
     u.reports_to_name || (byId.get(u.reports_to) || {}).name || "", u.roster_status || "Production", u.shift || "", u.email || ""]);
   return { header, rows };
 }
-function useIntroOpen(key) {
-  const k = "brahmastra:intro:" + key;
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem(k) !== "closed"; } catch (e) { return true; } });
-  const set = (v) => { setOpen(v); try { localStorage.setItem(k, v ? "open" : "closed"); } catch (e) {} };
-  return [open, set];
-}
-function AppIntro({ app, appKey }) {
-  const [open, setOpen] = useIntroOpen(appKey);
-  return (
-    <div className="card hub-intro">
-      <div className="row between" style={{ alignItems: "flex-start" }}>
-        <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
-          <div className="hub-icon">{app.icon}</div>
-          <div><div className="hub-kicker">{app.name}</div><h2 style={{ margin: "2px 0 4px" }}>{app.title}</h2><div className="small muted" style={{ maxWidth: 760 }}>{app.short}</div></div>
-        </div>
-        <button className="btn sm" onClick={() => setOpen(!open)}>{open ? "Hide the guide" : "How to use it"}</button>
-      </div>
-      {open && <>
-        <div className="grid g2 mt16" style={{ gap: 14 }}>
-          <div className="hub-box"><div className="hub-label">What it shows</div><div className="small">{app.what}</div></div>
-          <div className="hub-box"><div className="hub-label">When to use it</div><div className="small">{app.when}</div></div>
-        </div>
-        <div className="hub-steps mt16">{app.steps.map(([t, d], i) => (
-          <div key={i} className="hub-step"><span className="stepn">{i + 1}</span><div><div className="b small">{t}</div><div className="tiny muted" style={{ marginTop: 2 }}>{d}</div></div></div>))}</div>
-      </>}
-    </div>
-  );
-}
-/* The app itself, in a frame. Full screen hides Brahmastra's header so the report gets the whole window. */
-function AppFrame({ appKey, scope, frameRef, onLoad }) {
-  const app = REPORT_APPS[appKey];
-  const src = reportAppUrl(appKey, scope);
-  const [loading, setLoading] = useState(true);
-  const [full, setFull] = useState(false);
-  const [nonce, setNonce] = useState(0);
-  useEffect(() => { setLoading(true); }, [src, nonce]);
-  useEffect(() => { if (!full) return; const esc = (e) => { if (e.key === "Escape") setFull(false); }; window.addEventListener("keydown", esc); return () => window.removeEventListener("keydown", esc); }, [full]);
-  return (
-    <div className={"card tight hub-frame" + (full ? " full" : "")}>
-      <div className="row between hub-frame-bar">
-        <div className="row" style={{ gap: 8 }}><span className="hub-dot" style={{ background: loading ? "#E0A82E" : "#12B886" }} /><b className="small">{app.name}</b>
-          {appKey === "thirdeye" && <span className="badge teal">{(TE_SCOPES.find(([k]) => k === scope) || TE_SCOPES[0])[1]}</span>}
-          <span className="tiny muted">{loading ? "Opening…" : "Ready. Everything below is " + app.name + " itself."}</span></div>
-        <div className="row" style={{ gap: 6 }}>
-          <button className="btn sm" title="Load the app again" onClick={() => setNonce((n) => n + 1)}>↻ Reload</button>
-          <button className="btn sm" title="Open it in its own browser tab (use this if a Microsoft sign-in window does not open here)" onClick={() => window.open(src, "_blank", "noopener")}>↗ Own tab</button>
-          <button className="btn sm primary" onClick={() => setFull(!full)}>{full ? "✕ Exit full screen" : "⛶ Full screen"}</button>
-        </div>
-      </div>
-      <iframe key={src + nonce} ref={frameRef} src={src} title={app.name} className="hub-iframe" onLoad={() => { setLoading(false); onLoad && onLoad(); }} allow="clipboard-write; fullscreen" />
-    </div>
-  );
-}
 /* Third Eye saves its Quality insights to Brahmastra Reports / <team lead> / <client>. It asks the page around it
    (window.BRAHMASTRA_REPORTS) who is signed in and each client's team lead, and opens the QA box in that client's
    QA tracker folder. Folder names are cleaned the same way as odName in worker.js. */
 const odName = (s) => String(s || "").replace(/["*:<>?/\\|#%]+/g, " ").replace(/\s+/g, " ").trim().replace(/\.+$/, "").slice(0, 80) || "Unnamed";
-function ThirdEyePanel({ ctx, me }) {
-  const frameRef = useRef(null);
+function useReportsContext(me, client) {
   const leadsQ = useRpc("reports.clientLeads", {}, []);
+  const leads = (leadsQ.data && leadsQ.data.leads) || {}, root = (leadsQ.data && leadsQ.data.root) || "Brahmastra Reports";
+  const tl = client && (leads[client.name] || [])[0];
+  useEffect(() => {
+    window.BRAHMASTRA_REPORTS = { user: me && me.name, leads, root: [root], qaFolder: client && tl ? [root, odName(tl), odName(client.name), "QA tracker"] : [root] };
+    return () => { try { delete window.BRAHMASTRA_REPORTS; } catch (e) {} };
+  }, [leadsQ.data, client && client.id, me && me.name]);
+  return { root, tl, folder: (sub) => [root, tl || "team lead", client ? client.name : "client", sub].join(" › ") };
+}
+/* The header of each page: who it is for, what it answers, and the frame's buttons. */
+function HubHead({ page, onHow, frame }) {
+  const p = HUB_PAGES[page];
+  return (
+    <div className="rh-head">
+      <div style={{ minWidth: 0 }}>
+        <div className="rh-eyebrow"><span className={"rh-tag " + p.group}>{p.group === "int" ? "Internal" : "For clients"}</span>{p.app || "Brahmastra"}</div>
+        <h1>{p.title}</h1><p>{p.desc}</p>
+      </div>
+      <div className="rh-acts">
+        {p.steps && <button className="btn" onClick={onHow}><Ico d={HUB_ICONS.info} size={15} /> How it works</button>}
+        {frame && <>
+          <button className="btn icon" title={"Load " + p.app + " again"} onClick={frame.reload}><Ico d={HUB_ICONS.reload} size={15} /></button>
+          <button className="btn icon" title="Open in its own browser tab (use this if a Microsoft sign-in window does not open here)" onClick={() => window.open(frame.src, "_blank", "noopener")}><Ico d={HUB_ICONS.ext} size={15} /></button>
+          <button className="btn icon" title="Full screen" onClick={() => frame.setFull(true)}><Ico d={HUB_ICONS.full} size={15} /></button>
+        </>}
+      </div>
+    </div>
+  );
+}
+function HowDrawer({ page, onClose }) {
+  const p = HUB_PAGES[page];
+  useEffect(() => { const esc = (e) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", esc); return () => window.removeEventListener("keydown", esc); }, []);
+  return (
+    <>
+      <div className="hist-shade" onClick={onClose} />
+      <div className="hist rh-how">
+        <div className="hist-top row between"><div><div className="rh-eyebrow"><span className={"rh-tag " + p.group}>{p.group === "int" ? "Internal" : "For clients"}</span>{p.app}</div><h2 style={{ marginTop: 6 }}>How {p.title.toLowerCase()} works</h2></div><button className="btn sm" onClick={onClose}>Close</button></div>
+        <div className="hist-body">
+          <div className="rh-how-sec"><div className="rh-how-l">What it shows</div><div>{p.what}</div></div>
+          <div className="rh-how-sec"><div className="rh-how-l">When to use it</div><div>{p.when}</div></div>
+          <div className="rh-how-sec"><div className="rh-how-l">Steps</div>
+            {p.steps.map(([t, d], i) => <div key={i} className="rh-how-step"><span className="stepn">{i + 1}</span><div><div className="b">{t}</div><div className="small muted">{d}</div></div></div>)}</div>
+          <div className="rh-how-sec"><div className="rh-how-l">Files</div><div>Uploads come only from the Purviewautomate OneDrive. Saved reports go to OneDrive › Brahmastra Reports › team lead › client.</div></div>
+        </div>
+      </div>
+    </>
+  );
+}
+/* The app itself. Its address carries embed=1 (no header of its own) and the Brahmastra theme. */
+function useFrame(base, extra) {
+  const [nonce, setNonce] = useState(0);
+  const [full, setFull] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const src = embedUrl(base, extra);
+  useEffect(() => { setLoading(true); }, [src, nonce]);
+  useEffect(() => { if (!full) return; const esc = (e) => { if (e.key === "Escape") setFull(false); }; window.addEventListener("keydown", esc); return () => window.removeEventListener("keydown", esc); }, [full]);
+  return { src, nonce, full, setFull, loading, setLoading, reload: () => setNonce((n) => n + 1) };
+}
+function EmbedPanel({ frame, frameRef, title, onLoad }) {
+  return (
+    <div className={"card rh-frame" + (frame.full ? " full" : "")}>
+      {frame.full && <div className="rh-fullbar"><b>{title}</b><span className="muted small">Full screen · Esc to leave</span><button className="btn sm" style={{ marginLeft: "auto" }} onClick={() => frame.setFull(false)}>Exit full screen</button></div>}
+      {frame.loading && <div className="rh-loading"><Spinner label={"Opening " + title + "…"} /></div>}
+      <iframe key={frame.src + frame.nonce} ref={frameRef} src={frame.src} title={title} className="rh-iframe" style={frame.loading ? { visibility: "hidden" } : undefined}
+        onLoad={() => { frame.setLoading(false); onLoad && onLoad(); }} allow="clipboard-write; fullscreen" />
+    </div>
+  );
+}
+const timeNow = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function QualityPage({ ctx, me, onHow }) {
+  const frameRef = useRef(null);
   const today = todayISO();
   const [scope, setScope] = useState(() => { try { return localStorage.getItem("brahmastra:te-scope") || "ar"; } catch (e) { return "ar"; } });
   const [f, setF] = useState({ client_id: "", location_id: "", from: today.slice(0, 8) + "01", to: today, roster: true });
   const [busy, setBusy] = useState(null);
   const [done, setDone] = useState(null);
+  const frame = useFrame(TE_BASE, scope !== "ar" ? "scope=" + scope : "");
   const pickScope = (s) => { setScope(s); setDone(null); try { localStorage.setItem("brahmastra:te-scope", s); } catch (e) {} };
   const client = ctx.clients.find((c) => c.id === f.client_id);
-  useEffect(() => {
-    const leads = (leadsQ.data && leadsQ.data.leads) || {}, root = (leadsQ.data && leadsQ.data.root) || "Brahmastra Reports";
-    const tl = client && (leads[client.name] || [])[0];
-    window.BRAHMASTRA_REPORTS = { user: me && me.name, leads, root: [root], qaFolder: client && tl ? [root, odName(tl), odName(client.name), "QA tracker"] : [root] };
-    return () => { try { delete window.BRAHMASTRA_REPORTS; } catch (e) {} };
-  }, [leadsQ.data, client && client.id, me && me.name]);
-  const build = async () => {
-    const r = await rpc("reports.production", { scope, client_id: f.client_id || undefined, location_id: f.location_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] });
-    const label = [client ? client.name : "All clients", TE_SCOPES.find(([k]) => k === scope)[1], f.from + " to " + f.to].join(" - ");
-    return { r, prodName: safeName("Brahmastra production - " + label + ".xlsx"), prod: xlsxBlob(r.header, r.rows, "Production"), roster: f.roster ? xlsxBlob(...Object.values(rosterSheet(ctx.users)), "Roster") : null };
-  };
+  const rc = useReportsContext(me, client);
   const send = async () => {
+    const win = frameRef.current && frameRef.current.contentWindow;
+    let ready = false;
+    try { ready = !!(win && typeof win.handleProd === "function"); } catch (e) { ready = false; }
+    if (!ready) { toast("Third Eye is still opening. Wait a moment, then click Load production again.", "err"); return; }
     setBusy("Collecting Brahmastra's production…"); setDone(null);
     try {
-      const b = await build();
-      if (!b.r.rows.length) { toast("Nothing was worked in Brahmastra for these dates" + (client ? " and this client." : "."), "err"); setBusy(null); return; }
-      const win = frameRef.current && frameRef.current.contentWindow;
-      let inFrame = false;
-      try { inFrame = !!(win && typeof win.handleProd === "function"); } catch (e) { inFrame = false; }
-      if (inFrame) {
-        setBusy("Loading into Third Eye…");
-        const F = win.File || File;
-        if (b.roster && typeof win.handleRoster === "function") { await win.handleRoster(new F([b.roster], "Brahmastra team roster.xlsx", { type: b.roster.type })); await new Promise((res) => setTimeout(res, 600)); }
-        await win.handleProd(new F([b.prod], b.prodName, { type: b.prod.type }));
-        setDone({ n: b.r.rows.length, how: "frame" });
-        toast(`${fmtInt(b.r.rows.length)} entries loaded into Third Eye.`);
-      } else {
-        saveBlob(b.prod, b.prodName); if (b.roster) setTimeout(() => saveBlob(b.roster, "Brahmastra team roster.xlsx"), 400);
-        setDone({ n: b.r.rows.length, how: "download" });
-      }
+      const r = await rpc("reports.production", { scope, client_id: f.client_id || undefined, location_id: f.location_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] });
+      if (!r.rows.length) { toast("Nothing was worked in Brahmastra for these dates" + (client ? " and this client." : "."), "err"); setBusy(null); return; }
+      setBusy("Loading into Third Eye…");
+      const F = win.File || File, label = [client ? client.name : "All clients", TE_SCOPES.find(([k]) => k === scope)[1], f.from + " to " + f.to].join(" - ");
+      let people = 0;
+      if (f.roster && typeof win.handleRoster === "function") { const rs = rosterSheet(ctx.users); people = rs.rows.length; const b = xlsxBlob(rs.header, rs.rows, "Roster"); await win.handleRoster(new F([b], "Brahmastra team roster.xlsx", { type: b.type })); await new Promise((res) => setTimeout(res, 600)); }
+      const pb = xlsxBlob(r.header, r.rows, "Production");
+      await win.handleProd(new F([pb], safeName("Brahmastra production - " + label + ".xlsx"), { type: pb.type }));
+      setDone({ n: r.rows.length, people, at: timeNow() });
     } catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
-  const download = async () => { setBusy("Preparing the files…"); try { const b = await build(); saveBlob(b.prod, b.prodName); if (b.roster) setTimeout(() => saveBlob(b.roster, "Brahmastra team roster.xlsx"), 400); } catch (e) { toast(e.message, "err"); } setBusy(null); };
-  const what = scope === "ar" ? "every AR entry billers saved (SAAG, note, call times), in the Production Conso layout" : scope === "pp" ? "every claim the Payment Posting team marked posted (who, when, check / EFT, amount)" : "every claim the Submission team marked submitted (who, when, batch / claim ID)";
   return (
-    <div className="stack">
-      <AppIntro app={REPORT_APPS.thirdeye} appKey="thirdeye" />
-      <div className="card">
-        <div className="row between" style={{ flexWrap: "wrap", gap: 10 }}>
-          <div><div className="hub-label">Step 1 · Which work</div><div className="pill-list mt8">{TE_SCOPES.map(([k, l]) => <button key={k} className={"chip " + (scope === k ? "on" : "")} onClick={() => pickScope(k)}>{l}</button>)}</div></div>
-          <div className="tiny muted" style={{ maxWidth: 420 }}>Switching reopens Third Eye in that scope. Each scope keeps its own sheets, targets and RCA notes.</div>
-        </div>
-        <div className="hub-label mt16">Step 2 · Bring in Brahmastra's production</div>
-        <div className="small muted" style={{ marginTop: 2 }}>Loads {what}, plus the team roster from Brahmastra. It replaces exporting a production sheet by hand.</div>
-        <div className="grid g5 mt8" style={{ alignItems: "end" }}>
-          <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF((x) => ({ ...x, client_id: v, location_id: "" }))} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} allowAll />
-          <Field label="From"><input className="input" type="date" value={f.from} max={f.to} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
-          <Field label="To"><input className="input" type="date" value={f.to} min={f.from} max={today} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
-          <div className="stack" style={{ gap: 6 }}>
-            <button className="btn primary" disabled={!!busy} onClick={send}>{busy || "⇢ Load into Third Eye"}</button>
-            <button className="btn sm link" disabled={!!busy} onClick={download} title="Save the production sheet and roster as Excel files instead">or download the files</button>
-          </div>
-        </div>
-        <label className="check small mt8"><input type="checkbox" checked={f.roster} onChange={(e) => setF({ ...f, roster: e.target.checked })} /> Also load the team roster (names, Emp IDs, team leads, departments)</label>
-        {done && <div className={"alert " + (done.how === "frame" ? "info" : "warn") + " mt8"}>{done.how === "frame"
-          ? <><b>{fmtInt(done.n)} {done.n === 1 ? "entry is" : "entries are"} in Third Eye.</b> Next: upload the QA sheet inside Third Eye (step 3 in the guide) to see quality next to production.</>
-          : <><b>Third Eye could not be filled directly here, so the files were downloaded.</b> Drop them into Third Eye's Production Sheet and Team Roster boxes below.</>}</div>}
-        <div className="tiny muted mt8">QA scores still come from the QA team's tracker. Brahmastra provides what was worked, not the audits.</div>
+    <div>
+      <HubHead page="quality" onHow={onHow} frame={frame} />
+      <div className="card rh-bar">
+        <Field label="Work"><div className="seg2">{TE_SCOPES.map(([k, l]) => <button key={k} className={scope === k ? "on" : ""} onClick={() => pickScope(k)}>{l}</button>)}</div></Field>
+        <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF((x) => ({ ...x, client_id: v, location_id: "" }))} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} allowAll allLabel="All my clients" />
+        <Field label="From"><input className="input" type="date" value={f.from} max={f.to} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
+        <Field label="To"><input className="input" type="date" value={f.to} min={f.from} max={today} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
+        <button className="btn primary rh-go" disabled={!!busy || frame.loading} onClick={send}>{busy || "Load production"}</button>
       </div>
-      <AppFrame appKey="thirdeye" scope={scope} frameRef={frameRef} onLoad={() => setDone(null)} />
+      <div className="rh-status">
+        <span><i className={"rh-dot" + (done ? "" : " off")} />{done ? <>Production from Brahmastra · {fmtInt(done.n)} {done.n === 1 ? "entry" : "entries"} · {done.at}</> : "Production not loaded yet"}</span>
+        <label className="check small" style={{ gap: 6 }}><input type="checkbox" checked={f.roster} onChange={(e) => setF({ ...f, roster: e.target.checked })} />{done && done.people ? <>Roster · {fmtInt(done.people)} people</> : "Load the team roster too"}</label>
+        <span><i className="rh-dot off" />QA tracker: pick it inside Third Eye, from {rc.folder("QA tracker")}</span>
+      </div>
+      <EmbedPanel frame={frame} frameRef={frameRef} title="Sasha's Third Eye" onLoad={() => setDone(null)} />
+    </div>
+  );
+}
+const monthBounds = (ym) => { const [y, m] = ym.split("-").map(Number); const last = new Date(y, m, 0).getDate(); const to = ym + "-" + String(last).padStart(2, "0"); const t = todayISO(); return [ym + "-01", to > t ? t : to]; };
+const CR_PARTS = [["inventory", "AR inventory (today)"], ["worked", "AR production"], ["submission", "Submission"], ["payment", "Payment posting"]];
+function ClientReportsPage({ ctx, me, onHow }) {
+  const frameRef = useRef(null);
+  const [f, setF] = useState({ client_id: "", location_id: "", month: todayISO().slice(0, 7) });
+  const [parts, setParts] = useState({ inventory: true, worked: true, submission: true, payment: true });
+  const [busy, setBusy] = useState(null);
+  const [done, setDone] = useState(null);
+  const frame = useFrame(TE_BASE + "client.html");
+  const client = ctx.clients.find((c) => c.id === f.client_id);
+  useReportsContext(me, client);
+  const fill = async () => {
+    const win = frameRef.current && frameRef.current.contentWindow;
+    let doc = null; try { doc = win.document; } catch (e) { doc = null; }
+    const box = (id) => doc && doc.querySelector('.slot[data-slot="' + id + '"] input[type=file]');
+    if (!box("worked")) { toast("Open the upload page in Client reports first (New report), then click Fill from Brahmastra.", "err"); return; }
+    setBusy("Collecting…"); setDone(null);
+    try {
+      const [from, to] = monthBounds(f.month), mName = new Date(f.month + "-15").toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      const put = (id, header, rows, name) => {
+        const b = xlsxBlob(header, rows, name.split(" - ")[0]), dt = new win.DataTransfer();
+        dt.items.add(new win.File([b], safeName(name + ".xlsx"), { type: b.type }));
+        const inp = box(id); inp.files = dt.files; inp.dispatchEvent(new win.Event("change", { bubbles: true }));
+      };
+      const nameBox = doc.getElementById("upClient"); if (nameBox) { nameBox.value = client.name; nameBox.dispatchEvent(new win.Event("input", { bubbles: true })); }
+      const typeBox = doc.getElementById("upType"); if (typeBox && typeBox.value !== "month") { typeBox.value = "month"; typeBox.dispatchEvent(new win.Event("change", { bubbles: true })); }
+      const out = [], args = { client_id: f.client_id, location_id: f.location_id || undefined };
+      if (parts.inventory) { setBusy("AR inventory…"); const r = await rpc("reports.arInventory", args); if (r.rows.length) put("inventory", r.header, r.rows, "AR Inventory report - " + client.name + " - " + todayISO()); out.push(["AR inventory", r.rows.length]); }
+      for (const [id, scope, label] of [["worked", "ar", "AR production"], ["submission", "sub", "Submission production"], ["payment", "pp", "Payment posting production"]]) {
+        if (!parts[id]) continue;
+        setBusy(label + "…");
+        const r = await rpc("reports.production", { ...args, scope, from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1] });
+        if (r.rows.length) put(id, r.header, r.rows, label + " - " + client.name + " - " + mName);
+        out.push([label, r.rows.length]);
+      }
+      setDone({ out, at: timeNow() });
+    } catch (e) { toast(e.message, "err"); }
+    setBusy(null);
+  };
+  return (
+    <div>
+      <HubHead page="client" onHow={onHow} frame={frame} />
+      <div className="card rh-bar">
+        <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF((x) => ({ ...x, client_id: v, location_id: "" }))} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
+        <Field label="Month"><input className="input" type="month" value={f.month} max={todayISO().slice(0, 7)} onChange={(e) => setF({ ...f, month: e.target.value || todayISO().slice(0, 7) })} /></Field>
+        <Field label="Fill in"><div className="rh-checks">{CR_PARTS.map(([k, l]) => <label key={k} className="check small"><input type="checkbox" checked={parts[k]} onChange={(e) => setParts({ ...parts, [k]: e.target.checked })} />{l}</label>)}</div></Field>
+        <button className="btn primary rh-go" disabled={!f.client_id || !!busy || frame.loading || !Object.values(parts).some(Boolean)} onClick={fill}>{busy || "Fill from Brahmastra"}</button>
+      </div>
+      <div className="rh-status">
+        {done ? done.out.map(([l, n]) => <span key={l}><i className={"rh-dot" + (n ? "" : " wait")} />{l} · {n ? fmtInt(n) + " rows" : "nothing this month"}</span>) : <span><i className="rh-dot off" />{f.client_id ? "Ready to fill this client's boxes" : "Pick the client first"}</span>}
+        <span><i className="rh-dot off" />Last month's inventory, rejections, EV: from OneDrive inside</span>
+        {done && <span style={{ marginLeft: "auto" }}>Filled {done.at} · next: Build dashboards</span>}
+      </div>
+      <EmbedPanel frame={frame} frameRef={frameRef} title="Client Reporting" onLoad={() => setDone(null)} />
     </div>
   );
 }
 /* Drishti opens already signed in as the Brahmastra user: Brahmastra asks its server for Drishti's own session token
    and leaves it where the Drishti page looks for it (same web address, so the same browser storage). */
 const DRISHTI_TOKEN_KEY = "drishti:token:v1";
-function DrishtiPanel({ ctx }) {
+function SlaPage({ ctx, me, onHow }) {
   const [sso, setSso] = useState({ state: "loading" });
   useEffect(() => {
     let alive = true;
@@ -4175,69 +4421,83 @@ function DrishtiPanel({ ctx }) {
     }).catch((e) => { if (alive) setSso({ state: e.status === 503 && /not switched on/.test(e.message) ? "off" : "error", msg: e.message }); });
     return () => { alive = false; };
   }, []);
+  const frameRef = useRef(null);
+  const frame = useFrame(DR_BASE);
   const [f, setF] = useState({ client_id: "", location_id: "" });
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(null);
   const client = ctx.clients.find((c) => c.id === f.client_id);
-  const downloadInv = async () => {
-    setBusy(true);
+  const rc = useReportsContext(me, client);
+  const saveInv = async () => {
+    setBusy(true); setSaved(null);
     try {
       const r = await rpc("reports.arInventory", { client_id: f.client_id, location_id: f.location_id || undefined });
-      if (!r.rows.length) toast("This client has no open AR in Brahmastra right now.", "err");
-      else { saveBlob(xlsxBlob(r.header, r.rows, "AR Inventory"), safeName(`AR Inventory report - ${client.name} - ${todayISO()}.xlsx`)); toast(`AR Inventory report downloaded: ${fmtInt(r.rows.length)} claims.`); }
+      if (!r.rows.length) { toast("This client has no open AR in Brahmastra right now.", "err"); setBusy(false); return; }
+      const name = safeName(`AR Inventory report - ${client.name} - ${todayISO()}`);
+      const s = await rpc("reports.saveArInventory", { client_id: f.client_id, name, file_b64: XLSX.write(xlsxBook(r.header, r.rows, "AR Inventory"), { bookType: "xlsx", type: "base64" }) });
+      setSaved({ n: r.rows.length, name: s.name, folders: s.folders, at: timeNow() });
     } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   return (
-    <div className="stack">
-      <AppIntro app={REPORT_APPS.drishti} appKey="drishti" />
-      <div className="card">
-        <div className="hub-label">From Brahmastra · AR Inventory report for Drishti</div>
-        <div className="small muted" style={{ marginTop: 2 }}>Today's AR inventory for a client, straight from Brahmastra (every open, assigned and worked claim with its balance, aging bucket and latest status), in the columns Drishti's AR Inventory report reads. Drop it into Drishti's upload box, or save it in the client's month folder in OneDrive.</div>
-        <div className="grid g4 mt8" style={{ alignItems: "end" }}>
-          <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF({ client_id: v, location_id: "" })} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
-          <div><button className="btn primary" disabled={!f.client_id || busy} onClick={downloadInv}>{busy ? "Preparing…" : "⤓ Download AR Inventory report"}</button></div>
-        </div>
-        {!f.client_id && <div className="tiny muted mt8">Pick the client first.</div>}
-        <div className="tiny muted mt8">The file name starts with "AR Inventory report", so Drishti places it in the right box by itself. Keep the previous period's file too: Drishti uses it for the aging comparison.</div>
+    <div>
+      <HubHead page="sla" onHow={onHow} frame={sso.state === "loading" ? null : frame} />
+      <div className="card rh-bar">
+        <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => { setF({ client_id: v, location_id: "" }); setSaved(null); }} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
+        <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns Drishti's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>
+        <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in to Drishti as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in to Drishti…</> : <><i className="rh-dot wait" />Sign in on the Drishti page below</>}</div>
       </div>
-      {sso.state === "loading" ? <div className="card"><Spinner label="Signing you in to Drishti…" /></div> : <>
-        {sso.state === "ok" && sso.created && <div className="alert info">Your Drishti account was created from your Brahmastra profile, under your reporting manager. From now on Drishti opens signed in.</div>}
-        {sso.state === "off" && <div className="alert info">Drishti will open signed in once its single sign-in is switched on (a one-time setting). Until then, sign in on the Drishti page below.</div>}
-        {sso.state === "error" && <div className="alert warn"><b>Drishti could not be opened signed in.</b> {sso.msg} You can still sign in on the Drishti page below.</div>}
-        <AppFrame appKey="drishti" />
-      </>}
+      <div className="rh-status">
+        {saved ? <span><i className="rh-dot" />{saved.name} · {fmtInt(saved.n)} claims · saved {saved.at} to {saved.folders.join(" and ")}</span>
+          : <span><i className="rh-dot off" />{f.client_id ? "AR Inventory goes to " + rc.folder("SLA & KPI") : "Pick a client to put its AR Inventory report in OneDrive"}</span>}
+        <span>Then in Drishti: Upload from OneDrive, and pick it with the period's other files</span>
+      </div>
+      {sso.state === "ok" && sso.created && <div className="alert info mb">Your Drishti account was made from your Brahmastra profile, under your reporting manager. From now on Drishti opens signed in.</div>}
+      {sso.state === "off" && <div className="alert info mb">Drishti will open signed in once its single sign-in is switched on (a one-time setting). Until then, sign in on the Drishti page below.</div>}
+      {sso.state === "error" && <div className="alert warn mb"><b>Drishti could not be opened signed in.</b> {sso.msg} You can still sign in on the Drishti page below.</div>}
+      {sso.state === "loading" ? <div className="card"><Spinner label="Signing you in to Drishti…" /></div> : <EmbedPanel frame={frame} frameRef={frameRef} title="Drishti" />}
     </div>
   );
 }
-const HUB_AREAS = [
-  ["work", "🗂", "Team work", "Your day list, and every note the team wrote today, this week or this month."],
-  ["thirdeye", "👁", "Team quality & production", "Sasha's Third Eye: QA scores, errors, production against target, outliers and RCA."],
-  ["drishti", "🎯", "Client SLA & KPI", "Drishti: each client's KPI and SLA score against the agreed targets."],
-];
+const HUB_GROUPS = [["int", "Internal · for our team", ["work", "quality"]], ["cli", "For clients", ["client", "sla"]]];
+const HUB_OLD = { thirdeye: "quality", drishti: "sla" };
 function ReportsHub(props) {
   const lead = props.me && props.me.role === "supervisor";
-  const [area, setArea] = useState(() => { if (props.initialTab === "today") return "work"; try { return localStorage.getItem("brahmastra:reports-area") || "work"; } catch (e) { return "work"; } });
-  const pickArea = (a) => { setArea(a); try { localStorage.setItem("brahmastra:reports-area", a); } catch (e) {} };
-  const shown = lead ? area : "work";
+  const [page, setPage] = useState(() => { if (props.initialTab === "today") return "work"; try { const v = localStorage.getItem("brahmastra:reports-area") || "work"; return HUB_PAGES[v] ? v : HUB_OLD[v] || "work"; } catch (e) { return "work"; } });
+  const pick = (a) => { setPage(a); setHow(false); try { localStorage.setItem("brahmastra:reports-area", a); } catch (e) {} };
+  const [how, setHow] = useState(false);
+  const shown = lead ? page : "work";
   const [tab, setTab] = useState(props.initialTab || "today");
   const today = todayISO();
   const range = tab === "today" ? [today, today] : tab === "weekly" ? [addDaysISO(today, -6), today] : [today.slice(0, 8) + "01", today];
-  return (
+  const work = <>
+    <div className="row between" style={{ marginBottom: 12 }}><div className="sub">{tab === "today" ? "Your own day list, then everything the team wrote today." : tab === "weekly" ? "The last 7 days of work, notes and skips." : "This month's work, notes and skips."}</div>
+      <div className="seg2">{[["today", "Today"], ["weekly", "Weekly"], ["monthly", "Monthly"]].map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div></div>
     <div className="stack">
-      <div><h1>My day & reports</h1><div className="sub">{lead ? "Everything about the team's work, its quality and the clients' results, in one place. Pick an area." : "Your own day list and the team's notes."}</div></div>
-      {lead && <div className="grid g3">{HUB_AREAS.map(([k, ic, t, d]) => (
-        <button key={k} type="button" className={"card tight tabcard hub-area" + (shown === k ? " on" : "")} onClick={() => pickArea(k)}>
-          <div className="row" style={{ gap: 10 }}><span className="hub-icon sm">{ic}</span><div className="tc-t">{t}</div>{k !== "work" && <span className="badge gray" style={{ marginLeft: "auto" }}>TL and above</span>}</div>
-          <div className="small muted mt8">{d}</div></button>))}</div>}
-      {shown === "work" && <>
-        <div className="row between"><div className="sub">{tab === "today" ? "Your own day list, then everything the team wrote today." : tab === "weekly" ? "The last 7 days of work, notes and skips." : "This month's work, notes and skips."}</div>
-          <div className="row" style={{ gap: 4 }}>{[["today", "Today"], ["weekly", "Weekly"], ["monthly", "Monthly"]].map(([k, l]) => <button key={k} className={"chip " + (tab === k ? "on" : "")} onClick={() => setTab(k)}>{l}</button>)}</div></div>
-        {tab === "today" && <QueueView {...props} />}
-        {tab === "today" && <h2 className="mt">Team activity today</h2>}
-        <ReportsView key={tab} ctx={props.ctx} from={range[0]} to={range[1]} embedded />
-      </>}
-      {shown === "thirdeye" && <ThirdEyePanel ctx={props.ctx} me={props.me} />}
-      {shown === "drishti" && <DrishtiPanel ctx={props.ctx} />}
+      {tab === "today" && <QueueView {...props} />}
+      {tab === "today" && <h2 className="mt">Team activity today</h2>}
+      <ReportsView key={tab} ctx={props.ctx} from={range[0]} to={range[1]} embedded />
+    </div>
+  </>;
+  if (!lead) return <div className="stack"><div><h1>My day & reports</h1><div className="sub">Your own day list and the team's notes.</div></div>{work}</div>;
+  return (
+    <div className="rh">
+      <nav className="rh-rail">
+        <h1>My day &amp; reports</h1>
+        {HUB_GROUPS.map(([g, label, keys]) => <React.Fragment key={g}>
+          <div className="rh-grp">{label}</div>
+          {keys.map((k) => <button key={k} type="button" className={"rh-it" + (shown === k ? " on" : "")} onClick={() => pick(k)}>
+            <Ico d={HUB_ICONS[k]} /><span><span className="t">{HUB_PAGES[k].title}</span><span className="s">{HUB_PAGES[k].short}</span></span></button>)}
+        </React.Fragment>)}
+        <div className="rh-foot"><b>Files save by themselves</b>OneDrive › Brahmastra Reports › team lead › client. Uploads come from the Purviewautomate OneDrive only.</div>
+      </nav>
+      <div style={{ minWidth: 0 }}>
+        {shown === "work" && <><HubHead page="work" />{work}</>}
+        {shown === "quality" && <QualityPage ctx={props.ctx} me={props.me} onHow={() => setHow(true)} />}
+        {shown === "client" && <ClientReportsPage ctx={props.ctx} me={props.me} onHow={() => setHow(true)} />}
+        {shown === "sla" && <SlaPage ctx={props.ctx} me={props.me} onHow={() => setHow(true)} />}
+      </div>
+      {how && HUB_PAGES[shown].steps && <HowDrawer page={shown} onClose={() => setHow(false)} />}
     </div>
   );
 }
@@ -4357,7 +4617,7 @@ function QueueView({ ctx, me }) {
       <div className="card tight stack">
         <div className="row between">
           <div><h3>My allocations</h3><div className="sub">Priority order. Click a claim to open its profile.</div></div>
-          <div className="row"><span className="legend"><i style={{ background: "#DDF7EA" }} /> closed ({counts.green})</span><span className="legend"><i style={{ background: "#FFF4CC" }} /> worked, still open ({counts.yellow})</span><span className="legend"><i style={{ background: "#fff" }} /> not worked yet ({counts.white})</span></div>
+          <div className="row"><span className="legend"><i style={{ background: "var(--green-soft)" }} /> closed ({counts.green})</span><span className="legend"><i style={{ background: "var(--hl)" }} /> worked, still open ({counts.yellow})</span><span className="legend"><i style={{ background: "var(--card)" }} /> not worked yet ({counts.white})</span></div>
         </div>
         <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
           <Combo sm width={140} value={f.due} onChange={(v) => set("due", v)} placeholder="Due: any day" options={[{ id: "", label: "Due: any day" }, { id: "today", label: "Due today" }, { id: "tomorrow", label: "Due tomorrow" }, { id: "later", label: "Due later" }]} />
@@ -4484,6 +4744,8 @@ function App() {
     } catch (e) { toast(e.message, "err"); }
   }, [me && me.id, me && me.must_change, me && me.role]);
   useEffect(() => { reload(); }, [reload]);
+  // The theme saved to the account wins over this browser's, so it follows the person to any computer.
+  useEffect(() => { if (me && me.prefs && Object.keys(me.prefs).length) storePrefs({ ...readPrefs(), ...me.prefs }); }, [me && me.id, me && JSON.stringify(me.prefs || {})]);
   /* After sign-in, a team lead first matches any roster project that is not yet a client, then (TLs and SMEs) sets who works each project today. */
   const [mapAsk, setMapAsk] = useState(null);
   const [teamAsk, setTeamAsk] = useState([]);
@@ -4513,7 +4775,7 @@ function App() {
   if (me.must_change) return (
     <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
-  const allowed = [...navFor(me, handoffs).map((x) => x[0]), ...(me.role === "supervisor" ? Object.keys(NAV_ALIAS) : [])];
+  const allowed = [...navFor(me, handoffs).map((x) => x[0]), "settings", ...(me.role === "supervisor" ? Object.keys(NAV_ALIAS) : [])];
   const view = allowed.includes(nav.view) ? nav.view : (me.role === "supervisor" ? "dashboard" : "queue");
   const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs };
   const body = !ctx.loaded ? <Spinner label="Loading…" />
@@ -4529,6 +4791,7 @@ function App() {
     : view === "roster" ? <RosterView {...props} />
     : view === "handoffs" ? <HandoffsView {...props} />
     : view === "limits" ? <LimitsView {...props} />
+    : view === "settings" ? <SettingsView {...props} setMe={setMe} />
     : <QueueView {...props} />;
   return (
     <>
