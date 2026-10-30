@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.30.0";
+const VERSION = "2.31.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1028,6 +1028,12 @@ async function removeUser(env, id) {
   ]);
 }
 
+/* Payment posting and Submission people (their Shastra department), team leads included, work only on the claims
+   handed to their department: no inventory, allocation or SAAG screens, and Claims shows only those claims. */
+const DESK_DEPTS = { posting: ["posting"], submission: ["submission", "subcheck"] };
+const DESK_NAME = { posting: "Payment posting", submission: "Submission" };
+function userDesk(user) { const d = String((user && user.department) || "").trim(); return /^posting$/i.test(d) ? "posting" : /^submission$/i.test(d) ? "submission" : null; }
+const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
 const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
@@ -1630,6 +1636,7 @@ const OPS = {
     if (payload.worked_before === false) where.push("c.worked_before = 0");
     if (payload.escalated) where.push("c.escalated = 1");
     if (payload.handoff_status) { where.push("c.handoff_status = ?"); params.push(str(payload.handoff_status, 30)); }
+    { const dk = deskSql(user, "c.id"); if (dk) where.push(dk.replace(/^ AND /, "")); }
     if (payload.provider) { where.push("c.provider LIKE ?"); params.push("%" + str(payload.provider, 80).trim() + "%"); }
     if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
     if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
@@ -2385,7 +2392,8 @@ const OPS = {
       if (user.role === "supervisor" && user.scope && user.scope.length) { or.push(`h.client_id IN (${user.scope.map(() => "?").join(",")})`); vargs.push(...user.scope); }
       vis = "(" + or.join(" OR ") + ")";
     }
-    const dept = ["posting", "submission"].includes(payload.dept) ? payload.dept : "";
+    const desk = user.is_admin ? null : userDesk(user);
+    const dept = ["posting", "submission", "subcheck"].includes(payload.dept) ? payload.dept : desk || "";
     // The Submission chip also shows the follow-up checks after submitting.
     const base = vis + (dept === "submission" ? " AND h.dept IN ('submission','subcheck')" : dept ? " AND h.dept = ?" : ""), bargs = [...vargs, ...(dept && dept !== "submission" ? [dept] : [])];
     const now = Date.now(), month = now - 30 * 86400000;
@@ -2405,6 +2413,45 @@ const OPS = {
     return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, tat_hours: HANDOFF_TAT_HOURS, stats: st || {} };
   },
   /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
+  /* The Payment posting / Submission dashboard: what came in, what was done and how fast, by client, person and day. */
+  "handoffs.dashboard": async ({ env, user, payload }) => {
+    const desk = user.is_admin ? null : userDesk(user);
+    const dept = ["posting", "submission"].includes(payload.dept) ? payload.dept : desk || "posting";
+    const depts = DESK_DEPTS[dept];
+    const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now()), now = Date.now();
+    const w = [`h.dept IN (${depts.map(() => "?").join(",")})`], a = [...depts];
+    if (!(user.is_admin || (user.role === "supervisor" && !user.scope))) {
+      const or = ["h.lead_id = ?", "h.backup_id = ?", "h.assigned_to = ?"]; a.push(user.id, user.id, user.id);
+      if (user.role === "supervisor" && user.scope && user.scope.length) { or.push(`h.client_id IN (${user.scope.map(() => "?").join(",")})`); a.push(...user.scope); }
+      w.push("(" + or.join(" OR ") + ")");
+    }
+    if (payload.client_id) { w.push("h.client_id = ?"); a.push(str(payload.client_id, 60)); }
+    const W = w.join(" AND ");
+    const done = "h.status IN ('complete','assistance','rejected')";
+    const tot = await one(env, `SELECT SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
+        SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
+        SUM(CASE WHEN h.status = 'assistance' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
+        AVG(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
+        SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now,
+        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN c.balance ELSE 0 END) AS amount
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE ${W}`, from, to, from, to, from, to, from, to, from, to, from, to, now, from, to, ...a);
+    const byClient = await all(env, `SELECT cl.name AS client_name, SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
+        SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
+        SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now
+      FROM handoffs h LEFT JOIN clients cl ON cl.id = h.client_id WHERE ${W} GROUP BY h.client_id ORDER BY overdue_now DESC, open_now DESC, cl.name`, from, to, from, to, from, to, now, ...a);
+    const byPerson = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done,
+        SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now,
+        AVG(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
+      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
+    const ev = await all(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?) LIMIT 20000`, ...a, from, to, from, to);
+    const day = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10);
+    const days = {};
+    for (const e of ev) {
+      if (e.created_at >= from && e.created_at <= to) (days[day(e.created_at)] = days[day(e.created_at)] || { received: 0, done: 0 }).received++;
+      if (e.done_at && e.done_at >= from && e.done_at <= to && ["complete", "assistance", "rejected"].includes(e.status)) (days[day(e.done_at)] = days[day(e.done_at)] || { received: 0, done: 0 }).done++;
+    }
+    return { dept, totals: tot || {}, by_client: byClient, by_person: byPerson, by_day: Object.keys(days).sort().map((d) => ({ day: d, ...days[d] })), tat_hours: HANDOFF_TAT_HOURS };
+  },
   "handoffs.count": async ({ env, user }) => {
     const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN due_at < ? THEN 1 ELSE 0 END) AS overdue FROM handoffs WHERE status IN ('pending','assigned') AND (lead_id = ? OR backup_id = ? OR assigned_to = ?)`, Date.now(), user.id, user.id, user.id);
     const any = await one(env, "SELECT 1 AS x FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ? LIMIT 1", user.id, user.id, user.id);
@@ -2415,9 +2462,8 @@ const OPS = {
     const got = await all(env, "SELECT DISTINCT dept FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?", user.id, user.id, user.id);
     const depts = new Set(got.map((x) => x.dept));
     for (const k of ["posting", "submission", "subcheck"]) if (set && set[k]) depts.add(k);
-    if (/^posting$/i.test(user.department || "")) depts.add("posting");
-    if (/^submission$/i.test(user.department || "")) depts.add("submission");
-    return { n: (r && r.n) || 0, overdue: (r && r.overdue) || 0, involved: !!(any || depts.size), depts: [...depts] };
+    if (userDesk(user)) DESK_DEPTS[userDesk(user)].forEach((d) => depts.add(d));
+    return { n: (r && r.n) || 0, overdue: (r && r.overdue) || 0, involved: !!(any || depts.size), depts: [...depts], desk: user.is_admin ? null : userDesk(user) };
   },
   "handoffs.assign": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
@@ -2826,6 +2872,7 @@ export default {
         if (user && user.must_change && !["auth.changePassword", "auth.me", "auth.logout", "auth.deleteMyAccount", "meta.info"].includes(op)) throw new ApiError(403, "Please set a new password first.");
         if (SUPERVISOR_OPS.test(op) && (!user || user.role !== "supervisor")) throw denied("Supervisor access is needed for this.");
         if (ADMIN_OPS.test(op) && (!user || !user.is_admin)) throw denied("Admin access is needed for this.");
+        if (user && !user.is_admin && userDesk(user) && /^(inventory\.|alloc\.)/.test(op)) throw denied("Inventory and allocation are for AR. Your desk is " + DESK_NAME[userDesk(user)] + ".");
         if (user) {
           user.scope = await scopeOf(env, user);
           // Matching a roster project to a client is how a client comes into scope, so that one call is exempt.
