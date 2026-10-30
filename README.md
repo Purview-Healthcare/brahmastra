@@ -143,7 +143,7 @@ press **Sync now** on the Roster page. It runs the same rules as loading the exp
 and keeps a list of what changed (joined, changed, left). Date of joining (DOJ) is kept too. If Shastra sends an
 empty or very short list (under half of the active people), nothing is changed and the Roster page says why.
 
-Shastra answers through one read-only database function, `brahmastra_roster(p_key)`, which returns the roster
+Shastra answers through one read-only database function, `brahmastra_roster(p_key)` (`dev/shastra-roster-feed.sql`, run once in Shastra's Supabase SQL Editor), which returns the roster
 export's columns and nothing else, and only for the right key. Shastra stores only the key's hash.
 
 | Name | Type | Value |
