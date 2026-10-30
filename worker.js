@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.27.0";
+const VERSION = "2.28.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -624,8 +624,8 @@ function ensureReady(env) {
 }
 
 /* ------------------------------------------------------------- roster */
-/* The roster, from a Purview Shastra export file (roster.import) or straight from Shastra (syncShastra). dry_run shows
-   what would change; nothing is written until it is applied. */
+/* The roster, straight from Purview Shastra (syncShastra); the export file upload is gone. dry_run shows what would
+   change; nothing is written until it is applied. */
 async function importRoster(env, user, payload) {
   const raw = Array.isArray(payload.rows) ? payload.rows.slice(0, 5000) : [];
   if (!raw.length) throw bad("The file has no rows.");
@@ -743,6 +743,7 @@ async function syncShastra(env, by) {
     throw new ApiError(502, error);
   }
   const res = await importRoster(env, { name: "Purview Shastra (" + by + ")" }, { rows, file_name: "Purview Shastra", today: isoToday() });
+  const removed = await removeLeftovers(env);
   const sm = res.summary, now = Date.now();
   const log = (await getSetting(env, "shastra_log", [])) || [];
   if (sm.new + sm.updated + sm.deactivated || !log.length) {
@@ -751,8 +752,21 @@ async function syncShastra(env, by) {
         .concat(res.leaving.slice(0, 20).map((u) => ({ name: u.name, action: "left", changes: [] }))) });
     await setSetting(env, "shastra_log", log.slice(0, 30));
   }
-  await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings });
-  return { ...res, synced: true };
+  await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings, removed,
+    emails: res.warnings.slice(0, 200), no_access: res.excluded.length });
+  return { ...res, removed, synced: true };
+}
+/* People an old roster file brought in who are not in Shastra: switched off by the sync, and removed here when they
+   never signed in and have nothing on any claim. Anyone with work in Brahmastra stays (switched off) for the history. */
+async function removeLeftovers(env) {
+  const gone = await all(env, `SELECT id FROM users u WHERE u.source = 'roster' AND u.active = 0 AND u.role <> 'admin' AND u.last_login IS NULL AND COALESCE(u.pass_hash, '') = ''
+    AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.user_id = u.id) AND NOT EXISTS (SELECT 1 FROM claim_events e WHERE e.user_id = u.id)
+    AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.user_id = u.id) AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.assigned_to = u.id OR c.last_worked_by = u.id)
+    AND NOT EXISTS (SELECT 1 FROM handoffs h WHERE h.lead_id = u.id OR h.backup_id = u.id OR h.assigned_to = u.id OR h.done_by = u.id)
+    AND NOT EXISTS (SELECT 1 FROM allocations l WHERE l.by_user = u.id)`);
+  if (!gone.length) return 0;
+  await batchAll(env, gone.flatMap((u) => [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id), env.DB.prepare("DELETE FROM users WHERE id = ?").bind(u.id)]), 40);
+  return gone.length;
 }
 /* ------------------------------------------------------------- auth */
 async function userFromToken(env, token) {
@@ -2617,7 +2631,6 @@ const OPS = {
   },
 
   /* ---- roster (admin): load the Purview Shastra export. dry_run shows what would change; nothing is written until it is applied. ---- */
-  "roster.import": async ({ env, user, payload }) => importRoster(env, user, payload),
   /* Pull the roster from Purview Shastra now (the same as the hourly run). */
   "roster.syncShastra": async ({ env, user }) => syncShastra(env, user.name || user.email),
   "roster.meta": async ({ env }) => {

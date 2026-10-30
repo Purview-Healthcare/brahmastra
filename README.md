@@ -115,9 +115,9 @@ sign-in), then **Clients** and **Inventory**.
 
 ### Roster (Purview Shastra)
 
-The admin loads the Shastra export (CSV or Excel) on the Roster screen, checks
-the preview and applies it. People are matched by Emp ID (then email, then
-name) and their department, projects, manager and status are kept.
+The roster comes only from Purview Shastra (below); there is no file upload. People are
+matched by Emp ID (then email, then name) and their department, projects, manager, status
+and date of joining are kept. People are changed in Shastra, not in Brahmastra.
 
 - Agents become billers; SMEs, Team Leads and Sr Team Leads become team leads
   for their own projects; Assistant Managers, Managers and Sr Managers become
@@ -131,15 +131,15 @@ name) and their department, projects, manager and status are kept.
   how many claims each person should get. Automatic allocation and the Allocate
   screen use those ticks and numbers.
 - Roster people sign in only with a Purview email, or an address the admin
-  lists under Extra sign-in emails. Once a roster is loaded, self sign-up is
-  closed. People missing from a later roster, or past their exit date, are
-  switched off and their open claims go back to the pool.
+  lists under Extra sign-in emails. Self sign-up is closed. People no longer in
+  Shastra, or past their exit date, are switched off and their open claims go back
+  to the pool; those who never signed in and have no work in Brahmastra are removed.
 
 
 #### Straight from Purview Shastra (automatic)
 
 The Worker pulls the roster from Shastra's database every hour (`[triggers]` in `wrangler.toml`), and an admin can
-press **Sync now** on the Roster page. It runs the same rules as loading the export file, applies the changes at once
+press **Sync now** on the Roster page. It applies the changes at once
 and keeps a list of what changed (joined, changed, left). Date of joining (DOJ) is kept too. If Shastra sends an
 empty or very short list (under half of the active people), nothing is changed and the Roster page says why.
 
