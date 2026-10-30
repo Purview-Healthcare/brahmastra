@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.28.0";
+const VERSION = "2.29.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -2200,6 +2200,27 @@ const OPS = {
         c.balance, c.billed, c.age_days, c.bucket, c.tier, c.status_class, c.state, c.inventory_kind, c.worked_before, c.file_status, c.file_sub_status, cl.name AS client_name, l.name AS location_name
       FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")} ORDER BY nt.created_at DESC LIMIT 5000`, ...params);
     return { rows };
+  },
+  /* Team allocations: every claim on a biller's desk (or worked in the period), side by side with the latest entry on it in
+     the period, so a team lead sees in one list what was allocated, what was done, and what is still waiting. */
+  "reports.desk": async ({ env, user, payload }) => {
+    const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
+    const where = [], args = [from, to];
+    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); args.push(...user.scope); }
+    if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
+    if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
+    if (payload.user_id) { where.push("(c.assigned_to = ? OR nt.user_id = ?)"); args.push(str(payload.user_id, 60), str(payload.user_id, 60)); }
+    const rows = await all(env, `WITH wk AS (SELECT claim_id, COUNT(*) AS n, MAX(created_at) AS last_at FROM notes WHERE created_at BETWEEN ? AND ? GROUP BY claim_id)
+      SELECT c.id AS claim_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.priority, c.state, c.follow_up_on, c.assigned_to, c.assigned_at,
+        c.escalated, u.name AS assigned_name, cl.name AS client_name, l.name AS location_name,
+        wk.n AS entries, wk.last_at, nt.user_id AS by_id, nt.user_name AS by_name, nt.kind, nt.status, nt.sub_status, nt.action, nt.bucket AS work_bucket, nt.comment, nt.follow_up_on AS next_follow_up
+      FROM claims c LEFT JOIN wk ON wk.claim_id = c.id LEFT JOIN notes nt ON nt.claim_id = c.id AND nt.created_at = wk.last_at
+        LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
+      WHERE ((c.assigned_to IS NOT NULL AND c.state IN ('assigned', 'in_progress', 'completed')) OR wk.n IS NOT NULL)${where.length ? " AND " + where.join(" AND ") : ""}
+      ORDER BY u.name, c.priority DESC LIMIT 5000`, ...args);
+    // one line per claim (two entries at the same moment would repeat it)
+    const seen = new Set();
+    return { rows: rows.filter((r) => !seen.has(r.claim_id) && seen.add(r.claim_id)), today: isoToday() };
   },
   /* ---- data for the reporting apps inside My day & reports (team leads and above) ----
      Production: one row per entry in the Production Conso layout (AR), or one row per completed posting / submission
