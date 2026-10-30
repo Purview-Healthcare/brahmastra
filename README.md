@@ -135,6 +135,22 @@ name) and their department, projects, manager and status are kept.
   closed. People missing from a later roster, or past their exit date, are
   switched off and their open claims go back to the pool.
 
+
+#### Straight from Purview Shastra (automatic)
+
+The Worker pulls the roster from Shastra's database every hour (`[triggers]` in `wrangler.toml`), and an admin can
+press **Sync now** on the Roster page. It runs the same rules as loading the export file, applies the changes at once
+and keeps a list of what changed (joined, changed, left). Date of joining (DOJ) is kept too. If Shastra sends an
+empty or very short list (under half of the active people), nothing is changed and the Roster page says why.
+
+Shastra answers through one read-only database function, `brahmastra_roster(p_key)`, which returns the roster
+export's columns and nothing else, and only for the right key. Shastra stores only the key's hash.
+
+| Name | Type | Value |
+|---|---|---|
+| `SHASTRA_FEED_KEY` | **secret** | the key made when the function was added in Shastra's Supabase |
+| `SHASTRA_URL`, `SHASTRA_PUBLIC_KEY` | text (optional) | only if Shastra's Supabase project changes |
+
 ### Accounts and sign-in
 
 - **Billers** are created by a team lead on the Team screen (first name, last

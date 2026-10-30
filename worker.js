@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.26.0";
+const VERSION = "2.27.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -130,7 +130,7 @@ const EXTRA_COLUMNS = {
     // Who checks a submitted claim for acceptance / rejection 24 working hours after it was submitted.
     ["submission_check_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_check_person", "TEXT"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
-  users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
+  users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
     ["department", "TEXT NOT NULL DEFAULT ''"], ["departments_also", "TEXT NOT NULL DEFAULT ''"], ["roster_status", "TEXT NOT NULL DEFAULT ''"], ["exit_date", "TEXT NOT NULL DEFAULT ''"],
@@ -568,7 +568,7 @@ const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_
   must_change: !!u.must_change, has_password: !!u.pass_hash, via: u.via || undefined, created_at: u.created_at, last_login: u.last_login,
   source: u.source || "manual", emp_id: u.emp_id || "", position: u.position || "", roster_kind: u.roster_kind || "", department: u.department || "", departments_also: u.departments_also || "",
   roster_status: u.roster_status || "", exit_date: u.exit_date || "", reports_to: u.reports_to || null, reports_to_name: u.reports_to_name || "", projects: jsonList(u.projects_json),
-  scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "", city: u.city || "", prefs: userPrefs(u.prefs_json) });
+  scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "", city: u.city || "", doj: u.doj || "", prefs: userPrefs(u.prefs_json) });
 // Settings a person picks for themselves (theme, text size); unknown keys are dropped.
 const PREF_KEYS = { theme: ["light", "navy", "gold", "auto"], text: ["normal", "large"] };
 function userPrefs(j) { let o = {}; try { o = JSON.parse(j || "{}") || {}; } catch (e) { o = {}; } const out = {}; for (const k in PREF_KEYS) if (PREF_KEYS[k].includes(o[k])) out[k] = o[k]; return out; }
@@ -623,6 +623,137 @@ function ensureReady(env) {
   return READY;
 }
 
+/* ------------------------------------------------------------- roster */
+/* The roster, from a Purview Shastra export file (roster.import) or straight from Shastra (syncShastra). dry_run shows
+   what would change; nothing is written until it is applied. */
+async function importRoster(env, user, payload) {
+  const raw = Array.isArray(payload.rows) ? payload.rows.slice(0, 5000) : [];
+  if (!raw.length) throw bad("The file has no rows.");
+  const today = isoDate(payload.today) || isoToday();
+  const extra = ((await getSetting(env, "extra_emails", [])) || []).map(mailClean);
+  const rows = raw.map(rosterRow).filter((r) => r.name);
+  const existing = await all(env, "SELECT * FROM users");
+  // On a duplicate key (e.g. an Emp ID put on a hand-made account to merge it), the account with a
+  // password or a sign-in wins; the other copy, if it came from the roster, is switched off below.
+  const put = (m, k, u) => { const ex = m.get(k); if (!ex || (!(ex.pass_hash || ex.last_login) && (u.pass_hash || u.last_login))) m.set(k, u); };
+  const byEmp = new Map(); existing.forEach((u) => { if (u.emp_id) put(byEmp, u.emp_id.toUpperCase(), u); });
+  const byEmail = new Map(existing.map((u) => [u.email, u]));
+  // Exact full name also matches accounts created by hand before the roster, so they keep their password and get their Emp ID.
+  const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") put(byName, u.name.trim().toLowerCase(), u); });
+  const domains = {}; rows.forEach((r) => { if (mailOk(r.email)) { const d = r.email.split("@")[1]; domains[d] = (domains[d] || 0) + 1; } });
+  const plan = [], excluded = [], warnings = [], used = new Set(), dropped = new Set();
+  for (const row of rows) {
+    const cls = rosterClassify(row);
+    const match = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
+    if (cls.reason && match && match.source === "roster" && match.active) dropped.add(match.id);
+    if (cls.reason) { excluded.push({ name: row.name, emp_id: row.emp_id, position: row.position, department: row.department, reason: cls.reason, existing: !!(match && match.source === "roster" && match.active) }); continue; }
+    if (match) used.add(match.id);
+    const gone = ROSTER_GONE.test(row.status) || (row.exit_date && row.exit_date < today);
+    const emailOk = mailOk(row.email) && !/\.(comcom|con)$/.test(row.email);
+    const email = emailOk ? row.email : (match && !match.email_missing ? match.email : placeholderEmail(row));
+    const issues = [];
+    if (!row.email) issues.push("no email");
+    else if (!emailOk) issues.push("email looks wrong: " + row.email);
+    else {
+      const d = row.email.split("@")[1];
+      if (!domainOk(env, row.email) && !extra.includes(row.email)) issues.push("not a Purview email, cannot sign in until allowed: " + row.email);
+      else if ((domains[d] || 0) < 2) issues.push("check the spelling of the domain: " + row.email);
+    }
+    // The right email held by an unused copy (a roster duplicate nobody signed in to) is freed and taken over.
+    const holder = emailOk && match && match.email !== row.email ? byEmail.get(row.email) : null;
+    const freeable = holder && holder.id !== match.id && !holder.pass_hash && !holder.last_login;
+    if (holder && holder.id !== match.id && !freeable) issues.push("email already used by another account: " + row.email);
+    const role = cls.kind === "agent" ? "user" : "supervisor";
+    const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, free_email_from: freeable ? holder.id : null, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
+      role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
+      roster_status: row.status, exit_date: row.exit_date, doj: row.doj, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
+    const changes = [];
+    if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "doj", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
+    if (match && next.free_email_from && !changes.includes("email")) changes.push("email");
+    plan.push({ row, cls, match, next, issues, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
+    if (issues.length) warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues });
+  }
+  const leaving = existing.filter((u) => u.source === "roster" && u.active && !used.has(u.id) && !dropped.has(u.id));
+  const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients");
+  const mapped = new Set(clients.flatMap((c) => jsonList(c.roster_names_json).map(projKey)));
+  const projNames = new Map(); plan.forEach((p) => p.cls.projects.forEach((x) => projNames.set(projKey(x.name), x.name)));
+  const projects = [...projNames.values()].sort().map((name) => { const k = projKey(name); const hits = clients.filter((c) => projKey(c.name) === k || (c.code && projKey(c.code) === k));
+    const owner = clients.find((c) => jsonList(c.roster_names_json).some((n) => projKey(n) === k));
+    return { name, client: owner ? owner.name : hits.length === 1 ? hits[0].name : "", state: owner ? "matched" : hits.length === 1 ? "auto" : "ask" }; });
+  const summary = { rows: rows.length, people: plan.filter((p) => p.action !== "skip").length, new: plan.filter((p) => p.action === "new").length, updated: plan.filter((p) => p.action === "update").length,
+    same: plan.filter((p) => p.action === "same").length, deactivated: plan.filter((p) => p.match && p.match.active && !p.next.active).length + leaving.length + excluded.filter((x) => x.existing).length,
+    excluded: excluded.length, warnings: warnings.length, leads: plan.filter((p) => p.cls.kind !== "agent" && p.next.active).length, agents: plan.filter((p) => p.cls.kind === "agent" && p.next.active).length };
+  const people = plan.filter((p) => p.action !== "skip").map((p) => ({ name: p.row.name, emp_id: p.row.emp_id, action: p.action, changes: p.changes, access: p.cls.kind, position: p.row.position, department: p.row.department,
+    projects: p.cls.projects, reports_to: p.row.reports_to, status: p.row.status, active: !!p.next.active, email: p.next.email_missing ? "" : p.next.email, issues: p.issues }));
+  const out = { summary, people, excluded, warnings, projects, leaving: leaving.map((u) => ({ name: u.name, emp_id: u.emp_id })) };
+  if (payload.dry_run) return out;
+
+  // Apply: people first, then who reports to whom, then project access and teams.
+  const now = Date.now();
+  for (const p of plan) {
+    if (p.action === "skip") continue;
+    const n = p.next;
+    if (n.free_email_from) await run(env, "UPDATE users SET email = ?, email_missing = 1 WHERE id = ?", "freed-" + String(n.free_email_from).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) + "@no-email.invalid", n.free_email_from);
+    let id = p.match && p.match.id;
+    if (!id) {
+      id = uuid();
+      const [first, ...rest] = n.name.split(/\s+/);
+      await run(env, `INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at, source)
+        VALUES (?,?,?,?,?,?,?,'','',0,?,35,?,'roster')`, id, n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, now);
+    } else {
+      const [first, ...rest] = n.name.split(/\s+/);
+      await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
+    }
+    await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, shift = ?, city = ? WHERE id = ?`,
+      n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.shift, n.city, id);
+    p.id = id;
+    if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+  }
+  const off = [...leaving.map((u) => u.id), ...dropped];
+  for (const id of off) { await run(env, "UPDATE users SET active = 0 WHERE id = ?", id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+  const idByName = new Map(); plan.forEach((p) => { if (p.id) idByName.set(p.row.name.toLowerCase(), p.id); });
+  for (const p of plan) if (p.id) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", idByName.get(String(p.row.reports_to || "").toLowerCase()) || null, p.id);
+  await recomputeScopes(env);
+  await autoMapProjects(env);
+  await syncTeams(env);
+  await setSetting(env, "roster_meta", { at: now, by: user.name || user.email, file: str(payload.file_name, 200), summary });
+  return { ...out, applied: true };
+}
+/* Purview Shastra: its database answers one read-only function, brahmastra_roster(p_key), with the people list in the
+   same columns as its roster export (plus DOJ). The key is the Worker secret SHASTRA_FEED_KEY; Shastra keeps only its hash.
+   Runs every hour (wrangler.toml [triggers]) and from Sync now on the Roster page. Changes apply at once. */
+const SHASTRA_URL_DEFAULT = "https://qhbgshnqugxqiwdywsas.supabase.co";
+const SHASTRA_PUBLIC_KEY_DEFAULT = "sb_publishable_2aOo5c5pq3J33nK8hVIb0w_gjj6A4n7";   // Shastra's public (publishable) key, already in its page
+async function syncShastra(env, by) {
+  if (!env.SHASTRA_FEED_KEY) throw new ApiError(503, "Purview Shastra is not connected yet. Add the Worker secret SHASTRA_FEED_KEY (see the README).");
+  const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
+  let r = null, data = null;
+  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_roster", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch {}
+  if (!r || !r.ok || !data || data.ok === false) {
+    const why = (data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer");
+    await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error: str(why, 300) });
+    throw new ApiError(502, "Purview Shastra did not send the roster: " + why);
+  }
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  // A short or empty answer is a fault on the way, not half the company leaving: nothing is applied.
+  const active = await one(env, "SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1");
+  if (!rows.length || (active && active.n >= 20 && rows.length < active.n * 0.5)) {
+    const error = `Shastra sent ${rows.length} people while ${active ? active.n : 0} are active here, so nothing was changed.`;
+    await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error });
+    throw new ApiError(502, error);
+  }
+  const res = await importRoster(env, { name: "Purview Shastra (" + by + ")" }, { rows, file_name: "Purview Shastra", today: isoToday() });
+  const sm = res.summary, now = Date.now();
+  const log = (await getSetting(env, "shastra_log", [])) || [];
+  if (sm.new + sm.updated + sm.deactivated || !log.length) {
+    log.unshift({ at: now, by, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, people: sm.people,
+      names: res.people.filter((x) => x.action !== "same").slice(0, 40).map((x) => ({ name: x.name, action: x.action, changes: x.changes }))
+        .concat(res.leaving.slice(0, 20).map((u) => ({ name: u.name, action: "left", changes: [] }))) });
+    await setSetting(env, "shastra_log", log.slice(0, 30));
+  }
+  await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings });
+  return { ...res, synced: true };
+}
 /* ------------------------------------------------------------- auth */
 async function userFromToken(env, token) {
   if (!token) return null;
@@ -725,7 +856,7 @@ function rosterRow(r) {
   const g = (...keys) => { for (const k of keys) if (get[k]) return get[k]; return ""; };
   return { emp_id: g("empid", "employeeid", "id"), name: g("name", "employeename", "fullname"), hierarchy: g("hierarchy", "level"), position: g("position", "designation", "role"),
     func: g("function"), department: g("department"), departments_also: g("alsoindepartments"), status: g("status"), project: g("project"), also_projects: g("alsoonprojects"),
-    reports_to: g("reportsto", "manager"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), email: mailClean(g("email", "emailid", "workemail")),
+    reports_to: g("reportsto", "manager", "supervisor"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), doj: rosterDate(g("doj", "dateofjoining", "joiningdate")), email: mailClean(g("email", "emailid", "workemail")),
     city: ((v) => (/pune/i.test(v) ? "Pune" : /hyd/i.test(v) ? "Hyderabad" : v))(g("location", "worklocation", "city", "site", "baselocation")) };
 }
 function rosterClassify(row) {
@@ -2486,106 +2617,17 @@ const OPS = {
   },
 
   /* ---- roster (admin): load the Purview Shastra export. dry_run shows what would change; nothing is written until it is applied. ---- */
-  "roster.import": async ({ env, user, payload }) => {
-    const raw = Array.isArray(payload.rows) ? payload.rows.slice(0, 5000) : [];
-    if (!raw.length) throw bad("The file has no rows.");
-    const today = isoDate(payload.today) || isoToday();
-    const extra = ((await getSetting(env, "extra_emails", [])) || []).map(mailClean);
-    const rows = raw.map(rosterRow).filter((r) => r.name);
-    const existing = await all(env, "SELECT * FROM users");
-    // On a duplicate key (e.g. an Emp ID put on a hand-made account to merge it), the account with a
-    // password or a sign-in wins; the other copy, if it came from the roster, is switched off below.
-    const put = (m, k, u) => { const ex = m.get(k); if (!ex || (!(ex.pass_hash || ex.last_login) && (u.pass_hash || u.last_login))) m.set(k, u); };
-    const byEmp = new Map(); existing.forEach((u) => { if (u.emp_id) put(byEmp, u.emp_id.toUpperCase(), u); });
-    const byEmail = new Map(existing.map((u) => [u.email, u]));
-    // Exact full name also matches accounts created by hand before the roster, so they keep their password and get their Emp ID.
-    const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") put(byName, u.name.trim().toLowerCase(), u); });
-    const domains = {}; rows.forEach((r) => { if (mailOk(r.email)) { const d = r.email.split("@")[1]; domains[d] = (domains[d] || 0) + 1; } });
-    const plan = [], excluded = [], warnings = [], used = new Set(), dropped = new Set();
-    for (const row of rows) {
-      const cls = rosterClassify(row);
-      const match = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
-      if (cls.reason && match && match.source === "roster" && match.active) dropped.add(match.id);
-      if (cls.reason) { excluded.push({ name: row.name, emp_id: row.emp_id, position: row.position, department: row.department, reason: cls.reason, existing: !!(match && match.source === "roster" && match.active) }); continue; }
-      if (match) used.add(match.id);
-      const gone = ROSTER_GONE.test(row.status) || (row.exit_date && row.exit_date < today);
-      const emailOk = mailOk(row.email) && !/\.(comcom|con)$/.test(row.email);
-      const email = emailOk ? row.email : (match && !match.email_missing ? match.email : placeholderEmail(row));
-      const issues = [];
-      if (!row.email) issues.push("no email");
-      else if (!emailOk) issues.push("email looks wrong: " + row.email);
-      else {
-        const d = row.email.split("@")[1];
-        if (!domainOk(env, row.email) && !extra.includes(row.email)) issues.push("not a Purview email, cannot sign in until allowed: " + row.email);
-        else if ((domains[d] || 0) < 2) issues.push("check the spelling of the domain: " + row.email);
-      }
-      // The right email held by an unused copy (a roster duplicate nobody signed in to) is freed and taken over.
-      const holder = emailOk && match && match.email !== row.email ? byEmail.get(row.email) : null;
-      const freeable = holder && holder.id !== match.id && !holder.pass_hash && !holder.last_login;
-      if (holder && holder.id !== match.id && !freeable) issues.push("email already used by another account: " + row.email);
-      const role = cls.kind === "agent" ? "user" : "supervisor";
-      const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, free_email_from: freeable ? holder.id : null, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
-        role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
-        roster_status: row.status, exit_date: row.exit_date, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
-      const changes = [];
-      if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
-      if (match && next.free_email_from && !changes.includes("email")) changes.push("email");
-      plan.push({ row, cls, match, next, issues, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
-      if (issues.length) warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues });
-    }
-    const leaving = existing.filter((u) => u.source === "roster" && u.active && !used.has(u.id) && !dropped.has(u.id));
-    const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients");
-    const mapped = new Set(clients.flatMap((c) => jsonList(c.roster_names_json).map(projKey)));
-    const projNames = new Map(); plan.forEach((p) => p.cls.projects.forEach((x) => projNames.set(projKey(x.name), x.name)));
-    const projects = [...projNames.values()].sort().map((name) => { const k = projKey(name); const hits = clients.filter((c) => projKey(c.name) === k || (c.code && projKey(c.code) === k));
-      const owner = clients.find((c) => jsonList(c.roster_names_json).some((n) => projKey(n) === k));
-      return { name, client: owner ? owner.name : hits.length === 1 ? hits[0].name : "", state: owner ? "matched" : hits.length === 1 ? "auto" : "ask" }; });
-    const summary = { rows: rows.length, people: plan.filter((p) => p.action !== "skip").length, new: plan.filter((p) => p.action === "new").length, updated: plan.filter((p) => p.action === "update").length,
-      same: plan.filter((p) => p.action === "same").length, deactivated: plan.filter((p) => p.match && p.match.active && !p.next.active).length + leaving.length + excluded.filter((x) => x.existing).length,
-      excluded: excluded.length, warnings: warnings.length, leads: plan.filter((p) => p.cls.kind !== "agent" && p.next.active).length, agents: plan.filter((p) => p.cls.kind === "agent" && p.next.active).length };
-    const people = plan.filter((p) => p.action !== "skip").map((p) => ({ name: p.row.name, emp_id: p.row.emp_id, action: p.action, changes: p.changes, access: p.cls.kind, position: p.row.position, department: p.row.department,
-      projects: p.cls.projects, reports_to: p.row.reports_to, status: p.row.status, active: !!p.next.active, email: p.next.email_missing ? "" : p.next.email, issues: p.issues }));
-    const out = { summary, people, excluded, warnings, projects, leaving: leaving.map((u) => ({ name: u.name, emp_id: u.emp_id })) };
-    if (payload.dry_run) return out;
-
-    // Apply: people first, then who reports to whom, then project access and teams.
-    const now = Date.now();
-    for (const p of plan) {
-      if (p.action === "skip") continue;
-      const n = p.next;
-      if (n.free_email_from) await run(env, "UPDATE users SET email = ?, email_missing = 1 WHERE id = ?", "freed-" + String(n.free_email_from).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) + "@no-email.invalid", n.free_email_from);
-      let id = p.match && p.match.id;
-      if (!id) {
-        id = uuid();
-        const [first, ...rest] = n.name.split(/\s+/);
-        await run(env, `INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at, source)
-          VALUES (?,?,?,?,?,?,?,'','',0,?,35,?,'roster')`, id, n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, now);
-      } else {
-        const [first, ...rest] = n.name.split(/\s+/);
-        await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
-      }
-      await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, shift = ?, city = ? WHERE id = ?`,
-        n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.shift, n.city, id);
-      p.id = id;
-      if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
-    }
-    const off = [...leaving.map((u) => u.id), ...dropped];
-    for (const id of off) { await run(env, "UPDATE users SET active = 0 WHERE id = ?", id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
-    const idByName = new Map(); plan.forEach((p) => { if (p.id) idByName.set(p.row.name.toLowerCase(), p.id); });
-    for (const p of plan) if (p.id) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", idByName.get(String(p.row.reports_to || "").toLowerCase()) || null, p.id);
-    await recomputeScopes(env);
-    await autoMapProjects(env);
-    await syncTeams(env);
-    await setSetting(env, "roster_meta", { at: now, by: user.name || user.email, file: str(payload.file_name, 200), summary });
-    return { ...out, applied: true };
-  },
+  "roster.import": async ({ env, user, payload }) => importRoster(env, user, payload),
+  /* Pull the roster from Purview Shastra now (the same as the hourly run). */
+  "roster.syncShastra": async ({ env, user }) => syncShastra(env, user.name || user.email),
   "roster.meta": async ({ env }) => {
     const meta = await getSetting(env, "roster_meta", null);
     const extra = (await getSetting(env, "extra_emails", [])) || [];
     const clients = await all(env, "SELECT id, name, roster_names_json FROM clients ORDER BY name");
     const names = await rosterProjectNames(env);
     const projects = names.map((name) => { const c = clients.find((x) => jsonList(x.roster_names_json).some((n) => projKey(n) === projKey(name))); return { name, client_id: c ? c.id : null, client_name: c ? c.name : "" }; });
-    return { meta, extra_emails: extra, projects, admins: adminEmails(env) };
+    return { meta, extra_emails: extra, projects, admins: adminEmails(env),
+      shastra: { connected: !!env.SHASTRA_FEED_KEY, last: await getSetting(env, "shastra_sync", null), log: (await getSetting(env, "shastra_log", [])) || [] } };
   },
   "roster.saveEmails": async ({ env, payload }) => {
     const list = [...new Set((Array.isArray(payload.emails) ? payload.emails : String(payload.emails || "").split(/[\s,;]+/)).map(mailClean).filter(mailOk))].slice(0, 200);
@@ -2716,6 +2758,11 @@ async function claimBundle(env, user, c) {
 
 /* ------------------------------------------------------------ fetch */
 export default {
+  // Every hour: the roster from Purview Shastra (only once SHASTRA_FEED_KEY is set).
+  async scheduled(event, env, ctx) {
+    if (!env.SHASTRA_FEED_KEY || !env.DB) return;
+    ctx.waitUntil((async () => { try { await ensureReady(env); await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } })());
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });

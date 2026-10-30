@@ -27,3 +27,7 @@ EMAIL_FROM = "Brahmastra <purviewautomate@purview-healthcare.com>"
 MS_SENDER = "purviewautomate@purview-healthcare.com"
 MS_TENANT_ID = "94be55e5-2194-40e4-9d98-1dcc7e91c268"
 MS_CLIENT_ID = "111e229f-1aab-4b75-9282-811742bfd707"
+
+# Every hour at :17, the roster from Purview Shastra (does nothing until the SHASTRA_FEED_KEY secret is set).
+[triggers]
+crons = ["17 * * * *"]
