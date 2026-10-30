@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.31.0";
+const VERSION = "2.32.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -873,6 +873,8 @@ function rosterRow(r) {
     reports_to: g("reportsto", "manager", "supervisor"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), doj: rosterDate(g("doj", "dateofjoining", "joiningdate")), email: mailClean(g("email", "emailid", "workemail")),
     city: ((v) => (/pune/i.test(v) ? "Pune" : /hyd/i.test(v) ? "Hyderabad" : v))(g("location", "worklocation", "city", "site", "baselocation")) };
 }
+const rowDepts = (row) => [row.department, ...String(row.departments_also || "").split(/[;,]/)].map((d) => String(d || "").trim()).filter(Boolean);
+const rowWorkDepts = (row) => rowDepts(row).filter((d) => /^(ar|posting|submission)$/i.test(d));
 function rosterClassify(row) {
   const pos = row.position.toLowerCase().trim();
   const kind = ROSTER_KIND[pos];
@@ -882,6 +884,8 @@ function rosterClassify(row) {
   else if (/^administration$/i.test(row.func) || /^(hr|it)$/i.test(row.department)) reason = (row.department || row.func) + " (no access)";
   else if (!kind) reason = (row.position || "no position") + " (no access)";
   else if (kind !== "all" && !projects.length) reason = "no project";
+  // Eligibility Verification is not worked in Brahmastra: someone only on EV (no AR, Posting or Submission) gets no access.
+  else if (kind !== "all" && !rowWorkDepts(row).length && rowDepts(row).some((d) => /^(eligibility verification|ev)$/i.test(d))) reason = "Eligibility Verification only (not in Brahmastra)";
   return { kind, projects, reason, designation: ROSTER_DESIGNATION[pos] || row.position };
 }
 /* Team leads and SMEs see their own projects; managers also every project of the people below them. */
@@ -1030,9 +1034,16 @@ async function removeUser(env, id) {
 
 /* Payment posting and Submission people (their Shastra department), team leads included, work only on the claims
    handed to their department: no inventory, allocation or SAAG screens, and Claims shows only those claims. */
-const DESK_DEPTS = { posting: ["posting"], submission: ["submission", "subcheck"] };
-const DESK_NAME = { posting: "Payment posting", submission: "Submission" };
-function userDesk(user) { const d = String((user && user.department) || "").trim(); return /^posting$/i.test(d) ? "posting" : /^submission$/i.test(d) ? "submission" : null; }
+const DESK_DEPTS = { posting: ["posting"], submission: ["submission", "subcheck"], both: ["posting", "submission", "subcheck"] };
+const DESK_NAME = { posting: "Payment posting", submission: "Submission", both: "Posting & submission" };
+// From the Shastra department and the "also in" departments: anyone on AR keeps the AR view.
+function userDesk(user) {
+  if (!user) return null;
+  const d = new Set(rowDepts({ department: user.department, departments_also: user.departments_also }).map((x) => x.toLowerCase()));
+  if (d.has("ar")) return null;
+  const p = d.has("posting"), s = d.has("submission");
+  return p && s ? "both" : p ? "posting" : s ? "submission" : null;
+}
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
 const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
@@ -2393,7 +2404,7 @@ const OPS = {
       vis = "(" + or.join(" OR ") + ")";
     }
     const desk = user.is_admin ? null : userDesk(user);
-    const dept = ["posting", "submission", "subcheck"].includes(payload.dept) ? payload.dept : desk || "";
+    const dept = ["posting", "submission", "subcheck"].includes(payload.dept) ? payload.dept : desk && desk !== "both" ? desk : "";
     // The Submission chip also shows the follow-up checks after submitting.
     const base = vis + (dept === "submission" ? " AND h.dept IN ('submission','subcheck')" : dept ? " AND h.dept = ?" : ""), bargs = [...vargs, ...(dept && dept !== "submission" ? [dept] : [])];
     const now = Date.now(), month = now - 30 * 86400000;
@@ -2416,7 +2427,7 @@ const OPS = {
   /* The Payment posting / Submission dashboard: what came in, what was done and how fast, by client, person and day. */
   "handoffs.dashboard": async ({ env, user, payload }) => {
     const desk = user.is_admin ? null : userDesk(user);
-    const dept = ["posting", "submission"].includes(payload.dept) ? payload.dept : desk || "posting";
+    const dept = ["posting", "submission", "both"].includes(payload.dept) ? payload.dept : desk || "both";
     const depts = DESK_DEPTS[dept];
     const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now()), now = Date.now();
     const w = [`h.dept IN (${depts.map(() => "?").join(",")})`], a = [...depts];
