@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.29.0";
+const VERSION = "2.30.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -2408,8 +2408,16 @@ const OPS = {
   "handoffs.count": async ({ env, user }) => {
     const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN due_at < ? THEN 1 ELSE 0 END) AS overdue FROM handoffs WHERE status IN ('pending','assigned') AND (lead_id = ? OR backup_id = ? OR assigned_to = ?)`, Date.now(), user.id, user.id, user.id);
     const any = await one(env, "SELECT 1 AS x FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ? LIMIT 1", user.id, user.id, user.id);
-    const isLead = await one(env, "SELECT 1 AS x FROM clients WHERE posting_lead = ? OR posting_backup = ? OR submission_lead = ? OR submission_backup = ? LIMIT 1", user.id, user.id, user.id, user.id);
-    return { n: (r && r.n) || 0, overdue: (r && r.overdue) || 0, involved: !!(any || isLead) };
+    // Which hand-offs this person handles: set on a client (Clients & locations), their department, or given to them
+    const set = await one(env, `SELECT SUM(CASE WHEN posting_lead = ? OR posting_backup = ? THEN 1 ELSE 0 END) AS posting,
+        SUM(CASE WHEN submission_lead = ? OR submission_backup = ? THEN 1 ELSE 0 END) AS submission, SUM(CASE WHEN submission_check_person = ? THEN 1 ELSE 0 END) AS subcheck FROM clients WHERE active = 1`,
+      user.id, user.id, user.id, user.id, user.id);
+    const got = await all(env, "SELECT DISTINCT dept FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?", user.id, user.id, user.id);
+    const depts = new Set(got.map((x) => x.dept));
+    for (const k of ["posting", "submission", "subcheck"]) if (set && set[k]) depts.add(k);
+    if (/^posting$/i.test(user.department || "")) depts.add("posting");
+    if (/^submission$/i.test(user.department || "")) depts.add("submission");
+    return { n: (r && r.n) || 0, overdue: (r && r.overdue) || 0, involved: !!(any || depts.size), depts: [...depts] };
   },
   "handoffs.assign": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
