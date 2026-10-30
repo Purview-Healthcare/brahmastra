@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.32.0";
+const VERSION = "2.33.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -873,6 +873,7 @@ function rosterRow(r) {
     reports_to: g("reportsto", "manager", "supervisor"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), doj: rosterDate(g("doj", "dateofjoining", "joiningdate")), email: mailClean(g("email", "emailid", "workemail")),
     city: ((v) => (/pune/i.test(v) ? "Pune" : /hyd/i.test(v) ? "Hyderabad" : v))(g("location", "worklocation", "city", "site", "baselocation")) };
 }
+const NOT_IN_BRAHMASTRA = /^(eligibility verification|ev|pcc|credentialing|reporting)$/i;
 const rowDepts = (row) => [row.department, ...String(row.departments_also || "").split(/[;,]/)].map((d) => String(d || "").trim()).filter(Boolean);
 const rowWorkDepts = (row) => rowDepts(row).filter((d) => /^(ar|posting|submission)$/i.test(d));
 function rosterClassify(row) {
@@ -884,8 +885,9 @@ function rosterClassify(row) {
   else if (/^administration$/i.test(row.func) || /^(hr|it)$/i.test(row.department)) reason = (row.department || row.func) + " (no access)";
   else if (!kind) reason = (row.position || "no position") + " (no access)";
   else if (kind !== "all" && !projects.length) reason = "no project";
-  // Eligibility Verification is not worked in Brahmastra: someone only on EV (no AR, Posting or Submission) gets no access.
-  else if (kind !== "all" && !rowWorkDepts(row).length && rowDepts(row).some((d) => /^(eligibility verification|ev)$/i.test(d))) reason = "Eligibility Verification only (not in Brahmastra)";
+  // Eligibility Verification, PCC, Credentialing and Reporting are not worked in Brahmastra: someone only there
+  // (no AR, Posting or Submission in any of their departments) gets no access.
+  else if (kind !== "all" && !rowWorkDepts(row).length && rowDepts(row).some((d) => NOT_IN_BRAHMASTRA.test(d))) reason = rowDepts(row).filter((d) => NOT_IN_BRAHMASTRA.test(d)).join(", ") + " only (not in Brahmastra)";
   return { kind, projects, reason, designation: ROSTER_DESIGNATION[pos] || row.position };
 }
 /* Team leads and SMEs see their own projects; managers also every project of the people below them. */

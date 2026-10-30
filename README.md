@@ -124,7 +124,8 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   team leads for their projects and every project of the people below them;
   the Vice President sees every project. CEO, Director, HR, IT, Administration,
   QA, MIS and Tech Support get no access, and nor does anyone only on Eligibility
-  Verification (EV is not worked in Brahmastra; they are switched off).
+  Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
+  switched off).
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
