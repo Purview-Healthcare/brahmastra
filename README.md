@@ -356,6 +356,13 @@ which needs the **Files.ReadWrite.All application permission** (admin consent). 
 
 ## Drishti and Sasha's Third Eye inside My day & reports
 
+Both apps open **as part of Brahmastra**, not as a page inside a box: with `?embed=1` each hides its own
+logo, header and menu, takes the Brahmastra theme (Light, Navy, Gold) and lines up with Brahmastra's edge,
+and **Brahmastra draws their tabs in its own tab row** (Drishti: Overview, Clients, Formulas...; Third Eye:
+Production, Agent Quality...). A click there opens that tab inside the app (a `brahmastra:hello` /
+`embed:tabs` / `brahmastra:go` message handshake). Opened on their own addresses, both apps look and work
+exactly as before. The SLA scorecard has its own **SLA** tab, first in the bar.
+
 Team leads and above get a side menu in **My day & reports**, grouped by who the report is for:
 
 | Group | Page | What it is |
