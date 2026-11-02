@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.45.0";
+const VERSION = "2.46.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1823,6 +1823,61 @@ const OPS = {
     const scope = rows.length ? "payer" : "client";
     if (!rows.length) rows = await q(false);
     return { rows, scope };
+  },
+
+  /* ---- Ctrl+K: find a claim by number, account or patient, within what this person may open ---- */
+  "search.global": async ({ env, user, payload }) => {
+    const q = str(payload.q, 80).trim().replace(/[%_\\]/g, "");
+    if (q.length < 2) return { claims: [] };
+    const like = "%" + q + "%", sup = user.role === "supervisor";
+    const rows = await all(env, `SELECT c.id, c.client_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.assigned_to, c.last_worked_by,
+        cl.name AS client_name, u.name AS assigned_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.assigned_to
+      WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?)${sup ? scopeSql(user, "c.client_id") : " AND (c.assigned_to = ? OR c.last_worked_by = ?)"}
+      ORDER BY CASE WHEN c.claim_no = ? OR c.account_no = ? THEN 0 ELSE 1 END, CASE WHEN c.state IN ('open','assigned','in_progress') THEN 0 ELSE 1 END, c.balance DESC LIMIT 40`,
+      like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id]), q, q);
+    const ok = rows.filter((c) => leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id).slice(0, 8);
+    return { claims: ok.map(({ assigned_to, last_worked_by, ...c }) => c) };
+  },
+  /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
+  "notify.list": async ({ env, user, payload }) => {
+    const items = [], now = Date.now(), today = isoDate(payload.today) || isoToday(), plural = (n, a, b) => n + " " + (n === 1 ? a : b);
+    const add = (key, tone, n, text, view, params) => { if (n > 0) items.push({ key, tone, n, text, view, params: params || null }); };
+    const ho = await OPS["handoffs.count"]({ env, user });
+    add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the 24-hour TAT` : ""), "handoffs");
+    if (user.role === "supervisor") {
+      const at = await OPS["attention.count"]({ env, user });
+      add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "escalated claim waits", "escalated claims wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over 24 hours` : ""), "attention");
+      add("client_requests", "amber", at.client_to_send, plural(at.client_to_send, "client request", "client requests") + " to send to the client", "attention");
+      const missed = await missedByClient(env, payload);
+      let m = 0; for (const [cid, v] of missed) if (leadFor(user, cid)) m += v.ar + v.posting + v.submission;
+      add("missed", "amber", m, plural(m, "missed task", "missed tasks") + " on your clients (allocated or handed off, not worked)", "raci");
+      const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
+      const outIds = new Set((await all(env, "SELECT user_id FROM attendance WHERE day = ? AND status = 'out'", today)).map((r) => r.user_id));
+      const absent = team.filter((u) => outIds.has(u.id));
+      if (absent.length) {
+        const r = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE state = 'assigned' AND assigned_to IN (${absent.map(() => "?").join(",")})`, ...absent.map((u) => u.id));
+        add("absent", "amber", (r && r.n) || 0, plural((r && r.n) || 0, "claim sits", "claims sit") + " on the desks of people out today", "teamtoday");
+      }
+      const month = closingMonth(today);
+      const mine = (await all(env, "SELECT id, name FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id));
+      if (mine.length) {
+        const done = new Set((await all(env, "SELECT client_id, step FROM client_monthend WHERE month = ? AND done_at IS NOT NULL", month)).map((r) => r.client_id + "\u0001" + r.step));
+        const late = []; for (const c of mine) { const n = MONTHEND_STEPS.filter(([k, , due]) => nthWorkingDayAfter(month, due) < today && !done.has(c.id + "\u0001" + k)).length; if (n) late.push({ c, n }); }
+        const n = late.reduce((t, x) => t + x.n, 0);
+        add("monthend", "amber", n, plural(n, "month-end step", "month-end steps") + ` for ${monthName(month)} past due` + (late.length === 1 ? " at " + late[0].c.name : ` at ${late.length} clients`), "client", late.length ? { client_id: late[0].c.id } : null);
+      }
+    } else {
+      const r = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)", user.id, today);
+      add("queue", "info", (r && r.n) || 0, plural((r && r.n) || 0, "claim", "claims") + " on your list for today", "queue");
+      const since = now - 3 * 86400000;
+      const a = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND escalation_answered_at > ?", user.id, since);
+      add("answers", "amber", (a && a.n) || 0, plural((a && a.n) || 0, "escalation was", "escalations were") + " answered by your team lead in the last 3 days", "queue");
+      const b = await one(env, "SELECT COUNT(*) AS n FROM handoffs WHERE created_by = ? AND status = 'back' AND done_at > ?", user.id, since);
+      add("back", "amber", (b && b.n) || 0, plural((b && b.n) || 0, "hand-off was", "hand-offs were") + " sent back to you by posting / submission in the last 3 days", "queue");
+    }
+    const fb = await OPS["feedback.count"]({ env, user });
+    add("feedback", "info", fb.n, plural(fb.n, "new feedback item", "new feedback items"), "feedback");
+    return { items, at: now };
   },
 
   /* ---- Portfolio (VP and managers): every client in one table, worst first, with capacity and data freshness ---- */

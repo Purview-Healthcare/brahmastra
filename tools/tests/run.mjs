@@ -1,10 +1,10 @@
-/* Runs every API check (suite1..8: roles, hand-offs, spans, RACI, feedback...) and the sweep that calls every
+/* Runs every API check (suite1..9: roles, hand-offs, spans, RACI, feedback...) and the sweep that calls every
    server operation with good and bad input looking for crashes. Exits non-zero if anything fails. */
 import { spawnSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const runs = ["suite1.mjs", "suite2.mjs", "suite3.mjs", "suite4.mjs", "suite5.mjs", "suite6.mjs", "suite7.mjs", "suite8.mjs", "sweep.mjs"];
+const runs = ["suite1.mjs", "suite2.mjs", "suite3.mjs", "suite4.mjs", "suite5.mjs", "suite6.mjs", "suite7.mjs", "suite8.mjs", "suite9.mjs", "sweep.mjs"];
 let failed = 0;
 for (const f of runs) {
   const r = spawnSync(process.execPath, [path.join(here, f)], { cwd: here, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

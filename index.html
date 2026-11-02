@@ -262,7 +262,35 @@ tr.tat-missed td{background:var(--red-soft)}tr.tat-missed td:first-child{box-sha
 .coach-days{position:relative;display:flex;gap:3px;align-items:flex-end;height:110px;padding-top:4px;border-bottom:1px solid var(--line)}
 .coach-days>div{flex:1;height:100%;display:flex;align-items:flex-end}.coach-days i{display:block;width:100%;border-radius:3px 3px 0 0}
 .coach-target{position:absolute;left:0;right:0;border-top:1.5px dashed var(--slate);opacity:.6}
+.top-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
+.cmdk-btn{display:inline-flex;align-items:center;gap:8px;color:var(--slate);min-width:150px}.cmdk-btn .cmdk-lbl{flex:1;text-align:left}
+kbd{font:600 11px/1 inherit;font-family:inherit;padding:3px 6px;border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;background:var(--chipbg);color:var(--slate);white-space:nowrap}
+.icon-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;padding:6px 9px;color:var(--slate)}.icon-btn.on{background:var(--soft);color:var(--tealink)}
+.bell-n{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#E8A13C;color:#fff;font:700 11px/18px inherit;font-family:inherit;text-align:center;border:2px solid var(--card)}.bell-n.red{background:#C94F4F}
+.bell-menu{width:360px;max-width:calc(100vw - 24px)}
+.bell-item{display:flex !important;gap:10px;align-items:flex-start;width:100%;text-align:left;padding:9px 10px !important;border:0;background:transparent;border-radius:8px;font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
+.bell-item:hover{background:var(--hover)}.bell-item>i{flex:none;width:8px;height:8px;border-radius:50%;margin-top:5px}
+.cmdk-overlay{padding-top:12vh}
+.cmdk{width:100%;max-width:640px;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.3);overflow:hidden}
+.cmdk-in{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);color:var(--slate)}
+.cmdk-in input{flex:1;border:0;outline:0;background:transparent;font:inherit;font-size:16px;color:var(--ink);min-width:0}
+.cmdk-list{max-height:min(420px,55vh);overflow:auto;padding:6px}
+.cmdk-h{padding:8px 10px 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--slate)}
+.cmdk-item{display:block;width:100%;text-align:left;padding:9px 10px;border:0;background:transparent;border-radius:8px;font:inherit;font-size:14px;color:var(--ink);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmdk-item.on{background:var(--soft);box-shadow:inset 3px 0 0 var(--teal)}
+.cmdk-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 16px;border-top:1px solid var(--line)}
+.idle-warn{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:80;background:var(--ink);color:var(--card);padding:12px 18px;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.3);font-size:14px;max-width:calc(100vw - 32px)}
 .fb-tab{position:fixed;right:0;top:44%;z-index:40;writing-mode:vertical-rl;transform:rotate(180deg);background:var(--teal);color:#fff;border:0;border-radius:0 10px 10px 0;padding:14px 8px;font:600 12.5px/1 Inter,system-ui,sans-serif;letter-spacing:.05em;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.18);opacity:.92}
+@media(max-width:760px){
+.topbar-in{padding:8px 12px;gap:8px 10px}.topbar-in>.nav{order:3;flex:1 1 100% !important;gap:0;margin:0 -4px}
+.nav button{padding:7px 9px;font-size:13px}.nav .menu{position:fixed;left:12px;right:12px;top:auto;min-width:0}
+.top-tools{gap:6px}.cmdk-btn{min-width:0}.cmdk-btn .cmdk-lbl,.cmdk-btn kbd{display:none}.me-name{display:inline-block;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+.main{padding:16px 12px 70px}.modal{padding:16px 14px}.overlay{padding:12px 8px}
+.table-wrap>table.t{min-width:720px}.card,.stack>*{min-width:0}
+.fb-tab{top:auto;bottom:90px;padding:10px 6px;font-size:11px}
+.row.between{flex-wrap:wrap;gap:10px}h1{font-size:22px}
+.cmdk-overlay{padding-top:8px}.cmdk-foot span:last-child{display:none}
+}
 .fb-tab:hover{opacity:1;padding-left:11px}
 .fb-files{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .fb-file{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card2);height:104px;display:flex;align-items:center;justify-content:center}
@@ -332,4 +360,4 @@ html[data-text="large"] body{zoom:1.1}
 .seg2 button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 </style>
 </head><body><div id="root"></div>
-<script src="app/app.js?v=655a8ed7a7"></script></body></html>
+<script src="app/app.js?v=7c8b03be76"></script></body></html>

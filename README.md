@@ -198,6 +198,22 @@ pace this shift against their target spread over the shift from the roster, clai
   that payer (or the client when the payer is new); one click fills status, sub-status, action, bucket and the
   note action.
 
+#### Search, the bell, phones, signing out
+
+- **Search** (top right, or **Ctrl+K** / **Cmd+K** anywhere): type part of a page name, a client (opens its
+  Client 360), a biller (opens their coaching card), or a claim number, account number or patient name. Arrow keys
+  and Enter, Esc to close. Team leads find claims on the clients they lead; billers find only claims on their list
+  or that they worked.
+- **The bell** lists what needs you now, each line opening the page that deals with it. Team leads: escalations
+  (red after 24 hours), client requests to send, missed tasks, claims on the desks of people out today, month-end
+  steps past due, hand-offs on their desk. Billers: their list for today, escalations their team lead answered
+  and hand-offs sent back to them in the last 3 days. Feedback readers: new feedback. It refreshes every 2 minutes
+  and on every page change; the number counts what is new since you last opened it.
+- **Phones**: every page fits a phone screen; the menu sits under the logo and wide tables scroll sideways.
+- **Signing out when idle**: after 30 minutes without a key, click, scroll or touch in any Brahmastra tab (working
+  inside the embedded Sasha's Third Eye or SLA page counts), a 2-minute warning shows, then the person is signed
+  out to keep patient data safe.
+
 #### Feedback
 
 Every page has a **Feedback** tab on the right edge. Anyone signed in (billers too) picks what it is

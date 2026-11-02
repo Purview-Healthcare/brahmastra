@@ -31,6 +31,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Browser checks (every page, every role)
         run: node browser/crawl.cjs
+      - name: Browser checks (search, bell, phone layout, idle sign-out)
+        run: node browser/shell.cjs
       - name: Keep the browser results
         if: failure()
         uses: actions/upload-artifact@v4
