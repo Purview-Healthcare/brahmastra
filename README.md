@@ -362,7 +362,7 @@ and **Brahmastra draws their tabs in its own tab row** (Drishti: Overview, Clien
 Production, Agent Quality...). A click there opens that tab inside the app (a `brahmastra:hello` /
 `embed:tabs` / `brahmastra:go` message handshake). Opened on their own addresses, both apps look and work
 exactly as before. Both have their own tabs, first in the bar: **SLA** (the Drishti scorecard) and
-**Sasha's Third Eye** (a switch between Quality & production and Client reports; Posting and Submission
+**Sasha's Third Eye** (a switch between Internal reports and Client reports; Posting and Submission
 leads get Quality only, for their own work). My day & reports holds the team's work: team allocations,
 every entry and your own desk.
 
@@ -371,7 +371,7 @@ Team leads and above get a side menu in **My day & reports**, grouped by who the
 | Group | Page | What it is |
 |---|---|---|
 | Internal | Team work | the day list and the team's notes (Brahmastra) |
-| Internal | Quality & production | Sasha's Third Eye, Internal Reporting. **Load production** puts Brahmastra's entries and the roster straight in |
+| Internal | Internal reports | Sasha's Third Eye, Internal Reporting. **Load production** puts Brahmastra's entries and the roster straight in |
 | For clients | Client reports | Third Eye's Client Reporting. **Fill from Brahmastra** puts today's AR inventory and the month's AR, submission and posting production in its boxes |
 | For clients | SLA scorecard | Drishti, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
 
