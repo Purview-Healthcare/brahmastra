@@ -156,6 +156,12 @@ and **I**nformed. Until a row is saved it is filled from the roster. Team leads
 and managers edit the rows of their own clients (SMEs read); Informed holds at
 most two people and the VP is always the first, which cannot be removed.
 
+Each row also counts **missed tasks**, with the claims (patient, who, due,
+late by) one click away: **AR** = claims allocated before today and still not
+worked by the biller; **Posting** and **Submission** (with rechecks and
+rejections) = hand-offs past their 24-hour TAT, still open or finished late
+in the last 30 days.
+
 #### Payment Posting, Submission and Rejections
 
 A biller's SAAG action sends a claim to the person set on the client (Clients &

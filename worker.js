@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.38.0";
+const VERSION = "2.39.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1461,8 +1461,17 @@ const OPS = {
 
   /* ---- RACI tracker: who is Responsible, Accountable, Consulted and Informed on each client.
      Everyone from SME up can read it; team leads and up edit it; the VP is always informed. ---- */
-  "raci.list": async ({ env, user }) => {
+  "raci.list": async ({ env, user, payload }) => {
     const clients = (await all(env, "SELECT id, name, team_json, roster_names_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id));
+    // Missed tasks per client: AR = allocated before today and still not worked; posting / submission = past the
+    // 24-hour TAT (still open) or finished late in the last 30 days.
+    const now = Date.now(), since = now - 30 * 86400000;
+    const dayStart = (() => { const t = isoDate(payload.today); const off = Math.round(num(payload.tz_offset_min, 0)); return t ? Date.parse(t + "T00:00:00Z") - off * 60000 : now - (now % 86400000); })();
+    const arMiss = new Map((await all(env, `SELECT client_id, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_at IS NOT NULL AND assigned_at < ? GROUP BY client_id`, dayStart)).map((r) => [r.client_id, r.n]));
+    const hoMiss = await all(env, `SELECT client_id, CASE WHEN dept = 'posting' THEN 'posting' ELSE 'submission' END AS grp, COUNT(*) AS n FROM handoffs
+      WHERE ((status IN ('pending','assigned','client') AND due_at < ?) OR (done_at IS NOT NULL AND done_at > due_at AND done_at >= ?)) GROUP BY client_id, grp`, now, since);
+    const poMiss = new Map(hoMiss.filter((r) => r.grp === "posting").map((r) => [r.client_id, r.n]));
+    const suMiss = new Map(hoMiss.filter((r) => r.grp === "submission").map((r) => [r.client_id, r.n]));
     const saved = new Map((await all(env, "SELECT * FROM raci")).map((r) => [r.client_id, r]));
     const users = await all(env, "SELECT id, name, role, roster_kind, designation, department, projects_json, scope_projects_json, access_all FROM users WHERE active = 1");
     const vpRow = users.find((u) => u.access_all) || null;
@@ -1480,11 +1489,31 @@ const OPS = {
       let i = sv ? jsonList(sv.i_json) : [];
       if (vpRow) i = [person(vpRow), ...i.filter((x) => x.id !== vpRow.id)];
       return { client_id: c.id, client: c.name, r, a, c: cn, i: i.slice(0, 2), saved: !!sv,
+        missed: { ar: arMiss.get(c.id) || 0, posting: poMiss.get(c.id) || 0, submission: suMiss.get(c.id) || 0 },
         updated_at: sv ? sv.updated_at : null, updated_by_name: sv ? sv.updated_by_name : "",
         can_edit: user.role === "supervisor" && !isSME(user) && canEditClient(user, c.id) };
     });
     return { rows, vp: vpRow ? person(vpRow) : null,
       people: users.map((u) => ({ id: u.id, name: u.name, designation: u.designation || (u.role === "user" ? "Biller" : "Supervisor"), department: u.department || "" })) };
+  },
+  /* The claims behind one missed-task count, for the drop-down with patient names. */
+  "raci.missed": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (!inScope(user, clientId)) throw outOfScope();
+    const kind = ["ar", "posting", "submission"].includes(payload.kind) ? payload.kind : "ar";
+    const now = Date.now(), since = now - 30 * 86400000;
+    const dayStart = (() => { const t = isoDate(payload.today); const off = Math.round(num(payload.tz_offset_min, 0)); return t ? Date.parse(t + "T00:00:00Z") - off * 60000 : now - (now % 86400000); })();
+    if (kind === "ar") {
+      const rows = await all(env, `SELECT c.id, c.claim_no, c.patient, c.payer, c.balance, c.state, c.assigned_at, u.name AS who FROM claims c LEFT JOIN users u ON u.id = c.assigned_to
+        WHERE c.client_id = ? AND c.state IN ('assigned','in_progress') AND c.assigned_at IS NOT NULL AND c.assigned_at < ? ORDER BY c.assigned_at LIMIT 200`, clientId, dayStart);
+      return { kind, rows };
+    }
+    const depts = kind === "posting" ? "('posting')" : "('submission','subcheck','rejection')";
+    const rows = await all(env, `SELECT h.id, h.dept, h.status, h.due_at, h.done_at, c.claim_no, c.patient, c.payer, c.balance, COALESCE(a.name, l.name, '') AS who
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users a ON a.id = h.assigned_to LEFT JOIN users l ON l.id = h.lead_id
+      WHERE h.client_id = ? AND h.dept IN ${depts} AND ((h.status IN ('pending','assigned','client') AND h.due_at < ?) OR (h.done_at IS NOT NULL AND h.done_at > h.due_at AND h.done_at >= ?))
+      ORDER BY COALESCE(h.done_at, h.due_at) DESC LIMIT 200`, clientId, now, since);
+    return { kind, rows };
   },
   "raci.save": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
