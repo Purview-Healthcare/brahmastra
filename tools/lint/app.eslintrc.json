@@ -1,0 +1,4 @@
+{"root":true,"env":{"browser":true,"es2022":true},"parserOptions":{"ecmaVersion":2022,"sourceType":"script","ecmaFeatures":{"jsx":true}},
+ "plugins":["react","react-hooks"],"settings":{"react":{"version":"18.2"}},
+ "globals":{"React":"readonly","ReactDOM":"readonly","XLSX":"readonly","msal":"readonly","initSqlJs":"readonly"},
+ "rules":{"no-undef":"error","react/jsx-no-undef":"error","react/jsx-uses-vars":"error","react/jsx-uses-react":"error","react-hooks/rules-of-hooks":"error","no-dupe-keys":"error","no-unreachable":"warn","no-redeclare":"error","no-unused-vars":["warn",{"args":"none","varsIgnorePattern":"^_"}],"react/jsx-key":"warn","no-self-assign":"error","no-dupe-else-if":"error","no-unsafe-negation":"error","no-cond-assign":"warn","no-constant-condition":"warn","use-isnan":"error","valid-typeof":"error","no-sparse-arrays":"warn","react/no-unknown-property":"warn","react/jsx-no-duplicate-props":"error"}}

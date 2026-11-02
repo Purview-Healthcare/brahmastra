@@ -1,0 +1,40 @@
+# Runs on every push and pull request: the build is current, lint, every API check (roles, hand-offs, spans,
+# RACI, feedback...) plus a sweep of every server operation, and a browser pass over every page for every kind of
+# user. A red check means something would break for people; fix it before merging to main.
+name: Checks
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: tools
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+      - run: npm ci
+      - name: Build is up to date (app/app.js from app/app.jsx)
+        run: node build.mjs --check
+      - name: Lint
+        run: npm run lint
+      - name: API checks and operation sweep
+        run: node tests/run.mjs
+      - name: Install the browser
+        run: npx playwright install --with-deps chromium
+      - name: Browser checks (every page, every role)
+        run: node browser/crawl.cjs
+      - name: Keep the browser results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-results
+          path: tools/test-results
+          if-no-files-found: ignore

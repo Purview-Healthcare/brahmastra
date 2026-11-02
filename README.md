@@ -14,7 +14,10 @@ hours, and can be exported as one cell per note.
 
 | File | What it is |
 |---|---|
-| `index.html` | The whole app (React, loaded from CDNs). Host it anywhere static: GitHub Pages, Cloudflare Pages. |
+| `index.html` | The page: settings, styles, and the script tags. Host it anywhere static: GitHub Pages, Cloudflare Pages. |
+| `app/app.jsx` | The app's code (React with JSX). **Edit this**, then run `node tools/build.mjs`. |
+| `app/app.js` | Built from `app/app.jsx` by `tools/build.mjs`; what browsers load, so they no longer compile the app on every visit. Never edit it by hand. |
+| `tools/` | The build and the checks (`npm run check` there): build up to date, lint, the API checks in `tools/tests`, and a browser pass over every page for every role in `tools/browser`. They run on GitHub for every push (`.github/workflows/checks.yml`). |
 | `worker.js` | The API: a Cloudflare Worker on a D1 (SQLite) database. One file, no build step. |
 | `lib/saag.js` | The SAAG matrix (8 statuses, 96 sub-statuses, 50 actions, their Effective Matrix), generated from the SAAG Claim Entry Tool workbook. |
 | `lib/denial-library.js` | The denial library from Purview Gurukul (72 denial scenarios: meaning, questions for the payer, next steps). Drives the "Suggested next steps" panel. |
@@ -619,8 +622,21 @@ including the last SAAG entry per claim.
 
 ## Development on this PC
 
-No Node, no build. `dev/serve.ps1` serves the folder on
-http://localhost:8787 and `.claude/launch.json` lets Claude Code start it.
-Edit `index.html` and refresh. The Worker runs in the page in demo mode, so
-changes to `worker.js` are tested the same way; the production Worker is the
-same file.
+`dev/serve.ps1` serves the folder on http://localhost:8787 and
+`.claude/launch.json` lets Claude Code start it. The Worker runs in the page in
+demo mode, so changes to `worker.js` are tested the same way; the production
+Worker is the same file.
+
+The app's code is `app/app.jsx`. After changing it, build once (Node 20+):
+
+```
+cd tools
+npm install          # once
+node build.mjs       # writes app/app.js and stamps index.html with its version
+npm run check        # build current, lint, API checks, every page for every role
+```
+
+Commit `app/app.jsx`, `app/app.js` and `index.html` together. GitHub runs the
+same checks on every push (Actions › Checks); a red check means something would
+break for people. The browser pass needs Chromium: `npx playwright install
+chromium` once (or set `CHROME_PATH` to an installed Chrome).

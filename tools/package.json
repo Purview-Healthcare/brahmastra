@@ -1,0 +1,26 @@
+{
+  "name": "brahmastra-tools",
+  "private": true,
+  "type": "module",
+  "description": "Build and checks for Brahmastra. Not deployed: the site is the repository's static files, the API is worker.js.",
+  "scripts": {
+    "build": "node build.mjs",
+    "check:build": "node build.mjs --check",
+    "test:api": "node tests/run.mjs",
+    "test:browser": "node browser/crawl.cjs",
+    "check": "node build.mjs --check && npm run lint && node tests/run.mjs && node browser/crawl.cjs",
+    "lint": "eslint --no-eslintrc -c lint/app.eslintrc.json ../app/app.jsx && eslint --no-eslintrc -c lint/worker.eslintrc.json ../worker.js"
+  },
+  "dependencies": {
+    "@babel/standalone": "7.23.6",
+    "html2canvas": "1.4.1",
+    "playwright": "1.48.2",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "sql.js": "1.15.0",
+    "xlsx": "0.18.5",
+    "eslint": "8.57.0",
+    "eslint-plugin-react": "7.34.1",
+    "eslint-plugin-react-hooks": "4.6.2"
+  }
+}

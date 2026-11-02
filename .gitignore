@@ -9,3 +9,11 @@ shared-data.json
 build/
 .wrangler/
 node_modules/
+
+# build and test tooling
+tools/node_modules/
+tools/test-results/
+demo-test.html
+worker-test.js
+app/app-test.js
+tools/tests/.worker.mjs
