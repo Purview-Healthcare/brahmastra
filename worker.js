@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.37.0";
+const VERSION = "2.38.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -100,6 +100,10 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS payer_limits (client_id TEXT NOT NULL, payer_key TEXT NOT NULL, payer TEXT NOT NULL DEFAULT '', tfl_days INTEGER, afl_days INTEGER,
      note TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL, updated_by TEXT, updated_by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (client_id, payer_key))`,
   `CREATE TABLE IF NOT EXISTS availability (client_id TEXT NOT NULL, day TEXT NOT NULL, on_json TEXT NOT NULL DEFAULT '[]', by_user TEXT, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
+  `CREATE TABLE IF NOT EXISTS client_access (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, user_id TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'view',
+     granted_by TEXT, granted_by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, UNIQUE (client_id, user_id))`,
+  `CREATE TABLE IF NOT EXISTS raci (client_id TEXT PRIMARY KEY, r_json TEXT NOT NULL DEFAULT '[]', a_json TEXT NOT NULL DEFAULT '[]', c_json TEXT NOT NULL DEFAULT '[]',
+     i_json TEXT NOT NULL DEFAULT '[]', updated_at INTEGER, updated_by TEXT, updated_by_name TEXT NOT NULL DEFAULT '')`,
 ];
 
 /* Columns added after the first release. ensureReady() adds any that an
@@ -830,11 +834,23 @@ async function scopeOf(env, user) {
   if (user.role !== "supervisor" || user.is_admin || user.access_all || user.source !== "roster") return null;
   const names = new Set(user.scope_projects.map(projKey));
   const clients = await all(env, "SELECT id, roster_names_json FROM clients");
-  return clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id);
+  const own = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id);
+  // Clients shared person-to-person (Clients & locations, Shared with): they add to what this person sees; a "view" share cannot be changed.
+  const grants = await all(env, "SELECT client_id, level FROM client_access WHERE user_id = ?", user.id);
+  user.scope_view_only = new Set(grants.filter((g) => g.level !== "edit" && !own.includes(g.client_id)).map((g) => g.client_id));
+  return [...new Set([...own, ...grants.map((g) => g.client_id)])];
 }
 const projKey = (n) => String(n || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const inScope = (user, clientId) => !user.scope || user.scope.includes(clientId);
-const leadFor = (user, clientId) => user.role === "supervisor" && inScope(user, clientId);
+const canEditClient = (user, clientId) => inScope(user, clientId) && !(user.scope_view_only && user.scope_view_only.has(clientId));
+const leadFor = (user, clientId) => user.role === "supervisor" && canEditClient(user, clientId);
+const viewOnly = () => denied("This client is shared with you view-only: you can look, not change it.");
+const editableOr = (user, clientId) => { if (!inScope(user, clientId)) throw outOfScope(); if (!canEditClient(user, clientId)) throw viewOnly(); };
+// The clients someone may change: their scope minus the view-only shares (null means everything).
+const editScope = (user) => (!user || !user.scope ? null : (user.scope_view_only && user.scope_view_only.size ? user.scope.filter((id) => !user.scope_view_only.has(id)) : user.scope));
+const editScopeSql = (user, col) => { const sc = editScope(user); return sc == null ? "" : ` AND ${col} IN (${sc.length ? sc.map(() => "?").join(",") : "NULL"})`; };
+const editScopeArgs = (user) => editScope(user) || [];
+const isSME = (u) => u && u.source === "roster" && /\bsme\b|subject matter/i.test(String(u.designation || ""));
 // " AND col IN (...)" for a scoped team lead, "" otherwise; scopeArgs gives the matching parameters.
 const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`);
 const scopeArgs = (user) => (user && user.scope) || [];
@@ -848,6 +864,8 @@ async function visibleUsers(env, user) {
   for (let grew = true; grew;) { grew = false; for (const u of users) if (u.reports_to && below.has(u.reports_to) && !below.has(u.id)) { below.add(u.id); grew = true; } }
   const teams = new Set();
   for (const c of await all(env, "SELECT team_json FROM clients WHERE id IN (" + (user.scope.length ? user.scope.map(() => "?").join(",") : "NULL") + ")", ...user.scope)) parseTeam(c.team_json).forEach((id) => teams.add(id));
+  // People a client was shared with count as on it, so crossover billers can be picked and allocated.
+  if (user.scope.length) for (const g of await all(env, `SELECT user_id FROM client_access WHERE client_id IN (${user.scope.map(() => "?").join(",")})`, ...user.scope)) teams.add(g.user_id);
   return users.filter((u) => below.has(u.id) || teams.has(u.id) || jsonList(u.projects_json).some((p) => names.has(projKey(p.name))));
 }
 
@@ -1082,8 +1100,9 @@ function userDesk(user) {
 }
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
+const EDIT_OPS = /^(clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
 const OPS = {
@@ -1376,9 +1395,12 @@ const OPS = {
   "clients.list": async ({ env, user }) => {
     const clients = (await all(env, "SELECT * FROM clients ORDER BY active DESC, name")).filter((c) => inScope(user, c.id));
     const locs = await all(env, "SELECT * FROM locations ORDER BY active DESC, name");
+    const access = user.role === "supervisor" ? await all(env, "SELECT a.client_id, a.user_id, a.level, a.at, a.granted_by_name, u.name, u.designation, u.department, u.active FROM client_access a JOIN users u ON u.id = a.user_id ORDER BY u.name") : [];
     const shape = (r) => { const { team_json, roster_names_json, caps_json, ...rest } = r; return { ...rest, active: !!r.active, auto_allocate: r.auto_allocate == null ? true : !!r.auto_allocate, team: parseTeam(team_json),
       ...(roster_names_json !== undefined ? { roster_names: jsonList(roster_names_json), caps: jsonObj(caps_json) } : {}) }; };
-    return { clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape) })) };
+    return { clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
+      can_edit: user.role === "supervisor" && canEditClient(user, c.id),
+      access: access.filter((a) => a.client_id === c.id).map((a) => ({ user_id: a.user_id, name: a.name, designation: a.designation || "", department: a.department || "", active: !!a.active, level: a.level, granted_by_name: a.granted_by_name, at: a.at })) })) };
   },
   /* Billers mapped to a client (used when a location has no team of its own) or to a location. */
   /* Payment posting / submission responsibility on the client profile. */
@@ -1388,7 +1410,7 @@ const OPS = {
     const [mcol, lcol, bcol] = RESP_COLS[dept];
     const c = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!c) throw bad("Unknown client.");
-    if (!inScope(user, c.id)) throw outOfScope();
+    editableOr(user, c.id);
     const mode = ["person", "client", "biller", ""].includes(payload.mode) ? payload.mode : "";
     const lead = mode === "person" ? str(payload.lead, 60) || null : null, backup = mode === "person" && bcol ? str(payload.backup, 60) || null : null;
     if (mode === "person" && !lead) throw bad("Pick the person responsible.");
@@ -1400,12 +1422,95 @@ const OPS = {
     if (mode === "person" && dept === "subcheck") await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned')", lead, lead, c.id);
     return { ok: true };
   },
+  /* Every active person, name and designation only: for pickers that must reach outside the caller's own span (shares, RACI). */
+  "users.directory": async ({ env }) => ({ people: (await all(env, "SELECT id, name, designation, department, role FROM users WHERE active = 1 ORDER BY name")).map((u) => ({
+    id: u.id, name: u.name, designation: u.designation || (u.role === "user" ? "Biller" : "Supervisor"), department: u.department || "" })) }),
+
+  /* ---- crossover access: share one client with a person outside its span ---- */
+  "clients.accessList": async ({ env, user, payload }) => {
+    const clientId = payload.client_id ? str(payload.client_id, 60) : "";
+    const userId = payload.user_id ? str(payload.user_id, 60) : "";
+    if (!clientId && !userId) throw bad("Pick a client or a person.");
+    if (clientId && !inScope(user, clientId)) throw outOfScope();
+    const rows = await all(env, `SELECT a.*, u.name, u.designation, u.department, u.active, c.name AS client_name FROM client_access a JOIN users u ON u.id = a.user_id JOIN clients c ON c.id = a.client_id
+      WHERE ${clientId ? "a.client_id = ?" : "a.user_id = ?"} ORDER BY c.name, u.name`, clientId || userId);
+    return { rows: rows.filter((r) => inScope(user, r.client_id)).map((r) => ({ client_id: r.client_id, client_name: r.client_name, user_id: r.user_id, name: r.name,
+      designation: r.designation || "", department: r.department || "", active: !!r.active, level: r.level, granted_by_name: r.granted_by_name, at: r.at })) };
+  },
+  "clients.accessSave": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60), targetId = str(payload.user_id, 60);
+    const level = payload.level === "edit" ? "edit" : "view";
+    editableOr(user, clientId);
+    if (isSME(user)) throw denied("Sharing a client is for team leads and up. Ask your team lead.");
+    if (!(await one(env, "SELECT id FROM clients WHERE id = ?", clientId))) throw bad("Unknown client.");
+    const t = await one(env, "SELECT id, name, role, access_all FROM users WHERE id = ? AND active = 1", targetId);
+    if (!t) throw bad("Pick an active person.");
+    if (t.role === "admin" || t.access_all) throw bad(t.name + " already sees every client.");
+    if (t.id === user.id) throw bad("You have this client already.");
+    await run(env, `INSERT INTO client_access (id, client_id, user_id, level, granted_by, granted_by_name, at) VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT (client_id, user_id) DO UPDATE SET level = excluded.level, granted_by = excluded.granted_by, granted_by_name = excluded.granted_by_name, at = excluded.at`,
+      uuid(), clientId, t.id, level, user.id, user.name, Date.now());
+    return { ok: true };
+  },
+  "clients.accessRemove": async ({ env, user, payload }) => {
+    editableOr(user, str(payload.client_id, 60));
+    if (isSME(user)) throw denied("Sharing a client is for team leads and up. Ask your team lead.");
+    await run(env, "DELETE FROM client_access WHERE client_id = ? AND user_id = ?", str(payload.client_id, 60), str(payload.user_id, 60));
+    return { ok: true };
+  },
+
+  /* ---- RACI tracker: who is Responsible, Accountable, Consulted and Informed on each client.
+     Everyone from SME up can read it; team leads and up edit it; the VP is always informed. ---- */
+  "raci.list": async ({ env, user }) => {
+    const clients = (await all(env, "SELECT id, name, team_json, roster_names_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id));
+    const saved = new Map((await all(env, "SELECT * FROM raci")).map((r) => [r.client_id, r]));
+    const users = await all(env, "SELECT id, name, role, roster_kind, designation, department, projects_json, scope_projects_json, access_all FROM users WHERE active = 1");
+    const vpRow = users.find((u) => u.access_all) || null;
+    const person = (u) => ({ id: u.id, name: u.name });
+    const tlRe = /\b(sr\.? )?tl\b|team lead/i;
+    const rows = clients.map((c) => {
+      const names = new Set(jsonList(c.roster_names_json).map(projKey));
+      const onClient = (u) => jsonList(u.projects_json).some((p) => names.has(projKey(p && p.name != null ? p.name : p)));
+      const team = new Set(parseTeam(c.team_json));
+      const sv = saved.get(c.id);
+      // Until someone saves a row, it is filled from the roster: billers on the client, their team leads, their manager, the VP.
+      const r = sv ? jsonList(sv.r_json) : users.filter((u) => u.role === "user" && (team.has(u.id) || onClient(u))).slice(0, 10).map(person);
+      const a = sv ? jsonList(sv.a_json) : users.filter((u) => u.role !== "user" && u.roster_kind === "lead" && tlRe.test(u.designation || "") && onClient(u)).slice(0, 5).map(person);
+      const cn = sv ? jsonList(sv.c_json) : users.filter((u) => u.roster_kind === "manager" && jsonList(u.scope_projects_json).some((n) => names.has(projKey(n)))).slice(0, 5).map(person);
+      let i = sv ? jsonList(sv.i_json) : [];
+      if (vpRow) i = [person(vpRow), ...i.filter((x) => x.id !== vpRow.id)];
+      return { client_id: c.id, client: c.name, r, a, c: cn, i: i.slice(0, 2), saved: !!sv,
+        updated_at: sv ? sv.updated_at : null, updated_by_name: sv ? sv.updated_by_name : "",
+        can_edit: user.role === "supervisor" && !isSME(user) && canEditClient(user, c.id) };
+    });
+    return { rows, vp: vpRow ? person(vpRow) : null,
+      people: users.map((u) => ({ id: u.id, name: u.name, designation: u.designation || (u.role === "user" ? "Biller" : "Supervisor"), department: u.department || "" })) };
+  },
+  "raci.save": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    editableOr(user, clientId);
+    if (isSME(user)) throw denied("The RACI is edited by team leads and up; you can read it.");
+    if (!(await one(env, "SELECT id FROM clients WHERE id = ?", clientId))) throw bad("Unknown client.");
+    const users = new Map((await all(env, "SELECT id, name, access_all FROM users WHERE active = 1")).map((u) => [u.id, u]));
+    const clean = (v, cap) => [...new Set((Array.isArray(v) ? v : []).map((x) => str(x && x.id != null ? x.id : x, 60)).filter((id) => users.has(id)))].slice(0, cap).map((id) => ({ id, name: users.get(id).name }));
+    const r = clean(payload.r, 10), a = clean(payload.a, 5), cn = clean(payload.c, 5);
+    // Informed holds at most two people, and the VP is always the first.
+    const vp = [...users.values()].find((u) => u.access_all) || null;
+    let i = clean(payload.i, 3);
+    if (vp) i = [{ id: vp.id, name: vp.name }, ...i.filter((x) => x.id !== vp.id)];
+    i = i.slice(0, 2);
+    await run(env, `INSERT INTO raci (client_id, r_json, a_json, c_json, i_json, updated_at, updated_by, updated_by_name) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT (client_id) DO UPDATE SET r_json = excluded.r_json, a_json = excluded.a_json, c_json = excluded.c_json, i_json = excluded.i_json,
+        updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_name = excluded.updated_by_name`,
+      clientId, JSON.stringify(r), JSON.stringify(a), JSON.stringify(cn), JSON.stringify(i), Date.now(), user.id, user.name);
+    return { row: { client_id: clientId, r, a, c: cn, i } };
+  },
   "clients.saveTeam": async ({ env, user, payload }) => {
     const table = payload.location_id ? "locations" : "clients";
     const id = str(payload.location_id || payload.client_id, 60);
     const ex = await one(env, `SELECT id, ${payload.location_id ? "client_id" : "id AS client_id"} FROM ${table} WHERE id = ?`, id);
     if (!ex) throw bad("Unknown " + (payload.location_id ? "location" : "client") + ".");
-    if (!inScope(user, ex.client_id)) throw outOfScope();
+    editableOr(user, ex.client_id);
     const ids = [...new Set((Array.isArray(payload.team) ? payload.team : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
     const valid = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
     const team = ids.filter((x) => valid.includes(x));
@@ -1423,7 +1528,7 @@ const OPS = {
     if (payload.id) {
       const ex = await one(env, "SELECT id FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
-      if (!inScope(user, ex.id)) throw outOfScope();
+      editableOr(user, ex.id);
       await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);
       return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active, workbook_link: link } };
     }
@@ -1460,7 +1565,7 @@ const OPS = {
     if (payload.id) {
       const ex = await one(env, "SELECT id, client_id FROM locations WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown location.");
-      if (!inScope(user, ex.client_id)) throw outOfScope();
+      editableOr(user, ex.client_id);
       await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
       return { location: { id: ex.id, client_id: ex.client_id, name, active: !!active, workbook_link: link } };
     }
@@ -1661,7 +1766,7 @@ const OPS = {
   "inventory.undoBatch": async ({ env, user, payload }) => {
     const b = await one(env, "SELECT * FROM batches WHERE id = ?", payload.batch_id);
     if (!b) throw bad("Unknown batch.");
-    if (!inScope(user, b.client_id)) throw outOfScope();
+    editableOr(user, b.client_id);
     if (b.undone_at) throw bad("This batch was already undone.");
     const r = await run(env, "DELETE FROM claims WHERE first_batch_id = ? AND touches = 0 AND state <> 'in_progress' AND id NOT IN (SELECT claim_id FROM attachments)", b.id);
     await run(env, "UPDATE batches SET undone_at = ? WHERE id = ?", Date.now(), b.id);
@@ -1858,7 +1963,7 @@ const OPS = {
     const now = Date.now();
     let changed = 0;
     for (const part of chunks(ids, 80)) {
-      const rows = await all(env, `SELECT id, priority, priority_base, priority_set, priority_reason FROM claims WHERE id IN (${part.map(() => "?").join(",")})${scopeSql(user, "client_id")}`, ...part, ...scopeArgs(user));
+      const rows = await all(env, `SELECT id, priority, priority_base, priority_set, priority_reason FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const stmts = [];
       for (const r of rows) {
         const base = r.priority_set ? (r.priority_base != null ? r.priority_base : r.priority) : r.priority;
@@ -1890,11 +1995,11 @@ const OPS = {
     const reason = str(payload.reason, 200) || (state === "open" ? "Reopened by supervisor" : (state === "closed" ? "Closed by supervisor" : "Excluded by supervisor"));
     const now = Date.now();
     let changed = 0;
-    for (const part of chunks(ids, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${scopeSql(user, "client_id")}`, ...part, ...scopeArgs(user));
+    for (const part of chunks(ids, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
     for (const chunk of chunks(ids, 60)) {
       const r = await run(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
-        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${scopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...scopeArgs(user));
+        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
       changed += changesOf(r);
     }
     return { changed };
@@ -1938,11 +2043,11 @@ const OPS = {
     const now = Date.now();
     let changed = 0;
     const evs = [];
-    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${scopeSql(user, "c.client_id")}`, ...part, ...scopeArgs(user)))
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user)))
       evs.push(claimEvent(env, r.id, user, "assigned", u.name, { from: r.prev || "", via: "reassign" }));
     for (const chunk of chunks(ids, 60)) {
       const r = await run(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
-        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${scopeSql(user, "client_id")}`, u.id, now, now, ...chunk, ...scopeArgs(user));
+        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${editScopeSql(user, "client_id")}`, u.id, now, now, ...chunk, ...editScopeArgs(user));
       changed += changesOf(r);
     }
     if (evs.length) await batchAll(env, evs, 50);
@@ -1950,12 +2055,12 @@ const OPS = {
   },
   "alloc.unassign": async ({ env, user, payload }) => {
     const now = Date.now();
-    const logOff = async (where, args) => { const rows = await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE ${where}${scopeSql(user, "c.client_id")}`, ...args, ...scopeArgs(user)); if (rows.length) await batchAll(env, rows.map((r) => claimEvent(env, r.id, user, "unassigned", r.prev || "")), 50); };
+    const logOff = async (where, args) => { const rows = await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE ${where}${editScopeSql(user, "c.client_id")}`, ...args, ...editScopeArgs(user)); if (rows.length) await batchAll(env, rows.map((r) => claimEvent(env, r.id, user, "unassigned", r.prev || "")), 50); };
     if (payload.user_id) {
       const where = ["assigned_to = ?", "state IN ('assigned','in_progress')"], params = [str(payload.user_id, 60)];
       if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
       await logOff(where.map((w) => "c." + w).join(" AND "), params);
-      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE ${where.join(" AND ")}${scopeSql(user, "client_id")}`, now, ...params, ...scopeArgs(user));
+      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE ${where.join(" AND ")}${editScopeSql(user, "client_id")}`, now, ...params, ...editScopeArgs(user));
       return { changed: changesOf(r) };
     }
     const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 2000);
@@ -1963,7 +2068,7 @@ const OPS = {
     let changed = 0;
     for (const part of chunks(ids, 80)) await logOff(`c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ('assigned','in_progress')`, part);
     for (const chunk of chunks(ids, 60)) {
-      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ('assigned','in_progress')${scopeSql(user, "client_id")}`, now, ...chunk, ...scopeArgs(user));
+      const r = await run(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ('assigned','in_progress')${editScopeSql(user, "client_id")}`, now, ...chunk, ...editScopeArgs(user));
       changed += changesOf(r);
     }
     return { changed };
@@ -2690,7 +2795,7 @@ const OPS = {
   "inventory.enrich": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60), locId = payload.location_id ? str(payload.location_id, 60) : null;
     if (!clientId) throw bad("Pick the client.");
-    if (!inScope(user, clientId)) throw outOfScope();
+    editableOr(user, clientId);
     const purpose = str(payload.purpose, 120).trim();
     if (!purpose) throw bad("Say why you are uploading this report.");
     const overwrite = payload.overwrite ? 1 : 0;
@@ -2794,7 +2899,7 @@ const OPS = {
   },
   "payers.saveLimit": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
-    if (!inScope(user, clientId)) throw outOfScope();
+    editableOr(user, clientId);
     const payer = str(payload.payer, 160).trim();
     if (!payerKey(payer)) throw bad("Pick the insurance.");
     const tfl = limitDays(payload.tfl_days), afl = limitDays(payload.afl_days);
@@ -2829,7 +2934,7 @@ const OPS = {
   "attention.clientSent": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", str(payload.id, 60));
     if (!h || h.status !== "client") throw bad("This request is no longer waiting on the client.");
-    if (!inScope(user, h.client_id)) throw outOfScope();
+    editableOr(user, h.client_id);
     const how = CLIENT_SENT_HOW.includes(payload.how) ? payload.how : "";
     if (!how) throw bad("Pick how it was sent to the client.");
     const note = str(payload.note, 600).trim(), now = Date.now();
@@ -2851,7 +2956,7 @@ const OPS = {
   "attention.answer": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT id, client_id, assigned_to, state, escalated FROM claims WHERE id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (!inScope(user, c.client_id)) throw outOfScope();
+    editableOr(user, c.client_id);
     const comment = str(payload.comment, 4000).trim();
     if (!commentOk(comment)) throw bad("Write your answer for the biller, a few words at least.");
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
@@ -3036,6 +3141,8 @@ export default {
           user.scope = await scopeOf(env, user);
           // Matching a roster project to a client is how a client comes into scope, so that one call is exempt.
           if (user.scope && payload.client_id && op !== "projects.map" && !user.scope.includes(String(payload.client_id))) throw outOfScope();
+          // Changing a client's data needs edit access; a view-only share is not enough.
+          if (user.scope_view_only && user.scope_view_only.size && payload.client_id && EDIT_OPS.test(op) && user.scope_view_only.has(String(payload.client_id))) throw viewOnly();
         }
         const result = await handler({ env, user, token, payload, ctx });
         return json(result || { ok: true });

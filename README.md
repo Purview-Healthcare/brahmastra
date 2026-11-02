@@ -131,6 +131,31 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
   inventory or allocation.
 
+#### Crossover access (Shared with)
+
+Everyone sees only the clients of their own span: a biller or team lead their own
+projects, a manager every project under them, the VP everything. For crossovers,
+a team lead, manager or the VP can share one client with one person, on the client
+card (Clients & locations, "Shared with", also in the person's Team profile under
+"Extra client access"):
+
+- **View only**: the client, its claims, dashboards and reports become visible to
+  them, nothing can be changed. The card shows "shared · view only".
+- **Can edit**: they work it like their own client: upload, allocate, answer
+  Needs attention, keep its RACI. A shared biller can be picked in allocation.
+
+Shares are personal (one person, one client), show who shared and when, and can
+be taken back any time. SMEs cannot share; a view-only share cannot be passed on.
+
+#### RACI tracker
+
+Everyone from SME up (never billers) gets the **RACI** page: one row per client
+with who is **R**esponsible (does the work, the billers), **A**ccountable (owns
+the outcome, the team lead), **C**onsulted (asked before decisions, the manager)
+and **I**nformed. Until a row is saved it is filled from the roster. Team leads
+and managers edit the rows of their own clients (SMEs read); Informed holds at
+most two people and the VP is always the first, which cannot be removed.
+
 #### Payment Posting, Submission and Rejections
 
 A biller's SAAG action sends a claim to the person set on the client (Clients &
