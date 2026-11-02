@@ -97,6 +97,11 @@ a{color:var(--tealink)}
 .nav button{padding:9px 13px;font-weight:600;font-size:13.5px;color:var(--slate);background:transparent;border:none;border-bottom:3px solid transparent;cursor:pointer;border-radius:8px 8px 0 0;font-family:inherit}
 .nav button.active{color:var(--tealink);border-bottom-color:var(--teal);background:var(--soft)}
 .nav button:not(.active):hover{color:var(--ink);background:var(--hover)}
+.nav .nav-group{position:relative;display:inline-block}
+.nav .menu{left:0;right:auto;top:40px;min-width:240px}
+.nav .menu button{display:block;width:100%;text-align:left;padding:8px 10px;font-weight:500;font-size:13.5px;border:none;border-radius:6px;color:var(--ink)}
+.nav .menu button.on{background:var(--soft);color:var(--tealink);font-weight:600}
+.nav .menu button:hover{background:var(--hover);color:var(--ink)}
 .main{max-width:1360px;margin:0 auto;padding:22px 20px 70px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:18px 20px}
 .card.tight{padding:12px 14px}
@@ -1504,7 +1509,6 @@ function SettingsView({ me, setMe, ctx }) {
 }
 
 /* ---------- shell ---------- */
-const SUPERVISOR_NAV = [["dashboard", "Dashboard"], ["attention", "Needs attention"], ["inventory", "Inventory & allocation"], ["claims", "Claims"], ["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI"], ["saag", "SAAG"], ["limits", "TFL / AFL"], ["reports", "My day & reports"]];
 // Older screen names still open, inside the merged tabs.
 const NAV_ALIAS = { allocate: "inventory", locations: "clients", queue: "reports" };
 const USER_NAV = [["queue", "My day"], ["history", "My work"]];
@@ -1548,28 +1552,43 @@ function deskOf(me, ho) {
   if (!d.has("posting")) return "submission";
   return "both";
 }
+/* The tabs, with the less-used screens grouped under Work and Manage so the bar stays one row. */
 const navFor = (me, ho) => {
   const desk = deskOf(me, ho);
   // Posting and Submission work only on what is handed to them: no AR screens (SAAG, inventory, allocation, attention, TFL)
-  if (desk && me.role === "supervisor") return [["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"], ["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI"], ["reports", "Reports"]];
+  if (desk && me.role === "supervisor") return [["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"],
+    { g: "Manage", items: [["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"]] }, ["reports", "Reports"]];
   if (desk) return [["handoffs", DESK[desk].tab], ["history", "My work"]];
-  const base = me.role === "supervisor" ? (me.is_admin ? [...SUPERVISOR_NAV, ["roster", "Roster"]] : SUPERVISOR_NAV) : USER_NAV;
-  if (!handoffTab(me, ho)) return base;
-  const i = me.role === "supervisor" ? 2 : base.length;
-  return [...base.slice(0, i), ["handoffs", "Posting & submission"], ...base.slice(i)];
+  if (me.role !== "supervisor") {
+    const base = USER_NAV;
+    return handoffTab(me, ho) ? [...base, ["handoffs", "Posting & submission"]] : base;
+  }
+  const work = [...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["claims", "Claims"], ["saag", "SAAG reference"]];
+  const manage = [["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : [])];
+  return [["dashboard", "Dashboard"], ["attention", "Needs attention"], { g: "Work", items: work }, { g: "Manage", items: manage }, ["reports", "My day & reports"]];
 };
 const roleLabel = (me) => (me.is_admin ? "Admin" : me.role === "supervisor" ? "Team lead" : "Biller");
 function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount, attention, handoffs, children }) {
   const [menu, setMenu] = useState(false);
+  const [openG, setOpenG] = useState(null);
   const nav = navFor(me, handoffs);
   const navKey = NAV_ALIAS[view] && me.role === "supervisor" ? NAV_ALIAS[view] : view;
-  useEffect(() => { if (!menu) return; const h = () => setMenu(false); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu]);
+  useEffect(() => { if (!menu && !openG) return; const h = () => { setMenu(false); setOpenG(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu, openG]);
+  const navBadge = (k) => k === "attention" && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+    : k === "handoffs" && handoffs && handoffs.n > 0 ? <span className={"badge " + (handoffs.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{handoffs.n}</span> : null;
   return (
     <div>
       {DEMO && <div className="banner">Demo mode: the server runs inside this browser and nothing is shared. Set <span className="mono">API_BASE</span> in index.html to go live.</div>}
       <div className="topbar"><div className="topbar-in">
         <Wordmark size={20} tag={deskOf(me, handoffs) ? DESK[deskOf(me, handoffs)].role + (me.role === "supervisor" ? " lead" : "") : roleLabel(me).toLowerCase()} />
-        <div className="nav" style={{ flex: 1 }}>{nav.map(([k, l]) => <button key={k} className={navKey === k ? "active" : ""} onClick={() => setView(k)}>{l}{k === "attention" && attention && attention.n > 0 && <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>}{k === "handoffs" && handoffs && handoffs.n > 0 && <span className={"badge " + (handoffs.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{handoffs.n}</span>}</button>)}</div>
+        <div className="nav" style={{ flex: 1 }}>{nav.map((e) => Array.isArray(e)
+          ? <button key={e[0]} className={navKey === e[0] ? "active" : ""} onClick={() => { setOpenG(null); setView(e[0]); }}>{e[1]}{navBadge(e[0])}</button>
+          : <div key={e.g} className="nav-group" onClick={(ev) => ev.stopPropagation()}>
+              <button className={e.items.some(([k]) => k === navKey) ? "active" : ""} onClick={() => setOpenG(openG === e.g ? null : e.g)}>{e.g} ▾{openG !== e.g && (e.items.map(([k]) => navBadge(k)).find(Boolean) || null)}</button>
+              {openG === e.g && <div className="menu">
+                {e.items.map(([k, l]) => <button key={k} className={navKey === k ? "on" : ""} onClick={() => { setOpenG(null); setView(k); }}>{l}{navBadge(k)}</button>)}
+              </div>}
+            </div>)}</div>
         <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
           <button className="btn sm" onClick={() => setMenu(!menu)}>{me.name || me.email} ▾</button>
           {menu && <div className="menu">

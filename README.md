@@ -126,6 +126,11 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   QA, MIS and Tech Support get no access, and nor does anyone only on Eligibility
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).
+- The top bar stays one row: Dashboard, Needs attention and My day & reports sit
+  in front, the rest is grouped under **Work** (Posting & submission, Inventory &
+  allocation, Claims, SAAG reference) and **Manage** (Team, Clients & locations,
+  RACI tracker, TFL / AFL, and Roster for admins). The attention and hand-off
+  counts show on the group button while it is closed.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
