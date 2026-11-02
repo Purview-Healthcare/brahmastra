@@ -100,3 +100,4 @@ const d = await RI("handoffs.dashboard", { from_ms: 0, to_ms: Date.now() + 1e7 }
 
 console.log("\n==== " + results.filter((x) => x.pass).length + " passed, " + results.filter((x) => !x.pass).length + " failed of " + results.length);
 for (const f of results.filter((x) => !x.pass)) console.log("FAILED: [" + f.section + "] " + f.name);
+process.exit(results.some((x) => !x.pass) ? 1 : 0);

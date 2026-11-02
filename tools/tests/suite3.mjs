@@ -97,3 +97,4 @@ ok("...by client and by biller", dS.rejections.by_client.some((x) => x.name === 
 
 console.log("\n==== " + results.filter((x) => x.pass).length + " passed, " + results.filter((x) => !x.pass).length + " failed of " + results.length);
 for (const f of results.filter((x) => !x.pass)) console.log("FAILED: [" + f.section + "] " + f.name);
+process.exit(results.some((x) => !x.pass) ? 1 : 0);

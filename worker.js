@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.47.0";
+const VERSION = "2.48.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -154,7 +154,11 @@ const EXTRA_COLUMNS = {
     // Who checks a submitted claim for acceptance / rejection 24 working hours after it was submitted.
     ["submission_check_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_check_person", "TEXT"],
     // Rejections: the person who checks and fixes rejected claims first (their top priority), with a backup.
-    ["rejection_mode", "TEXT NOT NULL DEFAULT ''"], ["rejection_lead", "TEXT"], ["rejection_backup", "TEXT"]],
+    ["rejection_mode", "TEXT NOT NULL DEFAULT ''"], ["rejection_lead", "TEXT"], ["rejection_backup", "TEXT"],
+    // The client profile: the scope of work Purview does (ar, posting, submission, rejection), a daily target for each,
+    // and the AR person responsible (with a backup). Required for a new client; older clients show what is missing.
+    ["scope_json", "TEXT NOT NULL DEFAULT '[]'"], ["targets_json", "TEXT NOT NULL DEFAULT '{}'"],
+    ["ar_mode", "TEXT NOT NULL DEFAULT ''"], ["ar_lead", "TEXT"], ["ar_backup", "TEXT"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
   users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
@@ -1123,19 +1127,75 @@ async function signInBlock(env, u) {
   return extra.map(mailClean).includes(mailClean(u.email)) ? "" : "This email is not a Purview address. Ask your admin to allow it, or to set your Purview email in Shastra.";
 }
 
+const andList = (xs) => (xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
+const namesOf = async (env, ids) => { const u = [...new Set(ids.filter(Boolean))]; return new Map(u.length ? (await all(env, `SELECT id, name FROM users WHERE id IN (${u.map(() => "?").join(",")})`, ...u)).map((r) => [r.id, r.name]) : []); };
+/* Open hand-offs follow a new posting / submission / rejections person or follow-up checker. */
+async function followHandoffs(env, clientId, dept, lead, backup) {
+  if (dept === "subcheck") { if (lead) await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned')", lead, lead, clientId); return; }
+  if (lead && dept !== "ar") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned')", lead, backup || null, clientId, dept);
+}
+/* A client profile from the setup form: scope of work, a daily target and a responsible person for each, who
+   rechecks submissions. Everything is required; the message lists what is missing. */
+async function checkProfile(env, p, { isNew, locations }) {
+  p = p || {};
+  const scope = SERVICES.map(([k]) => k).filter((k) => Array.isArray(p.scope) && p.scope.includes(k));
+  const resp = p.resp || {}, miss = [], cols = {}, targets = {}, ids = [];
+  if (!scope.length) miss.push("the scope of work");
+  if (!locations) miss.push("at least one location");
+  for (const [s] of SERVICES) {
+    const [m, l, b] = RESP_COLS[s];
+    if (scope.includes(s)) {
+      const t = Math.round(num(p.targets && p.targets[s], 0));
+      if (t < 1 || t > 5000) miss.push(`a daily target for ${SERVICE_NAME[s]}`); else targets[s] = t;
+      const lead = str(resp[s] && resp[s].lead, 60), backup = str(resp[s] && resp[s].backup, 60);
+      if (!lead) miss.push(`who is responsible for ${SERVICE_NAME[s]}`);
+      cols[m] = "person"; cols[l] = lead || null; cols[b] = backup && backup !== lead ? backup : null;
+      ids.push(lead, cols[b]);
+    } else { cols[m] = s === "ar" || s === "rejection" ? "" : "client"; cols[l] = null; cols[b] = null; }
+  }
+  if (scope.includes("submission")) {
+    const sc = resp.subcheck || {};
+    if (sc.mode === "biller") { cols.submission_check_mode = "biller"; cols.submission_check_person = null; }
+    else if (sc.mode === "person" && sc.lead) { cols.submission_check_mode = "person"; cols.submission_check_person = str(sc.lead, 60); ids.push(cols.submission_check_person); }
+    else miss.push("who rechecks submitted claims after 48 hours");
+  } else { cols.submission_check_mode = ""; cols.submission_check_person = null; }
+  const want = ids.filter(Boolean);
+  if (want.length) { const ok = new Set((await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${want.map(() => "?").join(",")})`, ...want)).map((r) => r.id)); if (want.some((i) => !ok.has(i))) miss.push("only people who are active"); }
+  if (miss.length) throw bad(`To ${isNew ? "create" : "save"} this client, add ${andList(miss)}.`);
+  return { scope, targets, cols };
+}
+/* "Payment posting: Snail Post (backup Paula PostLead)" for the change history. */
+async function describeProfile(env, c) {
+  const names = await namesOf(env, RESP_PEOPLE.map(([, l]) => c[l]));
+  const scope = jsonList(c.scope_json), targets = jsonObj(c.targets_json), out = [];
+  for (const [s, label] of SERVICES) {
+    const [m, l, b] = RESP_COLS[s];
+    const who = c[m] === "person" && c[l] ? names.get(c[l]) + (c[b] ? " (backup " + names.get(c[b]) + ")" : "") : c[m] === "client" ? "client does it" : c[m] === "biller" ? "biller does it" : "not set";
+    out.push(`${label}: ${scope.includes(s) ? "in scope" + (targets[s] ? ", target " + targets[s] + " a day" : "") + ", " : scope.length ? "not in scope, " : ""}${who}`);
+  }
+  out.push("Submission follow-up: " + (c.submission_check_mode === "person" ? names.get(c.submission_check_person) || "someone" : c.submission_check_mode === "biller" ? "the biller who sent it" : "not set"));
+  return out;
+}
+const diffLines = (before, after) => after.map((x, i) => (x !== before[i] ? x + (before[i] ? "  (was: " + before[i].replace(/^[^:]+: /, "") + ")" : "") : null)).filter(Boolean);
 /* ---- who sees which projects ----
    Admins and the VP (access_all) see every client, and so does an account added by hand that has no projects
    (the bootstrap account). Everyone else, billers included, sees the clients their projects are matched to:
    their own projects (team leads and SMEs too), managers also every project of the people under them, plus
    clients shared with them person-to-person. user.scope is null (everything) or the list of client ids. */
 async function scopeOf(env, user) {
-  if (user.is_admin || user.access_all) return null;
+  if (user.is_admin || user.access_all) { user.resp_clients = new Set(); return null; }
+  // Anyone set on a client profile as responsible (AR, posting, submission, follow-up, rejections), or on its team,
+  // gets that client: the claims and the profile. Supervisors can change it; billers only see it.
+  const cls = await all(env, `SELECT id, roster_names_json, team_json, ar_mode, ar_lead, ar_backup, posting_mode, posting_lead, posting_backup, submission_mode, submission_lead, submission_backup,
+    submission_check_mode, submission_check_person, rejection_mode, rejection_lead, rejection_backup FROM clients`);
+  const resp = cls.filter((c) => RESP_PEOPLE.some(([m, l]) => c[l] === user.id && c[m] === "person")).map((c) => c.id);
+  const onTeam = cls.filter((c) => parseTeam(c.team_json).includes(user.id)).map((c) => c.id);
+  user.resp_clients = new Set(resp);
   const mine = (user.scope_projects && user.scope_projects.length ? user.scope_projects
     : (user.projects || []).map((p) => (p && p.name != null ? p.name : p))).filter(Boolean);
   if (!mine.length && user.source !== "roster") return null;
   const names = new Set(mine.map(projKey));
-  const clients = await all(env, "SELECT id, roster_names_json FROM clients");
-  const own = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id);
+  const own = [...new Set([...cls.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id), ...resp, ...onTeam])];
   // Clients shared person-to-person (Clients & locations, Shared with): they add to what this person sees; a "view" share cannot be changed.
   const grants = await all(env, "SELECT client_id, level FROM client_access WHERE user_id = ?", user.id);
   user.scope_view_only = new Set(grants.filter((g) => g.level !== "edit" && !own.includes(g.client_id)).map((g) => g.client_id));
@@ -1301,7 +1361,29 @@ const BACK_REASONS = ["Wrong department", "Not ready to post / submit", "Missing
 const CLIENT_REASONS = { posting: ["Need EOB / ERA from the client", "Need payment / deposit details", "Need patient or account details", "Other"],
   submission: ["Need corrected demographics / insurance", "Need signature or documents", "Need authorization / referral", "Need coding clarification", "Other"] };
 const HANDOFF_ROUTES = [[/^Need to Post\/Posting Correction$/i, "posting"], [/^(Need to Resubmit|Need to Submit Paper Claim|Correction, Resubmission & Reprocessing)$/i, "submission"]];
-const RESP_COLS = { posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
+/* The scope of work on a client profile, and the responsibility columns behind each. Submission follow-up (the 48-hour
+   recheck) belongs to Submission. */
+const SERVICES = [["ar", "AR follow-up"], ["posting", "Payment posting"], ["submission", "Submission"], ["rejection", "Rejections"]];
+const SERVICE_NAME = Object.fromEntries([...SERVICES, ["subcheck", "Submission follow-up"]]);
+const RESP_PEOPLE = [["ar_mode", "ar_lead"], ["ar_mode", "ar_backup"], ["posting_mode", "posting_lead"], ["posting_mode", "posting_backup"], ["submission_mode", "submission_lead"], ["submission_mode", "submission_backup"],
+  ["submission_check_mode", "submission_check_person"], ["rejection_mode", "rejection_lead"], ["rejection_mode", "rejection_backup"]];
+/* What a client profile still needs, in plain words (empty when complete). */
+function profileGaps(c, locCount, activeIds) {
+  const g = [], scope = jsonList(c.scope_json), targets = jsonObj(c.targets_json);
+  if (!scope.length) g.push("scope of work");
+  if (!locCount) g.push("a location");
+  for (const s of scope) {
+    if (!(Number(targets[s]) > 0)) g.push(SERVICE_NAME[s] + " target");
+    const [m, l] = RESP_COLS[s];
+    if (c[m] !== "person" || !c[l]) g.push(SERVICE_NAME[s] + " responsible person");
+    else if (!activeIds.has(c[l])) g.push(SERVICE_NAME[s] + " responsible person (the one set is no longer active)");
+    if (s === "submission" && !(c.submission_check_mode === "biller" || (c.submission_check_mode === "person" && activeIds.has(c.submission_check_person)))) g.push("Submission follow-up (who rechecks after 48 hours)");
+  }
+  // without a scope of work yet, still flag a department pointed at someone who has left
+  if (!scope.length) for (const s of ["posting", "submission", "rejection"]) { const [m, l] = RESP_COLS[s]; if (c[m] === "person" && c[l] && !activeIds.has(c[l])) g.push(SERVICE_NAME[s] + " responsible person (the one set is no longer active)"); }
+  return g;
+}
+const RESP_COLS = { ar: ["ar_mode", "ar_lead", "ar_backup"], posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
   rejection: ["rejection_mode", "rejection_lead", "rejection_backup"] };
 const handoffDeptOf = (action) => { for (const [re, d] of HANDOFF_ROUTES) if (re.test(String(action || "").trim())) return d; return ""; };
 const REJECT_REASONS = REJECT_CODES;
@@ -1328,6 +1410,7 @@ async function handoffRole(env, user, claimId) {
 }
 async function canSeeClaim(env, user, c) {
   if (leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id) return true;
+  if (user.resp_clients && user.resp_clients.has(c.client_id)) return true;
   return !!(await handoffRole(env, user, c.id));
 }
 
@@ -1401,6 +1484,9 @@ function userDesk(user) {
 }
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
+/* Read-only claim lists a biller may open for the clients they are responsible for (posting, submission...). */
+const DESK_READ_OPS = /^claims\.(list|stats)$/;
+const respOnly = (user) => { if (user.role === "supervisor") return null; const ids = [...(user.resp_clients || [])]; if (!ids.length) throw denied("Supervisor access is needed for this."); return ids; };
 const SUPERVISOR_OPS = /^(coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const EDIT_OPS = /^(client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
@@ -1553,7 +1639,7 @@ const OPS = {
     return openSession(env, u, "password");
   },
   "auth.logout": async ({ env, token }) => { if (token) await run(env, "DELETE FROM sessions WHERE token = ?", token); return { ok: true }; },
-  "auth.me": async ({ user }) => ({ user }),
+  "auth.me": async ({ user }) => ({ user: { ...user, scope_view_only: undefined, resp_clients: [...(user.resp_clients || [])] } }),
   "auth.deleteMyAccount": async ({ env, user, payload }) => {
     throw denied("Accounts are removed by the admin only.");
     if (str(payload.confirm, 200).trim().toLowerCase() !== String(user.email || "").toLowerCase()) throw bad("Type your email address exactly to confirm.");
@@ -1700,17 +1786,28 @@ const OPS = {
     const access = user.role === "supervisor" ? await all(env, "SELECT a.client_id, a.user_id, a.level, a.at, a.granted_by_name, u.name, u.designation, u.department, u.active FROM client_access a JOIN users u ON u.id = a.user_id ORDER BY u.name") : [];
     const shape = (r) => { const { team_json, roster_names_json, caps_json, ...rest } = r; return { ...rest, active: !!r.active, auto_allocate: r.auto_allocate == null ? true : !!r.auto_allocate, team: parseTeam(team_json),
       ...(roster_names_json !== undefined ? { roster_names: jsonList(roster_names_json), caps: jsonObj(caps_json) } : {}) }; };
-    return { clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
+    const people = await all(env, "SELECT id, name, active FROM users");
+    const nm = new Map(people.map((u) => [u.id, u.name])), activeIds = new Set(people.filter((u) => u.active).map((u) => u.id));
+    return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
+      scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), resp_names: Object.fromEntries(RESP_PEOPLE.map(([, l]) => [l, c[l] ? nm.get(c[l]) || "someone" : ""])),
+      profile_gaps: profileGaps(c, locs.filter((l) => l.client_id === c.id && l.active).length, activeIds), responsible_me: !!(user.resp_clients && user.resp_clients.has(c.id)),
       can_edit: user.role === "supervisor" && canEditClient(user, c.id),
       access: access.filter((a) => a.client_id === c.id).map((a) => ({ user_id: a.user_id, name: a.name, designation: a.designation || "", department: a.department || "", active: !!a.active, level: a.level, granted_by_name: a.granted_by_name, at: a.at })) })) };
+  },
+  /* Who changed what on a client profile (and its locations, teams, shares, RACI, month-end), for everyone on the client. */
+  "clients.history": async ({ env, user, payload }) => {
+    const cid = str(payload.client_id, 60);
+    if (!inScope(user, cid)) throw outOfScope();
+    const rows = await all(env, "SELECT at, user_name, action, detail FROM audit_log WHERE client_id = ? ORDER BY at DESC LIMIT 200", cid);
+    return { rows };
   },
   /* Billers mapped to a client (used when a location has no team of its own) or to a location. */
   /* Payment posting / submission responsibility on the client profile. */
   "clients.saveResponsibility": async ({ env, user, payload }) => {
     const dept = RESP_COLS[payload.dept] ? payload.dept : "";
-    if (!dept) throw bad("Pick payment posting, submission or submission follow-up.");
+    if (!dept) throw bad("Pick AR, payment posting, submission, submission follow-up or rejections.");
     const [mcol, lcol, bcol] = RESP_COLS[dept];
-    const c = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
+    const c = await one(env, "SELECT * FROM clients WHERE id = ?", payload.client_id);
     if (!c) throw bad("Unknown client.");
     editableOr(user, c.id);
     const mode = ["person", "client", "biller", ""].includes(payload.mode) ? payload.mode : "";
@@ -1720,9 +1817,10 @@ const OPS = {
     if (bcol) await run(env, `UPDATE clients SET ${mcol} = ?, ${lcol} = ?, ${bcol} = ? WHERE id = ?`, mode, lead, backup, c.id);
     else await run(env, `UPDATE clients SET ${mcol} = ?, ${lcol} = ? WHERE id = ?`, mode, lead, c.id);
     // Open hand-offs follow the new lead / backup.
-    if (mode === "person" && dept !== "subcheck") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned')", lead, backup, c.id, dept);
-    if (mode === "person" && dept === "subcheck") await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned')", lead, lead, c.id);
-    await audit(env, user, "client.responsibility", c.id, dept + ": " + (mode || "none"));
+    if (mode === "person") await followHandoffs(env, c.id, dept, lead, backup);
+    const before = await describeProfile(env, c);
+    const after = await describeProfile(env, { ...c, [mcol]: mode, [lcol]: lead, ...(bcol ? { [bcol]: backup } : {}) });
+    await audit(env, user, "client.responsibility", c.id, diffLines(before, after).join("; ") || SERVICE_NAME[dept] + ": unchanged");
     return { ok: true };
   },
   /* Every active person, name and designation only: for pickers that must reach outside the caller's own span (shares, RACI). */
@@ -2033,6 +2131,8 @@ const OPS = {
         const r = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE state = 'assigned' AND assigned_to IN (${absent.map(() => "?").join(",")})`, ...absent.map((u) => u.id));
         add("absent", "amber", (r && r.n) || 0, plural((r && r.n) || 0, "claim sits", "claims sit") + " on the desks of people out today", "teamtoday");
       }
+      const cl = (await OPS["clients.list"]({ env, user })).clients.filter((c) => c.active && c.can_edit && c.profile_gaps.length);
+      add("profiles", "amber", cl.length, (cl.length === 1 ? cl[0].name + "'s profile is" : cl.length + " client profiles are") + " incomplete: " + (cl.length === 1 ? cl[0].profile_gaps.slice(0, 3).join(", ") : "scope of work, locations, targets or the people responsible"), "clients");
       const month = closingMonth(today);
       const mine = (await all(env, "SELECT id, name FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id));
       if (mine.length) {
@@ -2385,7 +2485,12 @@ const OPS = {
     const valid = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
     const team = ids.filter((x) => valid.includes(x));
     const auto = payload.auto_allocate === false ? 0 : 1;
+    const old = await one(env, `SELECT team_json, auto_allocate, name FROM ${table} WHERE id = ?`, ex.id);
     await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ?`, JSON.stringify(team), auto, ex.id);
+    const was = parseTeam(old && old.team_json), add = team.filter((x) => !was.includes(x)), gone = was.filter((x) => !team.includes(x));
+    const nm = await namesOf(env, [...add, ...gone]);
+    const bits = [...(add.length ? ["added " + add.map((x) => nm.get(x)).join(", ")] : []), ...(gone.length ? ["removed " + gone.map((x) => nm.get(x) || "someone").join(", ")] : []), ...(old && !!old.auto_allocate !== !!auto ? [auto ? "auto-allocation on" : "auto-allocation off"] : [])];
+    if (bits.length) await audit(env, user, "client.team", ex.client_id, (payload.location_id ? "Billers at " + (old && old.name) : "Billers on the client") + ": " + bits.join("; "));
     return { team, auto_allocate: !!auto };
   },
   "clients.save": async ({ env, user, payload }) => {
@@ -2396,17 +2501,45 @@ const OPS = {
     const active = payload.active === false ? 0 : 1;
     const link = workbookLinkOf(payload.workbook_link);
     if (payload.id) {
-      const ex = await one(env, "SELECT id FROM clients WHERE id = ?", payload.id);
+      const ex = await one(env, "SELECT * FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
       editableOr(user, ex.id);
+      const changes = [];
+      if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);
+      if ((ex.code || "") !== code) changes.push(`code ${ex.code || "none"} → ${code || "none"}`);
+      if (Number(ex.follow_up_days) !== fu) changes.push(`default follow-up ${ex.follow_up_days} → ${fu} days`);
+      if (!!ex.active !== !!active) changes.push(active ? "made active" : "made inactive");
+      if (link != null && (ex.workbook_link || "") !== link) changes.push(link ? "production file link set to " + link : "production file link removed (Brahmastra keeps it by itself)");
       await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);
-      await audit(env, user, "client.save", ex.id, name + (active ? "" : " · inactive"));
+      if (payload.profile) {
+        const locs = await one(env, "SELECT COUNT(*) AS n FROM locations WHERE client_id = ? AND active = 1", ex.id);
+        const p = await checkProfile(env, payload.profile, { isNew: false, locations: (locs && locs.n) || 0 });
+        const before = await describeProfile(env, ex);
+        const sets = Object.keys(p.cols);
+        await run(env, `UPDATE clients SET scope_json = ?, targets_json = ?, ${sets.map((k) => k + " = ?").join(", ")} WHERE id = ?`, JSON.stringify(p.scope), JSON.stringify(p.targets), ...sets.map((k) => p.cols[k]), ex.id);
+        for (const d of ["posting", "submission", "rejection"]) { const [, l, b] = RESP_COLS[d]; if (p.cols[l]) await followHandoffs(env, ex.id, d, p.cols[l], p.cols[b]); }
+        if (p.cols.submission_check_person) await followHandoffs(env, ex.id, "subcheck", p.cols.submission_check_person);
+        const after = await describeProfile(env, { ...ex, ...p.cols, scope_json: JSON.stringify(p.scope), targets_json: JSON.stringify(p.targets) });
+        changes.push(...diffLines(before, after));
+      }
+      if (changes.length) await audit(env, user, "client.save", ex.id, changes.join("; "));
       return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active, workbook_link: link } };
     }
     if (user.scope) throw denied("Only a manager with every project, or an admin, can add a client. Ask them to add it.");
+    // A new client needs its whole profile: scope of work, locations, targets, the people responsible.
+    const locNames = [...new Set((Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter(Boolean))].slice(0, 50);
+    const p = await checkProfile(env, payload.profile, { isNew: true, locations: locNames.length });
+    if (await one(env, "SELECT id FROM clients WHERE lower(name) = lower(?)", name)) throw bad("A client with that name already exists.");
     const id = uuid(), now = Date.now();
-    await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at, workbook_link) VALUES (?,?,?,?,?,?,?,?)", id, name, code, active, fu, user.id, now, link || "");
+    const sets = Object.keys(p.cols);
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at, workbook_link, scope_json, targets_json, ${sets.join(", ")}) VALUES (?,?,?,?,?,?,?,?,?,?,${sets.map(() => "?").join(",")})`)
+        .bind(id, name, code, active, fu, user.id, now, link || "", JSON.stringify(p.scope), JSON.stringify(p.targets), ...sets.map((k) => p.cols[k])),
+      ...locNames.map((l) => env.DB.prepare("INSERT INTO locations (id, client_id, name, active, created_at) VALUES (?,?,?,1,?)").bind(uuid(), id, l, now)),
+    ]);
     await autoMapProjects(env);
+    const created = await one(env, "SELECT * FROM clients WHERE id = ?", id);
+    await audit(env, user, "client.save", id, `created with locations ${locNames.join(", ")}; production file ${link ? link : "kept by Brahmastra"}; ` + (await describeProfile(env, created)).join("; "));
     return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [], workbook_link: link || "" } };
   },
   /* Delete a client with everything under it: locations, uploads, claims, notes, allocation history. Confirmed by name on the screen. */
@@ -2438,15 +2571,20 @@ const OPS = {
       const ex = await one(env, "SELECT id, client_id FROM locations WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown location.");
       editableOr(user, ex.client_id);
+      const old = await one(env, "SELECT name, active, workbook_link FROM locations WHERE id = ?", ex.id);
       await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
+      const ch = [...(old.name !== name ? [`renamed ${old.name} → ${name}`] : []), ...(!!old.active !== !!active ? [active ? "reactivated" : "deactivated"] : []), ...(link != null && (old.workbook_link || "") !== link ? [link ? "production file link set" : "production file link removed"] : [])];
+      if (ch.length) await audit(env, user, "client.location", ex.client_id, `Location ${old.name}: ` + ch.join("; "));
       return { location: { id: ex.id, client_id: ex.client_id, name, active: !!active, workbook_link: link } };
     }
     const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!client) throw bad("Unknown client.");
+    editableOr(user, client.id);
     const dup = await one(env, "SELECT id FROM locations WHERE client_id = ? AND lower(name) = lower(?)", client.id, name);
     if (dup) throw bad("That location already exists for this client.");
     const id = uuid(), now = Date.now();
     await run(env, "INSERT INTO locations (id, client_id, name, active, created_at) VALUES (?,?,?,?,?)", id, client.id, name, active, now);
+    await audit(env, user, "client.location", client.id, "Location added: " + name);
     return { location: { id, client_id: client.id, name, active: !!active, created_at: now, team: [], auto_allocate: true } };
   },
 
@@ -2649,6 +2787,8 @@ const OPS = {
   /* ---- claims (supervisor views) ---- */
   "claims.list": async ({ env, user, payload }) => {
     const where = [], params = [];
+    const ro = respOnly(user);
+    if (ro) { where.push(`c.client_id IN (${ro.map(() => "?").join(",")})`); params.push(...ro); }
     if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
     if (payload.client_id) { where.push("c.client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(payload.location_id); }
@@ -2661,7 +2801,9 @@ const OPS = {
     if (payload.worked_before === false) where.push("c.worked_before = 0");
     if (payload.escalated) where.push("c.escalated = 1");
     if (payload.handoff_status) { where.push("c.handoff_status = ?"); params.push(str(payload.handoff_status, 30)); }
-    { const dk = deskSql(user, "c.id"); if (dk) where.push(dk.replace(/^ AND /, "")); }
+    // Posting / submission people see what is handed to their desk, and every claim of a client they are responsible for.
+    { const dk = deskSql(user, "c.id"); const rc = [...(user.resp_clients || [])];
+      if (dk && !ro) { if (rc.length) { where.push(`(${dk.replace(/^ AND /, "")} OR c.client_id IN (${rc.map(() => "?").join(",")}))`); params.push(...rc); } else where.push(dk.replace(/^ AND /, "")); } }
     if (payload.provider) { where.push("c.provider LIKE ?"); params.push("%" + str(payload.provider, 80).trim() + "%"); }
     if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
     if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
@@ -2715,6 +2857,8 @@ const OPS = {
   },
   "claims.stats": async ({ env, user, payload }) => {
     const where = [], params = [];
+    const ro = respOnly(user);
+    if (ro) { where.push(`client_id IN (${ro.map(() => "?").join(",")})`); params.push(...ro); }
     if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
     // Dashboard date range: only claims with activity in the window (loaded, refreshed, worked or closed then).
     if (payload.from_ms != null || payload.to_ms != null) { where.push("updated_at BETWEEN ? AND ?"); params.push(num(payload.from_ms, 0), num(payload.to_ms, Date.now())); }
@@ -4015,7 +4159,7 @@ export default {
         const user = await userFromToken(env, token);
         if (!PUBLIC_OPS.has(op) && !user) throw new ApiError(401, "Please sign in.");
         if (user && user.must_change && !["auth.changePassword", "auth.me", "auth.logout", "auth.deleteMyAccount", "meta.info"].includes(op)) throw new ApiError(403, "Please set a new password first.");
-        if (SUPERVISOR_OPS.test(op) && (!user || user.role !== "supervisor")) throw denied("Supervisor access is needed for this.");
+        if (SUPERVISOR_OPS.test(op) && (!user || user.role !== "supervisor") && !(user && DESK_READ_OPS.test(op))) throw denied("Supervisor access is needed for this.");
         if (ADMIN_OPS.test(op) && (!user || !user.is_admin)) throw denied("Admin access is needed for this.");
         if (user && !user.is_admin && userDesk(user) && /^(inventory\.|alloc\.)/.test(op)) throw denied("Inventory and allocation are for AR. Your desk is " + DESK_NAME[userDesk(user)] + ".");
         if (user) {

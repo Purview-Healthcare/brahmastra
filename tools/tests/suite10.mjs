@@ -23,8 +23,10 @@ const DB = rig.backend.env.DB; const sql = (q, ...a) => DB.prepare(q).bind(...a)
 await rig.app.seedDemo(() => {});
 const login = async (email, pw) => as(null)("auth.login", { email, passHash: await sha(pw) });
 const A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
-await A("clients.save", { name: "Orchid Family Clinic", code: "ORC", follow_up_days: 30, active: true });
-await A("clients.save", { name: "Willow Pediatrics", code: "WIL", follow_up_days: 30, active: true });
+const adminId = (await A("auth.me")).user.id;
+const prof = { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: adminId } } };
+await A("clients.save", { name: "Orchid Family Clinic", code: "ORC", follow_up_days: 30, active: true, locations: ["Main"], profile: prof });
+await A("clients.save", { name: "Willow Pediatrics", code: "WIL", follow_up_days: 30, active: true, locations: ["Main"], profile: prof });
 await A("roster.syncShastra");
 const users = (await A("users.list")).users; const U = (n) => users.find((u) => u.name === n);
 const firstIn = async (name, email) => { await as(null)("auth.firstPassword", { user_id: U(name).id, passHash: await sha("pw-" + email) }); return as((await login(email, "pw-" + email)).token); };

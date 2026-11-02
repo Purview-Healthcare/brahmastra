@@ -198,6 +198,27 @@ pace this shift against their target spread over the shift from the roster, clai
   that payer (or the client when the payer is new); one click fills status, sub-status, action, bucket and the
   note action.
 
+#### Client profile: scope of work, responsibility, change history
+
+Every client has a profile: the **scope of work** Purview does (AR follow-up, Payment posting, Submission,
+Rejections), its **locations**, a daily **target** for each part of the scope, the **production file** (Brahmastra
+keeps it, or the client's own workbook), and the **responsible person** for each part, with an optional backup
+(Submission also names who rechecks a submitted claim after 48 hours).
+
+- **A new client needs all of it.** Manage › Clients & locations › Add client opens the setup; it cannot be
+  created until each part is filled in. Older clients show **Profile incomplete** with what is missing (and
+  when a responsible person has left), the team lead's bell says so, and **Edit profile** completes it.
+- **Responsible means access.** Whoever is set on a client as AR, posting, submission, follow-up or rejections
+  person, or is on the client's team, gets that client straight away: its profile in **My clients** and its
+  claims. Supervisors set there can change the profile; billers only see it. Posting and submission people get a
+  **Claims** page with every claim of the clients they are responsible for (their work still happens in their
+  desk tab).
+- **Change history.** Every change to a client (profile, responsible people with what they were before, teams,
+  locations, shares, RACI, month-end) is kept with who and when; **Change history** on the client card shows it
+  to everyone on the client, billers included.
+- SAAG: **Claim Not On File › Policy Active** is added in the app (with the same actions as the other Claim Not
+  On File sub-statuses) until the SAAG workbook carries it; add it to the workbook too.
+
 #### Search, the bell, phones, signing out
 
 - **Search** (top right, or **Ctrl+K** / **Cmd+K** anywhere): type part of a page name, a client (opens its

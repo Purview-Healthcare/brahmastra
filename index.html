@@ -280,6 +280,10 @@ kbd{font:600 11px/1 inherit;font-family:inherit;padding:3px 6px;border:1px solid
 .cmdk-item.on{background:var(--soft);box-shadow:inset 3px 0 0 var(--teal)}
 .cmdk-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 16px;border-top:1px solid var(--line)}
 .idle-warn{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:80;background:var(--ink);color:var(--card);padding:12px 18px;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.3);font-size:14px;max-width:calc(100vw - 32px)}
+.scope-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.scope-opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer;background:var(--card)}
+.scope-opt.on{border-color:var(--teal);background:var(--soft)}.scope-opt input{margin-top:3px}.scope-opt>span{display:flex;flex-direction:column;gap:2px}
+.hist-row{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
 .digest-span{border-top:1px solid var(--line);padding-top:10px}
 .digest-frame{width:100%;height:70vh;border:1px solid var(--line);border-radius:8px;background:#fff}
 .fb-tab{position:fixed;right:0;top:44%;z-index:40;writing-mode:vertical-rl;transform:rotate(180deg);background:var(--teal);color:#fff;border:0;border-radius:0 10px 10px 0;padding:14px 8px;font:600 12.5px/1 Inter,system-ui,sans-serif;letter-spacing:.05em;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.18);opacity:.92}
@@ -362,4 +366,4 @@ html[data-text="large"] body{zoom:1.1}
 .seg2 button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 </style>
 </head><body><div id="root"></div>
-<script src="app/app.js?v=ac8df1bce0"></script></body></html>
+<script src="app/app.js?v=26c32842e7"></script></body></html>

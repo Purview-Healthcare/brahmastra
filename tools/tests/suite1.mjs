@@ -148,7 +148,7 @@ r = await T(async () => SN("handoffs.close", { id: snList.rows[0].id, outcome: "
 r = await T(async () => SN("handoffs.close", { id: snList.rows[0].id, outcome: "complete", proof: { date: "2026-11-01", ref: "CHK-1001", amount: 120.5 } })); ok("Snail completes the posting", r.ok, r);
 r = await T(async () => MK("handoffs.close", { id: snList.rows[0].id, outcome: "complete", proof: { date: "2026-11-01", ref: "x" } })); ok("Mark cannot close a posting hand-off", !r.ok, r);
 r = await T(async () => MK("handoffs.close", { id: mkList.rows[0].id, outcome: "assistance", reason: "Missing information", note: "Need the corrected NPI from the client" })); ok("old outcome 'assistance' still lands as Need assistance from AR", r.ok, r);
-const pc = await PA("claims.list", {}); ok("posting lead's Claims shows only the posting claim", pc.rows.length === 1 && pc.rows[0].id === c4.id, pc.rows.map((x) => x.claim_no));
+const pc = await PA("claims.list", { page_size: 500 }); ok("posting lead (backup on Sunrise) sees Sunrise's claims, the posting claim included, and no other client's", pc.rows.length > 1 && pc.rows.some((x) => x.id === c4.id) && pc.rows.every((x) => x.client_id === sunrise.id), [pc.rows.length, [...new Set(pc.rows.map((x) => x.client_id))]]);
 const dash = await PA("handoffs.dashboard", { from_ms: 0, to_ms: Date.now() + 1e7 }); ok("posting dashboard: 1 received, 1 posted, amount", dash.totals.received === 1 && dash.totals.done === 1, dash.totals);
 const dashM = await MK("handoffs.dashboard", { from_ms: 0, to_ms: Date.now() + 1e7 }); ok("submission dashboard for Mark", dashM.dept === "submission" && dashM.totals.received === 1, dashM.totals);
 const dashQ = await QU("handoffs.dashboard", { from_ms: 0, to_ms: Date.now() + 1e7 }); ok("both-desk dashboard answers", dashQ.dept === "both", dashQ.dept);
@@ -187,3 +187,4 @@ ok("removed count reported", r && (await A("roster.meta")).shastra.last.removed 
 
 console.log("\n==== " + results.filter((x) => x.pass).length + " passed, " + results.filter((x) => !x.pass).length + " failed of " + results.length);
 for (const f of results.filter((x) => !x.pass)) console.log("FAILED: [" + f.section + "] " + f.name);
+process.exit(results.some((x) => !x.pass) ? 1 : 0);

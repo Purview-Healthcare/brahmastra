@@ -16,10 +16,21 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFEAAABcCAYAAAAWEVnoAAAlfElEQVR42q19d3wUVff+c2ZrqoBIT0ISSGgJRZqAgBQBRUXFFwUsiDRRQlFAeq+KKCgIgqjgiwURRUEQBBGwUEVRQNLAAirS0rN7vn/slHvvzCbw/n7LZ9nN7szs3DvnPuc5zzn3DgEAwKGXeALSAKTrzzQADeH8IOE9O3wmPpL8QFoMkB4LpMcAabFAagyAWAAxIMTCjxj4KRY+xMDPseDxBzjy9po43mkEdaAc+PVtfHDDD8APwJcC+NMBX1ro1Z8G+JJhfQ/AT4Cf9fcAWhPhZ7D5fQ0Q8vX3mt4EbmC1n9IBTgcQLzRSaafm2DlURqeQw+dURgeWd1xaAdDzAE0FA/CPP8VR3/zFNzxZH546N6AVHQMAnBg1j4+Omrj9ffG6EfD8B9axmYARBAwm67qCrfdMwGHlul8Q3ovHNc6TSW4Akb6R/iQAboDB+lGoNssNJQfTY6ceYmETKr8DJSseDCAWjBhUWVfI/nap+tnLh/e8dgMiusV1qdt4Ie9ld2KnAaOyAWDMA8LmBLysW506SNj4j1g5NDs3i4BQj4X2MbdnuX3MqiVSWZalXi8O25f2TuQyLdbYzR0fHTpxImHjNDASgCCDoMHfoQYiW1TK2jl/Rqg9Qgc69L3jmZf1vXyefE2jTLPMVN9abITUGCp//BKVPZTNzmTHZnBp0Lw+bDxxDEA2QGRaE0V6EPlAHexc9Tp/UH0cl92BpHwW2pihtk14Sn2BcnvRLbVdHXb1HS4TledlysHE+4+EfM38iRz8q/C/2c+/0Nds4Bcvy9gDwvcAbiUAy0gAdQIx4K4ejdiMZvjgyFIuOPDvHWfunrwF/z8ex/RnYwtLjTYafWVCIOmdKGOa0OBfysFEukbvLFycpFkTOLJnLWgVvbj82qmHwIP7Jq5LqJ3Zb0J2gx1LQrAlYE8L/fCBvwql32bWLYUBb+Mq8Dau8pm38nw8/fQ4kr0zw8eCxyaWvbfw6tYvHqcBSGfLEsvHRHYYdk6dwuVfQQ7fifEpj41K6/UMxzySBFclnVAE9d2OXspKP7ma3fHRIMMSQSBo5iGTp0ynq68fR+CfYhN+xH8AIeLOZKw4sJbnTZrC/xsesjMm4powUcE1IgeAv8YhGw43KvgWUQWviXUSBwEArwvwuMBMOhZC8puMf9BgzlSq1+Ixyv84E8GigLydQTkqRiB6QBPM276ax2dM+NbegaR0oIKRJLAM0xKpvE5UO/AaOOI1+hnp+xLWLUYLvZIM3ESidWnmQQ8o1vIhgFYjJ1DRx1nNi/b/YTspwyrdSRURM6Jly3HvvMpPTJ3dtTMBbQm4GUAjEOoAiANwE4AYAF6x7wRbkqkbyZ/r22nGuGY2xj6DKfQ0/zbYFId7soW0ABInjeWE0WNY6kS2LIaZpP2ZYLdA/c3Nwntm4D79z1vHTTzYZX4GXV5y6POS0/+alsTS7wDeFjVR8eG0bcmvLGJm4AAYx8A4BeAMgPNgXAaj2Gyn1X6G3gdknWyoqfLfmg3IrgkTnXliwqgxvzfcvYhjB9eFu0aU+XntPqN6kUu3MAkmjKtJE0ULlCwV6QBqI2fTxmq2syDgvr/mdr/38CDKW/0DghcKTWsWrRIg+LvWRYPDG/iBmXO4LIwsMzAojyfacJCujyembpzHFUalVHclRttYfkSLmzZG3h0XuoKCVRmP7HnFcy6v+AnBglKJI4Za9gMYWcD5C3+c/ngFHxz93DqLdlih2aO3Tqf+NftRweaTCBYFbMdhABTtQ8R/0tH7q/XcZdQkduSMZpRSVvhLZfDEk6ELb/ZdsuKgwlyV2mOe2ePPSNWvPhw7naK9UngRikEZoJUAgLMAJTVZxL6WVU0eCBAOAmhDAJYxPI2qwNOoSt+DtyztW3jw3LDcLTOXY616NuMpYd7MFt5aFb/ztooDMUnnxQS4q8UiamhbdOm4hgt2nVp85sXZo6RDHCKTI4pEXsRCNo9p8kTdoFMhe6fMciiMQR2DSBZ5k2PEyNZbiwcSwIN0aI8F3hW203lgMxN2yRzD3qbV4GlafVmdlMXLEOWveX/u0N99hopTHfBj0vd+gKaPfG6nv0e92zxJNwqWT2YU465XFdGpVUcmpy4ZuWjIU667iYJEADcXQz6yGALLKg5bw5kd+JE+HMneC4lTx3Lt0WOCkLGpQAofyYE2KThl4p6NsWkSDzQEAnJpAsyEPLy/fQJ8DSv/9r53AU+/HSFnKBCjOYvndprT/VG6+uYh8MUiK7RVvLmvYwrGff9xIHHiLDbJdXlqVlieKPEjeTgmL53YuMEXCzj2iURo1XzmlwnTxvUmRgSL8a5iscHioPCd6EGtDeNmBbrA+M7hOMFCCy8lvPO5EHFHChoceo9XrprNTg5j6awp9FLL+yn/05/BJQElNtdHR0wEIvq3Qsqn73NC2ymM66DIbkeeaOyUGHqps2QSR/aoDs3n0htvmXRMr/j3Q57XAmlSLl/Bd+ef0SI9z3tSK+gegSyiS68DzIju99/t4lmHYIFwGEBrALePGO/ese7lUl/rWuaQIn07gKDF+hHVJw0rv36H89778eKZJXMq2v3AGIqfOaetN7Hy197mCVIPGb3mqlkRUUM6IuX0u1y45dipM+lIQeVrINvWVRd4ETGQE/oiqldNkFfTrUBnlwJH1GK9YJCdB+oNyP100Qt5X/4xzsYDAYCfMDGQQZIFMoAm+ma/0N+BpP5D6fLSA5tLTl0QPLyA/EzQqsYg9uk2FeqsXcbJby+Ne5+BjxnYxsBuBt6fPGHvhv6D6crSr/eVZl0wR4f6cCVVQdTwznWTz67mhOnPt2JmhJ6wPZ1jZxUHSjiEQ2TgiCarDmKkIUUi1iYuV/AfGw+UBoE9Fg49GwNIBKMyAEbTxXPuatxjIOWtOoLghUKbhGXs62uZAF96XO7YBQsdh/j2pTPbbuvxIOW//R34sngcTYrdvTcnwX9Xk2+S5r3I5fNEAAl3j5tQv/88VrGAgwIOmWowQbRiiduxouyQrC6LeCR6daeIBTgKRiaAvyX3c+ui6dRu+IOU/9FxcH6JFDiZ5+L3IOKeRhi7bwMPHjeNneLlb+ZMon0te1LhlmPgkoBsbQbb8Hngu/tmpHy5meOfnsyOwznp82nVU9dM44rDE2Z760Vb3jReJdx63BsUPipkJcJQroApl2ku0WmRSb5ed9jPeh7Rd88a9cJnDOBjAO8BeJuAlQRkPTueLp44X7NoT455HpYXDo0MrXI0oh6/BU98uo4fyJj8dhMA9XTIrw6gEhGyRo+i/A8OdC45kG2NKOVcXFUrIGpYN9RZt5ZrTpxzh9Fkd+3nxnBsUiWgoQsh72g1PuXtmUweDeR1SRZjxMIgIG9jLmKeSAH5XBIPFIdy6nPzGD53GD1wIIBY5M39BVF96puhCOsDyuC8ntSbepz59kNO2PQLWs6ZTn7SdcCBgP+Pob/70kBvLZ+8wN8u8VlPw+pQeSsDcNe5CdHJVfonN1vRX/v9SpPPnxtzVNIWZ0zY6YoGxT028Rt/j6atXLVvks6XdNx3N0lETMP4TxMwD9lzxpMW+2g8KNJt8rvQa8ixEGnwt7lJ5lUK/cleuICurDpl44HSw++Bt3FlfT+RBwqh33MBKj54TuKBRvONIahVikT0gJvxw5Y1vHvoxA1QciyDJ84cO+jexynvtf0I/pWn8FJLPfK1SoKrR8MjnRcuYpjyioVBuYdmtT75yf1U8O434PwSqd0mZnvciOjbIeRYKcot4xQ7i9jhOCAAcHHgqsoDbQqOxO/IhokAdEwKg5tsRQ3u5BsR/WTr+3Y99SpvrTuruZpjGf3CDBrVtjcVbPoBXBwQ8JKsc/G64b+zMTru+YSbjZvJJs0R9MPsamOpeO+xesXf/SrjrYDt8RnTFmskYBmpgXgQkoUZeqCJidbD56wHWqlHEixZihxolZXfZeEc9O1+UKIeMeLxtU6A98707zeWPG+ynbEEZBAwhICssc9S/senmhV/l2OPVPR2u26MQeSj7dH4o/WcmDF5uQXboW2ymo86kTlgAOWv/AK4XCBgZaiNQSa3W9TRWQQ1XR63MIWU4FcwtgkejxPXMo0oEJRyIvKXA62DvcUS5rIuhDEzeGkghNlm7G2ApRv+ng2x4Z8NXLjwJ8znKSTmTfzIOOwDaMTTk45H3NO4vqtWJcdcibtudbjr1hiS1ChuCOfnp2aeyDhp9sMVANGg5PXr2dOotjTMNLBPMy3M4IEGJoJRdPTyjsCfhXYeKPRig69f5YjbasCmBwqWWLT7tzwuCjrwQOtR953K7E6uZNMDGU0AJKM059Lk0pyLgkVrkkW7boxC1GOtsGrrOn4+Y+JeVTNZsWRWg+VdHqCC9d8jeKXIPF/pfIjgbVMfvnbpJxLjX2KVL5uRGGkSA9FYwSsxz5Dz7PwuV97NOWbjgeIhozxw171B4nes8MScfYui8zf9GoYH6imWljWhVY2G/XyOADiN+IUjZsV1fYDy1h5G4J8CGy81/nYlVkb0kx3aLHxzBc+YNq+92pnrpo+nxi16eIp2/yJzS5HD+jzw9WyOlIbbOGHTXGsQsp3rhniixO80GROrETSf620bD2RZMiN1P4eIBUUBhyQ5dExcrPA7/WoT4RjMcBsMIHvGZPrllt5U8PFP4KKAxDtF6/K2SoLv/qa7J7y4mO8l4A4COhHQFoT3iEozhw2jq6/vfqbkSK6MtRSycoDgqhiDiIc7ou6uTRw/fMoxFZOJCAztshZKcJAcExltOQcw2CfmRBh2THTKvzCHq73RPaQZ7z4O8MiwsXAjU9oKvd6JUJ7llhnPUtGBPxKK9mSa5yV5YQMvu6chde8nnDBhNu/Qz+kAgB8B7Fo09YXT/R6hvFe2XQ2cvQBRRbLaRXAlVEXksDsbuevWskUzGiFfcyyhIJYlbQc90HIaUCIWERcdmLfEA4VHKYeJWkInXJOruNVcSIfVg3NvP/gkXX1973OlP50zMVu1aK1SNCL7t8XQz97nWk9P2mEFr6HXQ6/OjDnY7R4qXL8X/G+eErtbGEh+r8QujDZoNh4YVGSxICJlHkl6tiv0yP8oE4FLRXYeKDS2/vzX2Nuiho0vij2c99YRcFFAyomIsHlw+cslOeve5B+nze0o5liYgPvqzJh3f7VH6OrKPQj8nWfDVQsvqyB6aJdOfdas4XumLWyj4uWJWePoZK9uVLj5e3BBiZKhtGsEzEAQYM3OAwVMu0nIkYg8UNATs2fPofyPshx4oBCgV4qAJ7WybMlmQmg1QIuRPXcmlRw7p1RAEH4SGuptnoDo3o2/PPzii6bnXP6q1ZkDpk+nk+3uocItPyoRhiZxVU+LZLh7tdjb9fklDBCqgBALMkvysj/PoJJ9h1NL9v9sw0AIbAakIWh4ZwOjWE3g/y3HuqZ30mT8C1wqPOukB4pqudFq0cOFDvw4wBkATwYXBqyP9eM0NPDQwCm3hogeDXBoy0be2X4mDx1uOR4AmMPA06MyKH/N3n7FR8/YWYNJDN3wd2+GlD1bOX78HL4EoMiAbGJkZmacPO0aQAUrt8wt+THHxEAzR6MfWAOgqVeMDK9hCLO6+iJHIpriWbRSZz1Q9OAk5U6cCxXZxgMZTQHUUXCI4KoUjaiHb8HO7u/wR79MWSSlUQGMnTf5nQl9HqH813YieP6KYP2aTkpCf2sVYxDZvyNu/ngjJw+fslPKrxCQ8/C0Cafv600Fyz91Zhhgn+ak1MptZL/K79iu1dj1QPG7YNBZd7TJyZpDjuUwgF9DMTDbiy5cdaogcnCHUR8cX8HrNr1aU621mbN4Bs3p0JMKNn4PvlpkVjCosbArsSqihva4LXn+Wk5uvfA2ta9yX5lGgdxzEkvRDTNPs9XGsOCNbyQAVCjxQFVPpHIKdQgo+PgUUBiw80AOYWL8yIiTqdvrsjvpRrseqF+yQNaF5Xy1WBgt8tPbpg48KclnV8xewGOIbAVMSyeOoTyttGLJnuMmDySHQlZPixS472+3M7HGMhbrIUPtZruWoLn/1Gy1MWKy6l/dEuGgVocNlMlWw5i1bQYV7Myy80AigAcAjChXQkVoVWIsTZNlz1lj8fBhhXty6hXtzZTjXjFPHemF/74WqLtzE88fMZnVIb765u4X1wwbQldXfTGm9KczVtJNOC/mEF56uzVHStKXHP+uEbGw1AVmfiXI0ZqzIs1SGYjKA8lJSJA8u2azxuA/BWWUlUHK4cilzlZf1R418ESdgUMo77Xda0pPnpc5nIDp7moVEDW0K+a+9w5PGjPrCVnWY2xYNGXRh336UP7yrQievyTFwiIP1CrGIKL/7ajz2WaOGz51L0nYrpksRIMDn7Jqy+ReRxmaohSp2HIsFviIPFCaJREmFnYqyGy6eOaApgP7Ut6qPQj+dcUWRRj7eRrFwT+gw8qxS5bzXQ7FnduXTqftnbtR4Xt7ELxa4MgDwYCrdg1EDOnVRkuoZsNs0uiqxkH5ChBpUlEPBRFl0wPtE2IioSg4TErEoijWITwhgN4AgYrFnIgYCzM3sxfI68fteHgqtb/1bir86BC4oMQRK4kIvs7pSN3/BQ+atIBFx2MIsd/MeIZOtu5AxV8eBUpZ4oESBvp8El8ENASCiNJIE3kggYMOJSWs5oVZjZWjVB5IauwcVCbmsPHZAKBWhfsDf162Ppd46yGAgd/HvMpnXnuTTyxaWs+sBgOA0cBd1cdQ8NRf1Qv3/CLncIRYmGIj4X/oVgzc/BE/MHzqflW5/5cIxzMGUdHaLwaWHs+10QzL2knyIRqYNDnPauCRWNhILgMHzX+k8sRQDYTMAxW41BRlWrD43Gd/O3yi/Y8UyL1oq9kGmoFRF+Rywdc+Ff5OqT8fe/Flfvec7KPuSen7Z9/HB1P+6ztnlB7/zZ4T0V9dCdUQOezO1vetXsvdZy6+Wc2xZK6fsPrXNfdSwZqt4Et5gkVrSsRiRV2aI79TEvhsq10pgyc6RSyiMCNuE5T8HUqy/7HxQMYhAKeE2M8NX7c0pH63lb9qNcd0+IYXHrRo+tTBvR+kvOXbUPrHRbsGqL93N0+Bt3vLAx3nLGHblDQCcj0T6GRuOyra9LWEl7a6R811QVNrpB10wXxbNZVdcMm3qSc2FYfseWECQGsAejn0ZwAOPJCFgk7LQrWYCET0a4ddHT/gjUdmzHqhGawJQwCefXk6Pdv5Dir6cD/4SqFjVZrm88LX8xZ02LWLm4yewyaWC8/sXk/TqTatqXjbNzbMBggBEGvspAcKfRBkVGC1xlctnWNL6XGmL6K3I6Vm+zGARyhemZyLnB2UcXdyFcQMum1i4uJXmV1s22/61Geoa+vb3MVfHLUwWxp5BKoUC/+j3ZG+YRPXvnfGfKu0kE2ynf3sYAqcOiNELKEL5oJWrCGo8EBVT2Ryk9OULZaKyfyqaUremdhB59O9syT3kH07vtks1nDKiRiY7uvaGBv2bedVU+azOgHyViCwaOQQyn/ry94lh06buRLVm7vqxCNiwJ1jk+54k5v1yY2xRpJ+xNKAErFoAAI+jUU117AClSc68cDr4YmiR3ao2VZlcjW+FmeCSpgrWTeAG6Lg/087rNyxhZ8fPrlY5ZcrFozbkPXYQ1Sw4rN3Atnn5PMxttM0uNs1xpX83y/X/uVlRkPZWpwmTGhqNRWJ+Q/ZvYZXrJkCBq9y3J/E+im1FkcpcVbywlzmRBqxIsPCXFe1iogc1tOz8J31PGPyC7cav99D/43cpdP6vXd3Typ4axuCf1+S2AkZTCQqCt77OqHOll0cN2zqXwCBPB4Js8nARNJI5oGquEBcavE7kqzAuopcAjUSCTrnWCQe6DQnBjJvBR1UEuPW9yVHcxC8lG/LiRjbudOT4L6n9VfjZ77EDOAzBnYCMPKpW1+YQFs7d6KizfvA+UVC1CPwwOqVETHkP5UT3/yQER0lYTYDcAXh1cxqLxL5D1vxM5NbijSUvLOOZX6b91NpkoN3JLVmmwA7b4UgFst6YMmhLJy4pSsV7zimjCIh0vB54e/VFs9+toUHPzVtl8gJjfdfT3ySklq38pV8dcSBB+rqTuN60KrcaK/gkHiiLcdiDrGisuqx1dJ423bC6Lbrger0RArDSe0xtVHZ+/hzQPebhlDeWzsfKT6cGTYn4qp1EyIH39XhiWVv8WKGR8XLtYTiH0Y8SkWrP36u9Odse64nXB2mIUCIPUsa2WY92ev+FMmMLduxKss0BcpU9dzYTs1hK5UWofkQjiqLWLff+5GJb/+nfz8qWLa5OPjHv7ZIxchje9qk4cjefcX3jVvIYjWr8f7XTybNO73+Lip6+1MEL14Jq18aviQQSlTJ1sVB54jFKUPnFLEYPFCe5qV6V5L4ozrPhR3mvuh0y3E0iDmWx1+Z5Xu8azcq3LAHwauFSk5Er+WJiYTvoa7o9cnn3CljpnQ4rxGxRI2jXzu2puJd34VWBFBZiH5MDSCNSO5pOccCaBQMOEYittBO1gOJ2SFikfPCJnQI82hUHsh0QCgqUHM4LHUgCwCQMW00+aIKK5TsOeY4C5VIgyu+GvwD7sFtn+3gm0fPlWMFArAByL7jMSpYs/HV4OkzUmWGNWNWKy4/YgGxnd85r4bBHGbupBA3SzzQYR6xygMlCUyJf6XZTQ7Xdlh6l0uThj9GhW9sHlfyY1ZYbNOqV4Hv4Z5oumk717x92gGVTZ1dOmn46d5dKfj7efvsAQS9mnUpNXtUIuZPJB6oCNdBuUY6ZEGazbGo/M5u4A4xPDcPNV5TcyKabTiHm2U/Z9HkBQv73keFqz4B/3XJVtNtWJYrvgYiBj1wc9JdGzju0vwB4loUAMB5BXIe21S2dQlEqiNzSkKxUsMoh1alKg9UhzM75ESMWQnmMyjOStDPyxjODjxQxcNw8bbxePWlybSsa0cq/Gg3uKBI4bpWH7iaNID/kXtW1856g8WpbggEHfPYmqiOSCqssXNQ89kwhUiZ00VuFXOY5ByLyuHIvMrC2NWsvLYZieiWaLIEtT6wjOHsvOYDY+3Upymw+2hq6bfHrFmvYrSiW6qnUxskZx/g+FELQrtrmt3rA9Bs3CzgYIkcdpK9Ld41+zVon+qKcJxUMBt7Dvx7+Tck/GVLS6TrWzRj/fiBJz8a+hAVrtq4LpB5NiwPpIo3wPvwvUj67zam6GjH3I9GLPNAkydaNTn5UgRhVP0r8wDV+kA1x0KKHgjjtxwyfqKCzNxCnn2qWrwkyorzBsVISV1Iw7KS7a9M6b/z/m5UtPYT8IVLjjO0CBq01GRo1as6Ziw1u9e0ialFNh7o4J0NTLHNlVNVbamSQgXKsrN8qh4IRdV2tEDlVG9Xvq+nv/9u0Tg60LkVFX++B1xUbPLAsLU8Ql2n28AfiSQJYiTAPggWGJoUo8z6ETCPCc45FlN/s6oS7KsCKBZmvgqoSKIQQvIyBvbLIgaOyhIxDsOdCLn1QAn5i9pQfOJed9NGFqdV1RQherMiFmVmqNCyIjUPy3b3bMtB2LJ9DnlhGyYaq32IvNXARDUuZ2tCebnWWIbDsX1GQObJ0fuyzvWiwpXvnAjk/i5HdCxHThR0saZWLlCEV64fBGy8yiHvXGYtTthtbGkGp/pxS8VRs23GeZTdgeE1SbYtpCGf3pmeU+plNW1PJR98Ar6cZ/vt0OyGoFeTQSv0kpz3EssaIDlHFKIoW9ZlJjtIhXggSyvY2UaEsHyB4bnFWJilJNa1WeBW5fPjyvd5JIsmTEDO3JFUvH5jtsmnBVwOQit2q5OcCYC/QzJSs97m/JW/7IdGP6jfh86YBUvi0lB+2raskQSzId4nr0oHh4JQa9IQKW5FsRrBCTpZozMGctnDWSLwjLnx0F578Z2Ab3BbiKukGH7A7fNluQN/XoWraowtonDVroSYYW1uKc28cItaOxOmPlOVapWIhcvOrQgem5TtbKq6adRcTgdeKwF3joDi97/CnuiOcN/aFk4ruAXz8pCzMGOHlrf550mB3y7b9UAdl9xJlW3zRGyLxICKbDXS6qSBcHP7lE5Ua7ZZ8d72yEgczuF5otOEcZUzst7+2rEzODntW/beeycoKlpWj/TzD2bnouTDj4YDgPvM/FmzMR+za8+YxRF3NQRFei39jRBmbp9tZd5g2Ll9ZB0H7ADyJAe4HG7NWiKHuX0kLcrrVCopog8A9NA/2udglU1GzB3uapa+1NeovskDbdrmlaso2bIduc9nhMBnibAuTvaaiVR8vuSmoq8yJSXHVhtDBG96TdR+Y2mCcAoxjnPloNIqux4oYyI5zhMRLUiq5THwTpzQKWIgCw5L6K6dSv0NM6PtonXse6TPUnejBo7VaSBC6Ze7kdmpPhkdaPyENO5OL3vg79NnnqK81/a/VHLivFUFpdQoupKrwpeWmJ0w2VyHJk+tD1RzLE7zhctXyB2WeVOjGged+HowsPtzL/Ptu4+xu31rm4pvPEuP/YTit9YPzBnb34nbwW3jRwBy2mAk6mFkwqqp7O/VBK6K0bJUBoIW5Udk31uQ0nEjl574Q6lsJXVtIisWJtirck2vIsTM5vECci2PwQ35f1NxjB36DJl22dOza4y3ek+FnegWyEDwz3Mo3rwVZ5dPIQwIv5KpG06VYEZnzptOACPxpcXsu60+yOsWsFIvya1eAd7qFW0lZUHl4rCoB4bx9LxMmScCANwSTD+H1sdmpS7cyP+WpeIoi5XHjVl4/8CGqR/40hso6Q7BKV3NQ+mO3ciZMZTQvKV0okQybuuLUFqLL0p1iYIYmZUxkgre/e6hkqNnlRpph5lYhh7ITnRR1QNlUZbYHtUwfWs20l4fyNcsgwHA6OffYl/fez9wN26o1OJYGFi6/3vElsTF5twwlLDdlhC2J8mkxcrLWXwxZ/bk9b/2eYyuLttxMZB7wVYjreqF7gZxiHt68kE1xyIrIuKPzJMjJ9OCWoFR3xGvjOW2GM75M+P9tAkv8aTdR9ndsa1NJTKOGTiZicJV6xYdW9Obvl0bfeV6ltJ1m1HINS4wdual2RUBIGHSbPbf2Qx0Q6QUyRjW4kqujqjkGs3qtE/jq8m1KtCGrxRvr0L9eIDrQ11nm/EtgBgrByOss62uJM9CHpYBLBo2/ay3R6ea3t49dRQi5eIRcOFfFG3Zjn2Lx5HPAyBtgrKwuj1yunZMLGfZuxxMJMxiJL6whL1d0gC320aOGYCrXhxiLuZdDDatY4s6bHrYK7Ct8fCb/lWcMmaN2un/jrM+y9APtnrs4q6ulNrb/IP6hdEvAS4uRemXXyN34uOmsldVuiAkR6AiJiqQ7pbX/BLq8ehaFicnZAEUP//FJu7KNxz2tKxrzlYSuZ1WMQZahRi7HqgpZ7QMSs0PUJNbwUfHUarE1Ma/BxdatxJBdcb6BW+wr0MrwOOVRggLuBI4+hOCp0+3/2Buxp6WGIAT+s+fI0JVAgrFkFKxQmaZ5bBsiaysp8q41iXdc8eNOgKA4kdOWetpn97PnVJDXrnTWfkJW5soXrWQY4mx5sHIqT/TsWxZspg9XW+Fu0u7sDw0eP4fFH/0WemaFVM8PieOarT5OhagFEBGXZC2nIV4w+Bm7uIZ/U/f15sK3tiB4LnLYarABC5WIcamPjjVbANyFYW47s7e09OP7snfxd7ed4AqxDrkhQkoKETJps+x4I7m9NuKqR6nmzeIi5WzzcFez2Ll75VzBa5h5XwAyH1hMp3q0p0KN+0H5xdJqrbIA3092yHpvd5ca3iVXyBlYclei+OgjLs7tob/iQfTtfga+j5ky4mUfncEBbuP1p09YxgBoQXbxOYcVVTtf6XJS3ZDCn9TGwMSHyzL0q7/Bg45k0dR7RtXJmqaN9N9S0NByLCulLtebbjrJaYmNjvO2o0VbZENQ63lsTDVVau6BfjKKsbBs7+jeOvOH8ctn5LmZ0HcIC5bBhP0STOribJv4FBmxGI3w3IAwmGT7OWDspAOijs+fYm3Q9OnXMk1hQZZ5+du3tCW45YOpc+FDqtfGh11NR+lX3yFwTOHk++edsDy68i7qIrQ9S5WTuXe0OZ/uIGDsNuZWvOfPh01iArXbUPw3yvSumJOkYOoBGVyA7ia1IdTJYaIgaX7D2JuhzTtkZnDyemGDWLFrlNtojWPxaGM5pqa3QihxWLmwrpbWhz+3x4uCHdfiwzdMa3bOQBAwrxl7O3cAvB4YAs7hLWwS745Bk+DZCAmWtqOBdE2mHkWxV9+ve63Vyf3d8YcLluWNx5RMO+SFkgHtHSA0gCuoOjCCoJZPJEI6GcvHwmfcLo247Td2+TPukDVGOTgXUqcdKUrUpK2eRqnWuoOy4qNt1XjUMKIIbEIYgJfvorirV+iY7dR5JvREf5XJsGn32JOvKmNeMu5PsTYCvlmNta2hBpGssrATrpengjhTjj0v/ZaGGYkdqZ+zKxZe7YDRyjuqRT23H0bXFVulBV0Nf43sDIQQMneg0gf2Y/8PzS5DhmsvO/ZEjauGxMpzA1dyiOG14qR5ZDXM0v/pMzbN1Pxp3uAohLnuYb6OQVP56J47cZxKev7EQbJiww5dxA55KHLxkNWCfe13OjL3G4tgAVhNFNcG6yUa41V1Q3eATBUj8f/pupFX7XxJdXa625cX/a6V/JQvHUXzswbQbdGdgbSQh33wQig/y7rN14I5+CER49yLnr0cqB0mX2Cp4SJ8o2+rNCJHi4LE9V1H9gZZcsczgycB3CTSDL6Sj/0BwX3gS9SrSfX53nv6RapRUeheNe38E/qRhUwANWU1GbvJbIoO5oVvBNu9GVipBMeQrht55Mi5SmfJ/4fzE2OofoE4vQAAAAASUVORK5CYII=";
-const APP_VERSION = "2.56.0";
+const APP_VERSION = "2.57.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
+/* Sub-statuses the team needs that the SAAG workbook does not have yet, each with the actions of a sibling under the
+   same status. A line does nothing once the workbook (lib/saag.js) carries it; add it to the workbook too. */
+const SAAG_ADD = [["Claim Not On File", "Policy Active", "Claim available in Clearing House"]];
+SAAG_ADD.forEach(([st, sub, like]) => {
+  const si = SAAG.statuses.indexOf(st), li = SAAG.subStatuses.indexOf(like);
+  if (si < 0 || li < 0) return;
+  let ui = SAAG.subStatuses.indexOf(sub);
+  if (ui >= 0 && SAAG.rows.some((r) => r[0] === si && r[1] === ui)) return;
+  if (ui < 0) { SAAG.subStatuses.push(sub); ui = SAAG.subStatuses.length - 1; }
+  SAAG.rows.filter((r) => r[0] === si && r[1] === li).forEach((r) => SAAG.rows.push([si, ui, r[2], r[3]]));
+});
 const SAAG_INDEX = (() => {
   const subsByStatus = new Map(), actsByKey = new Map();
   SAAG.rows.forEach(([si, ui, ai, ei]) => {
@@ -1307,9 +1318,10 @@ const navFor = (me, ho, fb) => {
   // Posting and Submission work only on what is handed to them: no AR screens (SAAG, inventory, allocation, attention, TFL)
   if (desk && me.role === "supervisor") return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"],
     { g: "Manage", items: [["client", "Client 360"], ["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ...inbox] }];
-  if (desk) return [["handoffs", DESK[desk].tab], ["history", "My work"], ...inbox];
+  const respNav = (me.resp_clients || []).length ? [["claims", "Claims"]] : [];
+  if (desk) return [["handoffs", DESK[desk].tab], ["history", "My work"], ...respNav, ["clients", "My clients"], ...inbox];
   if (me.role !== "supervisor") {
-    const base = USER_NAV;
+    const base = [...USER_NAV, ...respNav, ["clients", "My clients"]];
     return [...(handoffTab(me, ho) ? [...base, ["handoffs", "Posting & submission"]] : base), ...inbox];
   }
   const work = [["teamtoday", "Team today"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["claims", "Claims"], ["saag", "SAAG reference"]];
@@ -1739,6 +1751,144 @@ function Dashboard({ ctx, go }) {
 
 /* ---------- clients & locations ---------- */
 /* Clients & locations: the clients and their locations, and which billers work each one (with today's team). */
+/* ---------- Client profile setup: scope of work, locations, targets, production file, responsible people ---------- */
+const SERVICES_UI = [["ar", "AR follow-up", "Calling payers and working denials: the team lead accountable"], ["posting", "Payment posting", "Posting payments from EOBs / ERAs"],
+  ["submission", "Submission", "Submitting and resubmitting claims"], ["rejection", "Rejections", "Fixing rejected claims, first priority"]];
+const SERVICE_UI_NAME = Object.fromEntries(SERVICES_UI.map(([k, l]) => [k, l]));
+const profileFrom = (c) => {
+  const pick = (m, l, b) => (c && c[m] === "person" ? { lead: c[l] || "", backup: (b && c[b]) || "" } : { lead: "", backup: "" });
+  return { scope: (c && c.scope_of_work) || [], targets: (c && c.targets) || {},
+    resp: { ar: pick("ar_mode", "ar_lead", "ar_backup"), posting: pick("posting_mode", "posting_lead", "posting_backup"), submission: pick("submission_mode", "submission_lead", "submission_backup"),
+      rejection: pick("rejection_mode", "rejection_lead", "rejection_backup"), subcheck: { mode: (c && c.submission_check_mode) || "", lead: (c && c.submission_check_person) || "" } } };
+};
+function profileMissing(f, locCount) {
+  const m = [];
+  if (!f.name.trim()) m.push("client name");
+  if (!f.scope.length) m.push("scope of work");
+  if (!locCount) m.push("a location");
+  for (const s of f.scope) {
+    if (!(Number(f.targets[s]) > 0)) m.push(SERVICE_UI_NAME[s] + " target");
+    if (!f.resp[s].lead) m.push(SERVICE_UI_NAME[s] + " responsible person");
+  }
+  if (f.scope.includes("submission") && !(f.resp.subcheck.mode === "biller" || (f.resp.subcheck.mode === "person" && f.resp.subcheck.lead))) m.push("who rechecks submissions after 48 hours");
+  if (f.prodMode === "link" && !/^https?:\/\//i.test(f.workbook_link || "")) m.push("the production file link");
+  return m;
+}
+const Step = ({ n, title, sub, children }) => <div className="group"><div className="gt row" style={{ gap: 8 }}><span className="stepn">{n}</span>{title}</div>{sub && <div className="tiny muted" style={{ margin: "-4px 0 8px" }}>{sub}</div>}{children}</div>;
+function ClientProfileForm({ ctx, client, onClose, onSaved }) {
+  const isNew = !client;
+  const [f, setF] = useState(() => ({ name: client ? client.name : "", code: client ? client.code || "" : "", follow_up_days: client ? client.follow_up_days : 30, active: client ? client.active : true,
+    workbook_link: client ? client.workbook_link || "" : "", prodMode: client && client.workbook_link ? "link" : "auto", locations: [], locDraft: "", ...profileFrom(client) }));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const set = (patch) => setF((x) => ({ ...x, ...patch }));
+  const setResp = (k, patch) => setF((x) => ({ ...x, resp: { ...x.resp, [k]: { ...x.resp[k], ...patch } } }));
+  const toggle = (k) => setF((x) => ({ ...x, scope: x.scope.includes(k) ? x.scope.filter((y) => y !== k) : SERVICES_UI.map(([s]) => s).filter((s) => s === k || x.scope.includes(s)) }));
+  const people = ctx.users.filter((u) => u.active).sort((a, b) => a.name.localeCompare(b.name));
+  const deptRe = { ar: /^(ar|accounts)/i, posting: /posting/i, submission: /submission/i, rejection: /submission|rejection/i };
+  const opts = (k) => people.slice().sort((a, b) => ((deptRe[k] && deptRe[k].test(b.department || "")) - (deptRe[k] && deptRe[k].test(a.department || ""))) || ((b.role === "supervisor") - (a.role === "supervisor")) || a.name.localeCompare(b.name))
+    .map((u) => ({ id: u.id, label: u.name, sub: [u.designation || (u.role === "supervisor" ? "Supervisor" : "Biller"), u.department].filter(Boolean).join(" · ") }));
+  const locCount = isNew ? f.locations.length : (client.locations || []).filter((l) => l.active).length;
+  const missing = profileMissing(f, locCount);
+  const addLoc = () => { const n = f.locDraft.trim(); if (n && !f.locations.some((l) => l.toLowerCase() === n.toLowerCase())) set({ locations: [...f.locations, n], locDraft: "" }); };
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active,
+        workbook_link: f.prodMode === "link" ? f.workbook_link.trim() : "", locations: isNew ? f.locations : undefined, profile: { scope: f.scope, targets: f.targets, resp: f.resp } });
+      toast(isNew ? f.name.trim() + " created. Everyone set as responsible sees it now." : "Client profile saved.");
+      onSaved();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  return (
+    <Modal title={isNew ? "New client" : "Client profile · " + client.name} sub="Every part is needed: without a scope, a location, a target and the people responsible, nothing reaches anyone." wide onClose={onClose}
+      footer={<>{missing.length > 0 && <span className="tiny amber-ink" style={{ marginRight: "auto", maxWidth: 520 }}>Still needed: {missing.join(", ")}.</span>}<button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || missing.length > 0} onClick={save}>{busy ? "Saving…" : isNew ? "Create client" : "Save profile"}</button></>}>
+      <div className="stack">
+        {err && <div className="alert err">{err}</div>}
+        <Step n="1" title="Client">
+          <div className="grid g3">
+            <Field label="Client name"><input className="input" value={f.name} onChange={(e) => set({ name: e.target.value })} autoFocus={isNew} placeholder="e.g. Dr. Montella Eye Care" /></Field>
+            <Field label="Short code" hint="Shown on badges and reports"><input className="input" value={f.code} maxLength={12} onChange={(e) => set({ code: e.target.value.toUpperCase() })} /></Field>
+            <Field label="Default follow-up (days)"><input className="input" type="number" min={1} max={365} value={f.follow_up_days} onChange={(e) => set({ follow_up_days: e.target.value })} /></Field>
+          </div>
+          {!isNew && <label className="check mt8"><input type="checkbox" checked={!!f.active} onChange={(e) => set({ active: e.target.checked })} /> Active (inactive clients are hidden from uploads and allocation)</label>}
+        </Step>
+        <Step n="2" title="Scope of work" sub="What Purview does for this client. Anything not ticked is done by the client.">
+          <div className="scope-grid">{SERVICES_UI.map(([k, l, d]) => <label key={k} className={"scope-opt" + (f.scope.includes(k) ? " on" : "")}><input type="checkbox" checked={f.scope.includes(k)} onChange={() => toggle(k)} /><span><b>{l}</b><span className="tiny muted">{d}</span></span></label>)}</div>
+        </Step>
+        <Step n="3" title="Locations" sub={isNew ? "At least one. Inventory is uploaded, allocated and reported per location." : "Add, rename or switch off locations on the client card."}>
+          {isNew ? <><div className="row" style={{ gap: 6 }}><input className="input" style={{ maxWidth: 320 }} value={f.locDraft} placeholder="Location name, then Add" onChange={(e) => set({ locDraft: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addLoc(); } }} /><button className="btn" onClick={addLoc} disabled={!f.locDraft.trim()}>Add</button></div>
+            <div className="pill-list mt8">{f.locations.map((l) => <span key={l} className="chip on">{l} <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => set({ locations: f.locations.filter((x) => x !== l) })}>×</button></span>)}{!f.locations.length && <span className="tiny muted">None yet.</span>}</div></>
+            : <div className="pill-list">{(client.locations || []).filter((l) => l.active).map((l) => <span key={l.id} className="chip on">{l.name}</span>)}{!locCount && <span className="tiny red-ink">No active location: add one on the client card first.</span>}</div>}
+        </Step>
+        <Step n="4" title="Targets" sub="Claims a day for each part of the scope, for the whole team on this client.">
+          {f.scope.length ? <div className="grid g4">{f.scope.map((k) => <Field key={k} label={SERVICE_UI_NAME[k]}><input className="input" type="number" min={1} max={5000} value={f.targets[k] || ""} placeholder="claims a day" onChange={(e) => set({ targets: { ...f.targets, [k]: e.target.value } })} /></Field>)}</div> : <div className="tiny muted">Pick the scope of work first.</div>}
+        </Step>
+        <Step n="5" title="Production file" sub="Where every saved entry is copied, one row each.">
+          <div className="seg2">{[["auto", "Brahmastra keeps it"], ["link", "Our own workbook"]].map(([k, l]) => <button key={k} className={f.prodMode === k ? "on" : ""} onClick={() => set({ prodMode: k })}>{l}</button>)}</div>
+          {f.prodMode === "auto" ? <div className="tiny muted mt8">Saved by itself in the Purviewautomate OneDrive: Brahmastra Reports › team lead › {f.name || "client"} › Production, one file a month.</div>
+            : <input className="input mt8" value={f.workbook_link} placeholder="https://purviewhealthcare-my.sharepoint.com/…/Production.xlsx" onChange={(e) => set({ workbook_link: e.target.value })} />}
+        </Step>
+        <Step n="6" title="Responsible people" sub="For each part of the scope. They get this client's claims and profile in their login straight away; a backup covers when they are out.">
+          {f.scope.length ? f.scope.map((k) => (
+            <div key={k} className="row mt8" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <b style={{ width: 150 }}>{SERVICE_UI_NAME[k]}</b>
+              <Combo width={260} value={f.resp[k].lead} onChange={(v) => setResp(k, { lead: v })} placeholder="Responsible person…" options={opts(k)} />
+              <Combo width={240} value={f.resp[k].backup} onChange={(v) => setResp(k, { backup: v })} placeholder="Backup (optional)…" options={opts(k).filter((o) => o.id !== f.resp[k].lead)} />
+            </div>)) : <div className="tiny muted">Pick the scope of work first.</div>}
+          {f.scope.includes("submission") && <div className="row mt8" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <b style={{ width: 150 }}>Submission follow-up</b>
+            <Combo width={260} clearable={false} value={f.resp.subcheck.mode} onChange={(v) => setResp("subcheck", { mode: v })} placeholder="Who rechecks after 48 hours…" options={[{ id: "person", label: "A person" }, { id: "biller", label: "The biller who sent it" }]} />
+            {f.resp.subcheck.mode === "person" && <Combo width={240} value={f.resp.subcheck.lead} onChange={(v) => setResp("subcheck", { lead: v })} placeholder="Person…" options={opts("submission")} />}
+          </div>}
+        </Step>
+      </div>
+    </Modal>
+  );
+}
+const CLIENT_ACTION = { "client.save": "Profile", "client.responsibility": "Responsibility", "client.team": "Team", "client.location": "Location", "access.share": "Shared", "access.remove": "Share removed",
+  "raci.save": "RACI", "client.log": "Call log", "digest.sendNow": "Digest" };
+function ClientHistory({ c, onClose }) {
+  const q = useRpc("clients.history", { client_id: c.id }, [c.id]);
+  const rows = (q.data && q.data.rows) || [];
+  return (
+    <Modal title={"Change history · " + c.name} sub="Who changed what on this client: the profile, responsible people, teams, locations, shares, RACI and month-end. Everyone on the client sees it." wide onClose={onClose}>
+      {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <Empty>No changes recorded yet.</Empty> :
+        <div className="stack" style={{ gap: 0 }}>{rows.map((r, i) => <div key={i} className="hist-row"><div className="tiny muted" style={{ width: 130, flex: "none" }}>{fmtWhen(r.at)}</div>
+          <div style={{ flex: 1 }}><b>{r.user_name || "Brahmastra"}</b> <span className="badge gray">{CLIENT_ACTION[r.action] || (r.action.startsWith("monthend") ? "Month-end" : r.action)}</span><div className="small" style={{ whiteSpace: "pre-wrap" }}>{String(r.detail || "").split("; ").join("\n")}</div></div></div>)}</div>}
+    </Modal>
+  );
+}
+/* Claims of the clients a biller is responsible for (posting, submission...), to look at; work happens in their desk. */
+function DeskClaimsView({ ctx, me }) {
+  const mine = ctx.clients.filter((c) => c.responsible_me);
+  const [cid, setCid] = useState((mine[0] || {}).id || "");
+  const [qs, setQs] = useState("");
+  const [state, setState] = useState("workable");
+  const [page, setPage] = useState(1);
+  const [open, setOpen] = useState(null);
+  const q = useRpc("claims.list", { client_id: cid || undefined, q: qs.trim() || undefined, state, page, page_size: 50 }, [cid, qs, state, page], !!cid);
+  const rows = (q.data && q.data.rows) || [];
+  return (
+    <div className="stack">
+      <div><h1>Claims</h1><div className="sub">Every claim of the clients you are responsible for, to look up. Your work happens in {deskOf(me, null) ? "your desk tab" : "My day"}.</div></div>
+      {!mine.length ? <div className="card"><Empty>You are not responsible for a client yet.</Empty></div> : <>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <span style={{ minWidth: 240 }}><Combo clearable={false} value={cid} onChange={(v) => { setCid(v); setPage(1); }} options={mine.map((c) => ({ id: c.id, label: c.name }))} /></span>
+          <input className="input" style={{ maxWidth: 280 }} placeholder="claim #, patient, account, payer" value={qs} onChange={(e) => { setQs(e.target.value); setPage(1); }} />
+          <div className="seg2">{[["workable", "Open"], ["", "All"]].map(([k, l]) => <button key={k} className={state === k ? "on" : ""} onClick={() => { setState(k); setPage(1); }}>{l}</button>)}</div>
+        </div>
+        <div className="card tight"><div className="table-wrap"><table className="t">
+          <thead><tr><th>Claim #</th><th>Patient</th><th>DOS</th><th>Payer</th><th className="num">Balance</th><th>State</th><th>With</th></tr></thead>
+          <tbody>{rows.map((c) => <tr key={c.id} className="click" onClick={() => setOpen(c.id)}><td className="mono">{c.claim_no}</td><td className="phi">{c.patient}</td><td>{fmtDate(c.dos)}</td><td>{c.payer}</td><td className="num">{fmtMoney(c.balance, 2)}</td><td className="small">{c.state}</td><td className="small">{c.assigned_name || "–"}</td></tr>)}</tbody></table></div>
+          {!q.data ? <Spinner label="Loading…" /> : !rows.length ? <Empty>No claims match.</Empty> : null}
+          {q.data && q.data.total > rows.length && <div className="row between mt8"><span className="tiny muted">{fmtInt(q.data.total)} claims</span><span><button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button> <button className="btn sm" disabled={page * 50 >= q.data.total} onClick={() => setPage(page + 1)}>Next</button></span></div>}
+        </div></>}
+      {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
+    </div>
+  );
+}
 function ClientsHub({ ctx, reload, go, me, initialTab }) {
   const [tab, setTab] = useState(initialTab || "clients");
   return (
@@ -1750,7 +1900,12 @@ function ClientsHub({ ctx, reload, go, me, initialTab }) {
   );
 }
 function ClientsView({ ctx, reload, embedded, me, go }) {
-  const dirQ = useRpc("users.directory", {}, []);
+  const ro = !me || me.role !== "supervisor";
+  // Changes made by anyone show on opening: the client list is fetched again each time.
+  useEffect(() => { if (reload) reload(); }, []);
+  const [hist, setHist] = useState(null);
+  const [prof, setProf] = useState(null);
+  const dirQ = useRpc("users.directory", {}, [], !ro);
   const dir = (dirQ.data && dirQ.data.people) || [];
   const [edit, setEdit] = useState(null);
   const [locName, setLocName] = useState({});
@@ -1800,15 +1955,16 @@ function ClientsView({ ctx, reload, embedded, me, go }) {
           <Field label={"Type " + del.name + " to confirm"}><input className="input" value={delTyped} onChange={(e) => setDelTyped(e.target.value)} autoFocus /></Field>
         </Modal>
       )}
-      <div className="row between"><div>{!embedded && <><h1>Clients & locations</h1><div className="sub">Inventory is uploaded per client and location; allocation and reports follow the same split.</div></>}</div>
-        <button className="btn primary" onClick={() => setEdit({ name: "", code: "", follow_up_days: 30, active: true })}>Add client</button></div>
+      <div className="row between"><div>{!embedded && <><h1>{ro ? "My clients" : "Clients & locations"}</h1><div className="sub">{ro ? "The clients you work on or are responsible for: scope of work, locations, who does what, and every change. Only supervisors change them." : "Inventory is uploaded per client and location; allocation and reports follow the same split."}</div></>}</div>
+        {!ro && (me.is_admin || me.access_all || !me.scope) && <button className="btn primary" onClick={() => setProf({ client: null })}>Add client</button>}</div>
       {!ctx.clients.length && <div className="card"><Empty>No clients yet. Add your first client, then its locations.</Empty></div>}
       {ctx.clients.map((c) => (
         <div className="card" key={c.id}>
           <div className="row between top">
-            <div><h2>{c.name} {c.code && <span className="badge ink">{c.code}</span>} {!c.active && <span className="badge red">inactive</span>} {c.can_edit === false && <span className="badge amber" title="This client was shared with you view-only.">shared · view only</span>}</h2>
+            <div><h2>{c.name} {c.code && <span className="badge ink">{c.code}</span>} {!c.active && <span className="badge red">inactive</span>} {c.can_edit === false && !ro && <span className="badge amber" title="This client was shared with you view-only.">shared · view only</span>}</h2>
               <div className="sub">Default follow-up after a claim is worked: {c.follow_up_days} days · added {fmtDate(new Date(c.created_at).toISOString().slice(0, 10))}</div></div>
-            {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>{go && <button className="btn sm" onClick={() => go("client", { client_id: c.id })}>Open Client 360</button>}<button className="btn sm" onClick={() => setEdit({ id: c.id, name: c.name, code: c.code, follow_up_days: c.follow_up_days, active: c.active, workbook_link: c.workbook_link || "" })}>Edit</button><button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button></div>}
+            {c.can_edit === false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}<button className="btn sm" onClick={() => setHist(c)}>Change history</button></div>}
+            {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}<button className="btn sm" onClick={() => setHist(c)}>Change history</button><button className="btn sm" onClick={() => setProf({ client: c })}>Edit profile</button>{go && <button className="btn sm" onClick={() => go("client", { client_id: c.id })}>Open Client 360</button>}<button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button></div>}
           </div>
           <div className="small mt8">
             <b>Billers' work is copied to:</b> {c.workbook_link ? <><a href={c.workbook_link} target="_blank" rel="noopener">client workbook</a><WbLine id={c.id} link={c.workbook_link} /></> : <AutoWbLine s={wbStatus(c.id)} name={c.name} />}{" "}
@@ -1822,6 +1978,9 @@ function ClientsView({ ctx, reload, embedded, me, go }) {
               </div>
             )}
           </div>
+          <div className="small mt8"><b>Scope of work:</b> {(c.scope_of_work || []).length ? (c.scope_of_work || []).map((k) => <span key={k} className="badge teal" style={{ marginRight: 4 }}>{SERVICE_UI_NAME[k]}{c.targets && c.targets[k] ? " · " + c.targets[k] + " a day" : ""}</span>) : <span className="muted">not set</span>}</div>
+          {(c.profile_gaps || []).length > 0 && <div className="alert warn mt8" style={{ fontSize: 13 }}><b>Profile incomplete:</b> {c.profile_gaps.join(", ")}. {c.can_edit !== false ? <button className="btn link sm" style={{ padding: 0 }} onClick={() => setProf({ client: c })}>Complete it</button> : "A supervisor completes it."}</div>}
+          <ResponsibilityRow c={c} dept="ar" ctx={ctx} onSaved={reload} readOnly={c.can_edit === false} />
           <ResponsibilityRow c={c} dept="posting" ctx={ctx} onSaved={reload} readOnly={c.can_edit === false} />
           <ResponsibilityRow c={c} dept="submission" ctx={ctx} onSaved={reload} readOnly={c.can_edit === false} />
           <ResponsibilityRow c={c} dept="subcheck" ctx={ctx} onSaved={reload} me={me} readOnly={c.can_edit === false} />
@@ -1847,6 +2006,8 @@ function ClientsView({ ctx, reload, embedded, me, go }) {
           ))}
         </div>
       ))}
+      {hist && <ClientHistory c={hist} onClose={() => setHist(null)} />}
+      {prof && <ClientProfileForm ctx={ctx} client={prof.client} onClose={() => setProf(null)} onSaved={() => { setProf(null); reload(); }} />}
       {edit && (
         <Modal title={edit.id ? "Edit client" : "New client"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || !edit.name.trim()}>{busy ? "Saving…" : "Save"}</button></>}>
           <div className="stack">
@@ -3304,8 +3465,8 @@ function ClaimHistory({ claimId, claim, me, version }) {
   );
 }
 /* ---------- payment posting & submission hand-offs ---------- */
-const DEPT_NAME = { posting: "Payment Posting", submission: "Submission", subcheck: "Submission follow-up", rejection: "Rejections" };
-const RESP_COLS_UI = { posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
+const DEPT_NAME = { ar: "AR follow-up", posting: "Payment Posting", submission: "Submission", subcheck: "Submission follow-up", rejection: "Rejections" };
+const RESP_COLS_UI = { ar: ["ar_mode", "ar_lead", "ar_backup"], posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
   rejection: ["rejection_mode", "rejection_lead", "rejection_backup"] };
 const MODE_LABEL = { person: "A person from the roster", client: "Client does it", biller: "Biller does it", "": "Not set" };
 const handoffToast = (h) => (!h ? "" : h.mode === "person" ? ` Sent to ${h.label}${h.to ? " (" + h.to + ")" : ""}.` : h.mode === "client" ? ` ${h.label} is done by the client for this project.` : h.mode === "biller" ? ` You do the ${h.label.toLowerCase()} for this project.` : ` No ${h.label.toLowerCase()} responsibility is set for this client yet: tell your team lead.`);
@@ -3347,18 +3508,18 @@ function ResponsibilityRow({ c, dept, ctx, onSaved, me, readOnly }) {
   const [open, setOpen] = useState(false);
   const [d, setD] = useState({ mode, lead, backup });
   const [busy, setBusy] = useState(false);
-  const deptRe = dept === "posting" ? /posting/i : check ? /^$/ : /submission/i;   // Rejections are usually Submission people
+  const deptRe = dept === "posting" ? /posting/i : dept === "ar" ? /^(ar|accounts)/i : check ? /^$/ : /submission/i;   // Rejections are usually Submission people
   const names = new Set((c.roster_names || []).map((n) => String(n).toLowerCase()));
   const onProject = (u) => (u.projects || []).some((p) => names.has(String(p.name).toLowerCase()));
   const suggested = ctx.users.filter((u) => u.active && deptRe.test(u.department || "") && u.role === "supervisor" && onProject(u));
   const people = [...ctx.users.filter((u) => u.active)].sort((a, b) => (deptRe.test(b.department || "") - deptRe.test(a.department || "")) || a.name.localeCompare(b.name));
   const opts = people.map((u) => ({ id: u.id, label: u.name + (me && u.id === me.id ? " (me)" : ""), sub: [u.designation, u.department, suggested.includes(u) ? "suggested" : ""].filter(Boolean).join(" · ") }));
-  const nameOf = (id) => (ctx.users.find((u) => u.id === id) || {}).name || "someone";
+  const nameOf = (id) => (ctx.users.find((u) => u.id === id) || {}).name || (c.resp_names && (id === lead ? c.resp_names[lc] : bc ? c.resp_names[bc] : "")) || "someone";
   const modeLabel = (m) => (check && m === "biller" ? "The biller who sent it" : check && m === "person" ? "A person (supervisor, biller or me)" : MODE_LABEL[m]);
   const save = async () => { setBusy(true); try { await rpc("clients.saveResponsibility", { client_id: c.id, dept, ...d }); toast(DEPT_NAME[dept] + " responsibility saved."); setOpen(false); onSaved && onSaved(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   return (
     <div className="small mt8">
-      <b>{check ? "Submission follow-up (48 working hours after submitting)" : dept === "rejection" ? "Rejections (first priority)" : DEPT_NAME[dept]}:</b> {mode === "person" ? <>{nameOf(lead)}{backup ? <span className="muted"> · backup {nameOf(backup)}</span> : null}</> : <span className={mode ? "" : "muted"}>{modeLabel(mode)}</span>}{" "}
+      <b>{check ? "Submission follow-up (48 working hours after submitting)" : dept === "rejection" ? "Rejections (first priority)" : dept === "ar" ? "AR follow-up (accountable)" : DEPT_NAME[dept]}:</b> {mode === "person" ? <>{nameOf(lead)}{backup ? <span className="muted"> · backup {nameOf(backup)}</span> : null}</> : <span className={mode ? "" : "muted"}>{modeLabel(mode)}</span>}{" "}
       {!readOnly && <button className="btn link sm" onClick={() => { setOpen(!open); setD({ mode, lead: lead || (suggested[0] || {}).id || "", backup }); }}>{open ? "cancel" : mode ? "change" : "set"}</button>}
       {!mode && suggested.length > 0 && !open && <span className="tiny muted"> · roster suggests {suggested.map((u) => u.name).join(", ")}</span>}
       {open && (
@@ -3658,7 +3819,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
               </div>
             )}
             <Suggestions claim={c} subStatus={c.last_sub_status} />
-            {(!q.data.handoff_role || c.mine) && <div className="card stack" style={{ paddingBottom: 0 }}>
+            {(c.mine || (sup && !q.data.handoff_role)) && <div className="card stack" style={{ paddingBottom: 0 }}>
               <div className="row between"><h2 style={{ margin: 0 }}>Work this claim</h2><span className="tiny muted">Save entry records the SAAG and the note; Add as note keeps just the note (for example on a closed claim)</span></div>
               <WorkForm key={"wf" + ver} claim={c}
                 newFiles={(q.data.attachments || []).filter((a) => a.created_at > Math.max(0, ...q.data.notes.filter((n) => n.kind === "work").map((n) => n.created_at))).length}
@@ -5824,8 +5985,9 @@ function App() {
     : view === "dashboard" ? (deskOf(me, handoffs) ? <DeskDashboard {...props} desk={deskOf(me, handoffs)} /> : <Dashboard {...props} />)
     : view === "attention" ? <AttentionView {...props} />
     : view === "inventory" || view === "allocate" ? <InventoryView {...props} initialTab={view === "allocate" ? "allocate" : undefined} />
-    : view === "claims" ? <ClaimsView {...props} />
+    : view === "claims" ? (me.role === "supervisor" ? <ClaimsView {...props} /> : <DeskClaimsView {...props} />)
     : view === "team" ? <TeamView {...props} />
+    : (view === "clients" || view === "locations") && me.role !== "supervisor" ? <ClientsView {...props} />
     : view === "clients" || view === "locations" ? <ClientsHub {...props} initialTab={view === "locations" ? "billers" : undefined} />
     : view === "saag" ? <SaagView {...props} />
     : view === "reports" || (view === "queue" && me.role === "supervisor") ? <ReportsHub {...props} initialTab={view === "queue" ? "today" : undefined} />
