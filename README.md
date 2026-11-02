@@ -140,6 +140,28 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
   inventory or allocation.
 
+#### Client 360
+
+**Manage › Client 360** (or **Open Client 360** on a client card, or a client's name in the RACI tracker) shows one
+client on one page, for team leads, managers and the VP (and anyone a client is shared with, read-only):
+
+- a health line (**On track / Needs attention / At risk**) with the plain reasons: over-90 above the 15% target, SLA
+  below 90%, claims past or near timely filing, escalations over 24 hours, old requests waiting on the client,
+  many missed tasks;
+- AR balance (against a month ago), over 90 days, the SLA score ticked at month-end, collected (from payment posting
+  hand-offs, against the period before), dollars waiting on the client, dollars at timely-filing risk;
+- AR and the over-90 share by month (Brahmastra keeps one reading a day, so the trend fills in by itself);
+- denial and rejection reasons from billers' entries, in dollars;
+- every request waiting on the client, how long, whether it was sent, and the client's average reply time;
+- escalations, missed tasks, entries made, RACI;
+- the **month-end checklist** (inventory uploaded, internal reports reviewed, AR Inventory sent to the SLA
+  scorecard, client pack built, SLA scored with its score, pack sent), each with a due working day of the next
+  month; inventory and the scorecard step tick by themselves;
+- the **client call log**: calls, emails, meetings, notes and the next call with what to prepare.
+
+**Client call pack (PDF)** prints the page or saves it as a PDF for the meeting. Changes to the log and the
+month-end checklist are kept in the audit trail.
+
 #### Feedback
 
 Every page has a **Feedback** tab on the right edge. Anyone signed in (billers too) picks what it is

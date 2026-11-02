@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.41.0";
+const VERSION = "2.42.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -106,6 +106,16 @@ const SCHEMA = [
      kind TEXT NOT NULL DEFAULT 'bug', message TEXT NOT NULL DEFAULT '', page TEXT NOT NULL DEFAULT '', context_json TEXT NOT NULL DEFAULT '{}', files_json TEXT NOT NULL DEFAULT '[]',
      emailed_to TEXT NOT NULL DEFAULT '', email_error TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', done_by_name TEXT NOT NULL DEFAULT '', done_at INTEGER)`,
   `CREATE TABLE IF NOT EXISTS feedback_files (id TEXT PRIMARY KEY, feedback_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT '', data TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
+     client_id TEXT, detail TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at)`,
+  `CREATE TABLE IF NOT EXISTS client_snapshots (client_id TEXT NOT NULL, day TEXT NOT NULL, ar_balance REAL NOT NULL DEFAULT 0, ar_claims INTEGER NOT NULL DEFAULT 0,
+     over90_balance REAL NOT NULL DEFAULT 0, over90_claims INTEGER NOT NULL DEFAULT 0, over120_balance REAL NOT NULL DEFAULT 0, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
+  `CREATE TABLE IF NOT EXISTS client_log (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'note', text TEXT NOT NULL DEFAULT '',
+     next_on TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_client_log ON client_log (client_id, at)`,
+  `CREATE TABLE IF NOT EXISTS client_monthend (client_id TEXT NOT NULL, month TEXT NOT NULL, step TEXT NOT NULL, done_at INTEGER, done_by_name TEXT NOT NULL DEFAULT '',
+     auto INTEGER NOT NULL DEFAULT 0, score REAL, note TEXT NOT NULL DEFAULT '', PRIMARY KEY (client_id, month, step))`,
   `CREATE TABLE IF NOT EXISTS raci (client_id TEXT PRIMARY KEY, r_json TEXT NOT NULL DEFAULT '[]', a_json TEXT NOT NULL DEFAULT '[]', c_json TEXT NOT NULL DEFAULT '[]',
      i_json TEXT NOT NULL DEFAULT '[]', updated_at INTEGER, updated_by TEXT, updated_by_name TEXT NOT NULL DEFAULT '')`,
 ];
@@ -147,7 +157,7 @@ const EXTRA_COLUMNS = {
     ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
-  handoffs: [["available_at", "INTEGER"], ["paused_at", "INTEGER"],
+  handoffs: [["available_at", "INTEGER"], ["paused_at", "INTEGER"], ["client_answered_at", "INTEGER"],
     // Need client assistance: who asked, the AR team lead who sent it to the client (how, when, comment), and when to chase the client.
     ["client_req_by_name", "TEXT NOT NULL DEFAULT ''"], ["client_sent_at", "INTEGER"], ["client_sent_by", "TEXT"], ["client_sent_by_name", "TEXT NOT NULL DEFAULT ''"],
     ["client_sent_how", "TEXT NOT NULL DEFAULT ''"], ["client_sent_note", "TEXT NOT NULL DEFAULT ''"], ["chase_at", "INTEGER"],
@@ -821,6 +831,58 @@ function domainOk(env, email) {
 const maskEmail = (e) => { const at = String(e || "").lastIndexOf("@"); return at > 0 ? e[0] + "•••@" + e.slice(at + 1) : ""; };
 const ADMIN_NAME = "Bob The Builder";
 const adminEmails = (env) => String(env.ADMIN_EMAILS || "").split(",").map(mailClean).filter(mailOk);
+/* ---- audit trail: who changed access, RACI, recipients, client settings, roles ---- */
+async function audit(env, user, action, clientId, detail) {
+  try { await run(env, "INSERT INTO audit_log (id, at, user_id, user_name, action, client_id, detail) VALUES (?,?,?,?,?,?,?)", uuid(), Date.now(), (user && user.id) || null, (user && user.name) || "", str(action, 60), clientId || null, str(detail, 400)); } catch (e) {}
+}
+/* ---- client health (Client 360, portfolio) ---- */
+const OVER90_TARGET = 15;   // % of AR over 90 days that counts as healthy
+const MONTHEND_STEPS = [
+  ["inventory", "Inventory uploaded", 1, true], ["internal", "Internal reports reviewed", 2, false], ["sla_inventory", "AR Inventory sent to the SLA scorecard", 2, true],
+  ["pack", "Client pack built", 3, false], ["sla", "SLA scored and reasons noted", 4, false], ["sent", "Pack sent to the client", 5, false]];   // key, label, due (working day of next month), can tick by itself
+/* Today's AR per client, kept once a day (the last write of the day wins), for the six-month trend. */
+async function snapshotClients(env) {
+  const now = Date.now(), day = istISO(now), today = day;
+  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at)
+    SELECT client_id, ?, COALESCE(SUM(balance), 0), COUNT(*), COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0), SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END),
+      COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0), ?
+    FROM (SELECT client_id, balance, CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(dos, 1, 10)) ELSE age_days END AS age
+          FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id
+    ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = excluded.ar_balance, ar_claims = excluded.ar_claims, over90_balance = excluded.over90_balance,
+      over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, at = excluded.at`, day, now, today);
+}
+async function snapshotIfStale(env) {
+  const last = await getSetting(env, "snap_at", 0);
+  if (Date.now() - (Number(last) || 0) < 3600000) return;
+  await setSetting(env, "snap_at", Date.now());
+  await snapshotClients(env);
+}
+/* Missed tasks per client: AR = allocated before today and still not worked; posting / submission = past the 24-hour
+   TAT, still open or finished late in the last 30 days. */
+async function missedByClient(env, payload) {
+  const now = Date.now(), since = now - 30 * 86400000;
+  const t = isoDate(payload && payload.today), off = Math.round(num(payload && payload.tz_offset_min, 0));
+  const dayStart = t ? Date.parse(t + "T00:00:00Z") - off * 60000 : now - (now % 86400000);
+  const out = new Map(); const get = (id) => { if (!out.has(id)) out.set(id, { ar: 0, posting: 0, submission: 0 }); return out.get(id); };
+  for (const r of await all(env, `SELECT client_id, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_at IS NOT NULL AND assigned_at < ? GROUP BY client_id`, dayStart)) get(r.client_id).ar = r.n;
+  for (const r of await all(env, `SELECT client_id, CASE WHEN dept = 'posting' THEN 'posting' ELSE 'submission' END AS grp, COUNT(*) AS n FROM handoffs
+      WHERE ((status IN ('pending','assigned','client') AND due_at < ?) OR (done_at IS NOT NULL AND done_at > due_at AND done_at >= ?)) GROUP BY client_id, grp`, now, since)) get(r.client_id)[r.grp] = r.n;
+  return out;
+}
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const monthName = (ym) => { const [y, m] = String(ym || "").split("-").map(Number); return m >= 1 && m <= 12 ? MONTHS[m - 1] + " " + y : String(ym || ""); };
+/* The month being closed: last month during the first 10 days of a month, else this month. */
+const closingMonth = (todayIso) => { const [y, m, d] = todayIso.split("-").map(Number); if (d > 10) return `${y}-${String(m).padStart(2, "0")}`; const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y; return `${py}-${String(pm).padStart(2, "0")}`; };
+/* The n-th working day (Mon to Fri) of the month after `month` (YYYY-MM). */
+function nthWorkingDayAfter(month, n) {
+  const [y, m] = month.split("-").map(Number);
+  let d = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1)), k = 0;
+  for (;;) { const w = d.getUTCDay(); if (w !== 0 && w !== 6) { k++; if (k === n) return d.toISOString().slice(0, 10); } d = new Date(d.getTime() + 86400000); }
+}
+async function monthendAuto(env, clientId, month, step, byName) {
+  await run(env, `INSERT INTO client_monthend (client_id, month, step, done_at, done_by_name, auto) VALUES (?,?,?,?,?,1)
+    ON CONFLICT (client_id, month, step) DO NOTHING`, clientId, month, step, Date.now(), byName || "by itself");
+}
 /* ---- feedback ---- */
 const FEEDBACK_KINDS = { bug: "Something is wrong", idea: "I have an idea", praise: "This helped me" };
 const FEEDBACK_TYPES = /^(image\/(png|jpe?g|gif|webp)|application\/pdf)$/;
@@ -1134,9 +1196,9 @@ function userDesk(user) {
 }
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
-const SUPERVISOR_OPS = /^(users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
-const EDIT_OPS = /^(clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
+const EDIT_OPS = /^(client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
 const OPS = {
@@ -1569,6 +1631,122 @@ const OPS = {
     return { people: (await feedbackRecipients(env)).map((u) => ({ id: u.id, name: u.name })) };
   },
 
+  /* ---- Client 360: everything about one client on one page ---- */
+  "client.overview": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (!inScope(user, clientId)) throw outOfScope();
+    const c = await one(env, "SELECT * FROM clients WHERE id = ?", clientId);
+    if (!c) throw bad("Unknown client.");
+    await snapshotIfStale(env);
+    const now = Date.now(), today = isoDate(payload.today) || isoToday();
+    const from = num(payload.from_ms, now - 30 * 86400000), to = num(payload.to_ms, now), span = Math.max(86400000, to - from);
+    const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(dos, 1, 10)) ELSE age_days END";
+    const ar = await one(env, `SELECT COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0) AS o90, SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END) AS o90n,
+        COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0) AS o120 FROM (SELECT balance, ${ageSql} AS age FROM claims WHERE client_id = ? AND state IN ${WORKABLE})`, today, clientId);
+    // a month ago, from the snapshots, for the change
+    const monthAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(now - 30 * 86400000));
+    const snaps = await all(env, `SELECT day, ar_balance, over90_balance, ar_claims FROM client_snapshots WHERE client_id = ? AND day >= ? ORDER BY day`, clientId, istISO(now - 190 * 86400000));
+    const byMonth = new Map(); for (const sn of snaps) byMonth.set(sn.day.slice(0, 7), sn);
+    const trend = [...byMonth.entries()].slice(-6).map(([m, sn]) => ({ month: m, ar: sn.ar_balance, over90: sn.over90_balance, pct: sn.ar_balance ? Math.round(sn.over90_balance / sn.ar_balance * 1000) / 10 : 0, claims: sn.ar_claims, day: sn.day }));
+    const paid = async (a, b) => (await one(env, `SELECT COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt, COUNT(*) AS n FROM handoffs WHERE client_id = ? AND dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ?`, clientId, a, b));
+    const coll = await paid(from, to), collPrev = await paid(from - span, from);
+    const waiting = await all(env, `SELECT h.id, h.dept, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.chase_at, c.claim_no, c.patient, c.balance
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client' ORDER BY h.paused_at ASC LIMIT 100`, clientId);
+    const replyAvg = async (cid) => { const r = await one(env, `SELECT AVG(client_answered_at - COALESCE(client_sent_at, paused_at)) AS ms, COUNT(*) AS n FROM handoffs WHERE client_answered_at IS NOT NULL AND client_answered_at > ?${cid ? " AND client_id = ?" : ""}`, now - 90 * 86400000, ...(cid ? [cid] : [])); return r && r.n ? { days: Math.round(r.ms / 864000) / 100, n: r.n } : null; };
+    const reasons = await all(env, `SELECT COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, COUNT(DISTINCT n.claim_id) AS n, COALESCE(SUM(c.balance), 0) AS bal
+      FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ? AND COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Denied', 'Claim Rejected')
+      GROUP BY reason ORDER BY bal DESC LIMIT 6`, clientId, from, to);
+    const lim = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows.filter((r) => r.client_id === clientId);
+    const tfl = lim.reduce((a, r) => ({ soon_bal: a.soon_bal + r.soon_bal, soon_n: a.soon_n + r.soon_n, past_bal: a.past_bal + r.past_bal, past_n: a.past_n + r.past_n }), { soon_bal: 0, soon_n: 0, past_bal: 0, past_n: 0 });
+    const esc = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND ? - escalated_at > ? THEN 1 ELSE 0 END) AS late FROM claims WHERE client_id = ? AND escalated = 1 AND state IN ${WORKABLE}`, now, ESCALATION_TAT_MS, clientId);
+    const missed = (await missedByClient(env, payload)).get(clientId) || { ar: 0, posting: 0, submission: 0 };
+    const worked = await one(env, "SELECT COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, from, to);
+    const month = payload.month && /^\d{4}-\d{2}$/.test(payload.month) ? payload.month : closingMonth(today);
+    const me = new Map((await all(env, "SELECT * FROM client_monthend WHERE client_id = ? AND month = ?", clientId, month)).map((r) => [r.step, r]));
+    const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key); return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: r ? r.score : null, note: r ? r.note : "" }; });
+    const slaRow = await one(env, "SELECT month, score, done_at FROM client_monthend WHERE client_id = ? AND step = 'sla' AND score IS NOT NULL ORDER BY month DESC LIMIT 2", clientId);
+    const slaPrev = slaRow ? await one(env, "SELECT score FROM client_monthend WHERE client_id = ? AND step = 'sla' AND score IS NOT NULL AND month < ? ORDER BY month DESC LIMIT 1", clientId, slaRow.month) : null;
+    const log = await all(env, "SELECT id, at, kind, text, next_on, by_name, by_id FROM client_log WHERE client_id = ? ORDER BY at DESC LIMIT 30", clientId);
+    const raci = (await OPS["raci.list"]({ env, user, payload })).rows.find((r) => r.client_id === clientId) || null;
+    const team = parseTeam(c.team_json).length;
+    const locs = (await all(env, "SELECT name FROM locations WHERE client_id = ? AND active = 1 ORDER BY name", clientId)).map((l) => l.name);
+    // health: plain reasons, worst first
+    const pct = ar.bal ? Math.round(ar.o90 / ar.bal * 1000) / 10 : 0;
+    const oldest = waiting.length ? Math.floor((now - (waiting[0].client_sent_at || waiting[0].paused_at || now)) / 86400000) : 0;
+    const reasonsOut = [];
+    if (pct > OVER90_TARGET) reasonsOut.push({ tone: pct > OVER90_TARGET + 5 ? "red" : "amber", text: `Over-90 AR is ${pct}%, above the ${OVER90_TARGET}% target` });
+    if (slaRow && slaRow.score < 90) reasonsOut.push({ tone: slaRow.score < 85 ? "red" : "amber", text: `SLA ${slaRow.score}% for ${monthName(slaRow.month)}, below 90%` });
+    if (tfl.past_n) reasonsOut.push({ tone: "red", text: `${tfl.past_n} claims are past the timely filing limit` });
+    else if (tfl.soon_n) reasonsOut.push({ tone: "amber", text: `${tfl.soon_n} claims reach the timely filing limit in 30 days` });
+    if (esc && esc.late) reasonsOut.push({ tone: "red", text: `${esc.late} escalation${esc.late > 1 ? "s have" : " has"} waited over 24 hours` });
+    if (waiting.length && oldest >= 5) reasonsOut.push({ tone: "amber", text: `${waiting.length} request${waiting.length > 1 ? "s" : ""} waiting on the client, oldest ${oldest} days` });
+    const miss = missed.ar + missed.posting + missed.submission;
+    if (miss >= 10) reasonsOut.push({ tone: "amber", text: `${miss} missed tasks` });
+    const red = reasonsOut.filter((r) => r.tone === "red").length;
+    const health = reasonsOut.length === 0 ? "good" : red >= 1 ? "risk" : "watch";
+    return {
+      client: { id: c.id, name: c.name, code: c.code, active: !!c.active, created_at: c.created_at, team, locations: locs },
+      raci, health, reasons: reasonsOut.sort((a, b) => (a.tone === "red" ? 0 : 1) - (b.tone === "red" ? 0 : 1)).slice(0, 4),
+      ar: { balance: ar.bal, claims: ar.n, over90: ar.o90, over90_claims: ar.o90n || 0, over90_pct: pct, over120: ar.o120, target: OVER90_TARGET, month_ago: monthAgo ? monthAgo.ar_balance : null },
+      collected: { amount: coll.amt, n: coll.n, prev: collPrev.amt },
+      waiting: { rows: waiting.map((w) => ({ ...w, days: Math.floor((now - (w.client_sent_at || w.paused_at || now)) / 86400000), sent: !!w.client_sent_at, dept_label: DEPT_LABEL[w.dept] || w.dept })),
+        balance: waiting.reduce((a, w) => a + (w.balance || 0), 0), oldest, reply: await replyAvg(clientId), reply_all: await replyAvg(null) },
+      reasons_top: reasons, tfl, escalations: { open: (esc && esc.n) || 0, late: (esc && esc.late) || 0 }, missed, worked: { entries: (worked && worked.n) || 0, people: (worked && worked.people) || 0 },
+      sla: slaRow ? { score: slaRow.score, month: slaRow.month, prev: slaPrev ? slaPrev.score : null } : null,
+      trend, first_snapshot: snaps.length ? snaps[0].day : null,
+      monthend: { month, steps: monthend, done: monthend.filter((x) => x.done).length, can_edit: canEditClient(user, clientId) && user.role === "supervisor" },
+      log: log.map((l) => ({ ...l, mine: l.by_id === user.id })),
+    };
+  },
+  "client.logAdd": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    editableOr(user, clientId);
+    const kind = ["call", "email", "meeting", "note", "next"].includes(payload.kind) ? payload.kind : "note";
+    const text = str(payload.text, 2000).trim();
+    if (!commentOk(text)) throw bad("Write what was said or decided, a few words at least.");
+    const next = isoDate(payload.next_on) || "";
+    if (kind === "next" && !next) throw bad("Pick the date of the next call.");
+    const id = uuid();
+    await run(env, "INSERT INTO client_log (id, client_id, at, kind, text, next_on, by_id, by_name) VALUES (?,?,?,?,?,?,?,?)", id, clientId, Date.now(), kind, text, next, user.id, user.name || "");
+    await audit(env, user, "client.log", clientId, kind + ": " + text.slice(0, 80));
+    return { ok: true, id };
+  },
+  "client.logDelete": async ({ env, user, payload }) => {
+    const l = await one(env, "SELECT * FROM client_log WHERE id = ?", str(payload.id, 60));
+    if (!l) throw bad("That entry is no longer there.");
+    editableOr(user, l.client_id);
+    if (l.by_id !== user.id && !(user.role === "supervisor" && !isSME(user))) throw denied("Only the person who wrote it or a team lead can remove it.");
+    await run(env, "DELETE FROM client_log WHERE id = ?", l.id);
+    return { ok: true };
+  },
+  "monthend.set": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    editableOr(user, clientId);
+    const month = /^\d{4}-\d{2}$/.test(payload.month || "") ? payload.month : null;
+    const step = MONTHEND_STEPS.find(([k]) => k === payload.step);
+    if (!month || !step) throw bad("Pick the month and the step.");
+    if (payload.done === false) { await run(env, "DELETE FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]); return { ok: true }; }
+    let score = null;
+    if (step[0] === "sla") {
+      score = Number(payload.score);
+      if (!(score >= 0 && score <= 100)) throw bad("Type the SLA score from the scorecard, 0 to 100.");
+      score = Math.round(score * 10) / 10;
+    }
+    await run(env, `INSERT INTO client_monthend (client_id, month, step, done_at, done_by_name, auto, score, note) VALUES (?,?,?,?,?,0,?,?)
+      ON CONFLICT (client_id, month, step) DO UPDATE SET done_at = excluded.done_at, done_by_name = excluded.done_by_name, auto = 0, score = excluded.score, note = excluded.note`,
+      clientId, month, step[0], Date.now(), user.name || "", score, str(payload.note, 300).trim());
+    await audit(env, user, "monthend." + step[0], clientId, month + (score != null ? " · SLA " + score + "%" : ""));
+    return { ok: true };
+  },
+  /* The scorecard page ticks "AR Inventory sent to the SLA scorecard" when Brahmastra adds it there. */
+  "monthend.mark": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    editableOr(user, clientId);
+    if (payload.step !== "sla_inventory") throw bad("Only that step is ticked this way.");
+    await monthendAuto(env, clientId, closingMonth(isoDate(payload.today) || isoToday()), "sla_inventory", user.name);
+    return { ok: true };
+  },
+
   /* ---- RACI tracker: who is Responsible, Accountable, Consulted and Informed on each client.
      Everyone from SME up can read it; team leads and up edit it; the VP is always informed. ---- */
   "raci.list": async ({ env, user, payload }) => {
@@ -1839,6 +2017,7 @@ const OPS = {
         rows_read = CASE WHEN ? > 0 THEN ? ELSE rows_read END, summary_json = CASE WHEN ? = 1 THEN ? ELSE summary_json END WHERE id = ?`,
       counts.inserted, counts.updated, counts.reopened, counts.closed, counts.excluded, counts.skipped,
       Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), bid);
+    if (final) { try { await monthendAuto(env, client.id, istISO(Date.now()).slice(0, 7), "inventory", user.name); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) {} }
     return { batch_id: bid, ...counts };
   },
   "inventory.batches": async ({ env, user, payload }) => {
@@ -2632,6 +2811,7 @@ const OPS = {
       if (!r.ok) throw new ApiError(502, "OneDrive did not save " + name + " (" + r.status + ").");
       saved.push(path.slice(0, -1).join(" › "));
     }
+    try { await monthendAuto(env, c.id, closingMonth(isoDate(payload.today) || isoToday()), "sla_inventory", user.name); } catch (e) {}
     return { name, folders: saved };
   },
   /* The AR inventory as it stands now (open, on desks and worked claims), in the columns Drishti's AR Inventory report reads. */
@@ -2919,7 +3099,7 @@ const OPS = {
       // The client answered: back in the open list, with the same due time (the clock never stopped).
       if (h.status !== "client") throw bad("Only a claim waiting on the client can be resumed.");
       const due = h.due_at;
-      stmts.push(env.DB.prepare("UPDATE handoffs SET status = CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'pending' END, chase_at = NULL, note = ? WHERE id = ?").bind(note || h.note || "", h.id));
+      stmts.push(env.DB.prepare("UPDATE handoffs SET status = CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'pending' END, chase_at = NULL, client_answered_at = ?, note = ? WHERE id = ?").bind(now, note || h.note || "", h.id));
       stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, updated_at = ? WHERE id = ?").bind("with_" + (h.dept === "subcheck" ? "submission" : h.dept), "With " + DEPT_LABEL[h.dept], now, c.id));
       if (note) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]}: client answered. ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_resume", DEPT_LABEL[h.dept], { dept: h.dept, note, due_at: due }));
@@ -3251,8 +3431,11 @@ async function claimBundle(env, user, c) {
 export default {
   // Every hour: the roster from Purview Shastra (only once SHASTRA_FEED_KEY is set).
   async scheduled(event, env, ctx) {
-    if (!env.SHASTRA_FEED_KEY || !env.DB) return;
-    ctx.waitUntil((async () => { try { await ensureReady(env); await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } })());
+    if (!env.DB) return;
+    ctx.waitUntil((async () => {
+      try { await ensureReady(env); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) { console.log("Snapshot: " + (e && e.message)); }
+      if (env.SHASTRA_FEED_KEY) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
+    })());
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
