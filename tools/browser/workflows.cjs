@@ -131,6 +131,20 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("Every entry downloads with the SAAG fields and the note", /status/i.test(body.split("\n")[0]) && body.includes("Policy Active"), body.split("\n")[0].slice(0, 200));
   });
 
+  S("Report shortcuts on My day & reports");
+  await step("shortcuts", async () => {
+    await open("#/reports"); await t(800);
+    await p.screenshot({ path: path.join(OUT, "reports-shortcuts.png") });
+    await p.locator('.main button:has-text("Internal reports")').first().click(); await t(2000);
+    ok("Internal reports opens Sasha's Third Eye on Internal reports", /#\/thirdeye/.test(p.url()) && /on/.test(await p.locator('.te-switch button:has-text("Internal reports")').getAttribute("class")), p.url());
+    await open("#/reports"); await t(800);
+    await p.locator('.main button:has-text("Client reports")').first().click(); await t(2000);
+    ok("Client reports opens it on Client reports", /on/.test(await p.locator('.te-switch button:has-text("Client reports")').getAttribute("class")));
+    await open("#/reports"); await t(800);
+    await p.locator('.main button:has-text("SLA scorecard")').first().click(); await t(1500);
+    ok("SLA scorecard opens the SLA tab", /#\/sla/.test(p.url()), p.url());
+  });
+
   S("Dashboard");
   await step("dashboard", async () => {
     await open("#/dashboard"); await t(2500);

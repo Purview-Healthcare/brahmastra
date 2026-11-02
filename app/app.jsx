@@ -5686,7 +5686,13 @@ function ReportsHub(props) {
   </>;
   if (!lead) return <div className="stack"><div><h1>My day & reports</h1><div className="sub">Your own day list and the team's notes.</div></div>{work}</div>;
   if (desk) return <ThirdEyeView ctx={props.ctx} me={props.me} />;
-  return <div className="stack"><div><h1>My day &amp; reports</h1><div className="sub">Team allocations, every entry and your own desk, for any dates. Sasha's Third Eye and the SLA scorecard have their own tabs.</div></div>{work}</div>;
+  // Internal and Client reports live in the Sasha's Third Eye tab, the scorecard in SLA: one click from here too.
+  const openTE = (area) => { try { localStorage.setItem("brahmastra:te-area", area); } catch (e) {} if (props.go) props.go("thirdeye"); };
+  return <div className="stack"><div className="row between" style={{ alignItems: "flex-start" }}><div><h1>My day &amp; reports</h1><div className="sub">Team allocations, every entry and your own desk, for any dates.</div></div>
+    <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><span className="tiny muted">Reports:</span>
+      <button className="btn sm" onClick={() => openTE("quality")} title="Sasha's Third Eye › Internal reports: Brahmastra's production loads by itself">Internal reports</button>
+      <button className="btn sm" onClick={() => openTE("client")} title="Sasha's Third Eye › Client reports: fill from Brahmastra">Client reports</button>
+      <button className="btn sm" onClick={() => props.go && props.go("sla")} title="The Drishti SLA scorecard">SLA scorecard</button></div></div>{work}</div>;
 }
 function ReportsView({ ctx, from, to, embedded }) {
   const [f, setF] = useState({ client_id: "", location_id: "", user_id: "", kind: "work", from: from || addDaysISO(todayISO(), -6), to: to || todayISO() });

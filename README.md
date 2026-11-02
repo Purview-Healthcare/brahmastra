@@ -514,14 +514,17 @@ every entry and your own desk.
 Each page says what was filled and from where. To use different figures, choose another file in the same box;
 it takes the place of Brahmastra's.
 
-Team leads and above get a side menu in **My day & reports**, grouped by who the report is for:
+Where the reports are, for team leads and above:
 
-| Group | Page | What it is |
+| Where | Page | What it is |
 |---|---|---|
-| Internal | Team work | the day list and the team's notes (Brahmastra) |
-| Internal | Internal reports | Sasha's Third Eye, Internal Reporting. **Load production** puts Brahmastra's entries and the roster straight in |
-| For clients | Client reports | Third Eye's Client Reporting. **Fill from Brahmastra** puts today's AR inventory and the month's AR, submission and posting production in its boxes |
-| For clients | SLA scorecard | Drishti, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
+| My day & reports | Team allocations · Every entry · My own desk | the team's day lists, every entry (with CSV) and your own desk, for any dates (Brahmastra) |
+| Sasha's Third Eye tab › Internal reports | Internal reports | Third Eye's Internal Reporting; Brahmastra's production and the roster load into it by themselves |
+| Sasha's Third Eye tab › Client reports | Client reports | Third Eye's Client Reporting; **Fill from Brahmastra** puts today's AR inventory and the month's AR, submission and posting production in its boxes |
+| SLA tab | SLA scorecard | Drishti, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
+
+My day & reports also has **Internal reports**, **Client reports** and **SLA scorecard** buttons (top right) that
+open those tabs.
 
 Both apps run from their own addresses (`THIRD_EYE_URL`, `DRISHTI_URL` in the config block of `index.html`) with
 `?embed=1&theme=…`, which hides their own header and takes Brahmastra's theme; their formulas, Google Sheet and
