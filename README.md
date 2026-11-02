@@ -148,6 +148,18 @@ answered. Posting complete closes the claim as Payment posted. Submission comple
 sends it back to the biller with a 15-day follow-up and always opens a **recheck 48
 working hours later** (to the follow-up person on the client, or whoever submitted):
 **Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
+
+**Client requests.** Need client assistance lands in the client's AR team lead's **Needs attention →
+Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
+comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department
+sees who sent it and when; if the client has not answered 3 working days after sending, the claim comes back to
+their Open list as **Chase the client**.
+
+**Warnings and reports.** Hand-offs with under 4 hours left are flagged at the top of the list and in an amber
+bar on every screen. A claim returned to AR 3 times is escalated to the AR team lead and listed for the
+department lead. Department dashboards show **Needs you now**, **why claims came back to AR** (by reason and
+biller) and, for Submission, **rejections by code** (by code, client and biller). Rejected rechecks and
+resubmitted rejections carry a rejection code.
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once). Active AR agents on a project become
   that client's billers.
