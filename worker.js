@@ -884,7 +884,8 @@ function rosterClassify(row) {
   if (!row.name) reason = "no name";
   else if (/^administration$/i.test(row.func) || /^(hr|it)$/i.test(row.department)) reason = (row.department || row.func) + " (no access)";
   else if (!kind) reason = (row.position || "no position") + " (no access)";
-  else if (kind !== "all" && !projects.length) reason = "no project";
+  // Agents and team leads need a project; managers see the projects of the people below them.
+  else if ((kind === "agent" || kind === "lead") && !projects.length) reason = "no project";
   // Eligibility Verification, PCC, Credentialing and Reporting are not worked in Brahmastra: someone only there
   // (no AR, Posting or Submission in any of their departments) gets no access.
   else if (kind !== "all" && !rowWorkDepts(row).length && rowDepts(row).some((d) => NOT_IN_BRAHMASTRA.test(d))) reason = rowDepts(row).filter((d) => NOT_IN_BRAHMASTRA.test(d)).join(", ") + " only (not in Brahmastra)";
