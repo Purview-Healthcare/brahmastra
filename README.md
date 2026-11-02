@@ -216,23 +216,29 @@ pace this shift against their target spread over the shift from the roster, clai
 
 #### Monday digest email
 
-Every Monday from about 8:30 AM IST the server emails a one-page summary of last week (Monday to Sunday) for each
-client to **every supervisor on that client**: its team leads and SMEs, posting / submission leads, its manager,
-the VP and admins (people with a view-only share are left out). One email per client, so the VP gets one for every
-client and a team lead only their own. It shows health with the reason, AR now against a week before, over 90
-against the 15% target, collected from payment posting, entries and who made them, what needs attention (the
-Client 360 health rules plus month-end steps past due and missed tasks), one piece of good news, escalations,
-requests waiting on the client, timely filing, SLA, month-end progress and denials worked. Clients, staff and
-figures only: no patient names, claim or account numbers.
+Every Monday from about 8:30 AM IST the server sends **one email per manager's span**: Sweety's clients, Sandesh's
+clients and Joseph's clients (the managers on the roster and the clients their projects map to, as in Portfolio ›
+Managers side by side). Each goes to **every supervisor on those clients**: the manager, the clients' team leads and
+SMEs, posting / submission leads, the VP and admins (view-only shares are left out). So a team lead gets their
+manager's span, a manager their own, and the VP all three. Active clients that are in no manager's span go in one
+more email, "Clients without a manager", to the VP and admins.
 
-- **Client 360 › Monday digest email** lists who gets it, when it last went and to how many, any that did not
-  arrive and why, **Preview this week's**, and **Email me a copy**. Admins and the VP also get **Send this week's
-  now** (only to people who have not had it this week, and noted in the audit trail).
+It covers last week (Monday to Sunday): how many clients are at risk, on watch and on track; span totals for AR
+(against a week before), over 90 (against the 15% target), collected and entries; what needs attention, client by
+client (the Client 360 health rules, month-end steps past due, missed tasks) with one piece of good news; a row
+per client (health, AR and its change, over 90, collected, entries, SLA, month-end, escalations over 24 hours,
+requests waiting on the client); who worked how much; and the denials worked. Clients, staff and figures only:
+no patient names, claim or account numbers.
+
+- **Portfolio › Monday digest email** (VP, admins, managers) lists every span with its clients and who gets it, when
+  it last went, any that did not arrive and why, **Preview this week's** and **Email me a copy**. Admins and the VP
+  also get **Send this week's now** (only to people who have not had it this week; noted in the audit trail).
+- **Client 360** shows the span digest the client is in, with the same buttons.
 - **Settings › Email**: anyone can turn their digest off (or on again).
 - How it is sent: the same Microsoft 365 mailbox as the sign-in codes and feedback (`EMAIL_PROVIDER`). A second
   schedule in `wrangler.toml` (`*/10 3-7 * * 1`, every 10 minutes from 08:30 to 13:20 IST on Mondays) sends a few
-  clients per run (`DIGEST_BATCH`, default 3) until every client has gone, and never sends a client to the same
-  person twice in a week. `APP_URL` puts an **Open Client 360** button in the email.
+  spans per run (`DIGEST_BATCH`, default 3) until every span has gone, and never sends a span to the same person
+  twice in a week. `APP_URL` puts an **Open Client 360** button in the email.
 
 #### Feedback
 

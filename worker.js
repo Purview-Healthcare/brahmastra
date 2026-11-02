@@ -859,14 +859,17 @@ const OVER90_TARGET = 15;   // % of AR over 90 days that counts as healthy
 const MONTHEND_STEPS = [
   ["inventory", "Inventory uploaded", 1, true], ["internal", "Internal reports reviewed", 2, false], ["sla_inventory", "AR Inventory sent to the SLA scorecard", 2, true],
   ["pack", "Client pack built", 3, false], ["sla", "SLA scored and reasons noted", 4, false], ["sent", "Pack sent to the client", 5, false]];   // key, label, due (working day of next month), can tick by itself
-/* ---- The Monday digest: one email per client, to every supervisor on that client ----
-   Sent by the scheduled job on Monday mornings (IST), a few clients per run so a run stays small. Who gets it:
-   active team leads, SMEs, desk leads, managers, the VP and admins whose clients include it (not view-only
-   shares), with an email address and the digest not turned off in Settings. Clients and figures only: no
-   patient names, claim or account numbers. */
+/* ---- The Monday digest: one email per manager's span (their clients), to every supervisor on those clients ----
+   Spans are the managers from the roster (roster_kind manager) and the clients their projects map to, the same as
+   Portfolio › Managers side by side. Active clients in no span go in one more email, "clients without a manager".
+   Who gets a span's email: its manager, and the active team leads, SMEs, desk leads, the VP and admins who are on
+   any of its clients (not view-only shares), with an email address and the digest not turned off in Settings.
+   Clients, staff and figures only: no patient names, claim or account numbers. Sent on Monday mornings (IST) by
+   the scheduled job, a few spans per run. */
 const DIGEST_SYSTEM = { id: "system", name: "Brahmastra", email: "", role: "supervisor", is_admin: true, scope: null, scope_view_only: new Set() };
 const DIGEST_HOURS = [8.5, 13];   // IST, Monday
 const DIGEST_CRON = "*/10 3-7 * * 1";   // wrangler.toml: every 10 minutes, Monday 03:00 to 07:50 UTC (08:30 to 13:20 IST)
+const NO_SPAN = "span:none";
 function digestWeek(now) {
   const t = istISO(now), dow = new Date(t + "T00:00:00Z").getUTCDay();
   const monday = new Date(Date.parse(t + "T00:00:00Z") - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
@@ -874,7 +877,7 @@ function digestWeek(now) {
   return { week: monday, from: to - 7 * 86400000, to, first: new Date(to - 7 * 86400000 + IST_MIN * 60000).toISOString().slice(0, 10), last: new Date(to - 86400000 + IST_MIN * 60000).toISOString().slice(0, 10) };
 }
 async function digestPeople(env) {
-  const rows = await all(env, "SELECT * FROM users WHERE active = 1 AND (role IN ('supervisor', 'admin'))");
+  const rows = await all(env, "SELECT * FROM users WHERE active = 1 AND role IN ('supervisor', 'admin')");
   const out = [];
   for (const r of rows) {
     const u = publicUser(r);
@@ -884,110 +887,146 @@ async function digestPeople(env) {
   }
   return out;
 }
-const digestFor = (people, clientId) => people.filter((u) => u.is_admin || u.access_all || canEditClient(u, clientId));
+const onClient = (u, clientId) => u.is_admin || u.access_all || canEditClient(u, clientId);
+/* The spans, each with its clients and who gets its email. */
+async function digestSpans(env, people) {
+  const clients = await all(env, "SELECT id, name, roster_names_json FROM clients WHERE active = 1 ORDER BY name");
+  const mgrs = await all(env, "SELECT id, name, email, scope_projects_json FROM users WHERE active = 1 AND roster_kind = 'manager' AND access_all = 0 ORDER BY name");
+  const spans = [], placed = new Set();
+  for (const m of mgrs) {
+    const names = new Set(jsonList(m.scope_projects_json).map(projKey));
+    const mine = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n))));
+    if (!mine.length) continue;
+    mine.forEach((c) => placed.add(c.id));
+    spans.push({ key: "span:" + m.id, manager: { id: m.id, name: m.name }, title: m.name + "'s clients", clients: mine.map((c) => ({ id: c.id, name: c.name })) });
+  }
+  const rest = clients.filter((c) => !placed.has(c.id));
+  if (rest.length) spans.push({ key: NO_SPAN, manager: null, title: "Clients without a manager", clients: rest.map((c) => ({ id: c.id, name: c.name })) });
+  for (const s of spans) {
+    s.recipients = people.filter((u) => (s.manager && u.id === s.manager.id) || s.clients.some((c) => onClient(u, c.id)))
+      .filter((u) => s.key !== NO_SPAN || u.is_admin || u.access_all || s.clients.some((c) => canEditClient(u, c.id)));
+  }
+  return spans;
+}
+const spanVisible = (user, s) => user.is_admin || user.access_all || (s.manager && s.manager.id === user.id) || s.recipients.some((u) => u.id === user.id);
 async function digestData(env, clientId, wk) {
   const today = istISO(wk.to);
   const o = await OPS["client.overview"]({ env, user: DIGEST_SYSTEM, payload: { client_id: clientId, from_ms: wk.from, to_ms: wk.to, today } });
   const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 7 * 86400000));
   const prevWorked = await one(env, "SELECT COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, wk.from - 7 * 86400000, wk.from);
   const people = await all(env, `SELECT n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
-    WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 8`, clientId, wk.from, wk.to);
+    WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 12`, clientId, wk.from, wk.to);
   const esc = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND escalated_at BETWEEN ? AND ?", clientId, wk.from, wk.to);
-  const late = o.monthend.steps.filter((s) => !s.done && s.due < today);
   return {
-    client: o.client, health: o.health, reasons: o.reasons, week: wk,
-    ar: { now: o.ar.balance, claims: o.ar.claims, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: o.ar.over90_pct, over90_ago: weekAgo && weekAgo.ar_balance ? Math.round(weekAgo.over90_balance / weekAgo.ar_balance * 1000) / 10 : null, target: o.ar.target },
+    client: o.client, health: o.health, reasons: o.reasons,
+    ar: { now: o.ar.balance, over90: o.ar.over90, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: o.ar.over90_pct, target: o.ar.target },
     collected: o.collected, worked: { n: o.worked.entries, people: o.worked.people, prev: (prevWorked && prevWorked.n) || 0 }, team: people,
     sla: o.sla, escalations: { open: o.escalations.open, late: o.escalations.late, raised: (esc && esc.n) || 0 }, missed: o.missed,
-    waiting: { n: o.waiting.rows.length, balance: o.waiting.balance, oldest: o.waiting.oldest }, tfl: o.tfl, denials: o.reasons_top.slice(0, 4),
-    monthend: { month: o.monthend.month, done: o.monthend.done, total: o.monthend.steps.length, late: late.map((s) => s.label) },
-    raci: o.raci,
+    waiting: { n: o.waiting.rows.length, balance: o.waiting.balance, oldest: o.waiting.oldest }, tfl: o.tfl, denials: o.reasons_top,
+    monthend: { month: o.monthend.month, done: o.monthend.done, total: o.monthend.steps.length, late: o.monthend.steps.filter((s) => !s.done && s.due < today).map((s) => s.label) },
   };
 }
 const dMoney = (n) => (n == null ? "–" : "$" + Math.round(Number(n)).toLocaleString("en-US"));
 const dDay = (iso) => { const [, m, d] = iso.split("-").map(Number); return MONTHS[m - 1].slice(0, 3) + " " + d; };
-function digestEmail(d, appUrl) {
-  const H = { good: ["On track", "#0E8C74", "#E3F4EF"], watch: ["Watch", "#9A6A12", "#FBF0DC"], risk: ["At risk", "#A32D2D", "#FBE5E5"] }[d.health] || ["", "#3B4A55", "#F5F7F9"];
-  const delta = (now, then, money, lowerIsBetter) => {
-    if (then == null || now == null) return `<span style="color:#627079">no reading a week ago</span>`;
-    const diff = now - then; if (Math.abs(diff) < (money ? 1 : 0.05)) return `<span style="color:#627079">same as a week before</span>`;
-    const good = lowerIsBetter ? diff < 0 : diff > 0;
-    return `<span style="color:${good ? "#0E8C74" : "#A32D2D"}">${diff > 0 ? "up" : "down"} ${money ? dMoney(Math.abs(diff)) : Math.round(Math.abs(diff) * 10) / 10 + (money === false ? "" : " pts")} vs the week before</span>`;
-  };
-  const kpi = (label, value, sub) => `<td style="padding:10px 12px;border:1px solid #DFE4EA;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700">${label}</div><div style="font-size:20px;font-weight:700;margin:2px 0">${value}</div><div style="font-size:12px">${sub}</div></td>`;
-  const attention = [...d.reasons.map((r) => [r.tone, r.text])];
-  if (d.monthend.late.length) attention.push(["amber", `Month-end for ${monthName(d.monthend.month)} past due: ${d.monthend.late.join(", ")}`]);
-  if (d.missed.ar + d.missed.posting + d.missed.submission > 0 && !d.reasons.some((r) => /missed/.test(r.text))) attention.push(["amber", `${d.missed.ar + d.missed.posting + d.missed.submission} missed tasks (AR ${d.missed.ar}, posting ${d.missed.posting}, submission ${d.missed.submission})`]);
+const HEALTH_LOOK = { good: ["On track", "#0E8C74", "#E3F4EF"], watch: ["Watch", "#9A6A12", "#FBF0DC"], risk: ["At risk", "#A32D2D", "#FBE5E5"] };
+function spanEmail(span, wk, ds, appUrl) {
+  const sum = (f) => ds.reduce((t, d) => t + (f(d) || 0), 0);
+  const ar = sum((d) => d.ar.now), o90 = sum((d) => d.ar.over90), pct = ar ? Math.round(o90 / ar * 1000) / 10 : 0;
+  const withAgo = ds.filter((d) => d.ar.week_ago != null), agoNow = withAgo.reduce((t, d) => t + d.ar.now, 0), ago = withAgo.reduce((t, d) => t + d.ar.week_ago, 0);
+  const coll = sum((d) => d.collected.amount), collPrev = sum((d) => d.collected.prev), work = sum((d) => d.worked.n), workPrev = sum((d) => d.worked.prev);
+  const count = { risk: 0, watch: 0, good: 0 }; ds.forEach((d) => { count[d.health] = (count[d.health] || 0) + 1; });
+  const target = ds.length ? ds[0].ar.target : OVER90_TARGET;
+  const attention = [];
+  for (const d of ds) {
+    d.reasons.forEach((r) => attention.push([r.tone, d.client.name, r.text]));
+    if (d.monthend.late.length) attention.push(["amber", d.client.name, `month-end for ${monthName(d.monthend.month)} past due: ${d.monthend.late.join(", ")}`]);
+    const m = d.missed.ar + d.missed.posting + d.missed.submission;
+    if (m && !d.reasons.some((r) => /missed/.test(r.text))) attention.push(["amber", d.client.name, `${m} missed task${m > 1 ? "s" : ""}`]);
+  }
+  attention.sort((a, b) => (a[0] === "red" ? 0 : 1) - (b[0] === "red" ? 0 : 1));
   const good = [];
-  if (d.ar.week_ago != null && d.ar.now < d.ar.week_ago) good.push(`AR came down by ${dMoney(d.ar.week_ago - d.ar.now)}`);
-  if (d.collected.amount > d.collected.prev && d.collected.amount > 0) good.push(`${dMoney(d.collected.amount)} collected, more than the week before`);
-  if (d.worked.n > d.worked.prev && d.worked.n > 0) good.push(`${d.worked.n} entries, up from ${d.worked.prev}`);
-  if (!d.escalations.late && d.escalations.raised) good.push(`every escalation answered within 24 hours`);
+  for (const d of ds) {
+    if (d.ar.week_ago != null && d.ar.now < d.ar.week_ago - 1) good.push([d.ar.week_ago - d.ar.now, `${d.client.name}: AR down ${dMoney(d.ar.week_ago - d.ar.now)}`]);
+    if (d.collected.amount > d.collected.prev && d.collected.amount > 0) good.push([d.collected.amount, `${d.client.name}: ${dMoney(d.collected.amount)} collected, more than the week before`]);
+  }
+  if (work > workPrev && work > 0) good.push([work, `${work} entries across the span, up from ${workPrev}`]);
+  good.sort((a, b) => b[0] - a[0]);
+  const team = new Map(); ds.forEach((d) => d.team.forEach((p) => { const k = p.name || "–"; const t = team.get(k) || { name: k, work: 0, skips: 0, clients: [] }; t.work += p.work || 0; t.skips += p.skips || 0; if (p.work) t.clients.push(d.client.name); team.set(k, t); }));
+  const teamRows = [...team.values()].sort((a, b) => b.work - a.work).slice(0, 12);
+  const den = new Map(); ds.forEach((d) => d.denials.forEach((r) => { const t = den.get(r.reason) || { reason: r.reason, n: 0, bal: 0 }; t.n += r.n; t.bal += r.bal; den.set(r.reason, t); }));
+  const denRows = [...den.values()].sort((a, b) => b.bal - a.bal).slice(0, 5);
+  const weekTxt = `${dDay(wk.first)} to ${dDay(wk.last)}`;
+  const sec = (title) => `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:20px 0 6px">${title}</div>`;
+  const kpi = (label, value, sub) => `<td style="padding:10px 12px;border:1px solid #DFE4EA;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700">${label}</div><div style="font-size:20px;font-weight:700;margin:2px 0">${value}</div><div style="font-size:12px;color:#3B4A55">${sub}</div></td>`;
+  const th = (cells, align) => `<tr>${cells.map((c, i) => `<th style="padding:6px 8px 6px 0;text-align:${(align && align[i]) || "right"};font-size:11px;color:#627079;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #DFE4EA;white-space:nowrap">${c}</th>`).join("")}</tr>`;
+  const td = (cells, align) => `<tr>${cells.map((c, i) => `<td style="padding:6px 8px 6px 0;text-align:${(align && align[i]) || "right"};border-bottom:1px solid #EEF1F4;vertical-align:top">${c}</td>`).join("")}</tr>`;
+  const arDelta = (d) => d.ar.week_ago == null ? "" : `<div style="font-size:11px;color:${d.ar.now <= d.ar.week_ago ? "#0E8C74" : "#A32D2D"}">${d.ar.now === d.ar.week_ago ? "same" : (d.ar.now < d.ar.week_ago ? "down " : "up ") + dMoney(Math.abs(d.ar.now - d.ar.week_ago))}</div>`;
   const dot = (tone) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${tone === "red" ? "#C94F4F" : "#E8A13C"};margin-right:8px"></span>`;
-  const sec = (title) => `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:18px 0 6px">${title}</div>`;
-  const tr = (cells, head) => `<tr>${cells.map((c, i) => `<${head ? "th" : "td"} style="padding:5px 10px 5px 0;text-align:${i ? "right" : "left"};border-bottom:1px solid #EEF1F4;${head ? "font-size:11px;color:#627079;text-transform:uppercase;letter-spacing:.05em" : ""}">${c}</${head ? "th" : "td"}>`).join("")}</tr>`;
-  const raciLine = d.raci ? [["Responsible", d.raci.r], ["Accountable", d.raci.a]].filter(([, l]) => l && l.length).map(([k, l]) => `${k}: ${htmlEsc(l.map((x) => x.name || x).join(", "))}`).join(" · ") : "";
-  const weekTxt = `${dDay(d.week.first)} to ${dDay(d.week.last)}`;
-  const html = `<div style="font:14px/1.5 Segoe UI,Arial,sans-serif;color:#0F1B24;max-width:680px">
+  const L = ["left", "left"];
+  const html = `<div style="font:14px/1.5 Segoe UI,Arial,sans-serif;color:#0F1B24;max-width:720px">
 <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0E8C74;font-weight:700">Brahmastra · Monday digest</div>
-<h2 style="margin:4px 0 2px;font-size:22px">${htmlEsc(d.client.name)}</h2>
-<div style="color:#627079;font-size:13px">Week of ${weekTxt}${raciLine ? " · " + raciLine : ""}</div>
-<div style="margin:12px 0;padding:10px 14px;border-radius:8px;background:${H[2]};color:${H[1]};font-weight:700">${H[0]}${d.reasons.length ? `<span style="font-weight:400;color:#0F1B24"> · ${htmlEsc(d.reasons[0].text)}</span>` : `<span style="font-weight:400;color:#0F1B24"> · nothing on the watch list</span>`}</div>
+<h2 style="margin:4px 0 2px;font-size:22px">${htmlEsc(span.title)}</h2>
+<div style="color:#627079;font-size:13px">Week of ${weekTxt} · ${ds.length} client${ds.length === 1 ? "" : "s"}: ${htmlEsc(ds.map((d) => d.client.name).join(", "))}</div>
+<div style="margin:12px 0">${["risk", "watch", "good"].filter((k) => count[k]).map((k) => `<span style="display:inline-block;margin:0 6px 4px 0;padding:4px 10px;border-radius:999px;background:${HEALTH_LOOK[k][2]};color:${HEALTH_LOOK[k][1]};font-weight:700;font-size:13px">${count[k]} ${HEALTH_LOOK[k][0].toLowerCase()}</span>`).join("")}</div>
 <table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>
-${kpi("AR now", dMoney(d.ar.now), delta(d.ar.now, d.ar.week_ago, true, true))}
-${kpi("Over 90 days", d.ar.over90_pct + "%", `target ${d.ar.target}% · ` + delta(d.ar.over90_pct, d.ar.over90_ago, null, true))}
-${kpi("Collected", dMoney(d.collected.amount), `${d.collected.n} posted · week before ${dMoney(d.collected.prev)}`)}
-${kpi("Entries", String(d.worked.n), `${d.worked.people} ${d.worked.people === 1 ? "person" : "people"} · week before ${d.worked.prev}`)}
+${kpi("AR now", dMoney(ar), withAgo.length ? `<span style="color:${agoNow <= ago ? "#0E8C74" : "#A32D2D"}">${agoNow === ago ? "same as" : (agoNow < ago ? "down " : "up ") + dMoney(Math.abs(agoNow - ago)) + " vs"} a week before</span>` : "no reading a week ago")}
+${kpi("Over 90 days", pct + "%", `${dMoney(o90)} · target ${target}%`)}
+${kpi("Collected", dMoney(coll), `week before ${dMoney(collPrev)}`)}
+${kpi("Entries", String(work), `week before ${workPrev}`)}
 </tr></table>
 ${sec("Needs your attention")}
-${attention.length ? attention.slice(0, 6).map(([t, x]) => `<div style="margin:4px 0">${dot(t)}${htmlEsc(x)}</div>`).join("") : `<div style="color:#627079">Nothing needs you.</div>`}
-${good.length ? `<div style="margin:8px 0 0;color:#0E8C74">Good news: ${htmlEsc(good.slice(0, 2).join("; "))}.</div>` : ""}
-${sec("Where things stand")}
+${attention.length ? attention.slice(0, 10).map(([t, c, x]) => `<div style="margin:4px 0">${dot(t)}<b>${htmlEsc(c)}</b>: ${htmlEsc(x)}</div>`).join("") + (attention.length > 10 ? `<div style="color:#627079;font-size:12px">and ${attention.length - 10} more on Client 360</div>` : "") : `<div style="color:#627079">Nothing needs you.</div>`}
+${good.length ? `<div style="margin:8px 0 0;color:#0E8C74">Good news: ${htmlEsc(good.slice(0, 2).map((g) => g[1]).join("; "))}.</div>` : ""}
+${sec("Client by client")}
 <table style="border-collapse:collapse;font-size:13px;width:100%">
-${tr(["Escalations", `${d.escalations.raised} raised last week · ${d.escalations.open} open now${d.escalations.late ? ` · <b style="color:#A32D2D">${d.escalations.late} over 24 h</b>` : ""}`])}
-${tr(["Waiting on the client", d.waiting.n ? `${d.waiting.n} requests · ${dMoney(d.waiting.balance)} · oldest ${d.waiting.oldest} days` : "none"])}
-${tr(["Timely filing", d.tfl.past_n ? `<b style="color:#A32D2D">${d.tfl.past_n} past the limit</b> · ${d.tfl.soon_n} within 30 days` : d.tfl.soon_n ? `${d.tfl.soon_n} within 30 days (${dMoney(d.tfl.soon_bal)})` : "nothing near the limit"])}
-${tr(["SLA", d.sla ? `${d.sla.score}% for ${monthName(d.sla.month)}${d.sla.prev != null ? ` (before: ${d.sla.prev}%)` : ""}` : "not scored yet"])}
-${tr(["Month-end " + monthName(d.monthend.month), `${d.monthend.done} of ${d.monthend.total} steps done`])}
+${th(["Client", "Health", "AR", "Over 90", "Collected", "Entries", "SLA", "Month-end"], L)}
+${ds.map((d) => td([`<b>${htmlEsc(d.client.name)}</b>${d.escalations.late ? `<div style="font-size:11px;color:#A32D2D">${d.escalations.late} escalation${d.escalations.late > 1 ? "s" : ""} over 24 h</div>` : ""}${d.waiting.n ? `<div style="font-size:11px;color:#627079">${d.waiting.n} waiting on the client</div>` : ""}`,
+  `<span style="color:${HEALTH_LOOK[d.health][1]};font-weight:700">${HEALTH_LOOK[d.health][0]}</span>`, dMoney(d.ar.now) + arDelta(d),
+  `<span style="color:${d.ar.over90_pct > d.ar.target ? "#A32D2D" : "#0F1B24"}">${d.ar.over90_pct}%</span>`, dMoney(d.collected.amount), `${d.worked.n}<div style="font-size:11px;color:#627079">was ${d.worked.prev}</div>`,
+  d.sla ? `${d.sla.score}%<div style="font-size:11px;color:#627079">${MONTHS[Number(d.sla.month.slice(5)) - 1].slice(0, 3)}</div>` : `<span style="color:#627079">not scored</span>`,
+  `${d.monthend.done}/${d.monthend.total}`], L)).join("")}
 </table>
-${d.team.length ? sec("The team last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${tr(["Person", "Entries", "Skipped"], true)}${d.team.map((p) => tr([htmlEsc(p.name || "–"), String(p.work || 0), String(p.skips || 0)])).join("")}</table>` : ""}
-${d.denials.length ? sec("Denials and rejections worked last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${tr(["Reason", "Claims", "Balance"], true)}${d.denials.map((r) => tr([htmlEsc(r.reason), String(r.n), dMoney(r.bal)])).join("")}</table>` : ""}
-${appUrl ? `<p style="margin:18px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/client")}" style="background:#14B8A6;color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:600">Open Client 360</a></p>` : ""}
-<p style="margin-top:18px;font-size:12px;color:#627079">You get this because you are a supervisor on ${htmlEsc(d.client.name)} in Brahmastra. Turn it off in Brahmastra, Settings, Email. No patient details are included.</p>
+${teamRows.length ? sec("The team last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${th(["Person", "Clients", "Entries", "Skipped"], L)}${teamRows.map((p) => td([htmlEsc(p.name), `<span style="color:#627079">${htmlEsc(p.clients.join(", "))}</span>`, String(p.work), String(p.skips)], L)).join("")}</table>` : ""}
+${denRows.length ? sec("Denials and rejections worked last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${th(["Reason", "Claims", "Balance"], L)}${denRows.map((r) => td([htmlEsc(r.reason), String(r.n), dMoney(r.bal)], L)).join("")}</table>` : ""}
+${appUrl ? `<p style="margin:20px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/client")}" style="background:#14B8A6;color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:600">Open Client 360</a></p>` : ""}
+<p style="margin-top:18px;font-size:12px;color:#627079">You get this because you are a supervisor on ${span.manager ? htmlEsc(span.title.replace(/'s clients$/, "")) + "'s clients" : "clients without a manager"} in Brahmastra. Turn it off in Brahmastra, Settings, Email. No patient details are included.</p>
 </div>`;
-  const text = [`Brahmastra Monday digest: ${d.client.name}, week of ${weekTxt}`, `${H[0]}${d.reasons.length ? ": " + d.reasons[0].text : ""}`, "",
-    `AR now ${dMoney(d.ar.now)}${d.ar.week_ago != null ? " (a week before " + dMoney(d.ar.week_ago) + ")" : ""}`, `Over 90 days ${d.ar.over90_pct}% (target ${d.ar.target}%)`,
-    `Collected ${dMoney(d.collected.amount)} (week before ${dMoney(d.collected.prev)})`, `Entries ${d.worked.n} by ${d.worked.people} (week before ${d.worked.prev})`, "",
-    "Needs your attention:", ...(attention.length ? attention.slice(0, 6).map(([, x]) => "- " + x) : ["- Nothing needs you."]), "",
+  const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`, ["risk", "watch", "good"].filter((k) => count[k]).map((k) => count[k] + " " + HEALTH_LOOK[k][0].toLowerCase()).join(", "), "",
+    `AR now ${dMoney(ar)}, over 90 ${pct}% (target ${target}%), collected ${dMoney(coll)}, entries ${work}`, "", "Needs your attention:",
+    ...(attention.length ? attention.slice(0, 10).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "", "Client by client:",
+    ...ds.map((d) => `- ${d.client.name}: ${HEALTH_LOOK[d.health][0]}, AR ${dMoney(d.ar.now)}, over 90 ${d.ar.over90_pct}%, collected ${dMoney(d.collected.amount)}, entries ${d.worked.n}`), "",
     "Turn this off in Brahmastra, Settings, Email."].join("\n");
-  const subject = `${d.client.name} · week of ${dDay(d.week.first)}: ${H[0].toLowerCase()}, AR ${dMoney(d.ar.now)}${attention.length ? ", " + attention.length + " to look at" : ""}`;
+  const subject = `${span.title} · week of ${dDay(wk.first)}: ${count.risk ? count.risk + " at risk, " : ""}AR ${dMoney(ar)}${attention.length ? ", " + attention.length + " to look at" : ""}`;
   return { subject, html, text };
 }
-/* Sends this week's digest for up to `limit` clients that have not had it yet. Each person gets each client once a week. */
-async function sendDigests(env, { now = Date.now(), limit = 3, clientId = null, by = "Monday job" } = {}) {
+async function spanMail(env, span, wk) {
+  const ds = []; for (const c of span.clients) ds.push(await digestData(env, c.id, wk));
+  return spanEmail(span, wk, ds, env.APP_URL || "");
+}
+/* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
+async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, by = "Monday job" } = {}) {
   const wk = digestWeek(now);
   const done = new Set((await all(env, "SELECT client_id FROM digest_runs WHERE week = ?", wk.week)).map((r) => r.client_id));
-  const clients = (await all(env, "SELECT id, name FROM clients WHERE active = 1 ORDER BY name")).filter((c) => (clientId ? c.id === clientId : !done.has(c.id)));
-  if (!clients.length) return { week: wk.week, clients: 0, sent: 0, failed: 0 };
   const people = await digestPeople(env);
+  const spans = (await digestSpans(env, people)).filter((s) => (spanKey ? s.key === spanKey : !done.has(s.key)));
   let sent = 0, failed = 0, n = 0;
-  for (const c of clients.slice(0, limit)) {
+  for (const s of spans.slice(0, limit)) {
     n++;
-    const to = digestFor(people, c.id).filter((u) => (u.prefs || {}).digest !== "off");
-    const already = new Set((await all(env, "SELECT user_id FROM digest_log WHERE week = ? AND client_id = ? AND ok = 1", wk.week, c.id)).map((r) => r.user_id));
-    const mail = digestEmail(await digestData(env, c.id, wk), env.APP_URL || "");
-    let s = 0, f = 0;
+    const to = s.recipients.filter((u) => (u.prefs || {}).digest !== "off");
+    const already = new Set((await all(env, "SELECT user_id FROM digest_log WHERE week = ? AND client_id = ? AND ok = 1", wk.week, s.key)).map((r) => r.user_id));
+    const mail = await spanMail(env, s, wk);
+    let ok = 0, bad = 0;
     for (const u of to.filter((x) => !already.has(x.id))) {
       let err = "";
-      try { await sendEmail(env, { to: u.email, subject: mail.subject, text: mail.text, html: mail.html }); s++; } catch (e) { err = String((e && e.message) || e).slice(0, 300); f++; }
+      try { await sendEmail(env, { to: u.email, subject: mail.subject, text: mail.text, html: mail.html }); ok++; } catch (e) { err = String((e && e.message) || e).slice(0, 300); bad++; }
       await run(env, `INSERT INTO digest_log (week, client_id, user_id, name, email, at, ok, error) VALUES (?,?,?,?,?,?,?,?)
-        ON CONFLICT (week, client_id, user_id) DO UPDATE SET at = excluded.at, ok = excluded.ok, error = excluded.error`, wk.week, c.id, u.id, u.name || "", u.email, Date.now(), err ? 0 : 1, err);
+        ON CONFLICT (week, client_id, user_id) DO UPDATE SET at = excluded.at, ok = excluded.ok, error = excluded.error`, wk.week, s.key, u.id, u.name || "", u.email, Date.now(), err ? 0 : 1, err);
     }
     await run(env, `INSERT INTO digest_runs (week, client_id, at, sent, failed, by_name) VALUES (?,?,?,?,?,?)
-      ON CONFLICT (week, client_id) DO UPDATE SET at = excluded.at, sent = digest_runs.sent + excluded.sent, failed = excluded.failed, by_name = excluded.by_name`, wk.week, c.id, Date.now(), s, f, by);
-    sent += s; failed += f;
+      ON CONFLICT (week, client_id) DO UPDATE SET at = excluded.at, sent = digest_runs.sent + excluded.sent, failed = excluded.failed, by_name = excluded.by_name`, wk.week, s.key, Date.now(), ok, bad, by);
+    sent += ok; failed += bad;
   }
-  return { week: wk.week, clients: n, sent, failed, left: Math.max(0, clients.length - n) };
+  return { week: wk.week, spans: n, sent, failed, left: Math.max(0, spans.length - n) };
 }
 function digestDue(now) {
   const d = new Date(now + IST_MIN * 60000), h = d.getUTCHours() + d.getUTCMinutes() / 60;
@@ -2016,38 +2055,42 @@ const OPS = {
     return { items, at: now };
   },
 
-  /* ---- Monday digest: who gets it, what it says, and when it went ---- */
-  "digest.info": async ({ env, user, payload }) => {
-    const cid = str(payload.client_id, 60);
-    if (!inScope(user, cid)) throw outOfScope();
-    const people = digestFor(await digestPeople(env), cid);
+  /* ---- Monday digest: the spans this person can see (all for admins and the VP), who gets each, and when it went ---- */
+  "digest.spans": async ({ env, user, payload }) => {
+    const cid = payload.client_id ? str(payload.client_id, 60) : "";
+    if (cid && !inScope(user, cid)) throw outOfScope();
+    const spans = (await digestSpans(env, await digestPeople(env))).filter((s) => (cid ? s.clients.some((c) => c.id === cid) : spanVisible(user, s)));
     const wk = digestWeek(Date.now());
-    const runs = await all(env, "SELECT week, at, sent, failed, by_name FROM digest_runs WHERE client_id = ? ORDER BY week DESC LIMIT 6", cid);
-    const fails = await all(env, "SELECT name, email, error, at FROM digest_log WHERE client_id = ? AND week = ? AND ok = 0", cid, runs.length ? runs[0].week : wk.week);
-    return { recipients: people.map((u) => ({ id: u.id, name: u.name, designation: u.designation || (u.is_admin ? "Admin" : ""), off: (u.prefs || {}).digest === "off", me: u.id === user.id })).sort((a, b) => a.name.localeCompare(b.name)),
-      runs, fails, week: wk, email_ready: !!env.EMAIL_PROVIDER, can_send: !!(user.is_admin || user.access_all), mine_off: ((user.prefs || {}).digest === "off") };
+    const out = [];
+    for (const s of spans) {
+      const runs = await all(env, "SELECT week, at, sent, failed, by_name FROM digest_runs WHERE client_id = ? ORDER BY week DESC LIMIT 4", s.key);
+      const fails = runs.length ? await all(env, "SELECT name, error FROM digest_log WHERE client_id = ? AND week = ? AND ok = 0", s.key, runs[0].week) : [];
+      out.push({ key: s.key, title: s.title, manager: s.manager, clients: s.clients, runs, fails, visible: spanVisible(user, s),
+        recipients: s.recipients.map((u) => ({ id: u.id, name: u.name, designation: u.designation || (u.is_admin ? "Admin" : ""), off: (u.prefs || {}).digest === "off", me: u.id === user.id })).sort((a, b) => a.name.localeCompare(b.name)) });
+    }
+    return { spans: out, week: wk, email_ready: !!env.EMAIL_PROVIDER, can_send: !!(user.is_admin || user.access_all), mine_off: ((user.prefs || {}).digest === "off") };
   },
   "digest.preview": async ({ env, user, payload }) => {
-    const cid = str(payload.client_id, 60);
-    if (!inScope(user, cid)) throw outOfScope();
-    return digestEmail(await digestData(env, cid, digestWeek(Date.now())), env.APP_URL || "");
+    const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
+    if (!s || !spanVisible(user, s)) throw denied("That digest is not one of yours.");
+    return spanMail(env, s, digestWeek(Date.now()));
   },
   "digest.sendMe": async ({ env, user, payload }) => {
-    const cid = str(payload.client_id, 60);
-    if (!inScope(user, cid)) throw outOfScope();
+    const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
+    if (!s || !spanVisible(user, s)) throw denied("That digest is not one of yours.");
     if (!user.email || !/@/.test(user.email)) throw bad("Your account has no email address.");
-    const m = digestEmail(await digestData(env, cid, digestWeek(Date.now())), env.APP_URL || "");
+    const m = await spanMail(env, s, digestWeek(Date.now()));
     await sendEmail(env, { to: user.email, subject: "[Copy] " + m.subject, text: m.text, html: m.html });
     return { ok: true, to: user.email };
   },
-  /* Admins and the VP: send this week's digest now for one client (only to people who have not had it this week). */
+  /* Admins and the VP: send this week's digest for one span now (only to people who have not had it this week). */
   "digest.sendNow": async ({ env, user, payload }) => {
     if (!user.is_admin && !user.access_all) throw denied("Only an admin or the VP can send the digest by hand.");
-    const cid = str(payload.client_id, 60);
-    if (!inScope(user, cid)) throw outOfScope();
     if (!env.EMAIL_PROVIDER) throw new ApiError(503, "Email is not set up on the server yet (EMAIL_PROVIDER).");
-    const r = await sendDigests(env, { clientId: cid, limit: 1, by: user.name || "by hand" });
-    await audit(env, user, "digest.sendNow", cid, `week of ${r.week}: ${r.sent} sent${r.failed ? ", " + r.failed + " failed" : ""}`);
+    const key = str(payload.span, 80);
+    const r = await sendDigests(env, { spanKey: key, limit: 1, by: user.name || "by hand" });
+    if (!r.spans) throw bad("That digest has no clients now.");
+    await audit(env, user, "digest.sendNow", null, `${key} week of ${r.week}: ${r.sent} sent${r.failed ? ", " + r.failed + " failed" : ""}`);
     return r;
   },
   /* ---- Portfolio (VP and managers): every client in one table, worst first, with capacity and data freshness ---- */
@@ -3949,7 +3992,7 @@ export default {
       if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
       // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
       if (env.EMAIL_PROVIDER && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {
-        try { const r = await sendDigests(env, { limit: Math.max(1, Math.min(20, Number(env.DIGEST_BATCH) || 3)) }); if (r.clients) console.log(`Digest ${r.week}: ${r.clients} clients, ${r.sent} sent, ${r.failed} failed, ${r.left} left`); } catch (e) { console.log("Digest: " + (e && e.message)); }
+        try { const r = await sendDigests(env, { limit: Math.max(1, Math.min(20, Number(env.DIGEST_BATCH) || 3)) }); if (r.spans) console.log(`Digest ${r.week}: ${r.spans} spans, ${r.sent} sent, ${r.failed} failed, ${r.left} left`); } catch (e) { console.log("Digest: " + (e && e.message)); }
       }
     })());
   },

@@ -1198,7 +1198,7 @@ function SettingsView({ me, setMe, ctx }) {
           {lead && <div className="card set-sec" id="set-email">
             <h2>Email</h2><div className="sub">What Brahmastra emails you, besides sign-in codes.</div>
             <div className="row between mt8">
-              <div><div className="b">Monday digest</div><div className="small muted">Every Monday about 8:30 AM IST, one email per client you are a supervisor on: last week's health, AR, over 90, collected, entries, what needs attention, the team and month-end. No patient details. Preview it from Client 360.</div></div>
+              <div><div className="b">Monday digest</div><div className="small muted">Every Monday about 8:30 AM IST, one email for each manager's span you are a supervisor in (their clients): last week's health, AR, over 90, collected, entries, what needs attention, client by client, and the team. No patient details. Preview it from Client 360 or Portfolio.</div></div>
               <div className="seg2">{[["on", "On"], ["off", "Off"]].map(([k, l]) => <button key={k} className={(prefs.digest || "on") === k ? "on" : ""} onClick={() => save({ digest: k })}>{l}</button>)}</div>
             </div>
           </div>}
@@ -4786,6 +4786,7 @@ function PortfolioView({ me, go }) {
               : <Empty>Everything is fresh: inventories uploaded in the last week, SLA scored, roster in sync.</Empty>}
             <div className="tiny muted mt8">Numbers are only as good as the data behind them: inventory older than a week, an SLA not scored after its due day or a roster sync that failed are flagged here.</div></div>
         </div>
+        <DigestSpans me={me} />
       </>}
     </div>
   );
@@ -4793,7 +4794,7 @@ function PortfolioView({ me, go }) {
 const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took a share back", "raci.save": "Changed the RACI", "feedback.recipients": "Changed who gets feedback",
   "client.responsibility": "Changed posting / submission responsibility", "settings.save": "Changed settings", "client.delete": "Deleted a client", "client.save": "Edited a client",
   "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent",
-  "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard" };
+  "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
   const q = useRpc("audit.list", { client_id: f.client_id || undefined, action: f.action || undefined }, [f.client_id, f.action]);
@@ -4833,34 +4834,37 @@ function TrendChart({ trend }) {
     </svg>
   );
 }
-/* The Monday digest for one client: who gets it, a preview, a copy to yourself, and when it went. */
-function DigestCard({ clientId, me }) {
-  const q = useRpc("digest.info", { client_id: clientId }, [clientId], !!clientId);
+/* The Monday digest: one email per manager's span. On Client 360 it shows the span this client is in; on
+   Portfolio, every span the person can see. Who gets each, a preview, a copy to yourself, and when it went. */
+function DigestSpans({ clientId, me }) {
+  const q = useRpc("digest.spans", clientId ? { client_id: clientId } : {}, [clientId]);
   const [prev, setPrev] = useState(null);
   const [busy, setBusy] = useState(null);
   const d = q.data;
   const act = async (k, fn) => { setBusy(k); try { await fn(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
-  const preview = () => act("preview", async () => setPrev(await rpc("digest.preview", { client_id: clientId })));
-  const sendMe = () => act("me", async () => { const r = await rpc("digest.sendMe", { client_id: clientId }); toast("A copy is on its way to " + r.to + "."); });
-  const sendNow = () => act("now", async () => { const r = await rpc("digest.sendNow", { client_id: clientId }); toast(r.sent || r.failed ? `Sent to ${r.sent}${r.failed ? ", " + r.failed + " failed" : ""}.` : "Everyone on this client already had this week's digest."); q.reload(); });
-  if (!d) return <div className="card">{q.error ? <div className="alert err">{q.error}</div> : <Spinner label="Loading the digest…" />}</div>;
-  const on = d.recipients.filter((r) => !r.off);
-  const last = d.runs[0];
+  const preview = (s) => act("p" + s.key, async () => setPrev(await rpc("digest.preview", { span: s.key })));
+  const sendMe = (s) => act("m" + s.key, async () => { const r = await rpc("digest.sendMe", { span: s.key }); toast("A copy is on its way to " + r.to + "."); });
+  const sendNow = (s) => act("n" + s.key, async () => { const r = await rpc("digest.sendNow", { span: s.key }); toast(r.sent || r.failed ? `Sent to ${r.sent}${r.failed ? ", " + r.failed + " failed" : ""}.` : "Everyone on this span already had this week's digest."); q.reload(); });
+  if (!d) return <div className="card no-print">{q.error ? <div className="alert err">{q.error}</div> : <Spinner label="Loading the Monday digest…" />}</div>;
   return (
     <div className="card no-print"><div className="row between"><h3 className="c3-h">Monday digest email</h3><span className="tiny muted">every Monday, about 8:30 AM IST</span></div>
-      <div className="small">A one-page summary of last week for this client (health, AR, over 90, collected, entries, what needs attention, the team, denials, month-end) goes to every supervisor on it. No patient details.</div>
-      <div className="mt8 small"><b>{on.length} {on.length === 1 ? "person gets" : "people get"} it</b>{d.recipients.length > on.length ? <span className="muted"> · {d.recipients.length - on.length} turned it off</span> : null}</div>
-      <div className="pill-list mt8">{d.recipients.map((r) => <span key={r.id} className={"badge " + (r.off ? "gray" : "teal")} title={r.off ? "Turned off in their Settings" : r.designation} style={r.off ? { textDecoration: "line-through" } : null}>{r.name}{r.me ? " (you)" : ""}</span>)}
-        {!d.recipients.length && <span className="tiny muted">Nobody yet: team leads, managers and the VP covering this client get it.</span>}</div>
-      <div className="tiny muted mt8">{last ? `Last sent ${fmtWhen(last.at)} (week of ${fmtDate(last.week)}): ${last.sent} sent${last.failed ? ", " + last.failed + " failed" : ""}${last.by_name && last.by_name !== "Monday job" ? ", by " + last.by_name : ""}.` : "Not sent yet."}
-        {d.fails.length > 0 && <span className="red-ink"> Not delivered to {d.fails.map((f) => f.name).join(", ")}: {d.fails[0].error}</span>}
-        {!d.email_ready && <span className="amber-ink"> Email is not set up on the server, so nothing goes out yet.</span>}
-        {d.mine_off && <span> You turned yours off in Settings.</span>}</div>
-      <div className="row mt8" style={{ gap: 6, flexWrap: "wrap" }}>
-        <button className="btn sm" disabled={!!busy} onClick={preview}>{busy === "preview" ? "Building…" : "Preview this week's"}</button>
-        {d.email_ready && <button className="btn sm" disabled={!!busy} onClick={sendMe}>{busy === "me" ? "Sending…" : "Email me a copy"}</button>}
-        {d.can_send && d.email_ready && <button className="btn sm" disabled={!!busy} onClick={sendNow} title="Sends this week's digest now to anyone on this client who has not had it">{busy === "now" ? "Sending…" : "Send this week's now"}</button>}
-      </div>
+      <div className="small">One email per manager's span: their clients' health, AR, over 90, collected, entries, what needs attention, client by client, and the team, for last week. It goes to the manager and every supervisor on those clients. No patient details.</div>
+      {!d.email_ready && <div className="tiny amber-ink mt8">Email is not set up on the server, so nothing goes out yet.</div>}
+      {d.mine_off && <div className="tiny muted mt8">You turned yours off in Settings › Email.</div>}
+      {!d.spans.length && <Empty>{clientId ? "This client is in no digest yet." : "No spans yet: they come from the managers on the roster."}</Empty>}
+      {d.spans.map((s) => { const on = s.recipients.filter((r) => !r.off); const last = s.runs[0]; return (
+        <div key={s.key} className="digest-span mt8">
+          <div className="row between" style={{ gap: 8 }}><div><b>{s.title}</b><div className="tiny muted">{s.clients.map((c) => c.name).join(", ")}</div></div>
+            <span className="tiny muted">{on.length} {on.length === 1 ? "person" : "people"}{s.recipients.length > on.length ? ` · ${s.recipients.length - on.length} turned off` : ""}</span></div>
+          <div className="pill-list mt8">{s.recipients.map((r) => <span key={r.id} className={"badge " + (r.off ? "gray" : "teal")} title={r.off ? "Turned off in their Settings" : r.designation} style={r.off ? { textDecoration: "line-through" } : null}>{r.name}{r.me ? " (you)" : ""}</span>)}</div>
+          <div className="tiny muted mt8">{last ? `Last sent ${fmtWhen(last.at)} (week of ${fmtDate(last.week)}): ${last.sent} sent${last.failed ? ", " + last.failed + " failed" : ""}${last.by_name && last.by_name !== "Monday job" ? ", by " + last.by_name : ""}.` : "Not sent yet."}
+            {s.fails.length > 0 && <span className="red-ink"> Not delivered to {s.fails.map((f) => f.name).join(", ")}: {s.fails[0].error}</span>}</div>
+          {s.visible && <div className="row mt8" style={{ gap: 6, flexWrap: "wrap" }}>
+            <button className="btn sm" disabled={!!busy} onClick={() => preview(s)}>{busy === "p" + s.key ? "Building…" : "Preview this week's"}</button>
+            {d.email_ready && <button className="btn sm" disabled={!!busy} onClick={() => sendMe(s)}>{busy === "m" + s.key ? "Sending…" : "Email me a copy"}</button>}
+            {d.can_send && d.email_ready && <button className="btn sm" disabled={!!busy} onClick={() => sendNow(s)} title="Sends this week's digest now to anyone on this span who has not had it">{busy === "n" + s.key ? "Sending…" : "Send this week's now"}</button>}
+          </div>}
+        </div>); })}
       {prev && <Modal title="Monday digest preview" sub={prev.subject} wide onClose={() => setPrev(null)}>
         <iframe title="Digest preview" className="digest-frame" sandbox="" srcDoc={'<!doctype html><meta charset="utf-8"><body style="margin:16px;background:#fff">' + prev.html + "</body>"} /></Modal>}
     </div>
@@ -4952,7 +4956,7 @@ function ClientView({ ctx, me, go, params }) {
             {d.log.length ? d.log.slice(0, 12).map((l) => <div key={l.id} className={"c3-log " + l.kind}><b>{l.kind === "next" ? "Next call · " + fmtDate(l.next_on) : C360_KIND.find(([k]) => k === l.kind)[1] + " · " + fmtWhen(l.at)} · {l.by_name}{(l.mine || (me.role === "supervisor" && d.monthend.can_edit)) && <button className="btn link sm no-print" style={{ padding: "0 4px" }} disabled={busy} onClick={() => delLog(l)}>remove</button>}</b>{l.text}</div>)
               : <Empty>No calls logged yet. Note what the client agreed and when the next call is, so the next person does not start from zero.</Empty>}</div>
         </div>
-        <DigestCard clientId={cid} me={me} />
+        <DigestSpans clientId={cid} me={me} />
         <div className="tiny muted">Figures are Brahmastra's: AR from the latest inventory, collected from payment posting hand-offs, SLA from the score ticked at month-end. Over-90 target {d.ar.target}%.</div>
       </>}
     </div>
