@@ -240,6 +240,8 @@ tr.tat-missed td{background:var(--red-soft)}tr.tat-missed td:first-child{box-sha
 .sug ol,.sug ul{margin:4px 0 0 18px;padding:0;font-size:12.5px}
 @media print{.topbar,.banner,.no-print{display:none !important}.main{padding:0}}
 html[data-text="large"] body{zoom:1.1}
+.tatline{height:4px;border-radius:3px;background:var(--chipbg);overflow:hidden;margin:5px 0 3px;max-width:170px}.tatline i{display:block;height:100%}
+.ho-acts{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;max-width:330px;margin-left:auto}
 .saag-note{color:var(--body);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .drange{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.drange .seg2{min-height:38px;align-items:center}.drange-c{display:inline-flex;gap:6px;align-items:center}.drange-c .input{width:150px}
 .desk-people{display:flex;gap:8px;flex-wrap:wrap}.desk-person{display:flex;flex-direction:column;gap:4px;min-width:170px;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:9px;padding:8px 10px;cursor:pointer;font:inherit;color:var(--ink)}
@@ -309,7 +311,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.36.0";
+const APP_VERSION = "2.37.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -973,15 +975,18 @@ const Kpi = ({ label, value, sub, tone, onClick }) => (
     <div className="l">{label}</div><div className="v">{value}</div>{sub && <div className="s">{sub}</div>}
   </div>
 );
-const STATE_META = { open: ["gray", "Open"], assigned: ["blue", "Assigned"], in_progress: ["amber", "In progress"], completed: ["teal", "Worked"], closed: ["green", "Closed"], excluded: ["red", "Excluded"] };
+const STATE_META = { open: ["gray", "Open"], assigned: ["blue", "Assigned"], in_progress: ["amber", "In progress"], completed: ["teal", "Worked"], in_process: ["purple", "In process"], closed: ["green", "Closed"], excluded: ["red", "Excluded"] };
 const StateBadge = ({ state }) => { const m = STATE_META[state] || ["gray", state]; return <span className={"badge " + m[0]}>{m[1]}</span>; };
 const TierBadge = ({ tier }) => <span className={"badge " + (tier === "High" ? "red" : tier === "Medium" ? "teal" : "gray")}>{tier || "–"}</span>;
 const CLASS_TONE = { rejected: "amber", denied: "red", partial: "amber", secondary: "teal", awaiting: "teal", patient: "gray", paid: "green", other: "gray", unknown: "gray" };
 const ClassBadge = ({ cls }) => <span className={"badge " + (CLASS_TONE[cls] || "gray")}>{STATUS_LABEL[cls] || cls || "–"}</span>;
 /* The shared posting / submission status: the same badge for the TL, the biller and the department. */
-const HANDOFF_META = { with_posting: ["purple", "With Payment Posting"], posted: ["green", "Payment posted"], posting_assist: ["red", "Posting needs assistance"],
-  with_submission: ["blue", "With Submission"], submitted: ["green", "Submitted"], submission_assist: ["red", "Submission needs assistance"],
-  submission_accepted: ["green", "Submission accepted"], submission_rejected: ["red", "Submission rejected"] };
+const HANDOFF_META = { with_posting: ["purple", "In process · Payment Posting"], posted: ["green", "Payment posted"], posting_assist: ["red", "Posting needs assistance"],
+  posting_back: ["amber", "Back to AR from Posting"], posting_client: ["amber", "Posting waiting on client"],
+  with_submission: ["blue", "In process · Submission"], submitted: ["green", "Submitted · recheck in 48 h"], submission_assist: ["red", "Submission needs assistance"],
+  submission_back: ["amber", "Back to AR from Submission"], submission_client: ["amber", "Submission waiting on client"],
+  submission_accepted: ["green", "Submission accepted · final check done"], submission_rejected: ["red", "Submission rejected"],
+  with_rejection: ["red", "In process · Rejections"], rejection_assist: ["red", "Rejections needs assistance"], rejection_back: ["amber", "Back to AR from Rejections"], rejection_client: ["amber", "Rejections waiting on client"] };
 const HandoffBadge = ({ status, style }) => (status && HANDOFF_META[status] ? <span className={"badge " + HANDOFF_META[status][0]} style={{ marginLeft: 4, ...(style || {}) }}>{HANDOFF_META[status][1]}</span> : null);
 const KindBadge = ({ claim }) => (claim.worked_before ? <span className="badge purple">worked before</span> : <span className="badge green">fresh</span>);
 /* Horizontal bars. Hover shows the full figures; a click (when onClick is given) filters the dashboard to that slice, and isOn marks the active slice. */
@@ -1768,7 +1773,8 @@ function Dashboard({ ctx, go }) {
             <Kpi label="Assigned / in progress" value={fmtInt(assigned.n + prog.n)} sub={fmtMoney(assigned.amt + prog.amt) + " on desks · " + fmtInt(prog.n) + " open now"} />
             <Kpi label="Worked, awaiting follow-up" value={fmtInt(done.n)} sub={fmtMoney(done.amt) + " · " + fmtInt(d.follow_ups_due ? d.follow_ups_due.n : 0) + " due today"} tone={d.follow_ups_due && d.follow_ups_due.n ? "warn" : ""} />
           </div>
-          <div className="grid g4">
+          <div className="grid g5">
+            <Kpi label="In process" value={fmtInt(st("in_process").n)} sub={fmtMoney(st("in_process").amt) + " with Posting, Submission or Rejections"} tone={st("in_process").n ? "accent" : ""} onClick={() => openClaims({ state: "in_process" })} />
             <Kpi label="Closed / resolved" value={fmtInt(closed.n)} sub={fmtMoney(closed.amt)} tone="good" />
             <Kpi label="Excluded" value={fmtInt(excl.n)} sub="credits, zero balances, unbilled, paid in file" />
             <Kpi label="Escalated" value={fmtInt(d.escalated)} sub="flagged by the team for a supervisor" tone={d.escalated ? "bad" : ""} onClick={() => go("attention")} />
@@ -1776,14 +1782,14 @@ function Dashboard({ ctx, go }) {
           </div>
           <CallTimeCard clientId={clientId} locId={locId} rangeMs={rangeMs} rangeLabel={rangeLabel} />
           <div className="card"><h3>By client and location</h3><div className="sub mb">Where the inventory stands at each location. Click a row to focus the dashboard on it.</div>
-            <div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Location</th><th className="r">Unassigned</th><th className="r">On desks</th><th className="r">Worked, awaiting follow-up</th><th className="r">Overdue</th><th className="r">Closed</th><th className="r">Workable $</th></tr></thead>
+            <div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Location</th><th className="r">Unassigned</th><th className="r">On desks</th><th className="r">Worked, awaiting follow-up</th><th className="r">In process</th><th className="r">Overdue</th><th className="r">Closed</th><th className="r">Workable $</th></tr></thead>
               <tbody>{(d.by_location || []).map((r, i) => { const on = clientId === r.client_id && (locId || "") === (r.location_id || ""); return (
                 <tr key={i} className="click" style={on ? { background: "var(--soft)" } : undefined} title={`${r.client_name}${r.location_name ? " · " + r.location_name : ""}\n${fmtInt(r.n)} claims on file · ${fmtMoney(r.amt)} workable\nClick to focus the dashboard here; click again to go back.`} onClick={() => { if (on) { setClientId(""); setLocId(""); } else { setClientId(r.client_id); setLocId(r.location_id || ""); } }}>
                   <td><b>{r.client_name}</b></td><td>{r.location_name || <span className="muted">(no location)</span>}</td>
-                  <td className="num" title={fmtMoney(r.open_amt)}>{fmtInt(r.open_n)}</td><td className="num" title={fmtMoney(r.desk_amt)}>{fmtInt(r.desk_n)}</td><td className="num" title={fmtMoney(r.worked_amt)}>{fmtInt(r.worked_n)}</td>
+                  <td className="num" title={fmtMoney(r.open_amt)}>{fmtInt(r.open_n)}</td><td className="num" title={fmtMoney(r.desk_amt)}>{fmtInt(r.desk_n)}</td><td className="num" title={fmtMoney(r.worked_amt)}>{fmtInt(r.worked_n)}</td><td className="num" title={fmtMoney(r.process_amt)}>{fmtInt(r.process_n || 0)}</td>
                   <td className="num" style={r.overdue_n ? { color: "var(--red-ink)", fontWeight: 700 } : undefined}>{fmtInt(r.overdue_n)}</td><td className="num" title={fmtMoney(r.closed_amt)}>{fmtInt(r.closed_n)}</td><td className="num">{fmtMoney(r.amt)}</td>
                 </tr>); })}
-                {!(d.by_location || []).length && <tr><td colSpan={8} className="muted">No claims yet.</td></tr>}</tbody></table></div></div>
+                {!(d.by_location || []).length && <tr><td colSpan={9} className="muted">No claims yet.</td></tr>}</tbody></table></div></div>
           <div className="grid g3">
             <div className="card"><h3>By value tier</h3><div className="sub mb">Low under $100 · Medium up to the average · High above it</div>
               <Bars rows={["High", "Medium", "Low"].map((t) => d.tiers.find((x) => x.tier === t) || { tier: t, n: 0, amt: 0 })} labelOf={(r) => r.tier} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => toggleFl("tier", r.tier)} isOn={(r) => fl.tier === r.tier} /></div>
@@ -1908,6 +1914,7 @@ function ClientsView({ ctx, reload, embedded, me }) {
           <ResponsibilityRow c={c} dept="posting" ctx={ctx} onSaved={reload} />
           <ResponsibilityRow c={c} dept="submission" ctx={ctx} onSaved={reload} />
           <ResponsibilityRow c={c} dept="subcheck" ctx={ctx} onSaved={reload} me={me} />
+          <ResponsibilityRow c={c} dept="rejection" ctx={ctx} onSaved={reload} />
           <div className="row mt" style={{ alignItems: "flex-start" }}>
             <div className="pill-list" style={{ flex: 1 }}>
               {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={l.active ? "Click to deactivate" : "Click to reactivate"} onClick={() => toggleLoc(l)}>{l.name}{!l.active ? " (off)" : ""}</span><button className="btn link sm" style={{ padding: "0 4px" }} title={l.workbook_link ? "This location has its own workbook: " + l.workbook_link : "Link an Excel workbook for this location"} onClick={() => openWb("l:" + l.id, l.workbook_link)}>{l.workbook_link ? "📗" : "📎"}</button><WbLine id={l.id} link={l.workbook_link} /></span>)}
@@ -3213,7 +3220,7 @@ function NoteForm({ c, files, onChanged }) {
 }
 /* The history tab on the right edge and the timeline panel it opens: newest first, grouped by day, each entry with its time. */
 const HIST_FILTERS = [["all", "Everything"], ["work", "Work"], ["note", "Notes"], ["handoff", "Posting & submission"], ["file", "Files"], ["assign", "Assignments"], ["upload", "Uploads"]];
-const HIST_GROUP = { work: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff" };
+const HIST_GROUP = { work: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff" };
 const CHANGE_LABEL = { state: "State", bucket: "Bucket", follow_up: "Follow-up", status: "SAAG status" };
 const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 const dayKey = (ms) => { const d = new Date(Number(ms)); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -3267,8 +3274,11 @@ function HistEvent({ it, onEdit, onFile }) {
     case "handoff_assigned": dot = D("#EEE7FB", "👤"); title = (DEPT_NAME[it.data && it.data.dept] || "Hand-off") + " assigned to " + (it.text || "someone") + who; break;
     case "handoff_done": { const pr = (it.data && it.data.proof) || {}; const posting = it.data && it.data.dept === "posting";
       dot = D("#E3FBEF", "✓"); title = (posting ? "Payment posted" : it.data && it.data.dept === "subcheck" ? "Submission accepted by the payer" : "Submitted") + who; body = <><div className="x">{posting ? "Check / EFT " : "Batch / claim ID "}<b>{pr.ref}</b>{pr.date ? " · " + fmtDate(pr.date) : ""}{pr.amount != null ? " · " + fmtMoney(pr.amount, 2) : ""}{pr.mode ? " · " + pr.mode : ""}{it.data.note ? "\n" + it.data.note : ""}</div>{pr.files && pr.files.length ? <div className="m">📎 proof: {pr.files.join(", ")}</div> : null}<div className="m">{it.data.within_tat ? "within TAT" : "after the TAT"}</div></>; break; }
-    case "handoff_check": dot = D("#E0F7F4", "⏱"); title = "Submission follow-up set for " + (it.text || "someone") + who; body = it.data && it.data.available_at ? <div className="m">check from {fmtWhen(it.data.available_at)} · due {fmtWhen(it.data.due_at)}</div> : null; break;
-    case "handoff_rejected": dot = D("#FDEAEA", "✗"); title = "Submission rejected" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.resent ? "sent back to the Submission team to resubmit" : "back on the biller's list"}</div></>; break;
+    case "handoff_check": dot = D("#E0F7F4", "⏱"); title = "48-hour recheck set for " + (it.text || "someone") + who; body = it.data && it.data.available_at ? <div className="m">check from {fmtWhen(it.data.available_at)} · due {fmtWhen(it.data.due_at)}</div> : null; break;
+    case "handoff_rejected": dot = D("#FDEAEA", "✗"); title = "Submission rejected" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.resent ? "sent to " + (it.data.to === "Rejections" ? "the Rejections person (first priority)" : "the Submission team") + " to correct and resubmit" : "back on the biller's list"}</div></>; break;
+    case "handoff_back": dot = D("#FFF3D6", "↩"); title = "Sent back to AR by " + (it.text || "the department") + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">on the biller's list today{it.data && it.data.within_tat === false ? " · after the 24h TAT" : ""}</div></>; break;
+    case "handoff_client": dot = D("#FFF3D6", "⏸"); title = (it.text || "Department") + " needs client assistance" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">waiting on the client · 24h clock paused</div></>; break;
+    case "handoff_resume": dot = D("#E0F7F4", "▶"); title = "Client answered · back with " + (it.text || "the department") + who; body = <>{it.data && it.data.note ? <div className="x">{it.data.note}</div> : null}{it.data && it.data.due_at ? <div className="m">new due {fmtWhen(it.data.due_at)} (24 working hours)</div> : null}</>; break;
     case "handoff_assist": dot = D("#FDEAEA", "⚑"); title = (it.text || "Department") + " needs assistance" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">back on the biller's list · in the team lead's Needs attention</div></>; break;
     default: dot = D("#EEF1F0", "•"); title = it.kind + who; body = it.text ? <div className="x">{it.text}</div> : null;
   }
@@ -3312,8 +3322,9 @@ function ClaimHistory({ claimId, claim, me, version }) {
   );
 }
 /* ---------- payment posting & submission hand-offs ---------- */
-const DEPT_NAME = { posting: "Payment Posting", submission: "Submission", subcheck: "Submission follow-up" };
-const RESP_COLS_UI = { posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null] };
+const DEPT_NAME = { posting: "Payment Posting", submission: "Submission", subcheck: "Submission follow-up", rejection: "Rejections" };
+const RESP_COLS_UI = { posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
+  rejection: ["rejection_mode", "rejection_lead", "rejection_backup"] };
 const MODE_LABEL = { person: "A person from the roster", client: "Client does it", biller: "Biller does it", "": "Not set" };
 const handoffToast = (h) => (!h ? "" : h.mode === "person" ? ` Sent to ${h.label}${h.to ? " (" + h.to + ")" : ""}.` : h.mode === "client" ? ` ${h.label} is done by the client for this project.` : h.mode === "biller" ? ` You do the ${h.label.toLowerCase()} for this project.` : ` No ${h.label.toLowerCase()} responsibility is set for this client yet: tell your team lead.`);
 const fmtDue = (h) => { const ms = h.due_at - Date.now(); const a = Math.abs(ms); const t = a >= 86400000 ? Math.floor(a / 86400000) + "d " + Math.floor((a % 86400000) / 3600000) + "h" : Math.floor(a / 3600000) + "h " + Math.floor((a % 3600000) / 60000) + "m"; return ms < 0 ? "TAT missed · " + t : "due in " + t; };
@@ -3325,7 +3336,7 @@ function ResponsibilityRow({ c, dept, ctx, onSaved, me }) {
   const [open, setOpen] = useState(false);
   const [d, setD] = useState({ mode, lead, backup });
   const [busy, setBusy] = useState(false);
-  const deptRe = dept === "posting" ? /posting/i : check ? /^$/ : /submission/i;
+  const deptRe = dept === "posting" ? /posting/i : check ? /^$/ : /submission/i;   // Rejections are usually Submission people
   const names = new Set((c.roster_names || []).map((n) => String(n).toLowerCase()));
   const onProject = (u) => (u.projects || []).some((p) => names.has(String(p.name).toLowerCase()));
   const suggested = ctx.users.filter((u) => u.active && deptRe.test(u.department || "") && u.role === "supervisor" && onProject(u));
@@ -3336,7 +3347,7 @@ function ResponsibilityRow({ c, dept, ctx, onSaved, me }) {
   const save = async () => { setBusy(true); try { await rpc("clients.saveResponsibility", { client_id: c.id, dept, ...d }); toast(DEPT_NAME[dept] + " responsibility saved."); setOpen(false); onSaved && onSaved(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   return (
     <div className="small mt8">
-      <b>{check ? "Submission follow-up (24 working hours after submitting)" : DEPT_NAME[dept]}:</b> {mode === "person" ? <>{nameOf(lead)}{backup ? <span className="muted"> · backup {nameOf(backup)}</span> : null}</> : <span className={mode ? "" : "muted"}>{modeLabel(mode)}</span>}{" "}
+      <b>{check ? "Submission follow-up (48 working hours after submitting)" : dept === "rejection" ? "Rejections (first priority)" : DEPT_NAME[dept]}:</b> {mode === "person" ? <>{nameOf(lead)}{backup ? <span className="muted"> · backup {nameOf(backup)}</span> : null}</> : <span className={mode ? "" : "muted"}>{modeLabel(mode)}</span>}{" "}
       <button className="btn link sm" onClick={() => { setOpen(!open); setD({ mode, lead: lead || (suggested[0] || {}).id || "", backup }); }}>{open ? "cancel" : mode ? "change" : "set"}</button>
       {!mode && suggested.length > 0 && !open && <span className="tiny muted"> · roster suggests {suggested.map((u) => u.name).join(", ")}</span>}
       {open && (
@@ -3345,7 +3356,7 @@ function ResponsibilityRow({ c, dept, ctx, onSaved, me }) {
           {d.mode === "person" && <Combo sm width={240} value={d.lead} onChange={(v) => setD({ ...d, lead: v })} placeholder="Responsible person…" options={opts} />}
           {d.mode === "person" && bc && <Combo sm width={220} value={d.backup} onChange={(v) => setD({ ...d, backup: v })} placeholder="Backup (optional)…" options={opts.filter((o) => o.id !== d.lead)} />}
           <button className="btn sm primary" disabled={busy || (d.mode === "person" && !d.lead)} onClick={save}>Save</button>
-          <span className="tiny muted" style={{ flexBasis: "100%" }}>{check ? (d.mode === "person" || d.mode === "biller" ? "24 working hours after a claim is submitted, a check lands in this person's Posting & submission queue: Accepted by payer, or Rejected (back to the Submission team to resubmit). The biller keeps the 15-day follow-up." : d.mode === "client" ? "No check: the client confirms acceptance. The biller keeps the 15-day follow-up." : "No check: only the biller's 15-day follow-up.") : d.mode === "person" ? `Claims with a ${dept === "posting" ? "Need to Post / Posting Correction" : "resubmission or paper-claim"} action go to this person's Posting & submission queue (24 working hours).${dept === "posting" ? " The claim is closed for the biller." : ""}` : d.mode === "client" ? "Nothing is sent: the entry notes that the client does it." : d.mode === "biller" ? "Nothing is sent: the biller does it as part of their own work." : "Nothing is sent until this is set."}</span>
+          <span className="tiny muted" style={{ flexBasis: "100%" }}>{check ? (d.mode === "person" || d.mode === "biller" ? "48 working hours after a claim is submitted, a recheck lands in this person's queue: Accepted by payer (final check done), or Rejected (to the Rejections person first, else the Submission team). The biller keeps the 15-day follow-up." : "Not set: the recheck goes to whoever submitted the claim, 48 working hours later. The biller keeps the 15-day follow-up.") : dept === "rejection" ? (d.mode === "person" ? "Rejected claims (a rejected recheck, or a biller's Claim Rejected entry that needs resubmitting) go to this person first, at the top of their list." : "Not set: rejected claims go to the Submission person.") : d.mode === "person" ? `Claims with a ${dept === "posting" ? "Need to Post / Posting Correction" : "resubmission or paper-claim"} action go to this person's Posting & submission queue (24 working hours).${dept === "posting" ? " The claim is closed for the biller." : ""}` : d.mode === "client" ? "Nothing is sent: the entry notes that the client does it." : d.mode === "biller" ? "Nothing is sent: the biller does it as part of their own work." : "Nothing is sent until this is set."}</span>
         </div>
       )}
     </div>
@@ -3356,26 +3367,32 @@ function HandoffCard({ handoffs, role, onChanged, compact }) {
   const [act, setAct] = useState(null);
   if (!handoffs || !handoffs.length) return null;
   const h = handoffs[0];
-  const open = ["pending", "assigned"].includes(h.status);
+  const open = ["pending", "assigned", "client"].includes(h.status);
   const canClose = open && (role === "lead" || role === "member");
   return (
     <div className="card tight" style={{ borderLeft: "4px solid " + (h.status === "complete" ? "#12B886" : h.status === "assistance" || h.overdue ? "#A32D2D" : "#7C5CD6") }}>
       <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
         <div className="small"><span className="cv-sec" style={{ display: "inline-flex", margin: 0 }}>{DEPT_NAME[h.dept]}</span>{" "}
-          {open ? <><span className={"badge " + (h.overdue ? "red" : "purple")}>{h.status === "assigned" ? "assigned to " + (h.assigned_name || "") : "waiting for " + (h.lead_name || "the lead")}</span> <span className={h.overdue ? "b" : "muted"} style={h.overdue ? { color: "var(--red-ink)" } : undefined}>{fmtDue(h)}</span></>
+          {h.status === "client" ? <><span className="badge amber">Waiting on client</span> <span className="muted">{h.reason} · clock paused since {fmtWhen(h.paused_at)}</span></>
+            : h.status === "back" ? <><span className="badge amber">Sent back to AR</span> <span className="muted">{h.reason} · by {h.done_by_name} · {fmtWhen(h.done_at)}</span></>
+            : open ? <><span className={"badge " + (h.overdue ? "red" : "purple")}>{h.status === "assigned" ? "assigned to " + (h.assigned_name || "") : "waiting for " + (h.lead_name || "the lead")}</span> <span className={h.overdue ? "b" : "muted"} style={h.overdue ? { color: "var(--red-ink)" } : undefined}>{fmtDue(h)}</span></>
             : h.status === "rejected" ? <><span className="badge red">Rejected</span> <span className="muted">{h.reason} · by {h.done_by_name} · {fmtWhen(h.done_at)}</span></>
             : h.status === "complete" ? <><span className="badge green">{h.dept === "posting" ? "Payment posted" : h.dept === "subcheck" ? "Accepted by payer" : "Submitted"}</span> <span className="muted">by {h.done_by_name} · {fmtWhen(h.done_at)} · {h.dept === "posting" ? "check / EFT" : "batch / claim ID"} <b>{h.proof.ref}</b>{h.proof.date ? " · " + fmtDate(h.proof.date) : ""}{h.proof.amount != null ? " · " + fmtMoney(h.proof.amount, 2) : ""}{h.proof.mode ? " · " + h.proof.mode : ""}{h.proof.files && h.proof.files.length ? " · 📎 " + h.proof.files.length + " proof file" + (h.proof.files.length > 1 ? "s" : "") : " · no proof file"}</span></>
             : <><span className="badge red">Needs assistance</span> <span className="muted">{h.reason} · by {h.done_by_name} · {fmtWhen(h.done_at)}</span></>}
           <span className="tiny muted"> · sent by {h.created_by_name} {fmtWhen(h.created_at)} ({h.saag_action})</span>
           {h.note && !open ? <div className="tiny mt8">{h.note}</div> : null}</div>
-        {canClose && !compact && <div className="row" style={{ gap: 6 }}><button className="btn sm primary" onClick={() => setAct({ h, outcome: "complete" })}>✓ Mark complete</button><button className="btn sm" onClick={() => setAct({ h, outcome: "assistance" })}>Need assistance</button></div>}
+        {canClose && !compact && <HandoffActions h={h} canClose onOpen={null} onAct={(outcome) => setAct({ h, outcome })} />}
       </div>
       {act && <HandoffCloseModal act={act} onClose={() => setAct(null)} onDone={() => { setAct(null); onChanged && onChanged(); }} />}
     </div>
   );
 }
+const BACK_REASONS_UI = ["Wrong department", "Not ready to post / submit", "Missing or wrong information from AR", "Duplicate request", "Other"];
+const CLIENT_REASONS_UI = { posting: ["Need EOB / ERA from the client", "Need payment / deposit details", "Need patient or account details", "Other"],
+  submission: ["Need corrected demographics / insurance", "Need signature or documents", "Need authorization / referral", "Need coding clarification", "Other"] };
 const REJECT_REASONS_UI = ["Clearinghouse rejection", "Payer rejection: demographics / member ID", "Payer rejection: coding", "Payer rejection: duplicate", "Payer rejection: authorization", "Other"];
 const ASSIST_REASONS_UI = { subcheck: ["Payer has no record yet", "Cannot reach the payer / portal", "Other"], posting: ["No EOB / ERA", "Amount mismatch", "Patient / account not found", "Payer not set up", "Duplicate payment", "Other"], submission: ["Missing claim data", "Clearinghouse rejection", "No payer ID / address", "Authorization missing", "Duplicate claim", "Other"] };
+ASSIST_REASONS_UI.rejection = ASSIST_REASONS_UI.submission;
 /* Optional proof files for a hand-off step; they are attached to the claim when the step is saved. */
 function ProofFiles({ files, setFiles, why }) {
   const input = useRef(null);
@@ -3406,6 +3423,38 @@ const PROOF_WHY = {
   submission: "the clearinghouse acceptance / batch report or portal screenshot shows the claim really went out, so the biller's 15-day follow-up starts from proof.",
   subcheck: "the payer portal screenshot or acknowledgement shows the payer has the claim, in case it is later denied for timely filing.",
 };
+/* The 24-hour clock on a hand-off: time left, past the TAT, paused while waiting on the client, or (the follow-up check)
+   when the recheck opens, 48 working hours after submitting. */
+const durText = (ms) => { const a = Math.abs(ms); return a >= 86400000 ? Math.floor(a / 86400000) + "d " + Math.floor((a % 86400000) / 3600000) + "h" : Math.floor(a / 3600000) + "h " + Math.floor((a % 3600000) / 60000) + "m"; };
+function TatTag({ h }) {
+  const now = Date.now();
+  if (h.status === "client") return <div><span className="badge amber">Waiting on client · clock paused</span><div className="tiny muted">since {fmtWhen(h.paused_at)}</div></div>;
+  if (h.dept === "subcheck" && h.available_at && now < h.available_at) return <div><span className="badge gray">Recheck from {fmtWhen(h.available_at)}</span><div className="tiny muted">48 working hours after submitting</div></div>;
+  const start = h.dept === "subcheck" && h.available_at ? h.available_at : h.created_at;
+  const left = h.due_at - now, used = Math.max(0, Math.min(100, (100 * (now - start)) / Math.max(1, h.due_at - start)));
+  const tone = left < 0 ? "red" : used > 75 ? "amber" : "teal";
+  return (
+    <div>
+      <span className={"badge " + tone}>{left < 0 ? "Past the 24h TAT by " + durText(left) : (h.dept === "subcheck" ? "Recheck now · " : "24h TAT · ") + durText(left) + " left"}</span>
+      <div className="tatline"><i style={{ width: (left < 0 ? 100 : used) + "%", background: "var(--" + (tone === "teal" ? "teal" : tone === "amber" ? "amber" : "red") + ")" }} /></div>
+      <div className="tiny muted">sent {fmtWhen(h.created_at)} · due {fmtWhen(h.due_at)}</div>
+    </div>
+  );
+}
+/* What the department can do with a claim it was sent. Every choice opens a box for a comment. */
+function HandoffActions({ h, canClose, onOpen, onAct }) {
+  const b = (o, label, cls) => <button key={o} className={"btn sm " + (cls || "")} onClick={() => onAct(o)}>{label}</button>;
+  return (
+    <div className="ho-acts">
+      {onOpen && <button className="btn sm" onClick={onOpen}>Open claim</button>}
+      {canClose && (h.status === "client"
+        ? [b("resume", "▶ Client answered"), b("complete", "✓ Complete", "primary"), b("back", "↩ Back to AR")]
+        : h.dept === "subcheck"
+          ? [b("complete", "✓ Accepted · final check", "primary"), b("rejected", "Rejected", "danger"), b("assistance", "Need assistance")]
+          : [b("complete", "✓ Complete", "primary"), b("assistance", "Need assistance"), b("back", "↩ Back to AR"), b("client", "Need client assistance")])}
+    </div>
+  );
+}
 function HandoffCloseModal({ act, onClose, onDone }) {
   const { h, outcome } = act;
   const [p, setP] = useState({ date: todayISO(), ref: "", amount: "", mode: "" });
@@ -3415,8 +3464,9 @@ function HandoffCloseModal({ act, onClose, onDone }) {
   const [err, setErr] = useState(null);
   const [files, setFiles] = useState([]);
   const posting = h.dept === "posting", check = h.dept === "subcheck";
-  const ok = outcome === "complete" ? p.date && (check || p.ref.trim()) : reason && note.trim().length >= 8;
-  const done = { complete: check ? "Marked accepted by the payer." : posting ? "Payment posted." : "Submitted: back to the biller with a 15-day follow-up.", rejected: "Rejected: sent back to the Submission team to resubmit.", assistance: "Sent back to the biller and their team lead with your reason." };
+  const ok = outcome === "complete" ? p.date && (check || p.ref.trim()) : outcome === "resume" ? true : reason && note.trim().length >= 8;
+  const done = { complete: check ? "Accepted by the payer: final check done." : posting ? "Payment posted." : "Submitted: back to the biller with a 15-day follow-up; recheck in 48 working hours.", rejected: "Rejected: sent to the Rejections person (or the Submission team) to correct and resubmit.",
+    assistance: "Sent back to the biller and flagged for their team lead.", back: "Sent back to AR: on the biller's list today with your comment.", client: "Waiting on the client: the 24-hour clock is paused.", resume: "Back on the clock: 24 working hours from now." };
   const go = async () => {
     setBusy(true); setErr(null);
     try {
@@ -3427,6 +3477,25 @@ function HandoffCloseModal({ act, onClose, onDone }) {
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
+  if (outcome === "back" || outcome === "client" || outcome === "resume") {
+    const reasons = outcome === "back" ? BACK_REASONS_UI : CLIENT_REASONS_UI[posting ? "posting" : "submission"];
+    const title = { back: "Send back to AR", client: "Need client assistance", resume: "Client answered" }[outcome];
+    const help = { back: "The claim goes back on the biller's list today with your reason and comment. It does not go to their team lead's Needs attention (use Need assistance for that).",
+      client: "The claim stays with " + DEPT_NAME[h.dept] + " (In process for AR) and shows under Waiting on client. The 24-hour clock pauses until you click Client answered.",
+      resume: "The claim goes back on the clock with a fresh 24 working hours." }[outcome];
+    return (
+      <Modal title={title + " · " + DEPT_NAME[h.dept]} sub={[h.claim_no || "No claim #", h.patient, h.payer].filter(Boolean).join(" · ")} onClose={onClose} narrow
+        footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !ok} onClick={go}>{busy ? "Saving…" : title}</button></>}>
+        <div className="stack">
+          {outcome !== "resume" && <Field label={outcome === "back" ? "Why it goes back" : "What is needed from the client"}><Combo value={reason} onChange={setReason} placeholder="Pick…" options={reasons.map((x) => ({ id: x, label: x }))} /></Field>}
+          <Field label={outcome === "resume" ? "Comment (optional)" : "Comment"} hint={outcome === "resume" ? "" : "At least a few words"}><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} autoFocus
+            placeholder={outcome === "back" ? "What AR should do or fix before sending it again." : outcome === "client" ? "What was asked of the client, how and when." : "What the client sent or said."} /></Field>
+          <div className="tiny muted">{help}</div>
+          <ErrorBox error={err} />
+        </div>
+      </Modal>
+    );
+  }
   if (check && outcome !== "assistance") return (
     <Modal title={(outcome === "complete" ? "Accepted by payer · " : "Rejected · ") + "Submission follow-up"} sub={[h.claim_no || "No claim #", h.patient, h.payer].filter(Boolean).join(" · ")} onClose={onClose} narrow
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className={"btn " + (outcome === "complete" ? "primary" : "danger")} disabled={busy || !ok} onClick={go}>{busy ? "Saving…" : outcome === "complete" ? "Mark accepted" : "Send back to Submission"}</button></>}>
@@ -3453,9 +3522,9 @@ function HandoffCloseModal({ act, onClose, onDone }) {
             {posting ? <Field label="Amount posted (optional)"><input className="input" type="number" value={p.amount} onChange={(e) => setP({ ...p, amount: e.target.value })} /></Field>
               : <Field label="Mode (optional)"><Combo value={p.mode} onChange={(v) => setP({ ...p, mode: v })} placeholder="Pick…" options={["Electronic", "Paper", "Portal"].map((x) => ({ id: x, label: x }))} /></Field>}
           </div>
-          <Field label="Note (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+          <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything AR or QA should know about this one." /></Field>
           <ProofFiles files={files} setFiles={setFiles} why={PROOF_WHY[h.dept] || PROOF_WHY.submission} />
-          <div className="tiny muted">{posting ? "The claim shows Payment posted (not closed): posting QA audits it." : "The claim goes back to the biller with a follow-up in 15 days to check the payer received it."}</div>
+          <div className="tiny muted">{posting ? "The claim shows Payment posted and closes for AR; posting QA audits it later." : "The claim goes back to the biller with a 15-day follow-up, and a recheck (accepted or rejected?) opens 48 working hours from now."}</div>
         </> : <>
           <Field label="Reason"><Combo value={reason} onChange={setReason} placeholder="Pick the reason…" options={(ASSIST_REASONS_UI[h.dept] || []).map((x) => ({ id: x, label: x }))} /></Field>
           <Field label="What is needed"><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Exactly what the biller or team lead must provide or fix." autoFocus /></Field>
@@ -3473,7 +3542,8 @@ const DESK_TEXT = {
 };
 function HandoffsView({ ctx, me, refreshHandoffs, handoffs }) {
   const desk = deskOf(me, handoffs);
-  const mine = desk === "submission" && handoffs && (handoffs.depts || []).includes("subcheck") ? ["submission", "subcheck"] : null;
+  const hd = (handoffs && handoffs.depts) || [];
+  const mine = desk === "submission" && (hd.includes("subcheck") || hd.includes("rejection")) ? ["submission", ...hd.filter((x) => x === "subcheck" || x === "rejection")] : null;
   const [dept, setDept] = useState(desk === "posting" ? "posting" : desk === "submission" && !mine ? "submission" : "");
   const [view, setView] = useState("open");
   const q = useRpc("handoffs.list", { dept: dept || undefined, view }, [dept, view]);
@@ -3492,25 +3562,26 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs }) {
     <div className="stack">
       {desk ? <div><h1>{DESK_TEXT[desk][0]}</h1><div className="sub">{DESK_TEXT[desk][1]} {q.data ? q.data.tat_hours : 24} working hours each.</div></div> : <div><h1>Payment posting & submission</h1><div className="sub">Claims sent by billers through their SAAG action (Need to Post / Posting Correction → Payment Posting; resubmission and paper claims → Submission). {q.data ? q.data.tat_hours : 24} working hours to complete each one or ask for assistance; Saturday and Sunday do not count.</div></div>}
       <div className="grid g5">
-        <Kpi label="Open" value={fmtInt(st.open_n || 0)} tone="accent" />
+        <Kpi label="Open" value={fmtInt(st.open_n || 0)} sub={st.rejection_n ? st.rejection_n + " rejection" + (st.rejection_n === 1 ? "" : "s") + " first" : "24 working hours each"} tone="accent" />
         <Kpi label="Past TAT" value={fmtInt(st.overdue || 0)} tone={st.overdue ? "bad" : ""} sub="answer these first" />
         <Kpi label="Done · 30 days" value={fmtInt(st.done_n || 0)} tone="good" />
         <Kpi label="Within TAT" value={met == null ? "–" : met + "%"} sub="of those done in 30 days" />
-        <Kpi label="Need assistance · 30 days" value={fmtInt(st.assist_n || 0)} />
+        <Kpi label="Waiting on client" value={fmtInt(st.client_n || 0)} sub="24h clock paused" tone={st.client_n ? "warn" : ""} />
       </div>
       <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
         {!desk || desk === "both" ? <div className="row" style={{ gap: 5 }}>{[["", "Both"], ["posting", "Payment posting"], ["submission", "Submission"]].map(([k, l]) => <button key={k} className={"chip " + (dept === k ? "on" : "")} onClick={() => setDept(k)}>{l}</button>)}</div>
-          : mine ? <div className="row" style={{ gap: 5 }}>{[["", "All mine"], ["submission", "Submission"], ["subcheck", "Submission follow-up"]].map(([k, l]) => <button key={k} className={"chip " + (dept === k ? "on" : "")} onClick={() => setDept(k)}>{l}</button>)}</div> : <span />}
-        <div className="row" style={{ gap: 5 }}>{[["open", "Open"], ["mine", "Assigned to me"], ["done", "Completed"], ["assist", "Need assistance"]].map(([k, l]) => <button key={k} className={"chip " + (view === k ? "on" : "")} onClick={() => setView(k)}>{l}</button>)}</div>
+          : mine ? <div className="row" style={{ gap: 5 }}>{[["", "All mine"], ...mine.map((k) => [k, DEPT_NAME[k]])].map(([k, l]) => <button key={k} className={"chip " + (dept === k ? "on" : "")} onClick={() => setDept(k)}>{l}</button>)}</div> : <span />}
+        <div className="row" style={{ gap: 5 }}>{[["open", "Open"], ["mine", "Assigned to me"], ["client", "Waiting on client" + (st.client_n ? " " + st.client_n : "")], ["done", "Completed"], ["assist", "Returned to AR"]].map(([k, l]) => <button key={k} className={"chip " + (view === k ? "on" : "")} onClick={() => setView(k)}>{l}</button>)}</div>
       </div>
       <div className="card tight">
         <ErrorBox error={q.error} />
         {q.loading && !q.data && <Spinner />}
-        <div className="table-wrap"><table className="t"><thead><tr>{sort.Th("due_at", view === "open" || view === "mine" ? "Due" : "Done")}{sort.Th("dept", "Department")}{sort.Th("claim_no", "Claim #")}{sort.Th("patient", "Patient")}{sort.Th("client_name", "Client")}{sort.Th("payer", "Payer")}{sort.Th("balance", "Balance", "r")}{sort.Th("created_by_name", "Sent by")}{sort.Th("assigned_name", "Assigned to")}<th></th></tr></thead>
-          <tbody>{shown.map((h) => { const isOpen = ["pending", "assigned"].includes(h.status); return (
+        <div className="table-wrap"><table className="t"><thead><tr>{sort.Th("due_at", view === "open" || view === "mine" ? "24-hour TAT" : view === "client" ? "Waiting since" : "Done")}{sort.Th("dept", "Department")}{sort.Th("claim_no", "Claim #")}{sort.Th("patient", "Patient")}{sort.Th("client_name", "Client")}{sort.Th("payer", "Payer")}{sort.Th("balance", "Balance", "r")}{sort.Th("created_by_name", "Sent by")}{sort.Th("assigned_name", "Assigned to")}<th></th></tr></thead>
+          <tbody>{shown.map((h) => { const isOpen = ["pending", "assigned", "client"].includes(h.status); return (
             <tr key={h.id} className={h.overdue ? "tat-missed" : ""}>
-              <td>{isOpen ? (h.available_at && Date.now() < h.available_at ? <span className="badge gray">check from {fmtWhen(h.available_at)}</span> : <span className={"badge " + (h.overdue ? "red" : "gray")}>{fmtDue(h)}</span>) : h.status === "complete" ? <span className="badge green">{h.dept === "posting" ? "posted" : h.dept === "subcheck" ? "accepted" : "submitted"}</span> : h.status === "rejected" ? <span className="badge red">rejected</span> : <span className="badge red">assistance</span>}<div className="tiny muted">{isOpen ? "sent " + fmtWhen(h.created_at) : fmtWhen(h.done_at)}</div></td>
-              <td><span className={"badge " + (h.dept === "posting" ? "purple" : h.dept === "subcheck" ? "teal" : "blue")}>{DEPT_NAME[h.dept]}</span>{h.dept === "submission" && /^Rejected/.test(h.saag_action) ? <div className="tiny" style={{ color: "var(--red-ink)" }}>resubmit</div> : null}</td>
+              <td style={{ minWidth: 190 }}>{isOpen ? <TatTag h={h} /> : <><span className={"badge " + (h.status === "complete" ? "green" : h.status === "back" ? "amber" : "red")}>{h.status === "complete" ? (h.dept === "posting" ? "posted" : h.dept === "subcheck" ? "accepted · final check done" : "submitted") : h.status === "rejected" ? "rejected" : h.status === "back" ? "sent back to AR" : "assistance"}</span><div className="tiny muted">{fmtWhen(h.done_at)}{h.done_at && h.due_at ? (h.done_at <= h.due_at ? " · within TAT" : " · after TAT") : ""}</div></>}</td>
+              <td><span className={"badge " + (h.dept === "posting" ? "purple" : h.dept === "subcheck" ? "teal" : h.dept === "rejection" ? "red" : "blue")}>{DEPT_NAME[h.dept]}</span>{h.dept === "rejection" && isOpen ? <div className="tiny b" style={{ color: "var(--red-ink)" }}>first priority</div> : h.dept === "submission" && /^Rejected/.test(h.saag_action) ? <div className="tiny" style={{ color: "var(--red-ink)" }}>resubmit</div> : null}
+                {h.note && (isOpen || h.status === "back" || h.status === "assistance") ? <div className="tiny muted" style={{ maxWidth: 220, marginTop: 3 }} title={h.note}>“{h.note.length > 90 ? h.note.slice(0, 90) + "…" : h.note}”</div> : null}</td>
               <td className="mono small">{h.claim_no || "–"}</td><td>{h.patient}</td><td className="small">{h.client_name}{h.location_name ? " · " + h.location_name : ""}</td><td className="small">{h.payer}</td><td className="num">{fmtMoney(h.balance)}</td>
               <td className="small">{h.created_by_name}<div className="tiny muted">{h.saag_action}</div></td>
               <td className="small">{isOpen && h.can_assign ? <Combo sm width={170} value={h.assigned_to || ""} onChange={(v) => assign(h, v)} placeholder="Assign to team…" disabled={busy}
@@ -3518,9 +3589,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs }) {
                 : h.assigned_name || (isOpen ? <span className="muted">with {h.lead_name}</span> : h.done_by_name)}
                 {!isOpen && h.status === "complete" && <div className="tiny muted">{h.proof.ref}{h.proof.date ? " · " + fmtDate(h.proof.date) : ""}{h.proof.files && h.proof.files.length ? " · 📎 proof" : ""}</div>}
                 {!isOpen && (h.status === "assistance" || h.status === "rejected") && <div className="tiny" style={{ color: "var(--red-ink)" }}>{h.reason}</div>}</td>
-              <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(h.claim_id)}>Open claim</button>{isOpen && h.can_close && (h.dept === "subcheck"
-                ? <> <button className="btn sm primary" onClick={() => setAct({ h, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h, outcome: "rejected" })}>Rejected</button> <button className="btn sm" onClick={() => setAct({ h, outcome: "assistance" })}>Need assistance</button></>
-                : <> <button className="btn sm primary" onClick={() => setAct({ h, outcome: "complete" })}>✓ Complete</button> <button className="btn sm" onClick={() => setAct({ h, outcome: "assistance" })}>Need assistance</button></>)}</td>
+              <td className="r"><HandoffActions h={h} canClose={isOpen && h.can_close} onOpen={() => setOpen(h.claim_id)} onAct={(outcome) => setAct({ h, outcome })} /></td>
             </tr>); })}
             {q.data && !rows.length && <tr><td colSpan={10}><Empty>{view === "open" ? "Nothing waiting. Claims arrive here when a biller saves a posting or submission action on a client that has a person set for it (Clients & locations)." : "Nothing here."}</Empty></td></tr>}</tbody></table></div>
       </div>

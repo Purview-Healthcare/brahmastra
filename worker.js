@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.33.0";
+const VERSION = "2.34.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -128,7 +128,9 @@ const EXTRA_COLUMNS = {
     ["posting_mode", "TEXT NOT NULL DEFAULT ''"], ["posting_lead", "TEXT"], ["posting_backup", "TEXT"],
     ["submission_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_lead", "TEXT"], ["submission_backup", "TEXT"],
     // Who checks a submitted claim for acceptance / rejection 24 working hours after it was submitted.
-    ["submission_check_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_check_person", "TEXT"]],
+    ["submission_check_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_check_person", "TEXT"],
+    // Rejections: the person who checks and fixes rejected claims first (their top priority), with a backup.
+    ["rejection_mode", "TEXT NOT NULL DEFAULT ''"], ["rejection_lead", "TEXT"], ["rejection_backup", "TEXT"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
   users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
@@ -137,7 +139,7 @@ const EXTRA_COLUMNS = {
     ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
-  handoffs: [["available_at", "INTEGER"]],
+  handoffs: [["available_at", "INTEGER"], ["paused_at", "INTEGER"]],
   settings: [["updated_at", "INTEGER"]],
 };
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
@@ -949,13 +951,24 @@ const placeholderEmail = (row) => (row.emp_id || row.name).toLowerCase().replace
    (set on the client profile): Need to Post / Posting Correction -> Payment Posting; resubmission,
    paper claim and correction actions -> Submission. TAT: 24 working hours, Saturday and Sunday skipped (IST). */
 const HANDOFF_TAT_HOURS = 24;
-const DEPT_LABEL = { posting: "Payment Posting", submission: "Submission", subcheck: "Submission follow-up" };
+const DEPT_LABEL = { posting: "Payment Posting", submission: "Submission", subcheck: "Submission follow-up", rejection: "Rejections" };
+// After a claim is submitted, the follow-up check (accepted or rejected?) opens this many working hours later.
+const SUBCHECK_HOURS = 48;
+// While a claim is with Payment Posting, Submission or Rejections it is "In process" for AR (not on a biller's list).
+const IN_PROCESS = "in_process";
+// The claim status prefix for each department's outcomes (the follow-up check reports as Submission).
+const HO_PREFIX = { posting: "posting", submission: "submission", subcheck: "submission", rejection: "rejection" };
+const BACK_REASONS = ["Wrong department", "Not ready to post / submit", "Missing or wrong information from AR", "Duplicate request", "Other"];
+const CLIENT_REASONS = { posting: ["Need EOB / ERA from the client", "Need payment / deposit details", "Need patient or account details", "Other"],
+  submission: ["Need corrected demographics / insurance", "Need signature or documents", "Need authorization / referral", "Need coding clarification", "Other"] };
 const HANDOFF_ROUTES = [[/^Need to Post\/Posting Correction$/i, "posting"], [/^(Need to Resubmit|Need to Submit Paper Claim|Correction, Resubmission & Reprocessing)$/i, "submission"]];
-const RESP_COLS = { posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null] };
+const RESP_COLS = { posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
+  rejection: ["rejection_mode", "rejection_lead", "rejection_backup"] };
 const handoffDeptOf = (action) => { for (const [re, d] of HANDOFF_ROUTES) if (re.test(String(action || "").trim())) return d; return ""; };
 const REJECT_REASONS = ["Clearinghouse rejection", "Payer rejection: demographics / member ID", "Payer rejection: coding", "Payer rejection: duplicate", "Payer rejection: authorization", "Other"];
 const ASSIST_REASONS = { subcheck: ["Payer has no record yet", "Cannot reach the payer / portal", "Other"], posting: ["No EOB / ERA", "Amount mismatch", "Patient / account not found", "Payer not set up", "Duplicate payment", "Other"],
   submission: ["Missing claim data", "Clearinghouse rejection", "No payer ID / address", "Authorization missing", "Duplicate claim", "Other"] };
+ASSIST_REASONS.rejection = ASSIST_REASONS.submission;
 function addWorkingHours(ms, hours) {
   let t = ms, left = hours * 3600000;
   for (let guard = 0; left > 0 && guard < 60; guard++) {
@@ -1037,7 +1050,7 @@ async function removeUser(env, id) {
 
 /* Payment posting and Submission people (their Shastra department), team leads included, work only on the claims
    handed to their department: no inventory, allocation or SAAG screens, and Claims shows only those claims. */
-const DESK_DEPTS = { posting: ["posting"], submission: ["submission", "subcheck"], both: ["posting", "submission", "subcheck"] };
+const DESK_DEPTS = { posting: ["posting"], submission: ["submission", "subcheck", "rejection"], both: ["posting", "submission", "subcheck", "rejection"] };
 const DESK_NAME = { posting: "Payment posting", submission: "Submission", both: "Posting & submission" };
 // From the Shastra department and the "also in" departments: anyone on AR keeps the AR view.
 function userDesk(user) {
@@ -1740,6 +1753,7 @@ const OPS = {
           SUM(c.state IN ('assigned','in_progress')) AS desk_n, COALESCE(SUM(CASE WHEN c.state IN ('assigned','in_progress') THEN c.balance END),0) AS desk_amt,
           SUM(c.state = 'completed') AS worked_n, COALESCE(SUM(CASE WHEN c.state = 'completed' THEN c.balance END),0) AS worked_amt,
           SUM(c.state = 'closed') AS closed_n, COALESCE(SUM(CASE WHEN c.state = 'closed' THEN c.balance END),0) AS closed_amt,
+          SUM(c.state = 'in_process') AS process_n, COALESCE(SUM(CASE WHEN c.state = 'in_process' THEN c.balance END),0) AS process_amt,
           SUM(c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ?) AS overdue_n,
           COUNT(*) AS n, COALESCE(SUM(CASE WHEN c.state IN ${WORKABLE} THEN c.balance END),0) AS amt
         FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id ${(where.length ? "WHERE " + where.map((x) => "c." + x).join(" AND ") : "")}
@@ -2027,23 +2041,24 @@ const OPS = {
     if (dd) stmts.push(dd);
     await batchAll(env, stmts);
     // Payment posting / submission: send the claim to the department set on the client profile.
-    const dept = handoffDeptOf(saag.action);
+    let dept = handoffDeptOf(saag.action);
     let handoff = null;
     if (dept) {
       const cl = await one(env, "SELECT * FROM clients WHERE id = ?", c.client_id);
+      // A rejected claim goes to the client's Rejections person first, when one is set.
+      if (dept === "submission" && /reject/i.test(saag.status) && cl && cl.rejection_mode === "person" && cl.rejection_lead) dept = "rejection";
       const mode = cl ? cl[dept + "_mode"] : "";
       const lead = cl && mode === "person" ? cl[dept + "_lead"] : null;
       const hs = [];
       for (const t of targets) {
         if (mode === "person" && lead) {
-          const open = await one(env, "SELECT id FROM handoffs WHERE claim_id = ? AND dept = ? AND status IN ('pending','assigned')", t.id, dept);
+          const open = await one(env, "SELECT id FROM handoffs WHERE claim_id = ? AND dept = ? AND status IN ('pending','assigned','client')", t.id, dept);
           if (open) continue;
           const due = addWorkingHours(now, HANDOFF_TAT_HOURS);
           hs.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?)`)
             .bind(uuid(), t.id, c.client_id, dept, now, user.id, user.name, saag.action, due, lead, cl[dept + "_backup"] || null));
-          hs.push(env.DB.prepare("UPDATE claims SET handoff_status = ? WHERE id = ?").bind("with_" + dept, t.id));
-          // Sent to Payment Posting: closed for the biller (no follow-up). It comes back only through a later inventory upload, or if posting needs assistance.
-          if (dept === "posting") hs.push(env.DB.prepare("UPDATE claims SET state = 'closed', state_reason = 'Sent to Payment Posting', follow_up_on = '' WHERE id = ?").bind(t.id));
+          // In process for AR while the department works it: off the biller's list, no follow-up, until it is done or sent back.
+          hs.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '' WHERE id = ?").bind("with_" + dept, IN_PROCESS, "With " + DEPT_LABEL[dept], t.id));
           hs.push(claimEvent(env, t.id, user, "handoff_sent", DEPT_LABEL[dept], { dept, due_at: due }));
         } else hs.push(claimEvent(env, t.id, user, "handoff_none", DEPT_LABEL[dept], { dept, mode: mode || "unset" }));
       }
@@ -2073,7 +2088,7 @@ const OPS = {
   /* The biller's day: everything on the desk plus what was worked since the start of the day, with filters. */
   "queue.list": async ({ env, user, payload }) => {
     const from = num(payload.day_from_ms, 0);
-    const where = ["c.assigned_to = ?", "(c.state IN ('assigned','in_progress') OR (c.state IN ('completed','closed') AND c.completed_at >= ?))"];
+    const where = ["c.assigned_to = ?", "(c.state IN ('assigned','in_progress') OR (c.state IN ('completed','closed','in_process') AND c.completed_at >= ?))"];
     const params = [user.id, from];
     if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ?)"); params.push(q, q, q); }
     if (payload.payer) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer, 80).trim() + "%"); }
@@ -2116,7 +2131,7 @@ const OPS = {
     const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, call_min = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
       .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, fields.action, JSON.stringify(fields), callMinOf(fields), now, user.id, n.id)];
     const latest = await one(env, "SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id);
-    if (latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned") {
+    if (latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned" && c.state !== IN_PROCESS) {
       const newState = closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?, last_note = ?, follow_up_on = ?, updated_at = ? WHERE id = ?`)
         .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, fields.action, comment.slice(0, 600), followUp, now, c.id));
@@ -2407,23 +2422,26 @@ const OPS = {
       vis = "(" + or.join(" OR ") + ")";
     }
     const desk = user.is_admin ? null : userDesk(user);
-    const dept = ["posting", "submission", "subcheck"].includes(payload.dept) ? payload.dept : desk && desk !== "both" ? desk : "";
-    // The Submission chip also shows the follow-up checks after submitting.
-    const base = vis + (dept === "submission" ? " AND h.dept IN ('submission','subcheck')" : dept ? " AND h.dept = ?" : ""), bargs = [...vargs, ...(dept && dept !== "submission" ? [dept] : [])];
+    const dept = ["posting", "submission", "subcheck", "rejection"].includes(payload.dept) ? payload.dept : desk && desk !== "both" ? desk : "";
+    // The Submission chip also shows the follow-up checks after submitting and the rejections.
+    const base = vis + (dept === "submission" ? " AND h.dept IN ('submission','subcheck','rejection')" : dept ? " AND h.dept = ?" : ""), bargs = [...vargs, ...(dept && dept !== "submission" ? [dept] : [])];
     const now = Date.now(), month = now - 30 * 86400000;
     const view = str(payload.view, 20) || "open";
-    const vw = view === "mine" ? " AND h.status IN ('pending','assigned') AND h.assigned_to = ?" : view === "done" ? " AND h.status IN ('complete','rejected') AND h.done_at > ?" : view === "assist" ? " AND h.status = 'assistance' AND h.done_at > ?" : " AND h.status IN ('pending','assigned')";
+    // open: on the clock · mine: given to me · client: waiting on the client (clock paused) · done: completed or rejected · assist: returned to AR
+    const vw = view === "mine" ? " AND h.status IN ('pending','assigned') AND h.assigned_to = ?" : view === "client" ? " AND h.status = 'client'" : view === "done" ? " AND h.status IN ('complete','rejected') AND h.done_at > ?"
+      : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : " AND h.status IN ('pending','assigned')";
     const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : [];
     const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name,
         a.name AS assigned_name, l.name AS lead_name, b.name AS backup_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations lo ON lo.id = c.location_id
       LEFT JOIN users a ON a.id = h.assigned_to LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
-      WHERE ${base}${vw} ORDER BY CASE WHEN h.status IN ('pending','assigned') THEN h.due_at ELSE -h.done_at END LIMIT 500`, ...bargs, ...vwArgs);
+      WHERE ${base}${vw} ORDER BY CASE WHEN h.dept = 'rejection' AND h.status IN ('pending','assigned') THEN 0 ELSE 1 END, CASE WHEN h.status IN ('pending','assigned') THEN h.due_at WHEN h.status = 'client' THEN h.paused_at ELSE -h.done_at END LIMIT 500`, ...bargs, ...vwArgs);
     const out = rows.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && now > h.due_at,
       can_assign: user.is_admin || h.lead_id === user.id || h.backup_id === user.id, can_close: user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id }));
     const st = await one(env, `SELECT SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_n, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue,
-        SUM(CASE WHEN h.status IN ('complete','assistance','rejected') AND h.done_at > ? THEN 1 ELSE 0 END) AS done_n, SUM(CASE WHEN h.status IN ('complete','assistance','rejected') AND h.done_at > ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
-        SUM(CASE WHEN h.status = 'assistance' AND h.done_at > ? THEN 1 ELSE 0 END) AS assist_n FROM handoffs h WHERE ${base}`, now, month, month, month, ...bargs);
+        SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_n, SUM(CASE WHEN h.dept = 'rejection' AND h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS rejection_n,
+        SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS done_n, SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
+        SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS assist_n FROM handoffs h WHERE ${base}`, now, month, month, month, ...bargs);
     return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, tat_hours: HANDOFF_TAT_HOURS, stats: st || {} };
   },
   /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
@@ -2441,14 +2459,15 @@ const OPS = {
     }
     if (payload.client_id) { w.push("h.client_id = ?"); a.push(str(payload.client_id, 60)); }
     const W = w.join(" AND ");
-    const done = "h.status IN ('complete','assistance','rejected')";
+    const done = "h.status IN ('complete','assistance','rejected','back')";
     const tot = await one(env, `SELECT SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status = 'assistance' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
         AVG(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
-        SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now,
-        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN c.balance ELSE 0 END) AS amount
-      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE ${W}`, from, to, from, to, from, to, from, to, from, to, from, to, now, from, to, ...a);
+        SUM(CASE WHEN h.status IN ('pending','assigned','client') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now,
+        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN c.balance ELSE 0 END) AS amount,
+        SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_now, SUM(CASE WHEN h.status = 'back' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS back
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE ${W}`, from, to, from, to, from, to, from, to, from, to, from, to, now, from, to, from, to, ...a);
     const byClient = await all(env, `SELECT cl.name AS client_name, SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now
@@ -2462,7 +2481,7 @@ const OPS = {
     const days = {};
     for (const e of ev) {
       if (e.created_at >= from && e.created_at <= to) (days[day(e.created_at)] = days[day(e.created_at)] || { received: 0, done: 0 }).received++;
-      if (e.done_at && e.done_at >= from && e.done_at <= to && ["complete", "assistance", "rejected"].includes(e.status)) (days[day(e.done_at)] = days[day(e.done_at)] || { received: 0, done: 0 }).done++;
+      if (e.done_at && e.done_at >= from && e.done_at <= to && ["complete", "assistance", "rejected", "back"].includes(e.status)) (days[day(e.done_at)] = days[day(e.done_at)] || { received: 0, done: 0 }).done++;
     }
     return { dept, totals: tot || {}, by_client: byClient, by_person: byPerson, by_day: Object.keys(days).sort().map((d) => ({ day: d, ...days[d] })), tat_hours: HANDOFF_TAT_HOURS };
   },
@@ -2471,11 +2490,12 @@ const OPS = {
     const any = await one(env, "SELECT 1 AS x FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ? LIMIT 1", user.id, user.id, user.id);
     // Which hand-offs this person handles: set on a client (Clients & locations), their department, or given to them
     const set = await one(env, `SELECT SUM(CASE WHEN posting_lead = ? OR posting_backup = ? THEN 1 ELSE 0 END) AS posting,
-        SUM(CASE WHEN submission_lead = ? OR submission_backup = ? THEN 1 ELSE 0 END) AS submission, SUM(CASE WHEN submission_check_person = ? THEN 1 ELSE 0 END) AS subcheck FROM clients WHERE active = 1`,
-      user.id, user.id, user.id, user.id, user.id);
+        SUM(CASE WHEN submission_lead = ? OR submission_backup = ? THEN 1 ELSE 0 END) AS submission, SUM(CASE WHEN submission_check_person = ? THEN 1 ELSE 0 END) AS subcheck,
+        SUM(CASE WHEN rejection_lead = ? OR rejection_backup = ? THEN 1 ELSE 0 END) AS rejection FROM clients WHERE active = 1`,
+      user.id, user.id, user.id, user.id, user.id, user.id, user.id);
     const got = await all(env, "SELECT DISTINCT dept FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?", user.id, user.id, user.id);
     const depts = new Set(got.map((x) => x.dept));
-    for (const k of ["posting", "submission", "subcheck"]) if (set && set[k]) depts.add(k);
+    for (const k of ["posting", "submission", "subcheck", "rejection"]) if (set && set[k]) depts.add(k);
     if (userDesk(user)) DESK_DEPTS[userDesk(user)].forEach((d) => depts.add(d));
     return { n: (r && r.n) || 0, overdue: (r && r.overdue) || 0, involved: !!(any || depts.size), depts: [...depts], desk: user.is_admin ? null : userDesk(user) };
   },
@@ -2495,9 +2515,13 @@ const OPS = {
   /* Complete (with proof) or Need assistance (with a reason): the same status then shows to the TL, the biller and the department. */
   "handoffs.close": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
-    if (!h || !["pending", "assigned"].includes(h.status)) throw bad("This hand-off is already closed.");
+    if (!h || !["pending", "assigned", "client"].includes(h.status)) throw bad("This hand-off is already closed.");
     if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id)) throw denied("This hand-off is not yours.");
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", h.claim_id);
+    const pfx = HO_PREFIX[h.dept] || h.dept;
+    // Back to AR: on the biller's desk today (or the pool when nobody has it).
+    const backToAr = (status, extra = "") => env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','closed','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,
+        state_reason = '', follow_up_on = ?, skipped_at = NULL${extra}, updated_at = ? WHERE id = ?`);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const note = str(payload.note, 2000).trim();
     const stmts = [];
@@ -2513,23 +2537,24 @@ const OPS = {
       if (h.dept !== "subcheck" && (!proof.date || !proof.ref)) throw bad(h.dept === "posting" ? "Enter the posted date and the check / EFT number." : "Enter the submitted date and the batch or claim ID.");
       stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, JSON.stringify(proof), note, h.id));
       if (h.dept === "posting") {
-        // Payment posted, not closed: posting QA audits it later.
-        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'posted', updated_at = ? WHERE id = ?").bind(now, c.id));
-      } else if (h.dept === "submission") {
-        // Submitted: back to the biller with a 15-day follow-up, and (when set) a check for acceptance / rejection after 24 working hours.
+        // Payment posted: the work is done, so the claim closes for AR (posting QA audits it later).
+        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'posted', state = CASE WHEN state = 'in_process' THEN 'closed' ELSE state END, state_reason = CASE WHEN state = 'in_process' THEN 'Payment posted' ELSE state_reason END, updated_at = ? WHERE id = ?").bind(now, c.id));
+      } else if (h.dept === "submission" || h.dept === "rejection") {
+        // Submitted: back to the biller with a 15-day follow-up, and always a check after 48 working hours (accepted, or rejected?):
+        // the follow-up person set on the client, the biller when the client says so, otherwise whoever submitted it.
         const fu = addDays(today, 15);
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned') THEN 'completed' ELSE state END, updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
         const cl = await one(env, "SELECT submission_check_mode, submission_check_person FROM clients WHERE id = ?", h.client_id);
-        const who = cl && cl.submission_check_mode === "person" ? cl.submission_check_person : cl && cl.submission_check_mode === "biller" ? (h.created_by || c.assigned_to || c.last_worked_by) : null;
+        const who = (cl && cl.submission_check_mode === "person" && cl.submission_check_person) || (cl && cl.submission_check_mode === "biller" && (h.created_by || c.assigned_to || c.last_worked_by)) || user.id;
         if (who) {
-          const avail = addWorkingHours(now, HANDOFF_TAT_HOURS), due = addWorkingHours(avail, HANDOFF_TAT_HOURS);
+          const avail = addWorkingHours(now, SUBCHECK_HOURS), due = addWorkingHours(avail, HANDOFF_TAT_HOURS);
           stmts.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, available_at, lead_id, assigned_to, assigned_at) VALUES (?,?,?,'subcheck','assigned',?,?,?,?,?,?,?,?,?)`)
             .bind(uuid(), c.id, h.client_id, now, user.id, user.name, "Submitted " + (proof.ref || ""), due, avail, who, who, now));
           const wn = await one(env, "SELECT name FROM users WHERE id = ?", who);
           stmts.push(claimEvent(env, c.id, user, "handoff_check", wn ? wn.name : "", { dept: "subcheck", available_at: avail, due_at: due }));
         }
       } else {
-        // Submission follow-up: accepted by the payer.
+        // Submission follow-up: accepted by the payer, the final check is done.
         stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'submission_accepted', updated_at = ? WHERE id = ?").bind(now, c.id));
       }
       stmts.push(claimEvent(env, c.id, user, "handoff_done", DEPT_LABEL[h.dept], { dept: h.dept, proof, note, within_tat: now <= h.due_at }));
@@ -2539,18 +2564,21 @@ const OPS = {
       if (!reason) throw bad("Pick the rejection reason.");
       if (!commentOk(note)) throw bad("Write what was rejected and why, a few words at least.");
       stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'rejected', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, reason, note, h.id));
-      const cl = await one(env, "SELECT submission_mode, submission_lead, submission_backup FROM clients WHERE id = ?", h.client_id);
-      if (cl && cl.submission_mode === "person" && cl.submission_lead) {
-        const due = addWorkingHours(now, HANDOFF_TAT_HOURS);
-        stmts.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, note) VALUES (?,?,?,'submission','pending',?,?,?,?,?,?,?,?)`)
-          .bind(uuid(), c.id, h.client_id, now, user.id, user.name, "Rejected: " + reason, due, cl.submission_lead, cl.submission_backup || null, note));
-        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'with_submission', updated_at = ? WHERE id = ?").bind(now, c.id));
+      const cl = await one(env, "SELECT submission_mode, submission_lead, submission_backup, rejection_mode, rejection_lead, rejection_backup FROM clients WHERE id = ?", h.client_id);
+      // The Rejections person first (their top priority), otherwise the Submission team.
+      const toRej = cl && cl.rejection_mode === "person" && cl.rejection_lead;
+      const toSub = cl && cl.submission_mode === "person" && cl.submission_lead;
+      if (toRej || toSub) {
+        const due = addWorkingHours(now, HANDOFF_TAT_HOURS), nd = toRej ? "rejection" : "submission";
+        stmts.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, note) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?)`)
+          .bind(uuid(), c.id, h.client_id, nd, now, user.id, user.name, "Rejected: " + reason, due, toRej ? cl.rejection_lead : cl.submission_lead, (toRej ? cl.rejection_backup : cl.submission_backup) || null, note));
+        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '', updated_at = ? WHERE id = ?").bind("with_" + nd, IN_PROCESS, "With " + DEPT_LABEL[nd], now, c.id));
       } else {
         // Nobody set to resubmit: back to the biller today.
         stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned','closed') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ?`).bind(today, now, c.id));
       }
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `Submission rejected (${reason}): ${note}`, now));
-      stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(cl && cl.submission_mode === "person" && cl.submission_lead) }));
+      stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "" }));
     } else if (payload.outcome === "assistance") {
       const reason = str(payload.reason, 80).trim();
       if (!reason) throw bad("Pick the reason.");
@@ -2558,11 +2586,40 @@ const OPS = {
       const text = `${DEPT_LABEL[h.dept]} needs assistance (${reason}): ${note}`;
       stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'assistance', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, reason, note, h.id));
       // Back on the biller's list today, and flagged in the AR team lead's Needs attention.
-      stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned','closed') THEN 'assigned' ELSE state END, follow_up_on = ?,
-          escalated = 1, escalated_at = ?, escalated_by = ?, last_note = ?, skipped_at = NULL, updated_at = ? WHERE id = ?`).bind((h.dept === "subcheck" ? "submission" : h.dept) + "_assist", today, now, user.id, text.slice(0, 600), now, c.id));
+      stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','closed','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END, state_reason = '', follow_up_on = ?,
+          escalated = 1, escalated_at = ?, escalated_by = ?, last_note = ?, skipped_at = NULL, updated_at = ? WHERE id = ?`).bind(pfx + "_assist", today, now, user.id, text.slice(0, 600), now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_assist", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at }));
-    } else throw bad("Mark it complete or need assistance.");
+    } else if (payload.outcome === "back") {
+      // Sent back to AR: the biller has it on their list today with the reason (no escalation to the team lead).
+      const reason = str(payload.reason, 80).trim();
+      if (!reason) throw bad("Pick why it goes back to AR.");
+      if (!commentOk(note)) throw bad("Write what AR should do, a few words at least.");
+      const text = `Sent back to AR by ${DEPT_LABEL[h.dept]} (${reason}): ${note}`;
+      stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, reason, note, h.id));
+      stmts.push(backToAr(pfx + "_back", ", last_note = ?").bind(pfx + "_back", today, text.slice(0, 600), now, c.id));
+      stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
+      stmts.push(claimEvent(env, c.id, user, "handoff_back", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at }));
+    } else if (payload.outcome === "client") {
+      // Needs the client: the claim stays with the department (In process for AR), and the 24-hour clock pauses until it is resumed.
+      if (h.status === "client") throw bad("It is already waiting on the client.");
+      const reason = str(payload.reason, 80).trim();
+      if (!reason) throw bad("Pick what is needed from the client.");
+      if (!commentOk(note)) throw bad("Write what was asked of the client, a few words at least.");
+      const text = `${DEPT_LABEL[h.dept]} needs client assistance (${reason}): ${note}`;
+      stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'client', reason = ?, note = ?, paused_at = ? WHERE id = ?").bind(reason, note, now, h.id));
+      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, last_bucket = 'Client', updated_at = ? WHERE id = ?").bind(pfx + "_client", "Waiting on client (" + DEPT_LABEL[h.dept] + ")", now, c.id));
+      stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
+      stmts.push(claimEvent(env, c.id, user, "handoff_client", DEPT_LABEL[h.dept], { dept: h.dept, reason, note }));
+    } else if (payload.outcome === "resume") {
+      // The client answered: back on the clock with a fresh 24 working hours.
+      if (h.status !== "client") throw bad("Only a claim waiting on the client can be resumed.");
+      const due = addWorkingHours(now, HANDOFF_TAT_HOURS);
+      stmts.push(env.DB.prepare("UPDATE handoffs SET status = CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'pending' END, due_at = ?, paused_at = NULL, note = ? WHERE id = ?").bind(due, note || h.note || "", h.id));
+      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, updated_at = ? WHERE id = ?").bind("with_" + (h.dept === "subcheck" ? "submission" : h.dept), "With " + DEPT_LABEL[h.dept], now, c.id));
+      if (note) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]}: client answered. ${note}`, now));
+      stmts.push(claimEvent(env, c.id, user, "handoff_resume", DEPT_LABEL[h.dept], { dept: h.dept, note, due_at: due }));
+    } else throw bad("Pick what happened: complete, need assistance, back to AR or need client assistance.");
     await env.DB.batch(stmts);
     return { ok: true };
   },

@@ -130,6 +130,24 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
   inventory or allocation.
+
+#### Payment Posting, Submission and Rejections
+
+A biller's SAAG action sends a claim to the person set on the client (Clients &
+locations): Need to Post / Posting Correction to Payment Posting; resubmissions and
+paper claims to Submission; a **Claim Rejected** entry, or a rejected recheck, to the
+client's **Rejections** person first (top of their list), else Submission. While it is
+there the claim is **In process** for AR (own dashboard card, off the biller's list).
+
+Each hand-off has 24 working hours (a TAT tag and bar; red once past). The department
+can mark it **Complete** (with proof), **Need assistance** (back to the biller and the
+team lead's Needs attention), **Back to AR** (back to the biller with the reason) or
+**Need client assistance** (stays In process, the clock pauses until **Client
+answered**). Every choice takes a comment, required except on Complete and Client
+answered. Posting complete closes the claim as Payment posted. Submission complete
+sends it back to the biller with a 15-day follow-up and always opens a **recheck 48
+working hours later** (to the follow-up person on the client, or whoever submitted):
+**Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once). Active AR agents on a project become
   that client's billers.
