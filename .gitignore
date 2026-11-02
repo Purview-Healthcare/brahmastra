@@ -17,3 +17,5 @@ demo-test.html
 worker-test.js
 app/app-test.js
 tools/tests/.worker.mjs
+# the feature checklist is documentation (no patient data); every other CSV stays out of the repo
+!docs/brahmastra-feature-checklist.csv
