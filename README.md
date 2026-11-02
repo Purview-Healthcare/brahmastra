@@ -162,6 +162,22 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 **Client call pack (PDF)** prints the page or saves it as a PDF for the meeting. Changes to the log and the
 month-end checklist are kept in the audit trail.
 
+#### Portfolio, managers side by side, data freshness, audit trail
+
+**Portfolio** (a tab for the VP, admins and managers; managers see their own span) lists every client worst first:
+health with its reasons, team lead and manager, AR against a month ago, over 90, SLA, missed tasks, dollars waiting
+on the client, timely-filing risk, **days to clear** (claims still to work divided by the team's entries a working
+day over the last two weeks; a client nobody worked shows that instead of a made-up number) and when its inventory
+was last uploaded. Totals sit on top.
+
+- **Managers side by side**: clients, people under them, entries and skips by their people, missed tasks,
+  escalations over 24 hours and SLA average, for any dates. The VP sees every manager, a manager their own line.
+- **Data freshness**: inventory older than a week, an SLA not scored after its due day, a failed or late roster
+  sync.
+- **Audit trail** (Manage, admins and the VP): who shared a client or took it back, changed the RACI, who gets
+  feedback, a client, a responsibility, settings, a team member's role, projects or access, and month-end, with
+  when and what.
+
 #### Feedback
 
 Every page has a **Feedback** tab on the right edge. Anyone signed in (billers too) picks what it is

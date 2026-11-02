@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.42.0";
+const VERSION = "2.43.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -871,6 +871,19 @@ async function missedByClient(env, payload) {
 }
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const monthName = (ym) => { const [y, m] = String(ym || "").split("-").map(Number); return m >= 1 && m <= 12 ? MONTHS[m - 1] + " " + y : String(ym || ""); };
+/* Health of a client from its numbers: plain reasons, worst first, and a verdict (good / watch / risk). */
+function healthOf({ pct, sla, tfl, escLate, waitingN, oldest, missed }) {
+  const out = [];
+  if (pct > OVER90_TARGET) out.push({ tone: pct > OVER90_TARGET + 5 ? "red" : "amber", text: `Over-90 AR is ${pct}%, above the ${OVER90_TARGET}% target` });
+  if (sla && sla.score < 90) out.push({ tone: sla.score < 85 ? "red" : "amber", text: `SLA ${sla.score}% for ${monthName(sla.month)}, below 90%` });
+  if (tfl && tfl.past_n) out.push({ tone: "red", text: `${tfl.past_n} claim${tfl.past_n > 1 ? "s are" : " is"} past the timely filing limit` });
+  else if (tfl && tfl.soon_n) out.push({ tone: "amber", text: `${tfl.soon_n} claim${tfl.soon_n > 1 ? "s reach" : " reaches"} the timely filing limit in 30 days` });
+  if (escLate) out.push({ tone: "red", text: `${escLate} escalation${escLate > 1 ? "s have" : " has"} waited over 24 hours` });
+  if (waitingN && oldest >= 5) out.push({ tone: "amber", text: `${waitingN} request${waitingN > 1 ? "s" : ""} waiting on the client, oldest ${oldest} days` });
+  if (missed >= 10) out.push({ tone: "amber", text: `${missed} missed tasks` });
+  out.sort((a, b) => (a.tone === "red" ? 0 : 1) - (b.tone === "red" ? 0 : 1));
+  return { health: !out.length ? "good" : out.some((r) => r.tone === "red") ? "risk" : "watch", reasons: out };
+}
 /* The month being closed: last month during the first 10 days of a month, else this month. */
 const closingMonth = (todayIso) => { const [y, m, d] = todayIso.split("-").map(Number); if (d > 10) return `${y}-${String(m).padStart(2, "0")}`; const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y; return `${py}-${String(pm).padStart(2, "0")}`; };
 /* The n-th working day (Mon to Fri) of the month after `month` (YYYY-MM). */
@@ -1196,7 +1209,7 @@ function userDesk(user) {
 }
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
-const SUPERVISOR_OPS = /^(client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const EDIT_OPS = /^(client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
@@ -1433,6 +1446,7 @@ const OPS = {
       await run(env, "UPDATE users SET name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, capacity = ?, active = ? WHERE id = ?", name, first, last, designation, role, capacity, active, ex.id);
       if (!active) await run(env, "DELETE FROM sessions WHERE user_id = ?", ex.id);
       if (projects || reportsTo !== undefined || role !== ex.role || active !== ex.active) { await recomputeScopes(env); await syncTeams(env); }
+      if (role !== ex.role || active !== ex.active || projects) await audit(env, user, "user.save", null, name + (role !== ex.role ? " · role " + ex.role + " → " + role : "") + (active !== ex.active ? (active ? " · reactivated" : " · deactivated") : "") + (projects ? " · projects " + projects.map((x) => x.name).join(", ") : ""));
       return { user: publicUser(await one(env, "SELECT * FROM users WHERE id = ?", ex.id)) };
     }
     const email = mailClean(payload.email);
@@ -1516,6 +1530,7 @@ const OPS = {
     // Open hand-offs follow the new lead / backup.
     if (mode === "person" && dept !== "subcheck") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned')", lead, backup, c.id, dept);
     if (mode === "person" && dept === "subcheck") await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned')", lead, lead, c.id);
+    await audit(env, user, "client.responsibility", c.id, dept + ": " + (mode || "none"));
     return { ok: true };
   },
   /* Every active person, name and designation only: for pickers that must reach outside the caller's own span (shares, RACI). */
@@ -1546,12 +1561,15 @@ const OPS = {
     await run(env, `INSERT INTO client_access (id, client_id, user_id, level, granted_by, granted_by_name, at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT (client_id, user_id) DO UPDATE SET level = excluded.level, granted_by = excluded.granted_by, granted_by_name = excluded.granted_by_name, at = excluded.at`,
       uuid(), clientId, t.id, level, user.id, user.name, Date.now());
+    await audit(env, user, "access.share", clientId, t.name + " · " + (level === "edit" ? "can edit" : "view only"));
     return { ok: true };
   },
   "clients.accessRemove": async ({ env, user, payload }) => {
     editableOr(user, str(payload.client_id, 60));
     if (isSME(user)) throw denied("Sharing a client is for team leads and up. Ask your team lead.");
     await run(env, "DELETE FROM client_access WHERE client_id = ? AND user_id = ?", str(payload.client_id, 60), str(payload.user_id, 60));
+    const who = await one(env, "SELECT name FROM users WHERE id = ?", str(payload.user_id, 60));
+    await audit(env, user, "access.remove", str(payload.client_id, 60), who ? who.name : str(payload.user_id, 60));
     return { ok: true };
   },
 
@@ -1628,7 +1646,108 @@ const OPS = {
     const ids = [...new Set((Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 6);
     const ok = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
     await setSetting(env, "feedback_to", ids.filter((x) => ok.includes(x)));
+    await audit(env, user, "feedback.recipients", null, (await feedbackRecipients(env)).map((u) => u.name).join(", "));
     return { people: (await feedbackRecipients(env)).map((u) => ({ id: u.id, name: u.name })) };
+  },
+
+  /* ---- Portfolio (VP and managers): every client in one table, worst first, with capacity and data freshness ---- */
+  "portfolio.overview": async ({ env, user, payload }) => {
+    await snapshotIfStale(env);
+    const now = Date.now(), today = isoDate(payload.today) || isoToday();
+    const clients = (await all(env, "SELECT id, name, code, team_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id));
+    const ids = new Set(clients.map((c) => c.id));
+    const mapOf = (rows, k = "client_id") => new Map(rows.filter((r) => ids.has(r[k])).map((r) => [r[k], r]));
+    const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(dos, 1, 10)) ELSE age_days END";
+    const ar = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0) AS o90,
+        SUM(CASE WHEN state IN ('open','assigned','in_progress') THEN 1 ELSE 0 END) AS to_work
+      FROM (SELECT client_id, balance, state, ${ageSql} AS age FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id`, today));
+    const ago = mapOf(await all(env, `SELECT s.client_id, s.ar_balance FROM client_snapshots s WHERE s.day = (SELECT MAX(day) FROM client_snapshots WHERE client_id = s.client_id AND day <= ?)`, istISO(now - 30 * 86400000)));
+    const sla = mapOf(await all(env, `SELECT m.client_id, m.score, m.month FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`));
+    const missed = await missedByClient(env, payload);
+    const wait = mapOf(await all(env, `SELECT h.client_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS bal, MIN(COALESCE(h.client_sent_at, h.paused_at)) AS first FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.status = 'client' GROUP BY h.client_id`));
+    const esc = mapOf(await all(env, `SELECT client_id, COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND ? - escalated_at > ? THEN 1 ELSE 0 END) AS late FROM claims WHERE escalated = 1 AND state IN ${WORKABLE} GROUP BY client_id`, now, ESCALATION_TAT_MS));
+    const tflRows = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows;
+    const tfl = new Map(); for (const r of tflRows) { const t = tfl.get(r.client_id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 }; t.soon_n += r.soon_n; t.soon_bal += r.soon_bal; t.past_n += r.past_n; t.past_bal += r.past_bal; tfl.set(r.client_id, t); }
+    // capacity: entries a working day over the last 14 days, against the claims still to work
+    const since14 = now - 14 * 86400000;
+    let wd = 0; for (let t = since14; t < now; t += 86400000) { const w = new Date(t + IST_MIN * 60000).getUTCDay(); if (w !== 0 && w !== 6) wd++; }
+    const pace = mapOf(await all(env, `SELECT c.client_id, COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND n.created_at > ? GROUP BY c.client_id`, since14));
+    const lastInv = mapOf(await all(env, `SELECT client_id, MAX(uploaded_at) AS at FROM batches WHERE undone_at IS NULL GROUP BY client_id`));
+    const monthStart = Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
+    const coll = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt FROM handoffs WHERE dept = 'posting' AND status = 'complete' AND done_at >= ? GROUP BY client_id`, monthStart));
+    const raci = new Map((await OPS["raci.list"]({ env, user, payload })).rows.map((r) => [r.client_id, r]));
+    const closing = closingMonth(today), slaDue = nthWorkingDayAfter(closing, 4);
+    const rows = clients.map((c) => {
+      const a = ar.get(c.id) || { bal: 0, n: 0, o90: 0, to_work: 0 }, w = wait.get(c.id), e = esc.get(c.id), m = missed.get(c.id) || { ar: 0, posting: 0, submission: 0 }, t = tfl.get(c.id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 };
+      const pct = a.bal ? Math.round(a.o90 / a.bal * 1000) / 10 : 0;
+      const oldest = w && w.first ? Math.floor((now - w.first) / 86400000) : 0;
+      const sl = sla.get(c.id) || null;
+      const missN = m.ar + m.posting + m.submission;
+      const hh = healthOf({ pct, sla: sl, tfl: t, escLate: e ? e.late : 0, waitingN: w ? w.n : 0, oldest, missed: missN });
+      const pc = pace.get(c.id), perDay = pc && wd ? pc.n / wd : 0;
+      const r = raci.get(c.id);
+      return { client_id: c.id, client: c.name, code: c.code, health: hh.health, reasons: hh.reasons.map((x) => x.text), tl: r ? r.a.map((p) => p.name) : [], manager: r ? r.c.map((p) => p.name) : [],
+        ar: a.bal, claims: a.n, ar_month_ago: ago.get(c.id) ? ago.get(c.id).ar_balance : null, over90_pct: pct, sla: sl ? { score: sl.score, month: sl.month } : null,
+        missed: missN, waiting: w ? { n: w.n, bal: w.bal, oldest } : null, escalations_late: e ? e.late || 0 : 0, tfl_soon: t.soon_bal, tfl_soon_n: t.soon_n, tfl_past_n: t.past_n,
+        to_work: a.to_work || 0, per_day: Math.round(perDay * 10) / 10, people: pc ? pc.people : 0, days_to_clear: perDay ? Math.ceil((a.to_work || 0) / perDay) : null,
+        last_inventory: lastInv.get(c.id) ? lastInv.get(c.id).at : null, collected_month: coll.get(c.id) ? coll.get(c.id).amt : 0 };
+    });
+    const rank = { risk: 0, watch: 1, good: 2 };
+    rows.sort((x, y) => rank[x.health] - rank[y.health] || y.reasons.length - x.reasons.length || y.ar - x.ar);
+    // data freshness: what would make the numbers wrong
+    const fresh = [];
+    for (const r of rows) {
+      const days = r.last_inventory ? Math.floor((now - r.last_inventory) / 86400000) : null;
+      if (days == null) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: no inventory uploaded yet` });
+      else if (days > 7) fresh.push({ tone: days > 14 ? "red" : "amber", client_id: r.client_id, text: `${r.client}: inventory last uploaded ${days} days ago` });
+      if (!r.sla && today > slaDue) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: SLA for ${monthName(closing)} not scored yet (was due ${slaDue})` });
+    }
+    const sync = await getSetting(env, "shastra_sync", null);
+    if (env.SHASTRA_FEED_KEY && sync && sync.ok === false) fresh.unshift({ tone: "red", text: `Roster sync from Purview Shastra failed: ${sync.error || "no answer"}` });
+    else if (env.SHASTRA_FEED_KEY && sync && sync.at && now - sync.at > 3 * 3600000) fresh.unshift({ tone: "amber", text: `Roster last synced from Purview Shastra ${Math.round((now - sync.at) / 3600000)} hours ago` });
+    const sum = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
+    const totAr = sum("ar"), totAgo = rows.reduce((t, r) => t + (r.ar_month_ago || 0), 0), totO90 = rows.reduce((t, r) => t + r.ar * r.over90_pct / 100, 0);
+    const slas = rows.filter((r) => r.sla); 
+    return { rows, freshness: fresh, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, over90_pct: totAr ? Math.round(totO90 / totAr * 1000) / 10 : 0,
+      sla_avg: slas.length ? Math.round(slas.reduce((t, r) => t + r.sla.score, 0) / slas.length * 10) / 10 : null, collected_month: sum("collected_month"),
+      waiting_bal: rows.reduce((t, r) => t + (r.waiting ? r.waiting.bal : 0), 0), at_risk: rows.filter((r) => r.health === "risk").length, watch: rows.filter((r) => r.health === "watch").length, missed: sum("missed") },
+      target: OVER90_TARGET, working_days: wd };
+  },
+  /* Managers side by side: their clients, their people's work, missed tasks, SLA. The VP and admins see every
+     manager; a manager sees their own line. */
+  "portfolio.managers": async ({ env, user, payload }) => {
+    const now = Date.now(), from = num(payload.from_ms, now - 30 * 86400000), to = num(payload.to_ms, now);
+    const users = await all(env, "SELECT id, name, reports_to, roster_kind, scope_projects_json, active FROM users WHERE active = 1");
+    const managers = users.filter((u) => u.roster_kind === "manager" && (user.is_admin || user.access_all || u.id === user.id));
+    const clients = await all(env, "SELECT id, name, roster_names_json FROM clients WHERE active = 1");
+    const kids = new Map(); for (const u of users) if (u.reports_to) { if (!kids.has(u.reports_to)) kids.set(u.reports_to, []); kids.get(u.reports_to).push(u.id); }
+    const below = (id) => { const out = new Set(), walk = (x) => (kids.get(x) || []).forEach((k) => { if (!out.has(k)) { out.add(k); walk(k); } }); walk(id); return out; };
+    const work = new Map((await all(env, "SELECT user_id, COUNT(*) AS n FROM notes WHERE kind = 'work' AND created_at BETWEEN ? AND ? GROUP BY user_id", from, to)).map((r) => [r.user_id, r.n]));
+    const skips = new Map((await all(env, "SELECT user_id, COUNT(*) AS n FROM notes WHERE kind = 'skip' AND created_at BETWEEN ? AND ? GROUP BY user_id", from, to)).map((r) => [r.user_id, r.n]));
+    const missed = await missedByClient(env, payload);
+    const sla = new Map((await all(env, `SELECT m.client_id, m.score FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`)).map((r) => [r.client_id, r.score]));
+    const esc = new Map((await all(env, `SELECT client_id, SUM(CASE WHEN escalated_at IS NOT NULL AND ? - escalated_at > ? THEN 1 ELSE 0 END) AS late FROM claims WHERE escalated = 1 AND state IN ${WORKABLE} GROUP BY client_id`, now, ESCALATION_TAT_MS)).map((r) => [r.client_id, r.late || 0]));
+    const rows = managers.map((m) => {
+      const names = new Set(jsonList(m.scope_projects_json).map(projKey));
+      const mine = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n))));
+      const team = below(m.id);
+      let entries = 0, sk = 0; team.forEach((id) => { entries += work.get(id) || 0; sk += skips.get(id) || 0; });
+      const scores = mine.map((c) => sla.get(c.id)).filter((x) => x != null);
+      return { id: m.id, name: m.name, clients: mine.map((c) => c.name), people: team.size, entries, skips: sk,
+        missed: mine.reduce((t, c) => { const x = missed.get(c.id); return t + (x ? x.ar + x.posting + x.submission : 0); }, 0),
+        escalations_late: mine.reduce((t, c) => t + (esc.get(c.id) || 0), 0), sla_avg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10 : null };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    return { rows };
+  },
+  /* Audit trail: who changed access, RACI, feedback recipients, client settings, month-end. Admins and the VP. */
+  "audit.list": async ({ env, user, payload }) => {
+    if (!user.is_admin && !user.access_all) throw denied("The audit trail is for admins and the VP.");
+    const where = [], args = [];
+    if (payload.client_id) { where.push("a.client_id = ?"); args.push(str(payload.client_id, 60)); }
+    if (payload.action) { where.push("a.action LIKE ?"); args.push(str(payload.action, 40) + "%"); }
+    if (payload.from_ms) { where.push("a.at >= ?"); args.push(num(payload.from_ms, 0)); }
+    const rows = await all(env, `SELECT a.*, c.name AS client_name FROM audit_log a LEFT JOIN clients c ON c.id = a.client_id${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY a.at DESC LIMIT 500`, ...args);
+    return { rows };
   },
 
   /* ---- Client 360: everything about one client on one page ---- */
@@ -1673,20 +1792,10 @@ const OPS = {
     // health: plain reasons, worst first
     const pct = ar.bal ? Math.round(ar.o90 / ar.bal * 1000) / 10 : 0;
     const oldest = waiting.length ? Math.floor((now - (waiting[0].client_sent_at || waiting[0].paused_at || now)) / 86400000) : 0;
-    const reasonsOut = [];
-    if (pct > OVER90_TARGET) reasonsOut.push({ tone: pct > OVER90_TARGET + 5 ? "red" : "amber", text: `Over-90 AR is ${pct}%, above the ${OVER90_TARGET}% target` });
-    if (slaRow && slaRow.score < 90) reasonsOut.push({ tone: slaRow.score < 85 ? "red" : "amber", text: `SLA ${slaRow.score}% for ${monthName(slaRow.month)}, below 90%` });
-    if (tfl.past_n) reasonsOut.push({ tone: "red", text: `${tfl.past_n} claims are past the timely filing limit` });
-    else if (tfl.soon_n) reasonsOut.push({ tone: "amber", text: `${tfl.soon_n} claims reach the timely filing limit in 30 days` });
-    if (esc && esc.late) reasonsOut.push({ tone: "red", text: `${esc.late} escalation${esc.late > 1 ? "s have" : " has"} waited over 24 hours` });
-    if (waiting.length && oldest >= 5) reasonsOut.push({ tone: "amber", text: `${waiting.length} request${waiting.length > 1 ? "s" : ""} waiting on the client, oldest ${oldest} days` });
-    const miss = missed.ar + missed.posting + missed.submission;
-    if (miss >= 10) reasonsOut.push({ tone: "amber", text: `${miss} missed tasks` });
-    const red = reasonsOut.filter((r) => r.tone === "red").length;
-    const health = reasonsOut.length === 0 ? "good" : red >= 1 ? "risk" : "watch";
+    const { health, reasons: reasonsOut } = healthOf({ pct, sla: slaRow, tfl, escLate: esc && esc.late, waitingN: waiting.length, oldest, missed: missed.ar + missed.posting + missed.submission });
     return {
       client: { id: c.id, name: c.name, code: c.code, active: !!c.active, created_at: c.created_at, team, locations: locs },
-      raci, health, reasons: reasonsOut.sort((a, b) => (a.tone === "red" ? 0 : 1) - (b.tone === "red" ? 0 : 1)).slice(0, 4),
+      raci, health, reasons: reasonsOut.slice(0, 4),
       ar: { balance: ar.bal, claims: ar.n, over90: ar.o90, over90_claims: ar.o90n || 0, over90_pct: pct, over120: ar.o120, target: OVER90_TARGET, month_ago: monthAgo ? monthAgo.ar_balance : null },
       collected: { amount: coll.amt, n: coll.n, prev: collPrev.amt },
       waiting: { rows: waiting.map((w) => ({ ...w, days: Math.floor((now - (w.client_sent_at || w.paused_at || now)) / 86400000), sent: !!w.client_sent_at, dept_label: DEPT_LABEL[w.dept] || w.dept })),
@@ -1735,7 +1844,7 @@ const OPS = {
     await run(env, `INSERT INTO client_monthend (client_id, month, step, done_at, done_by_name, auto, score, note) VALUES (?,?,?,?,?,0,?,?)
       ON CONFLICT (client_id, month, step) DO UPDATE SET done_at = excluded.done_at, done_by_name = excluded.done_by_name, auto = 0, score = excluded.score, note = excluded.note`,
       clientId, month, step[0], Date.now(), user.name || "", score, str(payload.note, 300).trim());
-    await audit(env, user, "monthend." + step[0], clientId, month + (score != null ? " · SLA " + score + "%" : ""));
+    await audit(env, user, "monthend." + step[0], clientId, monthName(month) + (score != null ? " · SLA " + score + "%" : ""));
     return { ok: true };
   },
   /* The scorecard page ticks "AR Inventory sent to the SLA scorecard" when Brahmastra adds it there. */
@@ -1820,6 +1929,7 @@ const OPS = {
       ON CONFLICT (client_id) DO UPDATE SET r_json = excluded.r_json, a_json = excluded.a_json, c_json = excluded.c_json, i_json = excluded.i_json,
         updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_name = excluded.updated_by_name`,
       clientId, JSON.stringify(r), JSON.stringify(a), JSON.stringify(cn), JSON.stringify(i), Date.now(), user.id, user.name);
+    await audit(env, user, "raci.save", clientId, ["R " + r.map((x) => x.name).join(", "), "A " + a.map((x) => x.name).join(", "), "C " + cn.map((x) => x.name).join(", "), "I " + i.map((x) => x.name).join(", ")].join(" · "));
     return { row: { client_id: clientId, r, a, c: cn, i } };
   },
   "clients.saveTeam": async ({ env, user, payload }) => {
@@ -1847,6 +1957,7 @@ const OPS = {
       if (!ex) throw bad("Unknown client.");
       editableOr(user, ex.id);
       await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);
+      await audit(env, user, "client.save", ex.id, name + (active ? "" : " · inactive"));
       return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active, workbook_link: link } };
     }
     if (user.scope) throw denied("Only a manager with every project, or an admin, can add a client. Ask them to add it.");
@@ -1862,6 +1973,7 @@ const OPS = {
     if (user.scope) throw denied("Only a manager with every project, or an admin, can delete a client.");
     if (str(payload.confirm, 200).trim().toLowerCase() !== String(ex.name).trim().toLowerCase()) throw bad("Type the client's name exactly to confirm.");
     const n = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ?", ex.id);
+    await audit(env, user, "client.delete", null, ex.name + " · " + (n ? n.n : 0) + " claims");
     await env.DB.batch([
       env.DB.prepare("DELETE FROM notes WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
       env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id IN (SELECT a.id FROM attachments a JOIN claims c ON c.id = a.claim_id WHERE c.client_id = ?)").bind(ex.id),
@@ -1907,7 +2019,7 @@ const OPS = {
     // Sign-in and roster settings belong to the admin (Roster screen).
     for (const k of ["extra_emails", "roster_meta", "feedback_to"]) delete s[k];
     const stmts = Object.keys(s).slice(0, 50).map((k) => env.DB.prepare("INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json").bind(str(k, 60), JSON.stringify(s[k])));
-    if (stmts.length) await batchAll(env, stmts);
+    if (stmts.length) { await batchAll(env, stmts); await audit(env, user, "settings.save", null, Object.keys(s).slice(0, 12).join(", ")); }
     return OPS["settings.get"]({ env });
   },
 
