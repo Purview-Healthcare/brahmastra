@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.53.0";
+const APP_VERSION = "2.54.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -1305,8 +1305,8 @@ const navFor = (me, ho, fb) => {
     const base = USER_NAV;
     return [...(handoffTab(me, ho) ? [...base, ["handoffs", "Posting & submission"]] : base), ...inbox];
   }
-  const work = [...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["claims", "Claims"], ["saag", "SAAG reference"]];
-  const manage = [["client", "Client 360"], ["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : []), ...(me.is_admin || me.access_all ? [["audit", "Audit trail"]] : []), ...inbox];
+  const work = [["teamtoday", "Team today"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["claims", "Claims"], ["saag", "SAAG reference"]];
+  const manage = [["client", "Client 360"], ["team", "Team"], ["templates", "Note templates"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : []), ...(me.is_admin || me.access_all ? [["audit", "Audit trail"]] : []), ...inbox];
   return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ...(isPortfolioUser(me) ? [["portfolio", "Portfolio"]] : []), ["dashboard", "Dashboard"], ["attention", "Needs attention"], { g: "Work", items: work }, { g: "Manage", items: manage }, ["reports", "My day & reports"]];
 };
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
@@ -3691,6 +3691,18 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
   const pickSub = (v) => { setSaag((s) => ({ ...s, sub_status: v, action: "", effective: "", bucket: "" })); setNote((n) => ({ ...n, denial: (!n.denial || SAAG.subStatuses.includes(n.denial)) ? v : n.denial })); };
   const pickAction = (v) => { const a = acts.find((x) => x.action === v); const eff = a ? a.effective : ""; setSaag((s) => ({ ...s, action: v, effective: eff, bucket: EFFECTIVE_BUCKET[eff] || s.bucket || "" })); setNote((n) => ({ ...n, action: n.action || suggestNoteAction(v, eff) })); };
   const togglePre = (p) => setNote((n) => ({ ...n, precheck: n.precheck.includes(p) ? n.precheck.filter((x) => x !== p) : [...n.precheck, p] }));
+  // what the team picked most for this payer, and the team's note templates
+  const sug = useRpc("saag.suggest", { client_id: claim.client_id, payer: claim.payer }, [claim.id], !!claim.client_id);
+  const tpl = useRpc("templates.list", { client_id: claim.client_id }, [claim.client_id], !!claim.client_id);
+  // only combinations still in the SAAG list (an old or renamed one would leave the boxes half filled)
+  const sugRows = ((sug.data && sug.data.rows) || []).filter((x) => saagActions(x.status, x.sub_status).some((y) => y.action === x.action));
+  const pickSug = (x) => {
+    const a = saagActions(x.status, x.sub_status).find((y) => y.action === x.action);
+    const eff = a ? a.effective : "";
+    setSaag({ status: x.status, sub_status: x.sub_status, action: x.action, effective: eff, bucket: EFFECTIVE_BUCKET[eff] || x.bucket || "" });
+    setNote((n) => ({ ...n, denial: (!n.denial || SAAG.subStatuses.includes(n.denial)) ? x.sub_status : n.denial, action: n.action || suggestNoteAction(x.action, eff) }));
+  };
+  const insertTpl = (id) => { const tt = ((tpl.data && tpl.data.rows) || []).find((x) => x.id === id); if (tt) setNote((n) => ({ ...n, findings: (n.findings ? n.findings.replace(/\s+$/, "") + " " : "") + tt.text })); };
   const missing = [];
   if (!saag.status || !saag.sub_status || !saag.action) missing.push("SAAG status, sub-status and action");
   if (!saag.bucket) missing.push("bucket");
@@ -3711,6 +3723,8 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
     <div className="stack">
       <div className="group">
         <div className="gt row" style={{ gap: 8 }}><span className="stepn">1</span>SAAG entry</div>
+        {sugRows.length > 0 && !saag.status && <div className="row" style={{ gap: 6, flexWrap: "wrap", margin: "2px 0 8px" }}><span className="tiny muted">Used most {sug.data.scope === "payer" ? "for " + claim.payer : "at this client"}:</span>
+          {sugRows.map((x, i) => <button key={i} type="button" className="chip" title={"Picked " + x.n + " times in the last 90 days"} onClick={() => pickSug(x)}>{x.status} › {x.sub_status} › {x.action} <span className="tiny muted">({x.n})</span></button>)}</div>}
         <div className="grid g4">
           <Field label="Status">{sel(saag.status, pickStatus, SAAG.statuses, "Pick a status…")}</Field>
           <Field label="Sub-status">{sel(saag.sub_status, pickSub, subs, saag.status ? "Pick a sub-status…" : "Pick a status first", !saag.status)}</Field>
@@ -3724,7 +3738,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
         <LimitsRow note={note} setN={setN} claim={claim} />
         <PreCheck note={note} togglePre={togglePre} setN={setN} />
         <div style={{ display: "grid", gridTemplateColumns: attachments ? "minmax(0,2fr) minmax(0,1fr)" : "1fr", gap: 14, marginTop: 10 }}>
-          <Field label="RCA / findings"><textarea className="textarea" value={note.findings} onChange={(e) => setN("findings")(e.target.value)} placeholder="What the payer or portal said, the root cause, and what happens next." /></Field>
+          <Field label={<span className="row between" style={{ gap: 8 }}><span>RCA / findings</span>{tpl.data && tpl.data.rows.length > 0 && <span style={{ minWidth: 220, textTransform: "none", letterSpacing: 0 }}><Combo sm value="" onChange={(v) => v && insertTpl(v)} placeholder="Insert a template…" options={tpl.data.rows.map((x) => ({ id: x.id, label: x.title, sub: x.client_name || "" }))} /></span>}</span>}><textarea className="textarea" value={note.findings} onChange={(e) => setN("findings")(e.target.value)} placeholder="What the payer or portal said, the root cause, and what happens next." /></Field>
           {attachments && <div>{needFile && <div className={"alert " + (newFiles ? "info" : "warn") + " mb"} style={{ fontSize: 12.5 }}>{newFiles ? `Document attached for "${needFile}".` : `"${needFile}" needs the document: attach the EOB / appeal / reconsideration file before saving.`}</div>}{attachments}</div>}
         </div>
       </div>
@@ -4477,6 +4491,125 @@ function FeedbackInbox({ ctx, me, refreshFb }) {
                 <span className="n">{f.name}</span></div>))}</div>}
             <div className="tiny muted mt8">{r.emailed_to ? "Emailed to " + r.emailed_to : <span style={{ color: "var(--amber-ink, #9A6700)" }}>Not emailed{r.email_error ? ": " + r.email_error : ""}</span>}{r.context && r.context.version ? " · v" + r.context.version : ""}{r.context && r.context.screen ? " · " + r.context.screen : ""}</div>
           </div>))}
+    </div>
+  );
+}
+/* ---------- Team today (team leads): who is on what right now, pace, carried over, out today, one-click rebalance ---------- */
+const TT_STATUS = { working: ["green", "Working"], idle: ["red", "Idle"], not_started: ["amber", "Not started"], done: ["teal", "Desk cleared"], out: ["gray", "Out today"] };
+function TeamTodayView({ ctx, me }) {
+  const q = useRpc("team.huddle", {}, []);
+  useEffect(() => { const t = setInterval(() => q.reload(), 60000); return () => clearInterval(t); }, []);
+  const [busy, setBusy] = useState(false);
+  const [coach, setCoach] = useState(null);
+  const [outFor, setOutFor] = useState(null);
+  const rows = (q.data && q.data.rows) || [], t = (q.data && q.data.totals) || {};
+  const setOut = async (r, out, reason) => { setBusy(true); try { await rpc("team.setOut", { user_id: r.id, out, reason }); setOutFor(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const rebalance = async (r) => {
+    setBusy(true);
+    try { const x = await rpc("team.rebalance", { user_id: r.id }); toast(x.moved ? `Moved ${x.moved} of ${r.name}'s claims: ` + x.to.map((y) => y.name + " " + y.count).join(", ") + (x.left ? `. ${x.left} stayed (nobody on that client had room).` : ".") : "Nothing to move: no untouched claims, or nobody on those clients has room."); q.reload(); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const clock = (ms) => (ms ? new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "–");
+  return (
+    <div className="stack">
+      <div className="row between"><div><h1>Team today</h1><div className="sub">The morning huddle and the live floor: who is on which claim, pace against target, what is carried over, who is out. Refreshes every minute.</div></div>
+        <button className="btn" onClick={q.reload} disabled={q.loading}>{q.loading ? "Refreshing…" : "Refresh"}</button></div>
+      {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>Nobody on your team yet. Billers come from the roster and the clients' teams.</Empty></div> : <>
+        <div className="c3-kpis">
+          <Kpi tone="accent" label="In today" value={(t.people - t.out) + " of " + t.people} sub={t.out ? t.out + " out" : "everyone in"} />
+          <Kpi label="On desks" value={fmtInt(t.on_desk)} sub={"capacity " + fmtInt(t.capacity) + " today"} />
+          <Kpi label="Worked this shift" value={<span className="teal-ink">{fmtInt(t.worked)}</span>} sub="entries" />
+          <Kpi label="Carried over" value={<span className={t.carried ? "amber-ink" : ""}>{fmtInt(t.carried)}</span>} sub="allocated before this shift, not worked" />
+          <Kpi label="Idle now" value={<span className={t.idle ? "red-ink" : ""}>{t.idle}</span>} sub="no entry for 30 minutes" />
+          <Kpi label="On absent desks" value={<span className={t.out_on_desk ? "red-ink" : ""}>{fmtInt(t.out_on_desk)}</span>} sub={t.out_on_desk ? "rebalance them below" : "nothing stuck"} />
+        </div>
+        <div className="card tight"><div className="table-wrap"><table className="t">
+          <thead><tr><th>Biller</th><th>Now</th><th>Pace this shift</th><th className="num">On desk</th><th className="num">Carried over</th><th>First · last entry</th><th /></tr></thead>
+          <tbody>{rows.map((r) => (
+            <tr key={r.id}>
+              <td><button type="button" className="btn link" style={{ padding: 0, fontWeight: 700 }} title="Coaching card" onClick={() => setCoach(r.id)}>{r.name}</button><div className="tiny muted">{r.shift || "no shift on the roster"} · target {r.capacity}</div></td>
+              <td style={{ minWidth: 200 }}><span className={"badge " + TT_STATUS[r.status][0]}>{TT_STATUS[r.status][1]}{r.status === "idle" && r.idle_min != null ? " · " + r.idle_min + " min" : ""}</span>
+                {r.current ? <div className="tiny muted" style={{ marginTop: 3 }}>on <span className="mono">{r.current.claim_no}</span> · {r.current.client}{r.current.minutes != null ? " · " + r.current.minutes + " min" : ""}</div>
+                  : r.out ? <div className="tiny muted" style={{ marginTop: 3 }}>{r.out.reason || "marked out"} · by {r.out.by}</div> : null}</td>
+              <td style={{ minWidth: 180 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
+                <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}</div></>}</td>
+              <td className="num">{r.on_desk}</td>
+              <td className={"num " + (r.carried ? "amber-ink b" : "")}>{r.carried || "–"}</td>
+              <td className="small">{clock(r.first)} · {clock(r.last)}</td>
+              <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                {r.status === "out" ? <><button className="btn sm" disabled={busy} onClick={() => setOut(r, false)}>In after all</button> {r.on_desk > 0 && <button className="btn sm primary" disabled={busy} onClick={() => rebalance(r)}>Rebalance {r.on_desk}</button>}</>
+                  : <button className="btn sm" disabled={busy} onClick={() => setOutFor({ r, reason: "" })}>Out today</button>}
+              </td>
+            </tr>))}</tbody></table></div></div>
+        <div className="tiny muted">Pace compares entries this shift with the target spread over the shift from the roster (or nine hours from the first entry). Rebalance hands untouched claims (assigned, not started) to people in today on the same client, by the room left in their capacity, highest priority first.</div>
+      </>}
+      {outFor && <Modal title={"Out today · " + outFor.r.name} narrow onClose={() => setOutFor(null)} footer={<><button className="btn" onClick={() => setOutFor(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => setOut(outFor.r, true, outFor.reason)}>Mark out</button></>}>
+        <div className="stack"><Field label="Reason (optional)"><Combo value={outFor.reason} onChange={(v) => setOutFor({ ...outFor, reason: v })} placeholder="Pick or leave empty…" options={["Leave", "Sick", "Half day", "Training", "Other work"].map((x) => ({ id: x, label: x }))} /></Field>
+          <div className="small muted">Then use Rebalance to hand their {outFor.r.on_desk} claims to the people in today.</div></div></Modal>}
+      {coach && <CoachDrawer userId={coach} onClose={() => setCoach(null)} />}
+    </div>
+  );
+}
+const COACH_KIND = [["one_to_one", "1:1"], ["praise", "Praise"], ["concern", "Concern"], ["goal", "Goal"]];
+function CoachDrawer({ userId, onClose }) {
+  const q = useRpc("coach.profile", { user_id: userId }, [userId]);
+  const [n, setN] = useState({ kind: "one_to_one", text: "" });
+  const [busy, setBusy] = useState(false);
+  const d = q.data;
+  const add = async () => { setBusy(true); try { await rpc("coach.noteAdd", { user_id: userId, ...n }); setN({ kind: n.kind, text: "" }); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const del = async (x) => { setBusy(true); try { await rpc("coach.noteDelete", { id: x.id }); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const maxDay = d ? Math.max(1, d.person.capacity, ...d.days.map((x) => x.work)) : 1;
+  // one slot per calendar day, so a short history does not stretch across the chart
+  const slots = useMemo(() => { if (!d) return []; const by = new Map(d.days.map((x) => [x.day, x])); const t0 = todayISO(); return Array.from({ length: 30 }, (_, i) => { const day = addDaysISO(t0, i - 29); return by.get(day) || { day, work: 0, skips: 0 }; }); }, [d]);
+  return (
+    <Modal title={d ? "Coaching · " + d.person.name : "Coaching"} sub={d ? [d.person.designation, d.person.reports_to_name ? "reports to " + d.person.reports_to_name : "", d.person.shift, "target " + d.person.capacity + " a day"].filter(Boolean).join(" · ") : ""} wide onClose={onClose}>
+      {q.error ? <div className="alert err">{q.error}</div> : !d ? <Spinner label="Loading…" /> : <div className="stack">
+        <div className="c3-kpis">
+          <Kpi tone="accent" label="Entries a day" value={d.avg_per_day} sub={"on " + d.worked_days + (d.worked_days === 1 ? " day" : " days") + " worked · target " + d.person.capacity} />
+          <Kpi label="Entries · 30 days" value={fmtInt(d.entries)} sub={d.skips + " skipped"} />
+          <Kpi label="Carried over" value={<span className={d.carried ? "amber-ink" : ""}>{d.carried}</span>} sub="allocated over a day ago" />
+          <Kpi label="Escalated" value={d.escalations} sub="to the team lead" />
+          <Kpi label="Handed back" value={<span className={d.handed_back ? "amber-ink" : ""}>{d.handed_back}</span>} sub={"of " + d.handoffs_sent + " sent to posting / submission"} />
+          <Kpi label="Note length" value={d.note_len} sub={"characters on average" + (d.out_days ? " · " + d.out_days + " days out" : "")} />
+        </div>
+        <div className="card tight"><div className="b small mb">Entries a day, last 30 days</div>
+          {d.days.length ? <div className="coach-days">{slots.map((x) => <div key={x.day} title={fmtDate(x.day) + ": " + x.work + " entries" + (x.skips ? ", " + x.skips + " skipped" : "")}><i style={{ height: (x.work ? Math.max(2, x.work / maxDay * 100) : 0) + "%", background: x.work >= d.person.capacity ? "var(--teal)" : x.work >= d.person.capacity * 0.8 ? "#E8A13C" : "#C94F4F" }} /></div>)}
+            <span className="coach-target" style={{ bottom: d.person.capacity / maxDay * 100 + "%" }} title={"target " + d.person.capacity} /></div> : <Empty>No entries in the last 30 days.</Empty>}
+          {d.statuses.length > 0 && <div className="tiny muted mt8">Most entered: {d.statuses.map((x) => x.status + " (" + x.n + ")").join(" · ")}. QA scores are in Sasha's Third Eye › Internal reports.</div>}</div>
+        <div className="card tight"><div className="row between"><div className="b small">1:1 notes</div><span className="tiny muted">seen by team leads and up, never by the biller</span></div>
+          <div className="row mt8" style={{ gap: 6, flexWrap: "wrap" }}><div className="seg2">{COACH_KIND.map(([k, l]) => <button key={k} className={n.kind === k ? "on" : ""} onClick={() => setN({ ...n, kind: k })}>{l}</button>)}</div></div>
+          <div className="row mt8" style={{ gap: 6 }}><textarea className="textarea" style={{ minHeight: 54, flex: 1 }} value={n.text} onChange={(e) => setN({ ...n, text: e.target.value })} placeholder="What was discussed, agreed or worth keeping in mind" />
+            <button className="btn primary" disabled={busy || n.text.trim().length < 8} onClick={add}>Add</button></div>
+          {d.notes.map((x) => <div key={x.id} className="c3-log mt8"><b>{(COACH_KIND.find(([k]) => k === x.kind) || ["", x.kind])[1]} · {fmtWhen(x.at)} · {x.by_name}{x.mine && <button className="btn link sm" style={{ padding: "0 4px" }} disabled={busy} onClick={() => del(x)}>remove</button>}</b><div>{x.text}</div></div>)}
+          {!d.notes.length && <div className="tiny muted mt8">No notes yet.</div>}</div>
+      </div>}
+    </Modal>
+  );
+}
+/* Note templates: team leads write them, billers insert them into RCA / findings. */
+function TemplatesView({ ctx, me }) {
+  const q = useRpc("templates.list", {}, []);
+  const [edit, setEdit] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const rows = (q.data && q.data.rows) || [];
+  const canEdit = !isSmeUI(me);
+  const save = async () => { setBusy(true); try { await rpc("templates.save", edit); toast("Saved."); setEdit(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const del = async (r) => { setBusy(true); try { await rpc("templates.delete", { id: r.id }); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  return (
+    <div className="stack">
+      <div className="row between"><div><h1>Note templates</h1><div className="sub">Text billers insert into RCA / findings with one click, for every client or one. Keep them short and fill in the blanks after inserting.</div></div>
+        {canEdit && <button className="btn primary" onClick={() => setEdit({ title: "", text: "", client_id: "" })}>New template</button>}</div>
+      {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No templates yet.{canEdit ? " Add the notes your team types most often." : ""}</Empty></div> :
+        <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>Title</th><th>Text</th><th>Client</th><th>By</th><th /></tr></thead>
+          <tbody>{rows.map((r) => <tr key={r.id}><td className="b">{r.title}</td><td className="small" style={{ maxWidth: 520, whiteSpace: "pre-wrap" }}>{r.text}</td><td className="small">{r.client_name || "every client"}</td><td className="small">{r.by_name}<div className="tiny muted">{fmtWhen(r.at)}</div></td>
+            <td style={{ whiteSpace: "nowrap" }}>{canEdit && <><button className="btn sm" onClick={() => setEdit({ id: r.id, title: r.title, text: r.text, client_id: r.client_id || "" })}>Edit</button> <button className="btn sm link" style={{ color: "var(--red-ink)" }} disabled={busy} onClick={() => del(r)}>Delete</button></>}</td></tr>)}</tbody></table></div></div>}
+      {edit && <Modal title={edit.id ? "Edit template" : "New template"} narrow onClose={() => setEdit(null)} footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || edit.title.trim().length < 3 || edit.text.trim().length < 8} onClick={save}>Save</button></>}>
+        <div className="stack">
+          <Field label="Title" hint="What billers see in the list"><input className="input" value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="e.g. Claim in process, call back in 15 days" autoFocus /></Field>
+          <Field label="Text" hint="Inserted into RCA / findings; leave blanks like [ref] to fill in"><textarea className="textarea" style={{ minHeight: 110 }} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} placeholder="Called the payer, claim is in process since [date], expected to finalize in [n] days. Ref [ref]." /></Field>
+          <Field label="Client"><Combo value={edit.client_id} onChange={(v) => setEdit({ ...edit, client_id: v })} placeholder="Every client" options={ctx.clients.filter((c) => c.active && c.can_edit !== false).map((c) => ({ id: c.id, label: c.name }))} /></Field>
+        </div></Modal>}
     </div>
   );
 }
@@ -5531,6 +5664,8 @@ function App() {
     : view === "portfolio" && isPortfolioUser(me) ? <PortfolioView {...props} />
     : view === "audit" && (me.is_admin || me.access_all) ? <AuditView {...props} />
     : view === "feedback" ? <FeedbackInbox {...props} />
+    : view === "teamtoday" && me.role === "supervisor" ? <TeamTodayView {...props} />
+    : view === "templates" && me.role === "supervisor" ? <TemplatesView {...props} />
     : view === "sla" && me.role === "supervisor" ? <SlaView {...props} />
     : view === "thirdeye" && me.role === "supervisor" ? <ThirdEyeView {...props} />
     : view === "limits" ? <LimitsView {...props} />

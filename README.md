@@ -178,6 +178,26 @@ was last uploaded. Totals sit on top.
   feedback, a client, a responsibility, settings, a team member's role, projects or access, and month-end, with
   when and what.
 
+#### Team today, coaching, note templates (team leads)
+
+**Work › Team today** is the morning huddle and the live floor on one page, refreshed every minute: each biller
+with what they are on now (claim, client, minutes on it), **idle** after 30 minutes without an entry in their shift,
+pace this shift against their target spread over the shift from the roster, claims on their desk and **carried over**
+(allocated before this shift, not worked), and first and last entry.
+
+- **Out today** marks someone absent with a reason. **Rebalance** then hands their untouched claims (assigned, not
+  started) to the people in today on the same client team, by the room left in their capacity, highest priority
+  first; claims nobody has room for stay put. Each move is in the audit trail and on the claim's history.
+- Click a biller's name for their **coaching card**: entries a day over 30 days against target, skips, carried
+  over, escalations, hand-offs sent back, average note length, days out, the statuses they enter most, and
+  **1:1 notes** (1:1, praise, concern, goal) that team leads and up see and the biller never does. Only the writer
+  removes a note. QA scores stay in Sasha's Third Eye.
+- **Manage › Note templates**: text for RCA / findings, for every client or one, written by team leads and up.
+  Billers pick one from **Insert a template** above the RCA box.
+- On **Work this claim**, a biller sees the three SAAG combinations the team used most in the last 90 days for
+  that payer (or the client when the payer is new); one click fills status, sub-status, action, bucket and the
+  note action.
+
 #### Feedback
 
 Every page has a **Feedback** tab on the right edge. Anyone signed in (billers too) picks what it is

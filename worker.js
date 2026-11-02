@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.43.0";
+const VERSION = "2.45.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -109,6 +109,10 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
      client_id TEXT, detail TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at)`,
+  `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
+  `CREATE TABLE IF NOT EXISTS coach_notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'one_to_one', text TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_coach_user ON coach_notes (user_id, at)`,
+  `CREATE TABLE IF NOT EXISTS note_templates (id TEXT PRIMARY KEY, client_id TEXT, title TEXT NOT NULL, text TEXT NOT NULL, by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS client_snapshots (client_id TEXT NOT NULL, day TEXT NOT NULL, ar_balance REAL NOT NULL DEFAULT 0, ar_claims INTEGER NOT NULL DEFAULT 0,
      over90_balance REAL NOT NULL DEFAULT 0, over90_claims INTEGER NOT NULL DEFAULT 0, over120_balance REAL NOT NULL DEFAULT 0, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
   `CREATE TABLE IF NOT EXISTS client_log (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'note', text TEXT NOT NULL DEFAULT '',
@@ -831,6 +835,19 @@ function domainOk(env, email) {
 const maskEmail = (e) => { const at = String(e || "").lastIndexOf("@"); return at > 0 ? e[0] + "•••@" + e.slice(at + 1) : ""; };
 const ADMIN_NAME = "Bob The Builder";
 const adminEmails = (env) => String(env.ADMIN_EMAILS || "").split(",").map(mailClean).filter(mailOk);
+/* ---- team today: shifts ----
+   "18:30-03:30" (IST) and the like. The shift a person is in now (or last started) runs from its latest start at or
+   before now; without a shift, the day starts at local midnight and lasts nine hours from the first entry. */
+function shiftWindow(shift, now, dayStart) {
+  const m = String(shift || "").match(/(\d{1,2})[:.](\d{2})\s*[-–to]+\s*(\d{1,2})[:.](\d{2})/i);
+  if (!m) return null;
+  const startMin = Number(m[1]) * 60 + Number(m[2]), endMin = Number(m[3]) * 60 + Number(m[4]);
+  const len = ((endMin - startMin + 1440) % 1440 || 1440) * 60000;
+  const ist = now + IST_MIN * 60000, midnight = ist - (ist % 86400000);
+  let start = midnight + startMin * 60000 - IST_MIN * 60000;
+  if (start > now) start -= 86400000;
+  return { start, end: start + len, len };
+}
 /* ---- audit trail: who changed access, RACI, recipients, client settings, roles ---- */
 async function audit(env, user, action, clientId, detail) {
   try { await run(env, "INSERT INTO audit_log (id, at, user_id, user_name, action, client_id, detail) VALUES (?,?,?,?,?,?,?)", uuid(), Date.now(), (user && user.id) || null, (user && user.name) || "", str(action, 60), clientId || null, str(detail, 400)); } catch (e) {}
@@ -1209,7 +1226,7 @@ function userDesk(user) {
 }
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
-const SUPERVISOR_OPS = /^(portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(coach\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const EDIT_OPS = /^(client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
@@ -1648,6 +1665,164 @@ const OPS = {
     await setSetting(env, "feedback_to", ids.filter((x) => ok.includes(x)));
     await audit(env, user, "feedback.recipients", null, (await feedbackRecipients(env)).map((u) => u.name).join(", "));
     return { people: (await feedbackRecipients(env)).map((u) => ({ id: u.id, name: u.name })) };
+  },
+
+  /* ---- Team today (team leads): the morning huddle and the live floor on one page ---- */
+  "team.huddle": async ({ env, user, payload }) => {
+    const now = Date.now(), today = isoDate(payload.today) || isoToday();
+    const off = Math.round(num(payload.tz_offset_min, 0)), dayStart = Date.parse(today + "T00:00:00Z") - off * 60000;
+    const people = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
+    if (!people.length) return { rows: [], totals: { people: 0 } };
+    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const since = now - 26 * 3600000;
+    const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
+      WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN (${qs})`, ...ids);
+    const notes = await all(env, `SELECT user_id, kind, created_at FROM notes WHERE kind IN ('work','skip') AND created_at > ? AND user_id IN (${qs})`, since, ...ids);
+    const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
+    const rows = people.map((u) => {
+      const win = shiftWindow(u.shift, now, dayStart);
+      const mine = notes.filter((n) => n.user_id === u.id && n.created_at >= (win ? win.start : dayStart));
+      const work = mine.filter((n) => n.kind === "work"), skips = mine.length - work.length;
+      const first = mine.length ? Math.min(...mine.map((n) => n.created_at)) : null, last = mine.length ? Math.max(...mine.map((n) => n.created_at)) : null;
+      const onDesk = desk.filter((c) => c.assigned_to === u.id);
+      const startOf = win ? win.start : dayStart;
+      const carried = onDesk.filter((c) => c.assigned_at && c.assigned_at < startOf && c.state === "assigned").length;
+      const cur = onDesk.find((c) => c.state === "in_progress") || null;
+      const target = Math.max(1, u.capacity || 35);
+      const span = win ? win.len : 9 * 3600000, began = win ? win.start : first;
+      const elapsed = began ? Math.min(1, Math.max(0, (now - began) / span)) : 0;
+      const expected = Math.round(target * elapsed);
+      const a = att.get(u.id);
+      const inShift = win ? now >= win.start && now <= win.end : !!first;
+      let status = "not_started";
+      if (a && a.status === "out") status = "out";
+      else if (cur && cur.started_at && now - cur.started_at < 2 * 3600000) status = "working";
+      else if (!onDesk.length && work.length) status = "done";
+      else if (last && now - last > 30 * 60000 && inShift) status = "idle";
+      else if (work.length) status = "working";
+      return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", on_desk: onDesk.length, carried, worked: work.length, skips, first, last,
+        idle_min: last ? Math.floor((now - last) / 60000) : null, expected, behind: status !== "out" && work.length < expected - 3,
+        current: cur ? { claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
+        status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, in_shift: inShift };
+    });
+    const rank = { idle: 0, not_started: 1, working: 2, done: 3, out: 4 };
+    rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
+    const present = rows.filter((r) => r.status !== "out");
+    return { rows, totals: { people: rows.length, out: rows.length - present.length, on_desk: rows.reduce((t, r) => t + r.on_desk, 0), worked: rows.reduce((t, r) => t + r.worked, 0),
+      capacity: present.reduce((t, r) => t + r.capacity, 0), carried: rows.reduce((t, r) => t + r.carried, 0), idle: rows.filter((r) => r.status === "idle").length,
+      out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
+  },
+  "team.setOut": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60), today = isoDate(payload.today) || isoToday();
+    if (!(await visibleUsers(env, user)).some((u) => u.id === id)) throw denied("That person is not in your team.");
+    if (payload.out === false) await run(env, "DELETE FROM attendance WHERE user_id = ? AND day = ?", id, today);
+    else await run(env, `INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,'out',?,?,?) ON CONFLICT (user_id, day) DO UPDATE SET status = 'out', reason = excluded.reason, by_name = excluded.by_name, at = excluded.at`,
+      id, today, str(payload.reason, 120).trim(), user.name || "", Date.now());
+    return { ok: true };
+  },
+  /* Hands an absent biller's untouched claims (assigned, not started) to the people on the same client who are in
+     today, by room left in their capacity, highest priority first. */
+  "team.rebalance": async ({ env, user, payload }) => {
+    const from = str(payload.user_id, 60), today = isoDate(payload.today) || isoToday();
+    const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
+    const src = team.find((u) => u.id === from);
+    if (!src) throw denied("That person is not in your team.");
+    const out = new Set((await all(env, "SELECT user_id FROM attendance WHERE day = ? AND status = 'out'", today)).map((r) => r.user_id));
+    const claims = await all(env, `SELECT id, client_id, location_id, priority FROM claims WHERE assigned_to = ? AND state = 'assigned'${editScopeSql(user, "client_id")} ORDER BY priority DESC`, from, ...editScopeArgs(user));
+    if (!claims.length) return { moved: 0, left: 0, to: [] };
+    const teams = new Map((await all(env, "SELECT id, team_json FROM clients")).map((c) => [c.id, new Set(parseTeam(c.team_json))]));
+    const load = new Map((await all(env, "SELECT assigned_to, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_to IS NOT NULL GROUP BY assigned_to")).map((r) => [r.assigned_to, r.n]));
+    const cands = team.filter((u) => u.id !== from && !out.has(u.id));
+    const now = Date.now(), moved = new Map(), stmts = [];
+    let left = 0;
+    for (const c of claims) {
+      const onClient = cands.filter((u) => (teams.get(c.client_id) || new Set()).has(u.id));
+      const pick = onClient.map((u) => ({ u, room: (u.capacity || 35) - (load.get(u.id) || 0) })).filter((x) => x.room > 0).sort((a, b) => b.room - a.room)[0];
+      if (!pick) { left++; continue; }
+      load.set(pick.u.id, (load.get(pick.u.id) || 0) + 1);
+      moved.set(pick.u.name, (moved.get(pick.u.name) || 0) + 1);
+      stmts.push(env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned' AND assigned_to = ?").bind(pick.u.id, now, now, c.id, from));
+      stmts.push(claimEvent(env, c.id, user, "assigned", pick.u.name, { from: src.name, via: "rebalance" }));
+    }
+    if (stmts.length) await batchAll(env, stmts, 50);
+    const n = claims.length - left;
+    if (n) await audit(env, user, "team.rebalance", null, `${src.name}: ${n} claims to ` + [...moved.entries()].map(([k, v]) => k + " " + v).join(", "));
+    return { moved: n, left, to: [...moved.entries()].map(([name, count]) => ({ name, count })) };
+  },
+  /* Coaching: one biller's last 30 days and the team lead's 1:1 notes. */
+  "coach.profile": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60);
+    const u = (await visibleUsers(env, user)).find((x) => x.id === id);
+    if (!u) throw denied("That person is not in your team.");
+    const now = Date.now(), since = now - 30 * 86400000;
+    const days = await all(env, "SELECT date((created_at / 1000) + ?, 'unixepoch') AS day, SUM(kind = 'work') AS work, SUM(kind = 'skip') AS skips FROM notes WHERE user_id = ? AND created_at > ? GROUP BY day ORDER BY day", IST_MIN * 60, id, since);
+    const statuses = await all(env, "SELECT COALESCE(NULLIF(status, ''), status_code) AS status, COUNT(*) AS n FROM notes WHERE user_id = ? AND kind = 'work' AND created_at > ? GROUP BY 1 ORDER BY n DESC LIMIT 6", id, since);
+    const esc = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE escalated_by = ? AND escalated_at > ?", id, since);
+    const back = await one(env, "SELECT COUNT(*) AS n FROM handoffs WHERE created_by = ? AND status = 'back' AND created_at > ?", id, since);
+    const sent = await one(env, "SELECT COUNT(*) AS n FROM handoffs WHERE created_by = ? AND created_at > ?", id, since);
+    const carried = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND assigned_at < ?", id, now - 86400000);
+    const notesLen = await one(env, "SELECT AVG(LENGTH(comment)) AS len FROM notes WHERE user_id = ? AND kind = 'work' AND created_at > ?", id, since);
+    const out = await all(env, "SELECT day FROM attendance WHERE user_id = ? AND day >= ? AND status = 'out'", id, istISO(since));
+    const cn = await all(env, "SELECT id, at, kind, text, by_name, by_id FROM coach_notes WHERE user_id = ? ORDER BY at DESC LIMIT 40", id);
+    const workDays = days.filter((d) => d.work > 0);
+    const avg = workDays.length ? Math.round(workDays.reduce((t, d) => t + d.work, 0) / workDays.length * 10) / 10 : 0;
+    return { person: { id: u.id, name: u.name, designation: u.designation || "", capacity: u.capacity || 35, shift: u.shift || "", doj: u.doj || "", reports_to_name: u.reports_to_name || "" },
+      days, avg_per_day: avg, worked_days: workDays.length, entries: days.reduce((t, d) => t + d.work, 0), skips: days.reduce((t, d) => t + d.skips, 0),
+      statuses, escalations: (esc && esc.n) || 0, handoffs_sent: (sent && sent.n) || 0, handed_back: (back && back.n) || 0, carried: (carried && carried.n) || 0,
+      note_len: notesLen && notesLen.len ? Math.round(notesLen.len) : 0, out_days: out.length, notes: cn.map((n) => ({ ...n, mine: n.by_id === user.id })) };
+  },
+  "coach.noteAdd": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60);
+    if (!(await visibleUsers(env, user)).some((x) => x.id === id)) throw denied("That person is not in your team.");
+    const kind = ["one_to_one", "praise", "concern", "goal"].includes(payload.kind) ? payload.kind : "one_to_one";
+    const text = str(payload.text, 2000).trim();
+    if (!commentOk(text)) throw bad("Write what was discussed or agreed, a few words at least.");
+    await run(env, "INSERT INTO coach_notes (id, user_id, at, kind, text, by_id, by_name) VALUES (?,?,?,?,?,?,?)", uuid(), id, Date.now(), kind, text, user.id, user.name || "");
+    return { ok: true };
+  },
+  "coach.noteDelete": async ({ env, user, payload }) => {
+    const n = await one(env, "SELECT * FROM coach_notes WHERE id = ?", str(payload.id, 60));
+    if (!n) throw bad("That note is no longer there.");
+    if (n.by_id !== user.id && !user.is_admin) throw denied("Only the person who wrote it can remove it.");
+    await run(env, "DELETE FROM coach_notes WHERE id = ?", n.id);
+    return { ok: true };
+  },
+  /* Note templates, written by team leads, inserted by billers into RCA / findings. */
+  "templates.list": async ({ env, user, payload }) => {
+    const cid = payload.client_id ? str(payload.client_id, 60) : "";
+    const rows = await all(env, `SELECT t.*, c.name AS client_name FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id WHERE t.client_id IS NULL${cid ? " OR t.client_id = ?" : " OR 1 = 1"} ORDER BY t.title`, ...(cid ? [cid] : []));
+    return { rows: rows.filter((r) => !r.client_id || inScope(user, r.client_id)).map((r) => ({ id: r.id, client_id: r.client_id, client_name: r.client_name || "", title: r.title, text: r.text, by_name: r.by_name, at: r.at })) };
+  },
+  "templates.save": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor" || isSME(user)) throw denied("Templates are written by team leads and up.");
+    const cid = payload.client_id ? str(payload.client_id, 60) : null;
+    if (cid) editableOr(user, cid);
+    const title = str(payload.title, 80).trim(), text = str(payload.text, 1500).trim();
+    if (title.length < 3 || text.length < 8) throw bad("Give the template a short title and the text, a few words at least.");
+    const id = payload.id ? str(payload.id, 60) : uuid();
+    await run(env, `INSERT INTO note_templates (id, client_id, title, text, by_id, by_name, at) VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT (id) DO UPDATE SET client_id = excluded.client_id, title = excluded.title, text = excluded.text, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, cid, title, text, user.id, user.name || "", Date.now());
+    return { ok: true, id };
+  },
+  "templates.delete": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor" || isSME(user)) throw denied("Templates are managed by team leads and up.");
+    const t = await one(env, "SELECT client_id FROM note_templates WHERE id = ?", str(payload.id, 60));
+    if (t && t.client_id) editableOr(user, t.client_id);
+    await run(env, "DELETE FROM note_templates WHERE id = ?", str(payload.id, 60));
+    return { ok: true };
+  },
+  /* What the team picked most for this payer at this client (last 90 days), so a biller can start from it. */
+  "saag.suggest": async ({ env, user, payload }) => {
+    const cid = str(payload.client_id, 60), payer = str(payload.payer, 160).trim();
+    if (!cid || !inScope(user, cid)) return { rows: [] };
+    const since = Date.now() - 90 * 86400000;
+    const q = (byPayer) => all(env, `SELECT n.status, n.sub_status, n.action, n.bucket, COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id
+      WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at > ? AND n.status <> '' AND n.sub_status <> '' AND n.action <> ''${byPayer ? " AND lower(c.payer) = lower(?)" : ""}
+      GROUP BY n.status, n.sub_status, n.action ORDER BY n DESC LIMIT 3`, cid, since, ...(byPayer ? [payer] : []));
+    let rows = payer ? await q(true) : [];
+    const scope = rows.length ? "payer" : "client";
+    if (!rows.length) rows = await q(false);
+    return { rows, scope };
   },
 
   /* ---- Portfolio (VP and managers): every client in one table, worst first, with capacity and data freshness ---- */
