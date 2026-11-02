@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.36.0";
+const VERSION = "2.37.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -142,7 +142,9 @@ const EXTRA_COLUMNS = {
   handoffs: [["available_at", "INTEGER"], ["paused_at", "INTEGER"],
     // Need client assistance: who asked, the AR team lead who sent it to the client (how, when, comment), and when to chase the client.
     ["client_req_by_name", "TEXT NOT NULL DEFAULT ''"], ["client_sent_at", "INTEGER"], ["client_sent_by", "TEXT"], ["client_sent_by_name", "TEXT NOT NULL DEFAULT ''"],
-    ["client_sent_how", "TEXT NOT NULL DEFAULT ''"], ["client_sent_note", "TEXT NOT NULL DEFAULT ''"], ["chase_at", "INTEGER"]],
+    ["client_sent_how", "TEXT NOT NULL DEFAULT ''"], ["client_sent_note", "TEXT NOT NULL DEFAULT ''"], ["chase_at", "INTEGER"],
+    // Pending: the department's latest comment on where an open hand-off stands.
+    ["pending_at", "INTEGER"], ["pending_by_name", "TEXT NOT NULL DEFAULT ''"]],
   settings: [["updated_at", "INTEGER"]],
 };
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
@@ -2570,13 +2572,16 @@ const OPS = {
     if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id)) throw denied("This hand-off is not yours.");
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", h.claim_id);
     const pfx = HO_PREFIX[h.dept] || h.dept;
+    // The four choices: completed, pending (still working, with a comment), need assistance from AR, need assistance from client.
+    // ("assistance" is the older name for assistance from AR.)
+    const outcome = payload.outcome === "assistance" ? "back" : payload.outcome;
     // Back to AR: on the biller's desk today (or the pool when nobody has it).
     const backToAr = (status, extra = "") => env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','closed','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,
         state_reason = '', follow_up_on = ?, skipped_at = NULL${extra}, updated_at = ? WHERE id = ?`);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const note = str(payload.note, 2000).trim();
     const stmts = [];
-    if (payload.outcome === "complete") {
+    if (outcome === "complete") {
       const p = payload.proof || {};
       const proof = h.dept === "posting"
         ? { date: isoDate(p.date), ref: str(p.ref, 80).trim(), amount: p.amount === "" || p.amount == null ? null : num(p.amount, 0) }
@@ -2611,7 +2616,7 @@ const OPS = {
         stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'submission_accepted', updated_at = ? WHERE id = ?").bind(now, c.id));
       }
       stmts.push(claimEvent(env, c.id, user, "handoff_done", DEPT_LABEL[h.dept], { dept: h.dept, proof, note, within_tat: now <= h.due_at }));
-    } else if (payload.outcome === "rejected" && h.dept === "subcheck") {
+    } else if (outcome === "rejected" && h.dept === "subcheck") {
       // Rejected: straight back to the Submission team to resubmit, with the reason.
       const reason = str(payload.reason, 80).trim();
       if (!reason) throw bad("Pick the rejection reason.");
@@ -2632,25 +2637,14 @@ const OPS = {
       }
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `Submission rejected (${reason}): ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "" }));
-    } else if (payload.outcome === "assistance") {
+    } else if (outcome === "back") {
+      // Need assistance from AR: back on the biller's list today with the reason (the 3rd return also goes to the team lead).
       const reason = str(payload.reason, 80).trim();
-      if (!reason) throw bad("Pick the reason.");
-      if (!commentOk(note)) throw bad("Explain what is needed, a few words at least.");
-      const text = `${DEPT_LABEL[h.dept]} needs assistance (${reason}): ${note}`;
-      stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'assistance', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, reason, note, h.id));
-      // Back on the biller's list today, and flagged in the AR team lead's Needs attention.
-      stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','closed','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END, state_reason = '', follow_up_on = ?,
-          escalated = 1, escalated_at = ?, escalated_by = ?, last_note = ?, skipped_at = NULL, updated_at = ? WHERE id = ?`).bind(pfx + "_assist", today, now, user.id, text.slice(0, 600), now, c.id));
-      stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
-      stmts.push(claimEvent(env, c.id, user, "handoff_assist", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at }));
-    } else if (payload.outcome === "back") {
-      // Sent back to AR: the biller has it on their list today with the reason (no escalation to the team lead).
-      const reason = str(payload.reason, 80).trim();
-      if (!reason) throw bad("Pick why it goes back to AR.");
+      if (!reason) throw bad("Pick what is needed from AR.");
       if (!commentOk(note)) throw bad("Write what AR should do, a few words at least.");
       const returns = await returnsOf(env, c.id) + 1;
       const bounced = returns >= BOUNCE_LIMIT;
-      const text = `Sent back to AR by ${DEPT_LABEL[h.dept]} (${reason}): ${note}` + (bounced ? ` [returned ${returns} times: for both team leads to review]` : "");
+      const text = `${DEPT_LABEL[h.dept]} needs assistance from AR (${reason}): ${note}` + (bounced ? ` [returned ${returns} times: for both team leads to review]` : "");
       stmts.push(env.DB.prepare("UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ?").bind(now, user.id, user.name, reason, note, h.id));
       // The third return goes to the AR team lead's Needs attention as well (the department lead sees it on their dashboard).
       stmts.push(bounced
@@ -2658,7 +2652,13 @@ const OPS = {
         : backToAr(pfx + "_back", ", last_note = ?").bind(pfx + "_back", today, text.slice(0, 600), now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_back", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at, returns, bounced }));
-    } else if (payload.outcome === "client") {
+    } else if (outcome === "pending") {
+      // Pending: still with the department, a comment on where it stands; the 24-hour TAT keeps running.
+      if (!commentOk(note)) throw bad("Write where it stands, a few words at least.");
+      stmts.push(env.DB.prepare("UPDATE handoffs SET note = ?, pending_at = ?, pending_by_name = ? WHERE id = ?").bind(note, now, user.name, h.id));
+      stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]} · pending: ${note}`, now));
+      stmts.push(claimEvent(env, c.id, user, "handoff_pending", DEPT_LABEL[h.dept], { dept: h.dept, note }));
+    } else if (outcome === "client") {
       // Needs the client: the claim stays with the department (In process for AR); the 24-hour clock keeps running.
       if (h.status === "client") throw bad("It is already waiting on the client.");
       const reason = str(payload.reason, 80).trim();
@@ -2671,7 +2671,7 @@ const OPS = {
       stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, last_bucket = 'Client', updated_at = ? WHERE id = ?").bind(pfx + "_client", "Waiting on client (" + DEPT_LABEL[h.dept] + ")", now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_client", DEPT_LABEL[h.dept], { dept: h.dept, reason, note }));
-    } else if (payload.outcome === "resume") {
+    } else if (outcome === "resume") {
       // The client answered: back in the open list, with the same due time (the clock never stopped).
       if (h.status !== "client") throw bad("Only a claim waiting on the client can be resumed.");
       const due = h.due_at;
@@ -2679,7 +2679,7 @@ const OPS = {
       stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, updated_at = ? WHERE id = ?").bind("with_" + (h.dept === "subcheck" ? "submission" : h.dept), "With " + DEPT_LABEL[h.dept], now, c.id));
       if (note) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]}: client answered. ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_resume", DEPT_LABEL[h.dept], { dept: h.dept, note, due_at: due }));
-    } else throw bad("Pick what happened: complete, need assistance, back to AR or need client assistance.");
+    } else throw bad("Pick what happened: completed, pending, need assistance from AR or need assistance from client.");
     await env.DB.batch(stmts);
     return { ok: true };
   },

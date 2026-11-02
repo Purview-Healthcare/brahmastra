@@ -140,16 +140,18 @@ client's **Rejections** person first (top of their list), else Submission. While
 there the claim is **In process** for AR (own dashboard card, off the biller's list).
 
 Each hand-off has 24 working hours (a TAT tag and bar; red once past). The department
-can mark it **Complete** (with proof), **Need assistance** (back to the biller and the
-team lead's Needs attention), **Back to AR** (back to the biller with the reason) or
-**Need client assistance** (stays In process under Waiting on client; the 24-hour
-clock keeps running, and **Client answered** puts it back in the open list). Every choice takes a comment, required except on Complete and Client
+has four choices: **Completed** (with proof), **Pending** (still theirs; the comment
+shows on the row and the clock keeps running), **Need assistance from AR** (back on
+the biller's list today with the reason; the third return escalates to their team
+lead) or **Need assistance from client** (stays In process under Waiting on client;
+the 24-hour clock keeps running, and **Client answered** puts it back in the open
+list). Every choice takes a comment, required except on Completed and Client
 answered. Posting complete closes the claim as Payment posted. Submission complete
 sends it back to the biller with a 15-day follow-up and always opens a **recheck 48
 working hours later** (to the follow-up person on the client, or whoever submitted):
 **Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
 
-**Client requests.** Need client assistance lands in the client's AR team lead's **Needs attention →
+**Client requests.** Need assistance from client lands in the client's AR team lead's **Needs attention →
 Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
 comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department
 sees who sent it and when; if the client has not answered 3 working days after sending, the claim comes back to
@@ -157,7 +159,7 @@ their Open list as **Chase the client**.
 
 **Warnings and reports.** Hand-offs with under 4 hours left are flagged at the top of the list and in an amber
 bar on every screen. A claim returned to AR 3 times is escalated to the AR team lead and listed for the
-department lead. Department dashboards show **Needs you now**, **why claims came back to AR** (by reason and
+department lead. Department dashboards show **Needs you now**, **why claims needed AR's help** (by reason and
 biller) and, for Submission, **rejections by code** (by code, client and biller). Rejected rechecks and
 resubmitted rejections carry a rejection code.
 - Each roster project is matched to a client (same name or code automatically;
