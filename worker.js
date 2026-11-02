@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.46.0";
+const VERSION = "2.47.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -109,6 +109,8 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
      client_id TEXT, detail TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at)`,
+  `CREATE TABLE IF NOT EXISTS digest_runs (week TEXT NOT NULL, client_id TEXT NOT NULL, at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id))`,
+  `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
   `CREATE TABLE IF NOT EXISTS coach_notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'one_to_one', text TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_coach_user ON coach_notes (user_id, at)`,
@@ -601,7 +603,7 @@ const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_
   roster_status: u.roster_status || "", exit_date: u.exit_date || "", reports_to: u.reports_to || null, reports_to_name: u.reports_to_name || "", projects: jsonList(u.projects_json),
   scope_projects: jsonList(u.scope_projects_json), access_all: !!u.access_all, email_missing: !!u.email_missing, shift: u.shift || "", city: u.city || "", doj: u.doj || "", prefs: userPrefs(u.prefs_json) });
 // Settings a person picks for themselves (theme, text size); unknown keys are dropped.
-const PREF_KEYS = { theme: ["light", "navy", "gold", "auto"], text: ["normal", "large"] };
+const PREF_KEYS = { theme: ["light", "navy", "gold", "auto"], text: ["normal", "large"], digest: ["on", "off"] };
 function userPrefs(j) { let o = {}; try { o = JSON.parse(j || "{}") || {}; } catch (e) { o = {}; } const out = {}; for (const k in PREF_KEYS) if (PREF_KEYS[k].includes(o[k])) out[k] = o[k]; return out; }
 
 const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).first();
@@ -857,6 +859,140 @@ const OVER90_TARGET = 15;   // % of AR over 90 days that counts as healthy
 const MONTHEND_STEPS = [
   ["inventory", "Inventory uploaded", 1, true], ["internal", "Internal reports reviewed", 2, false], ["sla_inventory", "AR Inventory sent to the SLA scorecard", 2, true],
   ["pack", "Client pack built", 3, false], ["sla", "SLA scored and reasons noted", 4, false], ["sent", "Pack sent to the client", 5, false]];   // key, label, due (working day of next month), can tick by itself
+/* ---- The Monday digest: one email per client, to every supervisor on that client ----
+   Sent by the scheduled job on Monday mornings (IST), a few clients per run so a run stays small. Who gets it:
+   active team leads, SMEs, desk leads, managers, the VP and admins whose clients include it (not view-only
+   shares), with an email address and the digest not turned off in Settings. Clients and figures only: no
+   patient names, claim or account numbers. */
+const DIGEST_SYSTEM = { id: "system", name: "Brahmastra", email: "", role: "supervisor", is_admin: true, scope: null, scope_view_only: new Set() };
+const DIGEST_HOURS = [8.5, 13];   // IST, Monday
+const DIGEST_CRON = "*/10 3-7 * * 1";   // wrangler.toml: every 10 minutes, Monday 03:00 to 07:50 UTC (08:30 to 13:20 IST)
+function digestWeek(now) {
+  const t = istISO(now), dow = new Date(t + "T00:00:00Z").getUTCDay();
+  const monday = new Date(Date.parse(t + "T00:00:00Z") - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+  const to = Date.parse(monday + "T00:00:00Z") - IST_MIN * 60000;
+  return { week: monday, from: to - 7 * 86400000, to, first: new Date(to - 7 * 86400000 + IST_MIN * 60000).toISOString().slice(0, 10), last: new Date(to - 86400000 + IST_MIN * 60000).toISOString().slice(0, 10) };
+}
+async function digestPeople(env) {
+  const rows = await all(env, "SELECT * FROM users WHERE active = 1 AND (role IN ('supervisor', 'admin'))");
+  const out = [];
+  for (const r of rows) {
+    const u = publicUser(r);
+    if (!u.email || u.email_missing || !/@/.test(u.email)) continue;
+    u.scope = await scopeOf(env, u);
+    out.push(u);
+  }
+  return out;
+}
+const digestFor = (people, clientId) => people.filter((u) => u.is_admin || u.access_all || canEditClient(u, clientId));
+async function digestData(env, clientId, wk) {
+  const today = istISO(wk.to);
+  const o = await OPS["client.overview"]({ env, user: DIGEST_SYSTEM, payload: { client_id: clientId, from_ms: wk.from, to_ms: wk.to, today } });
+  const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 7 * 86400000));
+  const prevWorked = await one(env, "SELECT COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, wk.from - 7 * 86400000, wk.from);
+  const people = await all(env, `SELECT n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
+    WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 8`, clientId, wk.from, wk.to);
+  const esc = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND escalated_at BETWEEN ? AND ?", clientId, wk.from, wk.to);
+  const late = o.monthend.steps.filter((s) => !s.done && s.due < today);
+  return {
+    client: o.client, health: o.health, reasons: o.reasons, week: wk,
+    ar: { now: o.ar.balance, claims: o.ar.claims, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: o.ar.over90_pct, over90_ago: weekAgo && weekAgo.ar_balance ? Math.round(weekAgo.over90_balance / weekAgo.ar_balance * 1000) / 10 : null, target: o.ar.target },
+    collected: o.collected, worked: { n: o.worked.entries, people: o.worked.people, prev: (prevWorked && prevWorked.n) || 0 }, team: people,
+    sla: o.sla, escalations: { open: o.escalations.open, late: o.escalations.late, raised: (esc && esc.n) || 0 }, missed: o.missed,
+    waiting: { n: o.waiting.rows.length, balance: o.waiting.balance, oldest: o.waiting.oldest }, tfl: o.tfl, denials: o.reasons_top.slice(0, 4),
+    monthend: { month: o.monthend.month, done: o.monthend.done, total: o.monthend.steps.length, late: late.map((s) => s.label) },
+    raci: o.raci,
+  };
+}
+const dMoney = (n) => (n == null ? "–" : "$" + Math.round(Number(n)).toLocaleString("en-US"));
+const dDay = (iso) => { const [, m, d] = iso.split("-").map(Number); return MONTHS[m - 1].slice(0, 3) + " " + d; };
+function digestEmail(d, appUrl) {
+  const H = { good: ["On track", "#0E8C74", "#E3F4EF"], watch: ["Watch", "#9A6A12", "#FBF0DC"], risk: ["At risk", "#A32D2D", "#FBE5E5"] }[d.health] || ["", "#3B4A55", "#F5F7F9"];
+  const delta = (now, then, money, lowerIsBetter) => {
+    if (then == null || now == null) return `<span style="color:#627079">no reading a week ago</span>`;
+    const diff = now - then; if (Math.abs(diff) < (money ? 1 : 0.05)) return `<span style="color:#627079">same as a week before</span>`;
+    const good = lowerIsBetter ? diff < 0 : diff > 0;
+    return `<span style="color:${good ? "#0E8C74" : "#A32D2D"}">${diff > 0 ? "up" : "down"} ${money ? dMoney(Math.abs(diff)) : Math.round(Math.abs(diff) * 10) / 10 + (money === false ? "" : " pts")} vs the week before</span>`;
+  };
+  const kpi = (label, value, sub) => `<td style="padding:10px 12px;border:1px solid #DFE4EA;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700">${label}</div><div style="font-size:20px;font-weight:700;margin:2px 0">${value}</div><div style="font-size:12px">${sub}</div></td>`;
+  const attention = [...d.reasons.map((r) => [r.tone, r.text])];
+  if (d.monthend.late.length) attention.push(["amber", `Month-end for ${monthName(d.monthend.month)} past due: ${d.monthend.late.join(", ")}`]);
+  if (d.missed.ar + d.missed.posting + d.missed.submission > 0 && !d.reasons.some((r) => /missed/.test(r.text))) attention.push(["amber", `${d.missed.ar + d.missed.posting + d.missed.submission} missed tasks (AR ${d.missed.ar}, posting ${d.missed.posting}, submission ${d.missed.submission})`]);
+  const good = [];
+  if (d.ar.week_ago != null && d.ar.now < d.ar.week_ago) good.push(`AR came down by ${dMoney(d.ar.week_ago - d.ar.now)}`);
+  if (d.collected.amount > d.collected.prev && d.collected.amount > 0) good.push(`${dMoney(d.collected.amount)} collected, more than the week before`);
+  if (d.worked.n > d.worked.prev && d.worked.n > 0) good.push(`${d.worked.n} entries, up from ${d.worked.prev}`);
+  if (!d.escalations.late && d.escalations.raised) good.push(`every escalation answered within 24 hours`);
+  const dot = (tone) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${tone === "red" ? "#C94F4F" : "#E8A13C"};margin-right:8px"></span>`;
+  const sec = (title) => `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:18px 0 6px">${title}</div>`;
+  const tr = (cells, head) => `<tr>${cells.map((c, i) => `<${head ? "th" : "td"} style="padding:5px 10px 5px 0;text-align:${i ? "right" : "left"};border-bottom:1px solid #EEF1F4;${head ? "font-size:11px;color:#627079;text-transform:uppercase;letter-spacing:.05em" : ""}">${c}</${head ? "th" : "td"}>`).join("")}</tr>`;
+  const raciLine = d.raci ? [["Responsible", d.raci.r], ["Accountable", d.raci.a]].filter(([, l]) => l && l.length).map(([k, l]) => `${k}: ${htmlEsc(l.map((x) => x.name || x).join(", "))}`).join(" · ") : "";
+  const weekTxt = `${dDay(d.week.first)} to ${dDay(d.week.last)}`;
+  const html = `<div style="font:14px/1.5 Segoe UI,Arial,sans-serif;color:#0F1B24;max-width:680px">
+<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0E8C74;font-weight:700">Brahmastra · Monday digest</div>
+<h2 style="margin:4px 0 2px;font-size:22px">${htmlEsc(d.client.name)}</h2>
+<div style="color:#627079;font-size:13px">Week of ${weekTxt}${raciLine ? " · " + raciLine : ""}</div>
+<div style="margin:12px 0;padding:10px 14px;border-radius:8px;background:${H[2]};color:${H[1]};font-weight:700">${H[0]}${d.reasons.length ? `<span style="font-weight:400;color:#0F1B24"> · ${htmlEsc(d.reasons[0].text)}</span>` : `<span style="font-weight:400;color:#0F1B24"> · nothing on the watch list</span>`}</div>
+<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>
+${kpi("AR now", dMoney(d.ar.now), delta(d.ar.now, d.ar.week_ago, true, true))}
+${kpi("Over 90 days", d.ar.over90_pct + "%", `target ${d.ar.target}% · ` + delta(d.ar.over90_pct, d.ar.over90_ago, null, true))}
+${kpi("Collected", dMoney(d.collected.amount), `${d.collected.n} posted · week before ${dMoney(d.collected.prev)}`)}
+${kpi("Entries", String(d.worked.n), `${d.worked.people} ${d.worked.people === 1 ? "person" : "people"} · week before ${d.worked.prev}`)}
+</tr></table>
+${sec("Needs your attention")}
+${attention.length ? attention.slice(0, 6).map(([t, x]) => `<div style="margin:4px 0">${dot(t)}${htmlEsc(x)}</div>`).join("") : `<div style="color:#627079">Nothing needs you.</div>`}
+${good.length ? `<div style="margin:8px 0 0;color:#0E8C74">Good news: ${htmlEsc(good.slice(0, 2).join("; "))}.</div>` : ""}
+${sec("Where things stand")}
+<table style="border-collapse:collapse;font-size:13px;width:100%">
+${tr(["Escalations", `${d.escalations.raised} raised last week · ${d.escalations.open} open now${d.escalations.late ? ` · <b style="color:#A32D2D">${d.escalations.late} over 24 h</b>` : ""}`])}
+${tr(["Waiting on the client", d.waiting.n ? `${d.waiting.n} requests · ${dMoney(d.waiting.balance)} · oldest ${d.waiting.oldest} days` : "none"])}
+${tr(["Timely filing", d.tfl.past_n ? `<b style="color:#A32D2D">${d.tfl.past_n} past the limit</b> · ${d.tfl.soon_n} within 30 days` : d.tfl.soon_n ? `${d.tfl.soon_n} within 30 days (${dMoney(d.tfl.soon_bal)})` : "nothing near the limit"])}
+${tr(["SLA", d.sla ? `${d.sla.score}% for ${monthName(d.sla.month)}${d.sla.prev != null ? ` (before: ${d.sla.prev}%)` : ""}` : "not scored yet"])}
+${tr(["Month-end " + monthName(d.monthend.month), `${d.monthend.done} of ${d.monthend.total} steps done`])}
+</table>
+${d.team.length ? sec("The team last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${tr(["Person", "Entries", "Skipped"], true)}${d.team.map((p) => tr([htmlEsc(p.name || "–"), String(p.work || 0), String(p.skips || 0)])).join("")}</table>` : ""}
+${d.denials.length ? sec("Denials and rejections worked last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${tr(["Reason", "Claims", "Balance"], true)}${d.denials.map((r) => tr([htmlEsc(r.reason), String(r.n), dMoney(r.bal)])).join("")}</table>` : ""}
+${appUrl ? `<p style="margin:18px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/client")}" style="background:#14B8A6;color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:600">Open Client 360</a></p>` : ""}
+<p style="margin-top:18px;font-size:12px;color:#627079">You get this because you are a supervisor on ${htmlEsc(d.client.name)} in Brahmastra. Turn it off in Brahmastra, Settings, Email. No patient details are included.</p>
+</div>`;
+  const text = [`Brahmastra Monday digest: ${d.client.name}, week of ${weekTxt}`, `${H[0]}${d.reasons.length ? ": " + d.reasons[0].text : ""}`, "",
+    `AR now ${dMoney(d.ar.now)}${d.ar.week_ago != null ? " (a week before " + dMoney(d.ar.week_ago) + ")" : ""}`, `Over 90 days ${d.ar.over90_pct}% (target ${d.ar.target}%)`,
+    `Collected ${dMoney(d.collected.amount)} (week before ${dMoney(d.collected.prev)})`, `Entries ${d.worked.n} by ${d.worked.people} (week before ${d.worked.prev})`, "",
+    "Needs your attention:", ...(attention.length ? attention.slice(0, 6).map(([, x]) => "- " + x) : ["- Nothing needs you."]), "",
+    "Turn this off in Brahmastra, Settings, Email."].join("\n");
+  const subject = `${d.client.name} · week of ${dDay(d.week.first)}: ${H[0].toLowerCase()}, AR ${dMoney(d.ar.now)}${attention.length ? ", " + attention.length + " to look at" : ""}`;
+  return { subject, html, text };
+}
+/* Sends this week's digest for up to `limit` clients that have not had it yet. Each person gets each client once a week. */
+async function sendDigests(env, { now = Date.now(), limit = 3, clientId = null, by = "Monday job" } = {}) {
+  const wk = digestWeek(now);
+  const done = new Set((await all(env, "SELECT client_id FROM digest_runs WHERE week = ?", wk.week)).map((r) => r.client_id));
+  const clients = (await all(env, "SELECT id, name FROM clients WHERE active = 1 ORDER BY name")).filter((c) => (clientId ? c.id === clientId : !done.has(c.id)));
+  if (!clients.length) return { week: wk.week, clients: 0, sent: 0, failed: 0 };
+  const people = await digestPeople(env);
+  let sent = 0, failed = 0, n = 0;
+  for (const c of clients.slice(0, limit)) {
+    n++;
+    const to = digestFor(people, c.id).filter((u) => (u.prefs || {}).digest !== "off");
+    const already = new Set((await all(env, "SELECT user_id FROM digest_log WHERE week = ? AND client_id = ? AND ok = 1", wk.week, c.id)).map((r) => r.user_id));
+    const mail = digestEmail(await digestData(env, c.id, wk), env.APP_URL || "");
+    let s = 0, f = 0;
+    for (const u of to.filter((x) => !already.has(x.id))) {
+      let err = "";
+      try { await sendEmail(env, { to: u.email, subject: mail.subject, text: mail.text, html: mail.html }); s++; } catch (e) { err = String((e && e.message) || e).slice(0, 300); f++; }
+      await run(env, `INSERT INTO digest_log (week, client_id, user_id, name, email, at, ok, error) VALUES (?,?,?,?,?,?,?,?)
+        ON CONFLICT (week, client_id, user_id) DO UPDATE SET at = excluded.at, ok = excluded.ok, error = excluded.error`, wk.week, c.id, u.id, u.name || "", u.email, Date.now(), err ? 0 : 1, err);
+    }
+    await run(env, `INSERT INTO digest_runs (week, client_id, at, sent, failed, by_name) VALUES (?,?,?,?,?,?)
+      ON CONFLICT (week, client_id) DO UPDATE SET at = excluded.at, sent = digest_runs.sent + excluded.sent, failed = excluded.failed, by_name = excluded.by_name`, wk.week, c.id, Date.now(), s, f, by);
+    sent += s; failed += f;
+  }
+  return { week: wk.week, clients: n, sent, failed, left: Math.max(0, clients.length - n) };
+}
+function digestDue(now) {
+  const d = new Date(now + IST_MIN * 60000), h = d.getUTCHours() + d.getUTCMinutes() / 60;
+  return d.getUTCDay() === 1 && h >= DIGEST_HOURS[0] && h < DIGEST_HOURS[1];
+}
 /* Today's AR per client, kept once a day (the last write of the day wins), for the six-month trend. */
 async function snapshotClients(env) {
   const now = Date.now(), day = istISO(now), today = day;
@@ -1226,7 +1362,7 @@ function userDesk(user) {
 }
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
-const SUPERVISOR_OPS = /^(coach\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const EDIT_OPS = /^(client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
@@ -1880,6 +2016,40 @@ const OPS = {
     return { items, at: now };
   },
 
+  /* ---- Monday digest: who gets it, what it says, and when it went ---- */
+  "digest.info": async ({ env, user, payload }) => {
+    const cid = str(payload.client_id, 60);
+    if (!inScope(user, cid)) throw outOfScope();
+    const people = digestFor(await digestPeople(env), cid);
+    const wk = digestWeek(Date.now());
+    const runs = await all(env, "SELECT week, at, sent, failed, by_name FROM digest_runs WHERE client_id = ? ORDER BY week DESC LIMIT 6", cid);
+    const fails = await all(env, "SELECT name, email, error, at FROM digest_log WHERE client_id = ? AND week = ? AND ok = 0", cid, runs.length ? runs[0].week : wk.week);
+    return { recipients: people.map((u) => ({ id: u.id, name: u.name, designation: u.designation || (u.is_admin ? "Admin" : ""), off: (u.prefs || {}).digest === "off", me: u.id === user.id })).sort((a, b) => a.name.localeCompare(b.name)),
+      runs, fails, week: wk, email_ready: !!env.EMAIL_PROVIDER, can_send: !!(user.is_admin || user.access_all), mine_off: ((user.prefs || {}).digest === "off") };
+  },
+  "digest.preview": async ({ env, user, payload }) => {
+    const cid = str(payload.client_id, 60);
+    if (!inScope(user, cid)) throw outOfScope();
+    return digestEmail(await digestData(env, cid, digestWeek(Date.now())), env.APP_URL || "");
+  },
+  "digest.sendMe": async ({ env, user, payload }) => {
+    const cid = str(payload.client_id, 60);
+    if (!inScope(user, cid)) throw outOfScope();
+    if (!user.email || !/@/.test(user.email)) throw bad("Your account has no email address.");
+    const m = digestEmail(await digestData(env, cid, digestWeek(Date.now())), env.APP_URL || "");
+    await sendEmail(env, { to: user.email, subject: "[Copy] " + m.subject, text: m.text, html: m.html });
+    return { ok: true, to: user.email };
+  },
+  /* Admins and the VP: send this week's digest now for one client (only to people who have not had it this week). */
+  "digest.sendNow": async ({ env, user, payload }) => {
+    if (!user.is_admin && !user.access_all) throw denied("Only an admin or the VP can send the digest by hand.");
+    const cid = str(payload.client_id, 60);
+    if (!inScope(user, cid)) throw outOfScope();
+    if (!env.EMAIL_PROVIDER) throw new ApiError(503, "Email is not set up on the server yet (EMAIL_PROVIDER).");
+    const r = await sendDigests(env, { clientId: cid, limit: 1, by: user.name || "by hand" });
+    await audit(env, user, "digest.sendNow", cid, `week of ${r.week}: ${r.sent} sent${r.failed ? ", " + r.failed + " failed" : ""}`);
+    return r;
+  },
   /* ---- Portfolio (VP and managers): every client in one table, worst first, with capacity and data freshness ---- */
   "portfolio.overview": async ({ env, user, payload }) => {
     await snapshotIfStale(env);
@@ -3776,7 +3946,11 @@ export default {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
       try { await ensureReady(env); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) { console.log("Snapshot: " + (e && e.message)); }
-      if (env.SHASTRA_FEED_KEY) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
+      if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
+      // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
+      if (env.EMAIL_PROVIDER && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {
+        try { const r = await sendDigests(env, { limit: Math.max(1, Math.min(20, Number(env.DIGEST_BATCH) || 3)) }); if (r.clients) console.log(`Digest ${r.week}: ${r.clients} clients, ${r.sent} sent, ${r.failed} failed, ${r.left} left`); } catch (e) { console.log("Digest: " + (e && e.message)); }
+      }
     })());
   },
   async fetch(request, env, ctx) {

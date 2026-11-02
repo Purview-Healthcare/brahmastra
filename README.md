@@ -214,6 +214,26 @@ pace this shift against their target spread over the shift from the roster, clai
   inside the embedded Sasha's Third Eye or SLA page counts), a 2-minute warning shows, then the person is signed
   out to keep patient data safe.
 
+#### Monday digest email
+
+Every Monday from about 8:30 AM IST the server emails a one-page summary of last week (Monday to Sunday) for each
+client to **every supervisor on that client**: its team leads and SMEs, posting / submission leads, its manager,
+the VP and admins (people with a view-only share are left out). One email per client, so the VP gets one for every
+client and a team lead only their own. It shows health with the reason, AR now against a week before, over 90
+against the 15% target, collected from payment posting, entries and who made them, what needs attention (the
+Client 360 health rules plus month-end steps past due and missed tasks), one piece of good news, escalations,
+requests waiting on the client, timely filing, SLA, month-end progress and denials worked. Clients, staff and
+figures only: no patient names, claim or account numbers.
+
+- **Client 360 › Monday digest email** lists who gets it, when it last went and to how many, any that did not
+  arrive and why, **Preview this week's**, and **Email me a copy**. Admins and the VP also get **Send this week's
+  now** (only to people who have not had it this week, and noted in the audit trail).
+- **Settings › Email**: anyone can turn their digest off (or on again).
+- How it is sent: the same Microsoft 365 mailbox as the sign-in codes and feedback (`EMAIL_PROVIDER`). A second
+  schedule in `wrangler.toml` (`*/10 3-7 * * 1`, every 10 minutes from 08:30 to 13:20 IST on Mondays) sends a few
+  clients per run (`DIGEST_BATCH`, default 3) until every client has gone, and never sends a client to the same
+  person twice in a week. `APP_URL` puts an **Open Client 360** button in the email.
+
 #### Feedback
 
 Every page has a **Feedback** tab on the right edge. Anyone signed in (billers too) picks what it is
