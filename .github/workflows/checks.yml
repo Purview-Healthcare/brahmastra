@@ -33,6 +33,8 @@ jobs:
         run: node browser/crawl.cjs
       - name: Browser checks (search, bell, phone layout, idle sign-out)
         run: node browser/shell.cjs
+      - name: Browser checks (workflows through the screens)
+        run: node browser/workflows.cjs
       - name: Keep the browser results
         if: failure()
         uses: actions/upload-artifact@v4

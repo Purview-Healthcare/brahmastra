@@ -624,8 +624,9 @@ lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
 locations automatically.
 
-**Upload history** lists every batch; an upload can be undone while none of
-the claims it added have been worked.
+**Upload history** lists every batch. **Undo** removes the claims that upload added which nobody has
+worked yet (no entry, not open, no attachment); claims already worked stay, so no work is lost. An upload is
+undone once.
 
 ### Prioritisation (the Revenue Doctor's rules)
 

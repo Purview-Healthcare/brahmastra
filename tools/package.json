@@ -7,8 +7,8 @@
     "build": "node build.mjs",
     "check:build": "node build.mjs --check",
     "test:api": "node tests/run.mjs",
-    "test:browser": "node browser/crawl.cjs && node browser/shell.cjs",
-    "check": "node build.mjs --check && npm run lint && node tests/run.mjs && node browser/crawl.cjs && node browser/shell.cjs",
+    "test:browser": "node browser/crawl.cjs && node browser/shell.cjs && node browser/workflows.cjs",
+    "check": "node build.mjs --check && npm run lint && node tests/run.mjs && node browser/crawl.cjs && node browser/shell.cjs && node browser/workflows.cjs",
     "lint": "eslint --no-eslintrc -c lint/app.eslintrc.json ../app/app.jsx && eslint --no-eslintrc -c lint/worker.eslintrc.json ../worker.js"
   },
   "dependencies": {
