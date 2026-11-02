@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.39.0";
+const VERSION = "2.40.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -827,12 +827,16 @@ async function signInBlock(env, u) {
 }
 
 /* ---- who sees which projects ----
-   Admins, the VP (access_all) and people added by hand see every client. Everyone else from the roster sees the clients
-   their roster projects are matched to: team leads and SMEs their own projects, managers also every project of the people
-   under them. user.scope is null (everything) or the list of client ids. */
+   Admins and the VP (access_all) see every client, and so does an account added by hand that has no projects
+   (the bootstrap account). Everyone else, billers included, sees the clients their projects are matched to:
+   their own projects (team leads and SMEs too), managers also every project of the people under them, plus
+   clients shared with them person-to-person. user.scope is null (everything) or the list of client ids. */
 async function scopeOf(env, user) {
-  if (user.role !== "supervisor" || user.is_admin || user.access_all || user.source !== "roster") return null;
-  const names = new Set(user.scope_projects.map(projKey));
+  if (user.is_admin || user.access_all) return null;
+  const mine = (user.scope_projects && user.scope_projects.length ? user.scope_projects
+    : (user.projects || []).map((p) => (p && p.name != null ? p.name : p))).filter(Boolean);
+  if (!mine.length && user.source !== "roster") return null;
+  const names = new Set(mine.map(projKey));
   const clients = await all(env, "SELECT id, roster_names_json FROM clients");
   const own = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id);
   // Clients shared person-to-person (Clients & locations, Shared with): they add to what this person sees; a "view" share cannot be changed.
@@ -927,7 +931,7 @@ async function recomputeScopes(env) {
   const kids = new Map(); for (const u of users) if (u.reports_to) { if (!kids.has(u.reports_to)) kids.set(u.reports_to, []); kids.get(u.reports_to).push(u); }
   const stmts = [];
   for (const u of users) {
-    if (u.source !== "roster") continue;
+    // People added by hand are scoped by their own projects (none = everything); only roster managers add their span.
     const set = new Map(); const add = (p) => { const k = projKey(p.name); if (k && !set.has(k)) set.set(k, p.name); };
     jsonList(u.projects_json).forEach(add);
     if (u.roster_kind === "manager") { const seen = new Set([u.id]); const walk = (id) => (kids.get(id) || []).forEach((k) => { if (seen.has(k.id)) return; seen.add(k.id); if (k.active) jsonList(k.projects_json).forEach(add); walk(k.id); }); walk(u.id); }
@@ -3169,7 +3173,7 @@ export default {
         if (user) {
           user.scope = await scopeOf(env, user);
           // Matching a roster project to a client is how a client comes into scope, so that one call is exempt.
-          if (user.scope && payload.client_id && op !== "projects.map" && !user.scope.includes(String(payload.client_id))) throw outOfScope();
+          if (user.scope && user.role === "supervisor" && payload.client_id && op !== "projects.map" && !user.scope.includes(String(payload.client_id))) throw outOfScope();
           // Changing a client's data needs edit access; a view-only share is not enough.
           if (user.scope_view_only && user.scope_view_only.size && payload.client_id && EDIT_OPS.test(op) && user.scope_view_only.has(String(payload.client_id))) throw viewOnly();
         }

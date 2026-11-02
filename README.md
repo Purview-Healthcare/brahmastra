@@ -133,8 +133,11 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
 
 #### Crossover access (Shared with)
 
-Everyone sees only the clients of their own span: a biller or team lead their own
-projects, a manager every project under them, the VP everything. For crossovers,
+Everyone sees only the clients of their own span: a biller, SME or team lead their
+own projects, a manager every project under them, the VP and admins everything.
+An account added by hand follows its projects too; only one with no projects at
+all (the bootstrap account) still sees everything. Settings has a **What you can
+see** card that spells out exactly why an account sees what it sees. For crossovers,
 a team lead, manager or the VP can share one client with one person, on the client
 card (Clients & locations, "Shared with", also in the person's Team profile under
 "Extra client access"):
