@@ -137,6 +137,18 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
   inventory or allocation.
 
+#### Feedback
+
+Every page has a **Feedback** tab on the right edge. Anyone signed in (billers too) picks what it is
+(something is wrong, an idea, this helped me), writes a few words, and adds up to 4 pictures or PDFs:
+**Capture this screen** (the page as it is, the Sasha's Third Eye or SLA page in it included), a snippet
+pasted with Ctrl+V (Win+Shift+S first), or files attached or dropped in. Big pictures are made smaller.
+It is emailed, with the files attached, to **Shreya and Sweety** (the active people with those first names,
+team leads and up first, at the email on their Brahmastra account), and kept in their **Feedback inbox**
+(Manage › Feedback inbox, with a count of new ones), where they open the files and mark each one done.
+If an email does not go out, the feedback is still in the inbox and says so. Only an admin changes who gets
+it, from the inbox.
+
 #### Crossover access (Shared with)
 
 Everyone sees only the clients of their own span: a biller, SME or team lead their

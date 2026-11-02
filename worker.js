@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.40.0";
+const VERSION = "2.41.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -102,6 +102,10 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS availability (client_id TEXT NOT NULL, day TEXT NOT NULL, on_json TEXT NOT NULL DEFAULT '[]', by_user TEXT, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
   `CREATE TABLE IF NOT EXISTS client_access (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, user_id TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'view',
      granted_by TEXT, granted_by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, UNIQUE (client_id, user_id))`,
+  `CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', user_email TEXT NOT NULL DEFAULT '',
+     kind TEXT NOT NULL DEFAULT 'bug', message TEXT NOT NULL DEFAULT '', page TEXT NOT NULL DEFAULT '', context_json TEXT NOT NULL DEFAULT '{}', files_json TEXT NOT NULL DEFAULT '[]',
+     emailed_to TEXT NOT NULL DEFAULT '', email_error TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', done_by_name TEXT NOT NULL DEFAULT '', done_at INTEGER)`,
+  `CREATE TABLE IF NOT EXISTS feedback_files (id TEXT PRIMARY KEY, feedback_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT '', data TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS raci (client_id TEXT PRIMARY KEY, r_json TEXT NOT NULL DEFAULT '[]', a_json TEXT NOT NULL DEFAULT '[]', c_json TEXT NOT NULL DEFAULT '[]',
      i_json TEXT NOT NULL DEFAULT '[]', updated_at INTEGER, updated_by TEXT, updated_by_name TEXT NOT NULL DEFAULT '')`,
 ];
@@ -164,19 +168,20 @@ const ATTACH_PART_CHARS = 512 * 1024;
    webhook = POST {secret, to, subject, text, html} to EMAIL_WEBHOOK_URL (for a Google Apps Script web app like Gurukul's).
    In demo mode (no provider) the code is shown on screen instead. */
 function splitFrom(from) { const m = String(from || "").match(/^\s*(.*?)\s*<([^>]+)>\s*$/); return m ? { name: m[1].replace(/^"|"$/g, ""), email: m[2] } : { name: "Brahmastra", email: String(from || "").trim() }; }
-async function sendEmail(env, { to, subject, text, html }) {
+async function sendEmail(env, { to, subject, text, html, attachments }) {
+  const att = Array.isArray(attachments) ? attachments : [];
   const provider = String(env.EMAIL_PROVIDER || "").toLowerCase().trim();
   if (!provider) throw new ApiError(503, "Email is not set up on the server yet (EMAIL_PROVIDER). A team lead can give you a sign-in code from the Team screen instead.");
   const from = splitFrom(env.EMAIL_FROM || "Brahmastra <no-reply@purview-healthcare.com>");
   const fail = async (r, who) => { let t = ""; try { t = (await r.text()).slice(0, 300); } catch {} throw new ApiError(502, `${who} did not accept the email (${r.status}${t ? ": " + t : ""}).`); };
   if (provider === "resend") {
-    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ from: `${from.name} <${from.email}>`, to: [to], subject, text, html }) });
+    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ from: `${from.name} <${from.email}>`, to: [to], subject, text, html, ...(att.length ? { attachments: att.map((a) => ({ filename: a.name, content: a.b64 })) } : {}) }) });
     if (!r.ok) await fail(r, "Resend");
   } else if (provider === "brevo") {
-    const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ sender: { name: from.name, email: from.email }, to: [{ email: to }], subject, textContent: text, htmlContent: html }) });
+    const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ sender: { name: from.name, email: from.email }, to: [{ email: to }], subject, textContent: text, htmlContent: html, ...(att.length ? { attachment: att.map((a) => ({ name: a.name, content: a.b64 })) } : {}) }) });
     if (!r.ok) await fail(r, "Brevo");
   } else if (provider === "sendgrid") {
-    const r = await fetch("https://api.sendgrid.com/v3/mail/send", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ personalizations: [{ to: [{ email: to }] }], from: { email: from.email, name: from.name }, subject, content: [{ type: "text/plain", value: text }, { type: "text/html", value: html }] }) });
+    const r = await fetch("https://api.sendgrid.com/v3/mail/send", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ personalizations: [{ to: [{ email: to }] }], from: { email: from.email, name: from.name }, subject, content: [{ type: "text/plain", value: text }, { type: "text/html", value: html }], ...(att.length ? { attachments: att.map((a) => ({ content: a.b64, filename: a.name, type: a.type, disposition: "attachment" })) } : {}) }) });
     if (!r.ok) await fail(r, "SendGrid");
   } else if (provider === "graph") {
     const tr = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID || "")}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -185,10 +190,11 @@ async function sendEmail(env, { to, subject, text, html }) {
     const tok = (await tr.json()).access_token;
     const sender = env.MS_SENDER || from.email;
     const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, { method: "POST", headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
-      body: JSON.stringify({ message: { subject, body: { contentType: "HTML", content: html }, toRecipients: [{ emailAddress: { address: to } }] }, saveToSentItems: false }) });
+      body: JSON.stringify({ message: { subject, body: { contentType: "HTML", content: html }, toRecipients: [{ emailAddress: { address: to } }],
+        ...(att.length ? { attachments: att.map((a) => ({ "@odata.type": "#microsoft.graph.fileAttachment", name: a.name, contentType: a.type, contentBytes: a.b64 })) } : {}) }, saveToSentItems: false }) });
     if (!r.ok) await fail(r, "Microsoft Graph");
   } else if (provider === "webhook") {
-    const r = await fetch(env.EMAIL_WEBHOOK_URL || "", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret: env.EMAIL_API_KEY || "", to, subject, text, html }) });
+    const r = await fetch(env.EMAIL_WEBHOOK_URL || "", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret: env.EMAIL_API_KEY || "", to, subject, text, html, ...(att.length ? { attachments: att } : {}) }) });
     if (!r.ok) await fail(r, "The email webhook");
   } else throw new ApiError(503, "Unknown EMAIL_PROVIDER '" + provider + "'. Use resend, brevo, sendgrid, graph or webhook.");
 }
@@ -815,6 +821,30 @@ function domainOk(env, email) {
 const maskEmail = (e) => { const at = String(e || "").lastIndexOf("@"); return at > 0 ? e[0] + "•••@" + e.slice(at + 1) : ""; };
 const ADMIN_NAME = "Bob The Builder";
 const adminEmails = (env) => String(env.ADMIN_EMAILS || "").split(",").map(mailClean).filter(mailOk);
+/* ---- feedback ---- */
+const FEEDBACK_KINDS = { bug: "Something is wrong", idea: "I have an idea", praise: "This helped me" };
+const FEEDBACK_TYPES = /^(image\/(png|jpe?g|gif|webp)|application\/pdf)$/;
+/* Who gets feedback: the admin's pick, else the active Shreya and Sweety (team leads and up first). */
+async function feedbackRecipients(env) {
+  const users = await all(env, "SELECT id, name, email, role, email_missing FROM users WHERE active = 1 ORDER BY name");
+  const set = await getSetting(env, "feedback_to", null);
+  if (Array.isArray(set) && set.length) { const picked = users.filter((u) => set.includes(u.id)); if (picked.length) return picked; }
+  const first = (u) => String(u.name || "").trim().split(/\s+/)[0].toLowerCase();
+  const pick = (n) => { const m = users.filter((u) => first(u) === n); const lead = m.filter((u) => u.role !== "user"); return lead.length ? lead : m; };
+  return [...pick("shreya"), ...pick("sweety")];
+}
+async function isFeedbackReader(env, user) { return !!user && (user.is_admin || (await feedbackRecipients(env)).some((u) => u.id === user.id)); }
+async function feedbackReader(env, user) { if (!(await isFeedbackReader(env, user))) throw denied("The feedback inbox is for the people the feedback goes to."); }
+const htmlEsc = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function feedbackHtml({ kind, message, page, user, files, ctx, at }) {
+  const row = (k, v) => v ? `<tr><td style="padding:3px 12px 3px 0;color:#627079;white-space:nowrap">${k}</td><td style="padding:3px 0">${htmlEsc(v)}</td></tr>` : "";
+  return `<div style="font:14px/1.5 Segoe UI,Arial,sans-serif;color:#0F1B24;max-width:640px">
+<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0E8C74;font-weight:700">Brahmastra feedback</div>
+<h2 style="margin:4px 0 12px;font-size:20px">${htmlEsc(FEEDBACK_KINDS[kind] || kind)}</h2>
+<div style="white-space:pre-wrap;background:#F5F7F9;border:1px solid #DFE4EA;border-radius:8px;padding:12px 14px">${htmlEsc(message)}</div>
+<table style="margin-top:14px;font-size:13px;border-collapse:collapse">${row("From", (user.name || "") + " <" + (user.email || "") + ">")}${row("Page", page)}${row("When", new Date(at).toISOString().replace("T", " ").slice(0, 16) + " UTC")}${row("Version", ctx.version)}${row("Screen", ctx.screen)}${row("Browser", ctx.agent)}</table>
+<p style="font-size:13px;color:#3B4A55">${files.length ? files.length + " file" + (files.length > 1 ? "s" : "") + " attached: " + files.map((f) => htmlEsc(f.name)).join(", ") + "." : "No files attached."} It is also in the Feedback inbox in Brahmastra (Manage › Feedback).</p></div>`;
+}
 async function getSetting(env, key, fallback) { const r = await one(env, "SELECT value_json FROM settings WHERE key = ?", key); if (!r) return fallback; try { return JSON.parse(r.value_json); } catch { return fallback; } }
 const setSetting = (env, key, value) => run(env, "INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json", key, JSON.stringify(value));
 /* People who came from the roster sign in only with a Purview address, or one the admin has allowed by name (Extra sign-in emails). */
@@ -1463,6 +1493,82 @@ const OPS = {
     return { ok: true };
   },
 
+  /* ---- feedback: anyone signed in sends it (with a screenshot and snippets); it is emailed to the feedback people
+     (Shreya and Sweety unless the admin picks others) and kept in their Feedback inbox. ---- */
+  "feedback.recipients": async ({ env }) => ({ people: (await feedbackRecipients(env)).map((u) => ({ id: u.id, name: u.name })) }),
+  "feedback.send": async ({ env, user, payload }) => {
+    const message = str(payload.message, 4000).trim();
+    if (!commentOk(message)) throw bad("Write what happened or what you would like, a few words at least.");
+    const kind = FEEDBACK_KINDS[payload.kind] ? payload.kind : "bug";
+    const now = Date.now();
+    const today = await one(env, "SELECT COUNT(*) AS n FROM feedback WHERE user_id = ? AND at > ?", user.id, now - 86400000);
+    if (today && today.n >= 25) throw bad("That is a lot of feedback for one day. Please send the rest tomorrow.");
+    const files = (Array.isArray(payload.files) ? payload.files : []).slice(0, 4).map((f) => ({ name: str(f && f.name, 120).replace(/[\\/:*?"<>|]+/g, "-") || "file",
+      type: str(f && f.type, 80), b64: String((f && f.b64) || "").replace(/^data:[^,]*,/, "") }));
+    let total = 0;
+    for (const f of files) {
+      if (!FEEDBACK_TYPES.test(f.type)) throw bad("Attach pictures (PNG, JPG, GIF, WebP) or a PDF.");
+      if (!/^[A-Za-z0-9+/=]+$/.test(f.b64)) throw bad("One of the files could not be read. Attach it again.");
+      if (f.b64.length > 1500000) throw bad(f.name + " is too large. Keep each file under about 1 MB (a screenshot is usually well under).");
+      total += f.b64.length;
+    }
+    if (total > 3600000) throw bad("Together the files are too large. Remove one, or send a smaller screenshot.");
+    const id = uuid();
+    const page = str(payload.page, 200), ctx = { page, version: str(payload.version, 20), agent: str(payload.agent, 300), screen: str(payload.screen, 30), theme: str(payload.theme, 10) };
+    const meta = files.map((f) => ({ id: uuid(), name: f.name, type: f.type, size: Math.round(f.b64.length * 0.75) }));
+    const stmts = [env.DB.prepare("INSERT INTO feedback (id, at, user_id, user_name, user_email, kind, message, page, context_json, files_json) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .bind(id, now, user.id, user.name || "", user.email || "", kind, message, page, JSON.stringify(ctx), JSON.stringify(meta))];
+    files.forEach((f, i) => stmts.push(env.DB.prepare("INSERT INTO feedback_files (id, feedback_id, name, type, data) VALUES (?,?,?,?,?)").bind(meta[i].id, id, f.name, f.type, f.b64)));
+    await env.DB.batch(stmts);
+    // Email the feedback people. A failed email never loses the feedback: it stays in their inbox.
+    const to = (await feedbackRecipients(env)).filter((u) => u.email && !u.email_missing && mailOk(u.email));
+    const sent = [], errors = [];
+    if (env.EMAIL_PROVIDER && to.length) {
+      const subject = "Brahmastra feedback · " + FEEDBACK_KINDS[kind] + " · from " + (user.name || user.email);
+      const text = FEEDBACK_KINDS[kind] + " from " + (user.name || "") + " <" + (user.email || "") + ">\nPage: " + (page || "-") + "\n\n" + message + "\n\n" + (files.length ? files.length + " file(s) attached." : "No files.");
+      const html = feedbackHtml({ kind, message, page, user, files: meta, ctx, at: now });
+      for (const u of to) {
+        try { await sendEmail(env, { to: u.email, subject, text, html, attachments: files }); sent.push(u.name); }
+        catch (e) { errors.push(u.name + ": " + String((e && e.message) || e).slice(0, 160)); }
+      }
+    }
+    await run(env, "UPDATE feedback SET emailed_to = ?, email_error = ? WHERE id = ?", sent.join(", "), (!env.EMAIL_PROVIDER ? "Email is not set up on the server." : !to.length ? "Nobody to send it to." : errors.join("; ")).slice(0, 600), id);
+    return { ok: true, id, emailed: sent, saved: true, email_error: errors.length ? errors.join("; ") : !env.EMAIL_PROVIDER ? "email not set up" : "" };
+  },
+  "feedback.list": async ({ env, user, payload }) => {
+    await feedbackReader(env, user);
+    const show = payload.show === "done" ? "done" : payload.show === "all" ? "all" : "new";
+    const rows = await all(env, `SELECT * FROM feedback${show === "all" ? "" : " WHERE status = ?"} ORDER BY at DESC LIMIT 200`, ...(show === "all" ? [] : [show]));
+    const counts = await one(env, "SELECT SUM(status = 'new') AS n_new, SUM(status = 'done') AS n_done FROM feedback");
+    return { rows: rows.map((r) => ({ id: r.id, at: r.at, user_name: r.user_name, user_email: r.user_email, kind: r.kind, kind_label: FEEDBACK_KINDS[r.kind] || r.kind, message: r.message, page: r.page,
+      context: jsonObj(r.context_json), files: jsonList(r.files_json), emailed_to: r.emailed_to, email_error: r.email_error, status: r.status, done_by_name: r.done_by_name, done_at: r.done_at })),
+      counts: { new: (counts && counts.n_new) || 0, done: (counts && counts.n_done) || 0 }, recipients: (await feedbackRecipients(env)).map((u) => ({ id: u.id, name: u.name })) };
+  },
+  "feedback.file": async ({ env, user, payload }) => {
+    await feedbackReader(env, user);
+    const f = await one(env, "SELECT name, type, data FROM feedback_files WHERE id = ?", str(payload.id, 60));
+    if (!f) throw bad("That file is no longer there.");
+    return { name: f.name, type: f.type, b64: f.data };
+  },
+  "feedback.setStatus": async ({ env, user, payload }) => {
+    await feedbackReader(env, user);
+    const done = payload.status === "done";
+    await run(env, "UPDATE feedback SET status = ?, done_by_name = ?, done_at = ? WHERE id = ?", done ? "done" : "new", done ? user.name || "" : "", done ? Date.now() : null, str(payload.id, 60));
+    return { ok: true };
+  },
+  "feedback.count": async ({ env, user }) => {
+    if (!(await isFeedbackReader(env, user))) return { n: 0, reader: false };
+    const r = await one(env, "SELECT COUNT(*) AS n FROM feedback WHERE status = 'new'");
+    return { n: (r && r.n) || 0, reader: true };
+  },
+  "feedback.setRecipients": async ({ env, user, payload }) => {
+    if (!user.is_admin) throw denied("Only an admin can change who gets the feedback.");
+    const ids = [...new Set((Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 6);
+    const ok = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
+    await setSetting(env, "feedback_to", ids.filter((x) => ok.includes(x)));
+    return { people: (await feedbackRecipients(env)).map((u) => ({ id: u.id, name: u.name })) };
+  },
+
   /* ---- RACI tracker: who is Responsible, Accountable, Consulted and Informed on each client.
      Everyone from SME up can read it; team leads and up edit it; the VP is always informed. ---- */
   "raci.list": async ({ env, user, payload }) => {
@@ -1621,7 +1727,7 @@ const OPS = {
   "settings.save": async ({ env, user, payload }) => {
     const s = { ...(payload.settings || {}) };
     // Sign-in and roster settings belong to the admin (Roster screen).
-    for (const k of ["extra_emails", "roster_meta"]) delete s[k];
+    for (const k of ["extra_emails", "roster_meta", "feedback_to"]) delete s[k];
     const stmts = Object.keys(s).slice(0, 50).map((k) => env.DB.prepare("INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json").bind(str(k, 60), JSON.stringify(s[k])));
     if (stmts.length) await batchAll(env, stmts);
     return OPS["settings.get"]({ env });
