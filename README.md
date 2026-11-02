@@ -127,7 +127,7 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).
 - The top bar stays one row: SLA (the Drishti scorecard, first so it is one
-  click away all day), Dashboard, Needs attention and My day & reports sit in
+  click away all day), Sasha's Third Eye, Dashboard, Needs attention and My day & reports sit in
   front, the rest is grouped under **Work** (Posting & submission, Inventory &
   allocation, Claims, SAAG reference) and **Manage** (Team, Clients & locations,
   RACI tracker, TFL / AFL, and Roster for admins). The attention and hand-off
@@ -361,7 +361,10 @@ logo, header and menu, takes the Brahmastra theme (Light, Navy, Gold) and lines 
 and **Brahmastra draws their tabs in its own tab row** (Drishti: Overview, Clients, Formulas...; Third Eye:
 Production, Agent Quality...). A click there opens that tab inside the app (a `brahmastra:hello` /
 `embed:tabs` / `brahmastra:go` message handshake). Opened on their own addresses, both apps look and work
-exactly as before. The SLA scorecard has its own **SLA** tab, first in the bar.
+exactly as before. Both have their own tabs, first in the bar: **SLA** (the Drishti scorecard) and
+**Sasha's Third Eye** (a switch between Quality & production and Client reports; Posting and Submission
+leads get Quality only, for their own work). My day & reports holds the team's work: team allocations,
+every entry and your own desk.
 
 Team leads and above get a side menu in **My day & reports**, grouped by who the report is for:
 
