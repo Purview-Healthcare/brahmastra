@@ -366,6 +366,18 @@ exactly as before. Both have their own tabs, first in the bar: **SLA** (the Dris
 leads get Quality only, for their own work). My day & reports holds the team's work: team allocations,
 every entry and your own desk.
 
+**Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:
+- *Internal reports*: Brahmastra's production (and the roster) loads into the Production Sheet box when the page
+  opens and whenever the work, client or dates change.
+- *Client reports*: once a client is picked (or when someone has only one), its AR inventory, AR production,
+  Submission and Payment posting fill their boxes.
+- *SLA*: when a client's upload page is open in the scorecard, today's AR Inventory for the Brahmastra client
+  of the same name is added to it, and the scorecard shows it in its "Check these before they are applied" list,
+  so nothing is calculated until someone presses apply.
+
+Each page says what was filled and from where. To use different figures, choose another file in the same box;
+it takes the place of Brahmastra's.
+
 Team leads and above get a side menu in **My day & reports**, grouped by who the report is for:
 
 | Group | Page | What it is |
