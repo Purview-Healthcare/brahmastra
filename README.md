@@ -142,8 +142,8 @@ there the claim is **In process** for AR (own dashboard card, off the biller's l
 Each hand-off has 24 working hours (a TAT tag and bar; red once past). The department
 can mark it **Complete** (with proof), **Need assistance** (back to the biller and the
 team lead's Needs attention), **Back to AR** (back to the biller with the reason) or
-**Need client assistance** (stays In process, the clock pauses until **Client
-answered**). Every choice takes a comment, required except on Complete and Client
+**Need client assistance** (stays In process under Waiting on client; the 24-hour
+clock keeps running, and **Client answered** puts it back in the open list). Every choice takes a comment, required except on Complete and Client
 answered. Posting complete closes the claim as Payment posted. Submission complete
 sends it back to the biller with a 15-day follow-up and always opens a **recheck 48
 working hours later** (to the follow-up person on the client, or whoever submitted):
