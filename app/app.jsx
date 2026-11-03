@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.60.0";
+const APP_VERSION = "2.61.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -2228,14 +2228,13 @@ function PinFolderModal({ me, current, onClose, onSaved }) {
 
 /* ---------- automatic allocation: every open claim of a client / location goes to the billers mapped to it ---------- */
 async function autoAllocate({ ctx, client, loc }) {
-  const teamIds = loc && loc.team && loc.team.length ? loc.team : (client.team || []);
-  // Today's team for the project: people unticked today are left out; a number set for someone caps what they get.
-  let dt = null; try { dt = await rpc("team.today", { client_id: client.id, day: todayISO() }); } catch (e) {}
-  const offToday = new Set(dt ? dt.members.filter((m) => !m.on).map((m) => m.id) : []);
-  const capOf = dt ? Object.fromEntries(Object.entries(dt.caps || {}).map(([id, n]) => [id, Number(n) || 0])) : {};
-  // When today's team was saved (pop-up or Allocate), exactly the people ticked get claims; otherwise the mapped billers.
-  const users = dt && dt.on_ids ? ctx.users.filter((u) => u.active && dt.on_ids.includes(u.id)) : ctx.users.filter((u) => u.active && teamIds.includes(u.id) && !offToday.has(u.id));
-  if (!users.length) return { applied: 0, perUser: [], reason: offToday.size ? "nobody on today's team" : "no billers mapped" };
+  // The client's people (the location's own team when it has one), minus anyone out today, each up to their daily target.
+  let dt = null; try { dt = await rpc("team.today", { client_id: client.id, location_id: loc ? loc.id : undefined, day: todayISO() }); } catch (e) {}
+  const members = dt ? dt.members : [];
+  const users = members.filter((m) => !m.out);
+  const capOf = Object.fromEntries(members.map((m) => [m.id, Number(m.cap) || 35]));
+  const offToday = new Set(members.filter((m) => m.out).map((m) => m.id));
+  if (!users.length) return { applied: 0, perUser: [], reason: offToday.size ? "everyone on the client is out today" : "no people on the client yet" };
   const today = todayISO();
   const el = await rpc("claims.eligible", { client_id: client.id, location_id: loc ? loc.id : undefined });
   const pool = rescore(el.claims.filter((c) => (loc ? c.location_id === loc.id : !c.location_id)), today);
@@ -2250,45 +2249,6 @@ async function autoAllocate({ ctx, client, loc }) {
 
 /* ---------- the day's team for a project: who receives claims today, and how many ---------- */
 const STATUS_TONE = { working: "green", ojt: "blue", training: "blue", sabbatical: "amber", "serving notice": "red" };
-function TodayTeamModal({ clientId, onClose, onSaved, left = 0 }) {
-  const q = useRpc("team.today", { client_id: clientId, day: todayISO() }, [clientId]);
-  const [rows, setRows] = useState(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (q.data) setRows(q.data.members.map((m) => ({ ...m }))); }, [q.data]);
-  const set = (id, patch) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  const save = async () => {
-    setBusy(true);
-    try {
-      await rpc("team.saveToday", { client_id: clientId, day: todayISO(), on: rows.filter((r) => r.on).map((r) => r.id), caps: Object.fromEntries(rows.map((r) => [r.id, Math.max(0, Math.round(Number(r.cap) || 0))])) });
-      toast("Today's team saved for " + q.data.client.name + ".");
-      onSaved && onSaved();
-    } catch (e) { toast(e.message, "err"); }
-    setBusy(false);
-  };
-  const on = rows ? rows.filter((r) => r.on) : [];
-  return (
-    <Modal title={q.data ? `Who works ${q.data.client.name} today?` : "Today's team"} sub={"Everyone is ticked. Untick anyone on leave or busy elsewhere, and set how many claims each person should receive on this project."} onClose={onClose} wide
-      footer={<><span className="small muted" style={{ marginRight: "auto" }}>{rows ? `${on.length} of ${rows.length} people · ${fmtInt(sum(on, (r) => Number(r.cap) || 0))} claims` : ""}{left > 0 ? ` · ${left} more project${left > 1 ? "s" : ""} after this` : ""}</span><button className="btn" onClick={onClose} disabled={busy}>Later</button><button className="btn primary" onClick={save} disabled={busy || !rows}>{busy ? "Saving…" : "Save for today"}</button></>}>
-      <ErrorBox error={q.error} />
-      {!rows && !q.error && <Spinner />}
-      {q.data && q.data.saved && <div className="alert info mb">Already set today by {q.data.saved.by_name || "a team lead"} at {fmtWhen(q.data.saved.at)}. Changes replace it.</div>}
-      {rows && !rows.length && <Empty>Nobody is mapped to this project yet. Add billers on Locations, or load the roster.</Empty>}
-      {rows && rows.length > 0 && (
-        <div className="table-wrap" style={{ maxHeight: 440 }}><table className="t"><thead><tr><th><input type="checkbox" checked={on.length === rows.length} onChange={(e) => setRows(rows.map((r) => ({ ...r, on: e.target.checked })))} /></th><th>Name</th><th>Status</th><th>On this project</th><th className="r">Claims today</th></tr></thead>
-          <tbody>{rows.map((r) => { const st = String(r.status || "").toLowerCase(); return (
-            <tr key={r.id} style={r.on ? undefined : { opacity: 0.55 }}>
-              <td><input type="checkbox" checked={r.on} onChange={(e) => set(r.id, { on: e.target.checked })} /></td>
-              <td><b>{r.name}</b><div className="tiny muted">{r.designation}</div></td>
-              <td>{r.status ? <span className={"badge " + (STATUS_TONE[st] || "gray")}>{r.status}</span> : <span className="muted">–</span>}{r.exit_date ? <div className="tiny muted">leaving {fmtDate(r.exit_date)}</div> : null}</td>
-              <td className="small">{r.primary ? "main project" : r.share != null ? `${r.share}% (roster)` : "added by hand"}</td>
-              <td className="r"><input className="input sm" type="number" min={0} max={500} style={{ width: 80, textAlign: "right" }} value={r.cap} onChange={(e) => set(r.id, { cap: e.target.value })} /></td>
-            </tr>); })}</tbody></table></div>
-      )}
-      <div className="tiny muted mt8">The numbers are kept for this project until someone changes them. Automatic allocation and the Allocate screen use today's ticks and numbers.</div>
-    </Modal>
-  );
-}
-/* ---------- roster projects that are not yet a Brahmastra client: a team lead confirms which client each one is ---------- */
 function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
   const guess = (n) => { const k = String(n).toLowerCase().replace(/[^a-z0-9]/g, ""); const hit = clients.filter((c) => { const a = c.name.toLowerCase().replace(/[^a-z0-9]/g, ""), b = String(c.code || "").toLowerCase().replace(/[^a-z0-9]/g, ""); return a.includes(k) || k.includes(a) || (b && (b === k || a.startsWith(k))); }); return hit.length === 1 ? hit[0].id : ""; };
   const [pick, setPick] = useState(() => Object.fromEntries(names.map((n) => [n, guess(n)])));
@@ -2422,7 +2382,6 @@ function LocationsView({ ctx, reload, go, embedded }) {
     catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
-  const [todayFor, setTodayFor] = useState(null);
   const allocateNow = async (r) => {
     setBusy(r.key);
     try {
@@ -2445,12 +2404,11 @@ function LocationsView({ ctx, reload, go, embedded }) {
                 <td>{r.loc ? <b>{r.loc.name}</b> : <span className="tiny muted">client level · used when a location has no billers of its own</span>}</td>
                 <td><div className="pill-list">{people.map((u) => <button key={u.id} className={"chip " + (g.team.includes(u.id) ? "on" : "")} onClick={() => toggle(r, u.id)} title={u.role === "supervisor" ? "team lead" : "biller"}>{u.name}{u.role === "supervisor" ? " (TL)" : ""}</button>)}{!people.length && <span className="muted small">No active people yet.</span>}</div></td>
                 <td><label className="check small"><input type="checkbox" checked={g.auto} onChange={(e) => setAuto(r, e.target.checked)} /> yes</label></td>
-                <td className="r" style={{ whiteSpace: "nowrap" }}>{dirty(r) && <button className="btn sm primary" disabled={busy === r.key} onClick={() => save(r)}>Save</button>} {!r.loc && g.team.length > 0 && <button className="btn sm" disabled={dirty(r)} title="Who works this project today, and how many claims each" onClick={() => setTodayFor(r.client.id)}>Today's team</button>} <button className="btn sm" disabled={busy === r.key || !g.team.length || dirty(r)} title={dirty(r) ? "Save first" : "Hand every open claim here to these billers now"} onClick={() => allocateNow(r)}>Allocate open claims now</button></td>
+                <td className="r" style={{ whiteSpace: "nowrap" }}>{dirty(r) && <button className="btn sm primary" disabled={busy === r.key} onClick={() => save(r)}>Save</button>} <button className="btn sm" disabled={busy === r.key || !g.team.length || dirty(r)} title={dirty(r) ? "Save first" : "Hand every open claim here to these billers now"} onClick={() => allocateNow(r)}>Allocate open claims now</button></td>
               </tr>); })}</tbody></table></div>
         </div>
       )}
       <div className="small muted">Tip: a location without billers falls back to the client-level billers. Claims already on someone's desk are never moved by automatic allocation. Billers from the roster are added to their projects automatically; Today's team sets who works a project today.</div>
-      {todayFor && <TodayTeamModal clientId={todayFor} onClose={() => setTodayFor(null)} onSaved={() => setTodayFor(null)} />}
     </div>
   );
 }
@@ -4222,21 +4180,12 @@ function AllocateView({ ctx, params, go, embedded }) {
   const [pool, setPool] = useState(null);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({ kinds: { fresh: true, worked: true }, followUps: true, tiers: { High: true, Medium: true, Low: true }, classes: Object.fromEntries(STATUS_ORDER.map((k) => [k, true])), payers: {}, minBalance: 0 });
-  const [team, setTeam] = useState({});
-  const [teamSaved, setTeamSaved] = useState(null);
-  const [teamDirty, setTeamDirty] = useState(false);
-  const [teamBusy, setTeamBusy] = useState(false);
-  const [teamFind, setTeamFind] = useState("");
-  const editTeam = (t) => { setTeam(t); setTeamDirty(true); };
   const [strategy, setStrategy] = useState("smart");
   const [plan, setPlan] = useState(null);
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState(null);
   const stats = useRpc("claims.stats", { client_id: clientId || undefined, location_id: locId || undefined }, [clientId, locId], !!clientId);
   const today = todayISO();
-  useEffect(() => { // default team: every active team member with their own capacity
-    const t = {}; ctx.users.filter((u) => u.active).forEach((u) => { t[u.id] = { on: u.role === "user", capacity: u.capacity || 35 }; }); setTeam(t);
-  }, [ctx.users]);
   const loadPool = async () => {
     if (!clientId) return;
     setLoading(true); setPlan(null);
@@ -4245,35 +4194,16 @@ function AllocateView({ ctx, params, go, embedded }) {
     setLoading(false);
   };
   useEffect(() => { setPool(null); setPlan(null); setApplied(null); if (clientId) loadPool(); }, [clientId, locId]);
-  // Ticks = who works this client today. They come from what was saved for today (here or in the daily team pop-up),
-  // otherwise from the project team; Save keeps them, and automatic allocation after an upload uses them too.
+  // Who gets the claims: the client's people (the location's own team when it has one), minus anyone out today in
+  // Team today, each up to their daily target. People are changed on the client card.
+  const [members, setMembers] = useState(null);
   useEffect(() => {
-    if (!clientId) return;
+    if (!clientId) { setMembers(null); return undefined; }
     let alive = true;
-    setTeamDirty(false); setTeamSaved(null);
-    rpc("team.today", { client_id: clientId, day: todayISO() }).then((dt) => {
-      if (!alive) return;
-      setTeamSaved(dt.saved);
-      const caps = dt.caps || {};
-      if (!dt.on_ids && !dt.members.length) return;
-      const t = {}; ctx.users.filter((u) => u.active).forEach((u) => {
-        const m = dt.members.find((x) => x.id === u.id);
-        const on = dt.on_ids ? dt.on_ids.includes(u.id) : !!(m && m.on);
-        t[u.id] = { on, capacity: caps[u.id] != null ? caps[u.id] : m ? m.cap : u.capacity || 35 };
-      });
-      setTeam(t);
-    }).catch(() => {});
+    setMembers(null);
+    rpc("team.today", { client_id: clientId, location_id: locId || undefined, day: todayISO() }).then((dt) => { if (alive) setMembers(dt.members); }).catch(() => alive && setMembers([]));
     return () => { alive = false; };
-  }, [clientId, ctx.users]);
-  const saveTeam = async () => {
-    setTeamBusy(true);
-    try {
-      const act = ctx.users.filter((u) => u.active);
-      await rpc("team.saveToday", { client_id: clientId, day: todayISO(), on: act.filter((u) => team[u.id] && team[u.id].on).map((u) => u.id), caps: Object.fromEntries(act.filter((u) => team[u.id] && team[u.id].on).map((u) => [u.id, Math.max(0, Math.round(Number(team[u.id].capacity) || 0))])) });
-      setTeamDirty(false); setTeamSaved({ at: Date.now(), by_name: "you" }); toast("Saved: who works this client today.");
-    } catch (e) { toast(e.message, "err"); }
-    setTeamBusy(false);
-  };
+  }, [clientId, locId]);
   const payersAll = useMemo(() => { if (!pool) return []; const m = {}; pool.forEach((c) => { const k = c.payer || "Unknown"; m[k] = m[k] || { payer: k, n: 0, amt: 0 }; m[k].n++; m[k].amt += c.balance; }); return Object.values(m).sort((a, b) => b.amt - a.amt); }, [pool]);
   const filtered = useMemo(() => {
     if (!pool) return [];
@@ -4287,7 +4217,7 @@ function AllocateView({ ctx, params, go, embedded }) {
       return true;
     });
   }, [pool, filters]);
-  const teamUsers = ctx.users.filter((u) => u.active && team[u.id] && team[u.id].on).map((u) => ({ id: u.id, name: u.name, capacity: Math.max(0, Math.round(Number(team[u.id].capacity) || 0)) }));
+  const teamUsers = (members || []).filter((m) => !m.out).map((m) => ({ id: m.id, name: m.name, capacity: Math.max(0, Math.round(Number(m.cap) || 35)) }));
   const preview = () => { setPlan(planAllocation({ claims: filtered, users: teamUsers, strategy })); setApplied(null); };
   const apply = async () => {
     if (!plan || !plan.assignments.length) return;
@@ -4329,19 +4259,12 @@ function AllocateView({ ctx, params, go, embedded }) {
               <div className="alert info"><b>{fmtInt(sel.length)} claims · {fmtMoney(sum(sel, (c) => c.balance))}</b> selected to go out · High {fmtInt(sel.filter((c) => c.tier === "High").length)} · near filing limit (75–90d) {fmtInt(sel.filter((c) => c.age_days >= 75 && c.age_days <= 90).length)} · rejected/denied {fmtInt(sel.filter((c) => c.status_class === "rejected" || c.status_class === "denied").length)}</div>
             </div>
             <div className="card stack">
-              <div className="row between"><h3>2 · Who works it</h3>{clientId && go && <button className="btn sm" onClick={() => go("clients", { client_id: clientId, focus: "people" })} title="Opens this client's card, where its people are added">+ Add more people to this client</button>}</div>
-              <div className="tiny muted" style={{ marginTop: -6 }}>Tick who works this client <b>today</b> (not who worked the claims before), then Save. Saved ticks stay when you come back, and automatic allocation after an upload uses them too.</div>
-              <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                <input className="input sm" style={{ width: 170 }} placeholder="Find a person…" value={teamFind} onChange={(e) => setTeamFind(e.target.value)} />
-                <button className="btn sm" onClick={() => { const t = { ...team }; ctx.users.filter((u) => u.active && (!teamFind || u.name.toLowerCase().includes(teamFind.toLowerCase()))).forEach((u) => { t[u.id] = { ...(t[u.id] || { capacity: u.capacity || 35 }), on: true }; }); editTeam(t); }}>Select all{teamFind ? " shown" : ""}</button>
-                <button className="btn sm" onClick={() => { const t = { ...team }; ctx.users.filter((u) => u.active && (!teamFind || u.name.toLowerCase().includes(teamFind.toLowerCase()))).forEach((u) => { t[u.id] = { ...(t[u.id] || { capacity: u.capacity || 35 }), on: false }; }); editTeam(t); }}>Clear all{teamFind ? " shown" : ""}</button>
-                <span style={{ flex: 1 }} />
-                <button className="btn sm primary" disabled={teamBusy || !clientId} onClick={saveTeam}>{teamBusy ? "Saving…" : "Save"}</button>
-              </div>
-              <div className="tiny" style={{ color: teamDirty ? "#854F0B" : undefined }}>{teamDirty ? "Changes not saved yet: click Save so they stay." : teamSaved ? <span className="muted">Saved for today{teamSaved.by_name ? " by " + teamSaved.by_name : ""} · {fmtWhen(teamSaved.at)}</span> : <span className="muted">Not saved for today yet: these are the project's usual team.</span>}</div>
-              <div className="table-wrap" style={{ maxHeight: 420, overflowY: "auto" }}><table className="t"><thead><tr><th></th><th>Team member</th><th className="r">Claims today</th></tr></thead>
-                <tbody>{ctx.users.filter((u) => u.active && (!teamFind || u.name.toLowerCase().includes(teamFind.toLowerCase()))).map((u) => <tr key={u.id}><td><input type="checkbox" checked={!!(team[u.id] && team[u.id].on)} onChange={(e) => editTeam({ ...team, [u.id]: { ...(team[u.id] || { capacity: u.capacity || 35 }), on: e.target.checked } })} /></td><td>{u.name}{u.role === "supervisor" && <span className="tiny muted"> (supervisor)</span>}</td><td className="r"><input className="input sm" type="number" min={0} style={{ width: 80, textAlign: "right" }} value={team[u.id] ? team[u.id].capacity : u.capacity} onChange={(e) => editTeam({ ...team, [u.id]: { ...(team[u.id] || { on: true }), capacity: e.target.value } })} /></td></tr>)}</tbody></table></div>
-              <div className="small muted">Capacity today: <b>{fmtInt(capTotal)}</b> claims across {teamUsers.length} people (the Revenue Doctor plans on 35 claims per biller per day).</div>
+              <div className="row between"><h3>2 · Who works it</h3>{clientId && go && <button className="btn sm" onClick={() => go("clients", { client_id: clientId, focus: "people" })} title="Opens this client's card, where its people are added or taken off">Change people on the client card</button>}</div>
+              {!members ? <Spinner label="Loading the client's people…" /> : !members.length ? <div className="alert warn" style={{ fontSize: 13 }}>Nobody is on this client yet. Add its people on the client card, then come back.</div> : <>
+                <div className="small">Goes to the people on <b>{(ctx.clients.find((c) => c.id === clientId) || {}).name}</b>, each up to their daily target:</div>
+                <div className="pill-list">{members.map((m) => <span key={m.id} className={"badge " + (m.out ? "gray" : "teal")} title={m.out ? "Marked out today in Team today" : "Daily target"} style={m.out ? { opacity: .7 } : null}>{m.name} {m.out ? <span className="red-ink">out today</span> : <b>{m.cap}</b>}</span>)}</div>
+              </>}
+              <div className="small muted">Capacity today: <b>{fmtInt(capTotal)}</b> claims across {teamUsers.length} {teamUsers.length === 1 ? "person" : "people"}. Someone off today? Mark them in <b>Work › Team today › Out today</b>; they are skipped here and in automatic allocation after an upload.</div>
               <h3>3 · How to split it</h3>
               <div className="stack" style={{ gap: 6 }}>{STRATEGIES.map((s) => <label key={s.key} className="check" style={{ alignItems: "flex-start" }}><input type="radio" name="strategy" checked={strategy === s.key} onChange={() => setStrategy(s.key)} style={{ marginTop: 3 }} /><span><b>{s.label}</b><div className="tiny muted">{s.desc}</div></span></label>)}</div>
               <button className="btn primary" disabled={!sel.length || !teamUsers.length} onClick={preview}>Preview allocation</button>
@@ -5967,17 +5890,12 @@ function App() {
   useEffect(() => { if (me && me.prefs && Object.keys(me.prefs).length) storePrefs({ ...readPrefs(), ...me.prefs }); }, [me && me.id, me && JSON.stringify(me.prefs || {})]);
   /* After sign-in, a team lead first matches any roster project that is not yet a client, then (TLs and SMEs) sets who works each project today. */
   const [mapAsk, setMapAsk] = useState(null);
-  const [teamAsk, setTeamAsk] = useState([]);
-  const askedKey = "brahmastra.dayteam." + todayISO();
   const checkPending = useCallback(async () => {
     if (!me || me.role !== "supervisor") return;
     try {
       const um = await rpc("projects.unmapped");
       if (um.names.length) { setMapAsk(um); return; }
-      let later = false; try { later = sessionStorage.getItem(askedKey) === "later"; } catch (e) {}
-      if (later) return;
-      const tp = await rpc("team.pending", { day: todayISO() });
-      setTeamAsk(tp.clients || []);
+
     } catch (e) {}
   }, [me && me.id, me && me.role]);
   useEffect(() => { if (ctx.loaded) checkPending(); }, [ctx.loaded, checkPending]);
@@ -6044,8 +5962,6 @@ function App() {
         <React.Fragment key={view + JSON.stringify(nav.params || {})}>{body}</React.Fragment>
       </Shell>
       {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
-      {!mapAsk && teamAsk.length > 0 && <TodayTeamModal key={teamAsk[0].id} clientId={teamAsk[0].id} left={teamAsk.length - 1}
-        onClose={() => { try { sessionStorage.setItem(askedKey, "later"); } catch (e) {} setTeamAsk([]); }} onSaved={() => setTeamAsk((q) => q.slice(1))} />}
       {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
       {palClaim && <ClaimDrawer id={palClaim} ctx={ctx} me={me} onClose={() => setPalClaim(null)} onChanged={() => {}} />}
       {palCoach && <CoachDrawer userId={palCoach} onClose={() => setPalCoach(null)} />}

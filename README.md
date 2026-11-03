@@ -344,9 +344,9 @@ resubmitted rejections carry a rejection code.
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once). Active AR agents on a project become
   that client's billers.
-- After sign-in, a TL or SME is asked who works each of their projects today and
-  how many claims each person should get. Automatic allocation and the Allocate
-  screen use those ticks and numbers.
+- Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
+  when it has one), each up to their daily target, minus anyone marked **Out today** in Team today. Automatic
+  allocation after an upload and the Allocate screen both use that; there is no daily ticking.
 - Roster people sign in only with a Purview email, or an address the admin
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in
   Shastra, or past their exit date, are switched off and their open claims go back
@@ -636,9 +636,9 @@ biller's day list is sorted by it.
 
 Pick a client (and optionally a location). The pool is every unassigned claim
 plus every worked claim whose follow-up date has arrived. Filter it (fresh or
-worked, tiers, status, payers, minimum balance), pick the people and how many
-claims each takes today (default 35, the Revenue Doctor's planning figure),
-choose a strategy, preview, assign.
+worked, tiers, status, payers, minimum balance); the claims go to the client's people, each up to their daily
+target, skipping anyone marked out today (**Change people on the client card** to add or remove someone); choose a
+strategy, preview, assign.
 
 - **Smart batching**: every claim of a patient stays with one person, the rest
   are grouped by payer, all in priority order.

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.52.0";
+const VERSION = "2.53.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -4177,11 +4177,14 @@ const OPS = {
   },
 
   /* ---- the day's team for a project: who receives claims today, and how many each ---- */
+  /* Who gets this client's (or location's) claims today: its people (the location's own team when it has one), each up
+     to their daily target, minus anyone marked out today in Team today. */
   "team.today": async ({ env, payload }) => {
     const c = await one(env, "SELECT id, name, team_json, caps_json, roster_names_json FROM clients WHERE id = ?", payload.client_id);
     if (!c) throw bad("Unknown client.");
     const day = isoDate(payload.day) || isoToday();
-    const ids = parseTeam(c.team_json);
+    const loc = payload.location_id ? await one(env, "SELECT team_json FROM locations WHERE id = ? AND client_id = ?", str(payload.location_id, 60), c.id) : null;
+    const ids = loc && parseTeam(loc.team_json).length ? parseTeam(loc.team_json) : parseTeam(c.team_json);
     const users = ids.length ? await all(env, `SELECT * FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")}) ORDER BY name`, ...ids) : [];
     const caps = jsonObj(c.caps_json);
     const saved = await one(env, "SELECT a.on_json, a.at, u.name AS by_name FROM availability a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? AND a.day = ?", c.id, day);
@@ -4191,6 +4194,8 @@ const OPS = {
       return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
         cap: caps[u.id] != null ? caps[u.id] : u.capacity, cap_set: caps[u.id] != null, on: on ? on.includes(u.id) : true }; });
     // on_ids: everyone ticked for the day (Allocate can tick people outside the project team too); caps: numbers set per person.
+    const out = new Set(ids.length ? (await all(env, `SELECT user_id FROM attendance WHERE day = ? AND status = 'out' AND user_id IN (${ids.map(() => "?").join(",")})`, day, ...ids)).map((r) => r.user_id) : []);
+    members.forEach((m) => { m.out = out.has(m.id); m.cap = m.cap || 35; });
     return { client: { id: c.id, name: c.name }, day, members, on_ids: on, caps, saved: saved ? { at: saved.at, by_name: saved.by_name || "" } : null };
   },
   "team.saveToday": async ({ env, user, payload }) => {

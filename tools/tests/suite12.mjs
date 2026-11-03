@@ -226,6 +226,16 @@ ok("a team lead can still send a test email", r.ok || !/admin/.test(r.e || ""), 
 r = await T(async () => A("users.save", { first_name: "Hand", last_name: "Added", email: "hand.added@purview-healthcare.com", designation: "Biller", role: "user", capacity: 30, active: true }));
 ok("the admin still can (exceptions)", r.ok, r);
 
+S("Who works it: the client's people, minus out today");
+await TI("clients.saveTeam", { client_id: sun.id, team: [arun.id, cara.id] });
+await TI("team.setOut", { user_id: cara.id, out: true, reason: "Leave" });
+let tt = await TI("team.today", { client_id: sun.id, day: today });
+ok("the client's people are listed with their daily target", tt.members.length === 2 && tt.members.every((m) => m.cap > 0), tt.members);
+ok("someone out today is flagged and skipped", tt.members.find((m) => m.id === cara.id).out === true && tt.members.find((m) => m.id === arun.id).out === false);
+await TI("team.setOut", { user_id: cara.id, out: false });
+tt = await TI("team.today", { client_id: sun.id, day: today });
+ok("back in, back on the list", !tt.members.find((m) => m.id === cara.id).out);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
