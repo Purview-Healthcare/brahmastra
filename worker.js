@@ -1604,7 +1604,6 @@ const OPS = {
     roster: !!(await getSetting(env, "roster_meta", null)) }),
   /* Team lead: send a test message through the configured provider to prove the email setup works. */
   "email.test": async ({ env, user, payload }) => {
-    if (!user.is_admin) throw denied("Only the admin sends test emails.");
     const to = mailClean(payload.to || user.email);
     if (!mailOk(to)) throw bad("Enter a valid email address.");
     const provider = String(env.EMAIL_PROVIDER || "").toLowerCase();

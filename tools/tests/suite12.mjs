@@ -218,6 +218,14 @@ r = await T(async () => AR("team.syncRoster"));
 ok("billers cannot sync", !r.ok, r);
 ok("the sync is in the audit trail", (await A("audit.list", {})).rows.some((x) => x.action === "roster.sync" && x.user_name === "Tina Lead"));
 
+S("Team tab: people come from Shastra");
+r = await T(async () => TI("users.save", { first_name: "Hand", last_name: "Added", email: "hand.added@purview-healthcare.com", designation: "Biller", role: "user", capacity: 30, active: true }));
+ok("a team lead cannot add a person by hand", !r.ok && /Purview Shastra/.test(r.e), r);
+r = await T(async () => TI("email.test", { to: "tina@purview-healthcare.com" }));
+ok("a team lead can still send a test email", r.ok || !/admin/.test(r.e || ""), r);
+r = await T(async () => A("users.save", { first_name: "Hand", last_name: "Added", email: "hand.added@purview-healthcare.com", designation: "Biller", role: "user", capacity: 30, active: true }));
+ok("the admin still can (exceptions)", r.ok, r);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
