@@ -184,7 +184,20 @@ const tmp = (await A("clients.list")).clients.find((c) => c.name === "Temp Delet
 r = await T(async () => A("clients.delete", { id: tmp.id, confirm: "wrong name" }));
 ok("deleting a client needs its exact name", !r.ok, r);
 r = await T(async () => TI("clients.delete", { id: tmp.id, confirm: "Temp Delete Clinic" }));
-ok("team leads with a span cannot delete clients", !r.ok, r);
+ok("a team lead cannot delete a client outside their span", !r.ok && /not one of yours/i.test(r.e), r);
+{ // Team leads and managers can delete a client in their own span; a view-only share is not enough.
+  const tinaId = (await TI("auth.me")).user.id;
+  await A("clients.save", { name: "Tina Temp Clinic", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 10 }, resp: { ar: { lead: adminId } } } });
+  const t2 = (await A("clients.list")).clients.find((c) => c.name === "Tina Temp Clinic");
+  await A("clients.accessSave", { client_id: t2.id, user_id: tinaId, level: "view" });
+  r = await T(async () => TI("clients.delete", { id: t2.id, confirm: "Tina Temp Clinic" }));
+  ok("a view-only share cannot delete it", !r.ok && /view-only/i.test(r.e), r);
+  await A("clients.accessSave", { client_id: t2.id, user_id: tinaId, level: "edit" });
+  r = await T(async () => AR("clients.delete", { id: t2.id, confirm: "Tina Temp Clinic" }));
+  ok("a biller cannot delete a client", !r.ok, r);
+  r = await T(async () => TI("clients.delete", { id: t2.id, confirm: "Tina Temp Clinic" }));
+  ok("the team lead deletes a client in their span", r.ok && !(await A("clients.list")).clients.some((c) => c.id === t2.id), r);
+}
 r = await T(async () => A("clients.delete", { id: tmp.id, confirm: "Temp Delete Clinic" }));
 ok("the admin deletes it", r.ok && !(await A("clients.list")).clients.some((c) => c.id === tmp.id), r);
 ok("and the audit trail records it", (await A("audit.list", {})).rows.some((x) => x.action === "client.delete" && /Temp Delete Clinic/.test(x.detail)));

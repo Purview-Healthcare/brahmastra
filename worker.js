@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.53.1";
+const VERSION = "2.54.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -2696,7 +2696,11 @@ const OPS = {
   "clients.delete": async ({ env, user, payload }) => {
     const ex = await one(env, "SELECT id, name FROM clients WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown client.");
-    if (user.scope) throw denied("Only a manager with every project, or an admin, can delete a client.");
+    // Admins, the VP, and team leads and managers for a client in their own span (not one shared with them view-only). SMEs and billers cannot.
+    if (user.scope) {
+      if (user.role !== "supervisor" || isSME(user)) throw denied("Deleting a client is for team leads and managers. Ask your team lead.");
+      editableOr(user, ex.id);
+    }
     if (str(payload.confirm, 200).trim().toLowerCase() !== String(ex.name).trim().toLowerCase()) throw bad("Type the client's name exactly to confirm.");
     const n = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ?", ex.id);
     await audit(env, user, "client.delete", null, ex.name + " · " + (n ? n.n : 0) + " claims");
