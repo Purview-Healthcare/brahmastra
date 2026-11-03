@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.51.1";
+const VERSION = "2.52.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1899,7 +1899,7 @@ const OPS = {
     return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
       scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), od: { link: c.od_link || "", inventory: c.od_inventory_link || "", production: c.od_production_link || "", status: jsonObj(c.od_status_json),
         scopes: Object.fromEntries(Object.entries(jsonObj(c.od_prod_json)).map(([k, v]) => [k, { link: v.link || "", path: v.path || "" }])) }, resp_names: Object.fromEntries(RESP_PEOPLE.map(([, l]) => [l, c[l] ? nm.get(c[l]) || "someone" : ""])),
-      profile_gaps: profileGaps(c, locs.filter((l) => l.client_id === c.id && l.active).length, activeIds), responsible_me: !!(user.resp_clients && user.resp_clients.has(c.id)),
+      profile_gaps: profileGaps(c, locs.filter((l) => l.client_id === c.id && l.active).length, activeIds), team_names: Object.fromEntries(parseTeam(c.team_json).map((id) => [id, nm.get(id) || ""])), responsible_me: !!(user.resp_clients && user.resp_clients.has(c.id)),
       can_edit: user.role === "supervisor" && canEditClient(user, c.id),
       access: access.filter((a) => a.client_id === c.id).map((a) => ({ user_id: a.user_id, name: a.name, designation: a.designation || "", department: a.department || "", active: !!a.active, level: a.level, granted_by_name: a.granted_by_name, at: a.at })) })) };
   },
