@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.51.0";
+const VERSION = "2.51.1";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1604,6 +1604,7 @@ const OPS = {
     roster: !!(await getSetting(env, "roster_meta", null)) }),
   /* Team lead: send a test message through the configured provider to prove the email setup works. */
   "email.test": async ({ env, user, payload }) => {
+    if (!user.is_admin) throw denied("Only the admin sends test emails.");
     const to = mailClean(payload.to || user.email);
     if (!mailOk(to)) throw bad("Enter a valid email address.");
     const provider = String(env.EMAIL_PROVIDER || "").toLowerCase();
@@ -1806,6 +1807,8 @@ const OPS = {
     const designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
     const capacity = Math.max(1, Math.min(500, Math.round(num(payload.capacity, 35))));
     const active = payload.active === false ? 0 : 1;
+    // People come from Purview Shastra; only the admin adds someone by hand.
+    if (!payload.id && !user.is_admin) throw denied("People come from Purview Shastra. Use Sync from Purview Shastra on the Team tab, or ask the admin.");
     if (payload.id) {
       const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown user.");
