@@ -107,8 +107,8 @@ r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", locat
 ok("each part of the scope needs a target and a person", !r.ok && /daily target for Payment posting/.test(r.e) && /responsible for Submission/.test(r.e) && /rechecks submitted claims/.test(r.e), r.e);
 r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: "nobody-like-this" } } } }));
 ok("only active people", !r.ok && /only people who are active/.test(r.e), r.e);
-r = await T(async () => TI("clients.save", { name: "Dr. Montella Eye Care", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: U("Tina Lead").id } } } }));
-ok("team leads with a span do not add clients", !r.ok, r);
+r = await T(async () => AR("clients.save", { name: "Dr. Montella Eye Care", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: U("Tina Lead").id } } } }));
+ok("billers do not add clients (team leads and above do)", !r.ok, r);
 const full = { scope: ["ar", "posting", "submission", "rejection"], targets: { ar: 45, posting: 60, submission: 50, rejection: 20 },
   resp: { ar: { lead: U("Tina Lead").id }, posting: { lead: U("Snail Post").id, backup: U("Paula PostLead").id }, submission: { lead: U("Mark Sub").id }, rejection: { lead: U("Mark Sub").id }, subcheck: { mode: "person", lead: U("Mark Sub").id } } };
 r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", code: "MON", follow_up_days: 30, locations: ["Main", "Westgate"], workbook_link: "", profile: full }));
