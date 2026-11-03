@@ -15,7 +15,9 @@ export async function makeRig({ envExtra = {}, fetchMock = null } = {}) {
   const worker = await import(wcopy + "?" + Math.random());
   const realFetch = globalThis.fetch;
   if (fetchMock) globalThis.fetch = (u, i) => fetchMock(String(u), i, realFetch);
-  const backend = await lib.createLocalBackend({ worker: worker.default, env: { DEMO: true, ADMIN_EMAILS: "supervisor@purview-healthcare.com", BOOTSTRAP_EMAIL: "supervisor@purview-healthcare.com", BOOTSTRAP_PASSWORD: "brahmastra-demo", ALLOWED_DOMAINS: "*purview*", ...envExtra }, dbKey: "t" + Math.random() });
+  // liveEnv is read on every request, so a test can change it later (for example switch DEMO off after seeding).
+  const liveEnv = { DEMO: true, ADMIN_EMAILS: "supervisor@purview-healthcare.com", BOOTSTRAP_EMAIL: "supervisor@purview-healthcare.com", BOOTSTRAP_PASSWORD: "brahmastra-demo", ALLOWED_DOMAINS: "*purview*", ...envExtra };
+  const backend = await lib.createLocalBackend({ worker: worker.default, env: liveEnv, dbKey: "t" + Math.random() });
   // the page's code, as built by tools/build.mjs
   const code = fs.readFileSync(REPO + "/app/app.js", "utf8");
   const store = new Map();
@@ -36,5 +38,5 @@ export async function makeRig({ envExtra = {}, fetchMock = null } = {}) {
   // rpc as a given token
   const as = (token) => async (op, payload) => { app.setToken(token); return app.rpc(op, payload); };
   const tryOp = async (fn) => { try { return { ok: true, r: await fn() }; } catch (e) { return { ok: false, e: e.message, status: e.status }; } };
-  return { app, backend, worker, as, tryOp, sha: (p) => app.sha256Hex(p) };
+  return { app, backend, worker, as, tryOp, liveEnv, sha: (p) => app.sha256Hex(p) };
 }

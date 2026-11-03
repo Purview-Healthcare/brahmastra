@@ -78,8 +78,12 @@ await TI("clients.saveTeam", { client_id: sun.id, team: [U("Arun Agent").id, U("
 ok("being put on a client's team brings the client too", !!(await has(BE, sun)));
 
 S("Change history");
-const h1 = await hist(SN, sun);
-ok("Snail sees who changed what", h1.length >= 3 && h1[0].at >= h1[h1.length - 1].at, h1.length);
+const h1 = await hist(PA, sun);
+ok("a supervisor on the client sees who changed what, newest first", h1.length >= 3 && h1[0].at >= h1[h1.length - 1].at, h1.length);
+let rh = await T(async () => SN("clients.history", { client_id: sun.id }));
+ok("billers do not see the change history", !rh.ok, rh);
+rh = await T(async () => SN("raci.list", {}));
+ok("nor the RACI tracker", !rh.ok, rh);
 ok("with names, not codes", h1.some((x) => /Payment posting: .*Snail Post \(backup Paula PostLead\)/.test(x.detail) && x.user_name === "Tina Lead"), h1.map((x) => x.detail));
 ok("and what it was before", h1.some((x) => /Submission: .*Mark Sub.*\(was: not set\)/.test(x.detail) && x.user_name === "Paula PostLead"), h1.map((x) => x.detail));
 await TI("locations.save", { client_id: sun.id, name: "Northside" });
@@ -87,8 +91,8 @@ const loc = (await TI("clients.list")).clients.find((x) => x.id === sun.id).loca
 await TI("locations.save", { id: loc.id, name: "Northside Clinic", active: true });
 await TI("clients.saveTeam", { client_id: sun.id, team: [U("Arun Agent").id, U("Rohan Mehta").id] });
 await TI("clients.save", { id: sun.id, name: sun.name, code: "SUN", follow_up_days: 21, active: true });
-const h2 = await hist(AR, sun);
-ok("billers on the client see it too", h2.length > h1.length);
+const h2 = await hist(TI, sun);
+ok("the client's team lead sees the new changes too", h2.length > h1.length);
 ok("locations added and renamed", h2.some((x) => x.detail === "Location added: Northside") && h2.some((x) => /renamed Northside → Northside Clinic/.test(x.detail)), h2.map((x) => x.detail));
 ok("team changes", h2.some((x) => /Billers on the client: added Rohan Mehta; removed Bela Agent/.test(x.detail)), h2.map((x) => x.detail));
 ok("profile field changes", h2.some((x) => /default follow-up 30 → 21 days/.test(x.detail) && /code .* → SUN/.test(x.detail)), h2.map((x) => x.detail));
@@ -113,7 +117,7 @@ const mon = (await A("clients.list")).clients.find((x) => x.name === "Dr. Montel
 ok("with its locations, scope, targets and people", mon && mon.locations.length === 2 && mon.scope_of_work.join() === "ar,posting,submission,rejection" && mon.targets.posting === 60 && mon.posting_lead === U("Snail Post").id && mon.submission_check_person === U("Mark Sub").id, mon);
 ok("and nothing missing", mon && !mon.profile_gaps.length, mon && mon.profile_gaps);
 ok("Snail and Mark see it in their login straight away", (await has(SN, mon)) && (await has(MK, mon)) && (await has(TI, mon)));
-ok("its history starts with how it was set up", /created with locations Main, Westgate/.test((await hist(SN, mon)).slice(-1)[0].detail), (await hist(SN, mon)).slice(-1)[0]);
+ok("its history starts with how it was set up", /created with locations Main, Westgate/.test((await hist(A, mon)).slice(-1)[0].detail), (await hist(A, mon)).slice(-1)[0]);
 r = await T(async () => A("clients.save", { name: "dr. montella eye care", locations: ["X"], profile: full }));
 ok("no two clients with the same name", !r.ok && /already exists/.test(r.e), r.e);
 

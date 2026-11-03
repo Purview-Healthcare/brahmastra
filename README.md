@@ -217,7 +217,7 @@ keeps it, or the client's own workbook), and the **responsible person** for each
   the Submission person for Dr Vontela...") for two weeks and an email; someone taken off is told too.
 - **Change history.** Every change to a client (profile, responsible people with what they were before, teams,
   locations, shares, RACI, month-end) is kept with who and when; **Change history** on the client card shows it
-  to everyone on the client, billers included.
+  to the supervisors on the client (not billers; billers have no RACI either).
 - SAAG: **Claim Not On File › Policy Active** is added in the app (with the same actions as the other Claim Not
   On File sub-statuses) until the SAAG workbook carries it; add it to the workbook too.
 
@@ -475,23 +475,34 @@ Shastra, or Match my computer), the text size, their password, signing out on ev
 profile (Emp ID, designation, department, who they report to, projects, shift, daily target) and the connected apps.
 The theme is saved to the account (`users.prefs_json`), so it follows the person to any computer.
 
-## Report files in OneDrive (Brahmastra Reports)
+## Each client's folders in OneDrive (Brahmastra Clients)
 
-Every team lead's clients keep their files in one folder tree in the Purviewautomate OneDrive:
+Every client gets its own folders in the Purviewautomate OneDrive, made by Brahmastra when the client is added (the
+hourly job makes them for every existing client, a few per run; admins can press **Make OneDrive folders** on
+Clients & locations, or **Make folders now** on one client):
 
 ```
-Brahmastra Reports / <Team lead> / <Client> /
-   Production        Brahmastra, automatic: "Production - <Client> - Oct 2026.xlsx", one row per saved entry
-   QA tracker        the QA file the lead keeps (input to Third Eye)
-   Quality insights  Third Eye, automatic
-   SLA & KPI         Drishti, automatic; and the AR Inventory report Brahmastra saves for Drishti
+Brahmastra Clients / <Client> /
+   Inventory        the client's inventory files; Upload inventory > Open OneDrive opens this folder
+   Production /
+      AR                "AR Production - <Client> - Nov 2026.xlsx": one row per entry a biller saves
+      Payment posting   "Payment posting Production - …": one row per action the posting desk takes
+      Submission        submissions and the 48-hour rechecks
+      Rejections        rejected claims worked by the Rejections person
 ```
 
-Brahmastra writes the Production file itself, a new one each month, for every client and location that has no
-workbook link of its own (those keep using their link). The team lead is the roster TL whose projects are matched to
-the client; a client with two TLs gets the file under each. It uses the same Microsoft 365 app as the sign-in emails,
-which needs the **Files.ReadWrite.All application permission** (admin consent). Optional Worker variables:
-`REPORTS_OWNER` (default `Purviewautomate@purview-healthcare.com`) and `REPORTS_AUTO=off` to stop it.
+A new file starts by itself on the 1st of each month in each folder; nobody links or renames anything. Each folder
+gets a link anyone at Purview can open, and supervisors see every path, this month's file and when the last row was
+written on the client card (billers do not). If OneDrive refuses a write, the client's AR person and team leads
+get a bell notice and an email (once a day), and the card says why; the entry itself is always saved in Brahmastra.
+Older workbook links on clients and locations are no longer used.
+
+It needs the **Files.ReadWrite.All application permission** on the Microsoft 365 app (already used for the
+sign-in emails). Optional Worker variables: `REPORTS_OWNER` (default `Purviewautomate@purview-healthcare.com`) and
+`REPORTS_AUTO=off` to stop it.
+
+Sasha's Third Eye and Drishti still keep their own folders where they were: **Brahmastra Reports / Team lead /
+Client / QA tracker, Quality insights, SLA & KPI** (moving them needs changes in those two apps).
 
 ## Drishti and Sasha's Third Eye inside My day & reports
 
@@ -547,37 +558,6 @@ be on Drishti's People tab). Brahmastra's admin opens Drishti as its Admin. Neve
 
 **E. Test.** Sign in as a team lead → Team → **Send a test email**. When it
 arrives, sign out and try **Sign in with a code**.
-
-#### Billers' work in OneDrive
-
-A team lead can link an Excel workbook (.xlsx in the Purview Automate
-OneDrive) to a client, and a different one to any of its locations (Clients
-screen → "link an Excel workbook", or the 📎 next to a location). From then
-on every entry a biller saves on those claims is appended as one row (saved
-at, biller, client, location, claim #, account #, patient, payer, DOS, CPT,
-provider, balance, SAAG status / sub-status / action, bucket, effective
-matrix, follow-up, claim state, the one-cell note). The first row of an
-empty sheet becomes the header. The copy is made by the Worker, so billers
-need no OneDrive access.
-
-It uses the same *Brahmastra Mailer* registration as the sign-in emails,
-which therefore needs one more permission: Entra admin center → App
-registrations → Brahmastra Mailer → API permissions → Add a permission →
-Microsoft Graph → **Application permissions** → Files → **Files.ReadWrite.All**
-→ Add, then **Grant admin consent**. The Clients screen shows, next to each
-link, when the last row was copied or why the last copy failed.
-
-**If it fails**, the toast quotes the provider's answer:
-
-- `Microsoft sign-in (token) did not accept (401)`: tenant id, client id or
-  secret is wrong, or the secret expired.
-- `Microsoft Graph did not accept the email (403 … ErrorAccessDenied)`:
-  `Mail.Send` has no admin consent yet, or the access policy does not include
-  `MS_SENDER`.
-- `(404 … MailboxNotEnabledForRESTAPI / ResourceNotFound)`: `MS_SENDER` is
-  not an Exchange Online mailbox.
-- Codes land in Junk: keep the sender in your own Microsoft 365 domain (SPF
-  and DKIM are then already in place) and ask IT to allow-list it.
 
 ### Locations: who works what
 

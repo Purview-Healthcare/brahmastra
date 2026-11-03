@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.49.0";
+const VERSION = "2.50.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -159,6 +159,9 @@ const EXTRA_COLUMNS = {
     // The client profile: the scope of work Purview does (ar, posting, submission, rejection), a daily target for each,
     // and the AR person responsible (with a backup). Required for a new client; older clients show what is missing.
     ["scope_json", "TEXT NOT NULL DEFAULT '[]'"], ["targets_json", "TEXT NOT NULL DEFAULT '{}'"],
+    // The client's own folders in the Purviewautomate OneDrive: Brahmastra Clients / <Client> / Inventory, Production.
+    ["od_drive_id", "TEXT"], ["od_folder_id", "TEXT"], ["od_inventory_id", "TEXT"], ["od_production_id", "TEXT"],
+    ["od_link", "TEXT NOT NULL DEFAULT ''"], ["od_inventory_link", "TEXT NOT NULL DEFAULT ''"], ["od_production_link", "TEXT NOT NULL DEFAULT ''"], ["od_status_json", "TEXT NOT NULL DEFAULT '{}'"], ["od_prod_json", "TEXT NOT NULL DEFAULT '{}'"],
     ["ar_mode", "TEXT NOT NULL DEFAULT ''"], ["ar_lead", "TEXT"], ["ar_backup", "TEXT"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
   users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
@@ -259,7 +262,6 @@ function productionRow(c, by, extra) {
     (by && by.emp_id) || "", (by && by.name) || "", "Production", "", (by && by.reports_to_name) || "", wk.range, wk.week];
 }
 function workbookLinkOf(v) { if (v == null) return null; const s = str(v, 1000).trim(); if (!s) return ""; if (!/^https:\/\//i.test(s)) throw bad("Paste the whole OneDrive link, starting with https://"); return s; }
-const shareIdOf = (link) => "u!" + btoa(unescape(encodeURIComponent(link))).replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
 async function graphAppToken(env) {
   if (!env.MS_TENANT_ID || !env.MS_CLIENT_ID || !env.MS_CLIENT_SECRET) throw new ApiError(503, "Microsoft 365 is not set up on the server (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET).");
   const tr = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID)}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -274,33 +276,19 @@ async function graphCall(tok, method, path, body) {
   return r.json();
 }
 const colLetter = (n) => { let s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
-/* Append one row to the first worksheet of the workbook behind a sharing link. Writes the header into an empty sheet first. */
-async function appendWorkbookRow(env, link, values) {
-  const tok = await graphAppToken(env);
-  const key = "wb:" + (await sha256Hex(link)).slice(0, 24);
-  let loc = null; const cached = await one(env, "SELECT value_json FROM settings WHERE key = ?", key);
-  if (cached) { try { loc = JSON.parse(cached.value_json); } catch {} }
-  if (!loc || !loc.driveId) {
-    const it = await graphCall(tok, "GET", "/shares/" + shareIdOf(link) + "/driveItem?$select=id,name,parentReference,file");
-    if (!it.file || !/\.xlsx$/i.test(it.name || "")) throw new ApiError(400, "The link must point to an Excel workbook (.xlsx), not a folder or another file type.");
-    loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name };
-    await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", key, JSON.stringify(loc), Date.now());
-  }
-  return appendRowTo(tok, loc, values);
-}
-async function appendRowTo(tok, loc, values) {
+async function appendRowTo(tok, loc, values, header = WORKBOOK_HEADER) {
   const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
   const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
   const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
   const ws = base + "/worksheets/" + encodeURIComponent(sheet.id);
   const used = await graphCall(tok, "GET", ws + "/usedRange(valuesOnly=true)?$select=rowCount,address,values");
   const empty = !used || used.rowCount <= 1 && (!used.values || !used.values[0] || used.values[0].every((v) => v === "" || v == null));
-  let rows = empty ? [WORKBOOK_HEADER, values] : [values];
+  let rows = empty ? [header, values] : [values];
   const startRow = empty ? 1 : (parseInt(String(used.address).replace(/^.*![A-Z]+\d+:?[A-Z]*/, "").replace(/\D/g, ""), 10) || used.rowCount) + 1;
   // Sr. No = the row's own number in the sheet (header is row 1).
   const srOf = (sheetRow) => sheetRow - 1;
   rows = rows.map((r, i) => r.map((v) => (v === SR_NO ? srOf(startRow + i) : v)));
-  const last = colLetter(WORKBOOK_HEADER.length);
+  const last = colLetter(header.length);
   await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows });
   return loc.name;
 }
@@ -330,29 +318,115 @@ async function clientTeamLeads(env, clientId, byUserId) {
   return [top && top.name ? top.name : "No team lead"];
 }
 function b64Bytes(b64) { const s = atob(b64); const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
-/* The month's Production workbook for one lead and client: found, or made from the template the first time. */
-async function productionWorkbook(env, tok, lead, client, ms) {
+/* ---- each client's own folders ----
+   When a client is added (and once for every existing client) Brahmastra makes, in the Purviewautomate OneDrive:
+     Brahmastra Clients / <Client> / Inventory    the client's inventory files; Upload inventory opens here
+     Brahmastra Clients / <Client> / Production / AR | Payment posting | Submission | Rejections
+        one file per scope per month ("AR Production - <Client> - Nov 2026.xlsx"), one row per entry: AR from the
+        billers' saved entries, the others from every action their desk takes on a hand-off
+   with a link anyone at Purview can open (organisation sharing link), so the team reaches them without asking. */
+const CLIENT_ROOT = "Brahmastra Clients";
+const SCOPE_FOLDER = { ar: "AR", posting: "Payment posting", submission: "Submission", rejection: "Rejections" };
+const DEPT_SCOPE = { posting: "posting", submission: "submission", subcheck: "submission", rejection: "rejection" };
+const DESK_HEADER = ["Sr. No", "Date", "Department", "Done by", "Client", "Location", "Claim #", "Account #", "Patient", "Payer", "DOS", "Balance", "Action", "Proof date",
+  "Check / reference", "Amount", "Reason / code", "Comment", "Sent by (AR)", "Sent at", "Within 24h TAT"];
+async function odChild(tok, driveId, parentId, name) {
+  try { return await graphCall(tok, "POST", `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}/children`, { name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }); }
+  catch (e) { if (!/\(409/.test(String(e.message))) throw e; return graphCall(tok, "GET", `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}:/${encodeURIComponent(name)}?$select=id,name,parentReference,webUrl`); }
+}
+async function odShareLink(tok, driveId, itemId, fallback) {
+  try { const r = await graphCall(tok, "POST", `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/createLink`, { type: "edit", scope: "organization" }); return (r && r.link && r.link.webUrl) || fallback || ""; }
+  catch (e) { return fallback || ""; }
+}
+async function ensureClientFolders(env, clientId, tok) {
+  const c = await one(env, "SELECT * FROM clients WHERE id = ?", clientId);
+  if (!c) return null;
+  const have = jsonObj(c.od_prod_json);
+  if (c.od_drive_id && c.od_folder_id && c.od_inventory_id && c.od_production_id && Object.keys(SCOPE_FOLDER).every((k) => have[k] && have[k].id)) return c;
+  try {
+    tok = tok || await graphAppToken(env);
+    const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT);
+    let root;
+    try { root = await graphCall(tok, "POST", `/users/${owner}/drive/root/children`, { name: CLIENT_ROOT, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }); }
+    catch (e) { if (!/\(409/.test(String(e.message))) throw e; root = await graphCall(tok, "GET", `/users/${owner}/drive/root:/${encodeURIComponent(CLIENT_ROOT)}?$select=id,name,parentReference,webUrl`); }
+    const drive = root.parentReference.driveId;
+    const folder = await odChild(tok, drive, root.id, odName(c.name));
+    const inv = await odChild(tok, drive, folder.id, "Inventory");
+    const prod = await odChild(tok, drive, folder.id, "Production");
+    const link = await odShareLink(tok, drive, folder.id, folder.webUrl), invLink = await odShareLink(tok, drive, inv.id, inv.webUrl), prodLink = await odShareLink(tok, drive, prod.id, prod.webUrl);
+    const scopes = {};
+    for (const [k, nm] of Object.entries(SCOPE_FOLDER)) { const f = (have[k] && have[k].id) ? have[k] : null; if (f) { scopes[k] = f; continue; } const it = await odChild(tok, drive, prod.id, nm); scopes[k] = { id: it.id, link: await odShareLink(tok, drive, it.id, it.webUrl), path: [CLIENT_ROOT, odName(c.name), "Production", nm].join(" › ") }; }
+    await run(env, `UPDATE clients SET od_drive_id = ?, od_folder_id = ?, od_inventory_id = ?, od_production_id = ?, od_link = ?, od_inventory_link = ?, od_production_link = ?, od_prod_json = ?, od_status_json = ? WHERE id = ?`,
+      drive, folder.id, inv.id, prod.id, link, invLink, prodLink, JSON.stringify(scopes), JSON.stringify({ ok: true, at: Date.now(), path: [CLIENT_ROOT, odName(c.name)].join(" › ") }), c.id);
+    if (!c.od_folder_id) await audit(env, null, "client.folders", c.id, `OneDrive folders made: ${CLIENT_ROOT} › ${odName(c.name)} › Inventory; Production › AR, Payment posting, Submission, Rejections`);
+    return one(env, "SELECT * FROM clients WHERE id = ?", c.id);
+  } catch (e) {
+    await run(env, "UPDATE clients SET od_status_json = ? WHERE id = ?", JSON.stringify({ ok: false, at: Date.now(), error: String(e && e.message || e).slice(0, 300) }), c.id);
+    throw e;
+  }
+}
+/* The month's Production workbook in the client's Production folder: found, or made from the template the first time. */
+async function clientProductionFile(env, tok, clientId, ms, scope = "ar") {
+  const c = await ensureClientFolders(env, clientId, tok);
+  const folderId = (jsonObj(c.od_prod_json)[scope] || {}).id;
+  if (!folderId) throw new ApiError(502, "The " + SCOPE_FOLDER[scope] + " production folder is missing.");
   const d = istDate(ms), month = MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear();
-  const path = [REPORTS_ROOT, odName(lead), odName(client), "Production", odName("Production - " + client + " - " + month) + ".xlsx"];
-  const key = "rp:" + (await sha256Hex(path.join("/").toLowerCase())).slice(0, 24);
+  const name = odName(SCOPE_FOLDER[scope] + " Production - " + c.name + " - " + month) + ".xlsx";
+  const key = "cp:" + folderId + ":" + (await sha256Hex(name.toLowerCase())).slice(0, 16);
   const cached = await one(env, "SELECT value_json FROM settings WHERE key = ?", key);
   if (cached) { try { const loc = JSON.parse(cached.value_json); if (loc.driveId) return loc; } catch {} }
-  const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT);
-  const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
+  const at = `/drives/${encodeURIComponent(c.od_drive_id)}/items/${encodeURIComponent(folderId)}:/${encodeURIComponent(name)}:`;
   let it = null;
   try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference"); }
   catch (e) {
     if (!/\(404/.test(String(e.message))) throw e;
-    // Folders on the way are made by OneDrive; "fail" keeps a file another save made a moment ago.
     const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
       headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(PROD_TEMPLATE_B64) });
     if (r.ok) it = await r.json();
     else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference");
-    else throw new ApiError(502, "OneDrive did not create " + path[path.length - 1] + " (" + r.status + ").");
+    else throw new ApiError(502, "OneDrive did not create " + name + " (" + r.status + ").");
   }
-  const loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name, path: path.join(" › ") };
+  const loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name, path: [CLIENT_ROOT, odName(c.name), "Production", SCOPE_FOLDER[scope], it.name].join(" › ") };
   await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", key, JSON.stringify(loc), Date.now());
   return loc;
+}
+/* Every action a Payment posting / Submission / Rejections desk takes on a hand-off is a row in that scope's file. */
+async function deskProduction(env, user, handoffId) {
+  if (String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
+  const h = await one(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, cl.name AS client_name, l.name AS location_name
+    FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE h.id = ?`, handoffId);
+  if (!h) return;
+  const scope = DEPT_SCOPE[h.dept] || "submission", proof = jsonObj(h.proof_json), now = Date.now();
+  const action = { complete: h.dept === "posting" ? "Completed: payment posted" : h.dept === "subcheck" ? "Recheck: accepted" : "Completed: submitted", pending: "Pending", back: "Need assistance from AR",
+    client: "Need assistance from client", rejected: "Rejected", assigned: "Client answered (back to open)", pending_open: "Pending" }[h.status] || h.status;
+  const row = [SR_NO, excelSerial(istISO(now)), DEPT_LABEL[h.dept] || h.dept, user.name || "", h.client_name || "", h.location_name || "", h.claim_no || "", h.account_no || "", h.patient || "", h.payer || "",
+    h.dos || "", Number(h.balance) || 0, action, proof.date || "", proof.ref || proof.code || "", proof.amount == null ? "" : Number(proof.amount), h.reason || "", h.note || "", h.created_by_name || "",
+    h.created_at ? excelSerial(istISO(h.created_at)) : "", h.due_at ? (now <= h.due_at ? "Yes" : "No") : ""];
+  try {
+    const tok = await graphAppToken(env);
+    const loc = await clientProductionFile(env, tok, h.client_id, now, scope);
+    await appendRowTo(tok, loc, row, DESK_HEADER);
+    await recordWorkbookStatus(env, h.client_id + ":" + scope, { ok: true, at: now, file: loc.path, claim_no: h.claim_no });
+  } catch (e) {
+    const msg = String(e && e.message || e).slice(0, 300);
+    await recordWorkbookStatus(env, h.client_id + ":" + scope, { ok: false, at: now, error: msg, claim_no: h.claim_no });
+    try { await folderTrouble(env, h.client_id, msg); } catch (x) {}
+  }
+}
+/* When a client's folders or production file cannot be written, its AR person and team leads hear about it once a day. */
+async function folderTrouble(env, clientId, error) {
+  const day = istISO(Date.now()), key = "odfail:" + clientId + ":" + day;
+  if (await one(env, "SELECT 1 AS x FROM settings WHERE key = ?", key)) return;
+  await setSetting(env, key, true);
+  const c = await one(env, "SELECT id, name, ar_mode, ar_lead FROM clients WHERE id = ?", clientId);
+  if (!c) return;
+  const leadNames = await clientTeamLeads(env, c.id, null);
+  const people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND (id = ? OR name IN (${leadNames.map(() => "?").join(",") || "NULL"}))`, c.ar_mode === "person" ? c.ar_lead : "", ...leadNames);
+  const text = `Brahmastra could not save production to ${c.name}'s OneDrive folder: ${String(error).slice(0, 160)}. Entries are still saved in Brahmastra; tell your admin.`;
+  for (const u of people) {
+    await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), u.id, Date.now(), text, "clients", c.id);
+    if (env.EMAIL_PROVIDER && u.email && !u.email_missing) { try { await sendEmail(env, { to: u.email, subject: `Production file problem: ${c.name}`, text, html: `<p style="font:14px Segoe UI,Arial,sans-serif">${htmlEsc(text)}</p>` }); } catch (e) {} }
+  }
 }
 async function recordWorkbookStatus(env, targetId, status) {
   await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", "workbook_status:" + targetId, JSON.stringify(status), Date.now());
@@ -362,26 +436,21 @@ async function syncEntryToWorkbook(env, claimId, by, extra) {
   const c = await one(env, `SELECT c.*, cl.name AS client_name, cl.workbook_link AS client_link, l.name AS location_name, l.workbook_link AS location_link
       FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE c.id = ?`, claimId);
   if (!c) return;
-  const link = c.location_link || c.client_link;
   // The Team Lead column: the person the biller reports to, when the session did not carry the name.
   if (by && by.reports_to && !by.reports_to_name) { const r = await one(env, "SELECT name FROM users WHERE id = ?", by.reports_to); if (r) by = { ...by, reports_to_name: r.name }; }
   const row = productionRow(c, by, extra);
-  if (!link) {
-    // No workbook of its own: the month's Production file in Brahmastra Reports, under each of the client's team leads.
-    if (String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
-    try {
-      const tok = await graphAppToken(env), at = (extra && extra.ended_at) || Date.now(), files = [];
-      for (const lead of await clientTeamLeads(env, c.client_id, by && by.id)) {
-        const loc = await productionWorkbook(env, tok, lead, c.client_name || "Client", at);
-        await appendRowTo(tok, loc, row); files.push(loc.path);
-      }
-      await recordWorkbookStatus(env, c.client_id, { ok: true, auto: true, at: Date.now(), file: files.join(" · "), claim_no: c.claim_no });
-    } catch (e) { await recordWorkbookStatus(env, c.client_id, { ok: false, auto: true, at: Date.now(), error: String(e && e.message || e).slice(0, 300), claim_no: c.claim_no }); }
-    return;
+  // Every entry goes to this month's file in the client's own Production folder (Brahmastra Clients / <Client> / Production).
+  if (String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
+  try {
+    const tok = await graphAppToken(env);
+    const loc = await clientProductionFile(env, tok, c.client_id, (extra && extra.ended_at) || Date.now());
+    await appendRowTo(tok, loc, row);
+    await recordWorkbookStatus(env, c.client_id, { ok: true, auto: true, at: Date.now(), file: loc.path, claim_no: c.claim_no });
+  } catch (e) {
+    const msg = String(e && e.message || e).slice(0, 300);
+    await recordWorkbookStatus(env, c.client_id, { ok: false, auto: true, at: Date.now(), error: msg, claim_no: c.claim_no });
+    try { await folderTrouble(env, c.client_id, msg); } catch (x) {}
   }
-  const targetId = c.location_link ? c.location_id : c.client_id;
-  try { const name = await appendWorkbookRow(env, link, row); await recordWorkbookStatus(env, targetId, { ok: true, at: Date.now(), file: name, claim_no: c.claim_no }); }
-  catch (e) { await recordWorkbookStatus(env, targetId, { ok: false, at: Date.now(), error: String(e && e.message || e).slice(0, 300), claim_no: c.claim_no }); }
 }
 const otpCode = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0] % 900000)); };
 const otpHash = (env, email, code) => sha256Hex(`otp:${email}:${code}:${env.PEPPER || DEFAULT_PEPPER}`);
@@ -1826,13 +1895,26 @@ const OPS = {
     const people = await all(env, "SELECT id, name, active FROM users");
     const nm = new Map(people.map((u) => [u.id, u.name])), activeIds = new Set(people.filter((u) => u.active).map((u) => u.id));
     return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
-      scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), resp_names: Object.fromEntries(RESP_PEOPLE.map(([, l]) => [l, c[l] ? nm.get(c[l]) || "someone" : ""])),
+      scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), od: { link: c.od_link || "", inventory: c.od_inventory_link || "", production: c.od_production_link || "", status: jsonObj(c.od_status_json),
+        scopes: Object.fromEntries(Object.entries(jsonObj(c.od_prod_json)).map(([k, v]) => [k, { link: v.link || "", path: v.path || "" }])) }, resp_names: Object.fromEntries(RESP_PEOPLE.map(([, l]) => [l, c[l] ? nm.get(c[l]) || "someone" : ""])),
       profile_gaps: profileGaps(c, locs.filter((l) => l.client_id === c.id && l.active).length, activeIds), responsible_me: !!(user.resp_clients && user.resp_clients.has(c.id)),
       can_edit: user.role === "supervisor" && canEditClient(user, c.id),
       access: access.filter((a) => a.client_id === c.id).map((a) => ({ user_id: a.user_id, name: a.name, designation: a.designation || "", department: a.department || "", active: !!a.active, level: a.level, granted_by_name: a.granted_by_name, at: a.at })) })) };
   },
-  /* Who changed what on a client profile (and its locations, teams, shares, RACI, month-end), for everyone on the client. */
+  /* Make the client's OneDrive folders now (one client, or every client for an admin). */
+  "clients.setupFolders": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor") throw denied("Supervisor access is needed for this.");
+    const ids = payload.client_id ? [str(payload.client_id, 60)] : (user.is_admin || user.access_all ? (await all(env, "SELECT id FROM clients WHERE active = 1 ORDER BY name")).map((r) => r.id) : []);
+    if (!ids.length) throw bad("Pick the client.");
+    for (const id of ids) editableOr(user, id);
+    const tok = await graphAppToken(env);
+    const out = [];
+    for (const id of ids) { try { const c = await ensureClientFolders(env, id, tok); out.push({ id, ok: true, name: c.name, link: c.od_link }); } catch (e) { out.push({ id, ok: false, error: String(e.message || e).slice(0, 200) }); } }
+    return { done: out.filter((x) => x.ok).length, failed: out.filter((x) => !x.ok), rows: out };
+  },
+  /* Who changed what on a client profile (and its locations, teams, shares, RACI, month-end), for the supervisors on the client. */
   "clients.history": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor") throw denied("The change history is for supervisors.");
     const cid = str(payload.client_id, 60);
     if (!inScope(user, cid)) throw outOfScope();
     const rows = await all(env, "SELECT at, user_name, action, detail FROM audit_log WHERE client_id = ? ORDER BY at DESC LIMIT 200", cid);
@@ -2581,7 +2663,8 @@ const OPS = {
       ...locNames.map((l) => env.DB.prepare("INSERT INTO locations (id, client_id, name, active, created_at) VALUES (?,?,?,1,?)").bind(uuid(), id, l, now)),
     ]);
     await autoMapProjects(env);
-    const created = await one(env, "SELECT * FROM clients WHERE id = ?", id);
+    let created = await one(env, "SELECT * FROM clients WHERE id = ?", id);
+    try { created = (await ensureClientFolders(env, id)) || created; } catch (e) { /* recorded on the client; the hourly job tries again */ }
     await noticeResponsibility(env, user, created, {}, created);
     await audit(env, user, "client.save", id, `created with locations ${locNames.join(", ")}; production file ${link ? link : "kept by Brahmastra"}; ` + (await describeProfile(env, created)).join("; "));
     return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [], workbook_link: link || "" } };
@@ -3733,7 +3816,7 @@ const OPS = {
     return { ok: true };
   },
   /* Complete (with proof) or Need assistance (with a reason): the same status then shows to the TL, the biller and the department. */
-  "handoffs.close": async ({ env, user, payload }) => {
+  "handoffs.close": async ({ env, user, payload, ctx }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
     if (!h || !["pending", "assigned", "client"].includes(h.status)) throw bad("This hand-off is already closed.");
     if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id)) throw denied("This hand-off is not yours.");
@@ -3848,6 +3931,7 @@ const OPS = {
       stmts.push(claimEvent(env, c.id, user, "handoff_resume", DEPT_LABEL[h.dept], { dept: h.dept, note, due_at: due }));
     } else throw bad("Pick what happened: completed, pending, need assistance from AR or need assistance from client.");
     await env.DB.batch(stmts);
+    if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
     return { ok: true };
   },
 
@@ -4177,6 +4261,9 @@ export default {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
       try { await ensureReady(env); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) { console.log("Snapshot: " + (e && e.message)); }
+      if (env.MS_CLIENT_SECRET && String(env.REPORTS_AUTO || "on").toLowerCase() !== "off") {
+        try { const tok = await graphAppToken(env); for (const r of await all(env, "SELECT id FROM clients WHERE active = 1 AND (od_production_id IS NULL OR od_production_id = '' OR od_prod_json NOT LIKE '%rejection%') ORDER BY name LIMIT 8")) { try { await ensureClientFolders(env, r.id, tok); } catch (e) { console.log("Folders: " + (e && e.message)); } } } catch (e) { console.log("Folders: " + (e && e.message)); }
+      }
       if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
       // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
       if (env.EMAIL_PROVIDER && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {
