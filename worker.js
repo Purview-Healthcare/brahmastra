@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.48.1";
+const VERSION = "2.49.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -109,6 +109,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
      client_id TEXT, detail TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at)`,
+  `CREATE TABLE IF NOT EXISTS user_notices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, text TEXT NOT NULL, view TEXT NOT NULL DEFAULT 'clients', client_id TEXT)`,
   `CREATE TABLE IF NOT EXISTS digest_runs (week TEXT NOT NULL, client_id TEXT NOT NULL, at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id))`,
   `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
@@ -1177,6 +1178,42 @@ async function describeProfile(env, c) {
   return out;
 }
 const diffLines = (before, after) => after.map((x, i) => (x !== before[i] ? x + (before[i] ? "  (was: " + before[i].replace(/^[^:]+: /, "") + ")" : "") : null)).filter(Boolean);
+/* Tell people when they are made responsible for a client (or taken off it): a line in their bell for two
+   weeks, and an email when one is set up. */
+const RESP_LABEL = { ar_lead: "AR follow-up person (accountable)", ar_backup: "AR follow-up backup", posting_lead: "Payment posting person", posting_backup: "Payment posting backup",
+  submission_lead: "Submission person", submission_backup: "Submission backup", submission_check_person: "Submission follow-up person (48-hour recheck)", rejection_lead: "Rejections person", rejection_backup: "Rejections backup" };
+async function noticeResponsibility(env, actor, client, before, after) {
+  const on = (row, m, l) => (row && row[m] === "person" && row[l]) || null;
+  const added = [], removed = [];
+  for (const [m, l] of RESP_PEOPLE) {
+    const was = on(before, m, l), now = on(after, m, l);
+    if (now && now !== was) added.push([now, l]);
+    if (was && was !== now) removed.push([was, l]);
+  }
+  const bTeam = parseTeam(before && before.team_json), aTeam = after && after.team_json !== undefined ? parseTeam(after.team_json) : bTeam;
+  aTeam.filter((x) => !bTeam.includes(x)).forEach((x) => added.push([x, "team"]));
+  bTeam.filter((x) => !aTeam.includes(x)).forEach((x) => removed.push([x, "team"]));
+  const who = (actor && actor.name) || "Someone", now = Date.now();
+  const people = new Map((await all(env, `SELECT id, name, email, email_missing, active FROM users WHERE id IN (${[...added, ...removed].map(() => "?").join(",") || "NULL"})`, ...[...added, ...removed].map(([u]) => u))).map((u) => [u.id, u]));
+  for (const [uid, col] of added) {
+    if (actor && uid === actor.id) continue;
+    const role = col === "team" ? "one of the billers" : "the " + RESP_LABEL[col];
+    const text = `${who} made you ${role} for ${client.name}. Its profile is in your clients and its claims are open to you.`;
+    await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), uid, now, text, "clients", client.id);
+    const u = people.get(uid);
+    if (env.EMAIL_PROVIDER && u && u.active && u.email && !u.email_missing) {
+      const link = env.APP_URL ? env.APP_URL.replace(/\/+$/, "") + "/#/clients" : "";
+      try { await sendEmail(env, { to: u.email, subject: `You are now ${role} for ${client.name}`, text: text + (link ? "\n\nOpen Brahmastra: " + link : ""),
+        html: `<div style="font:14px/1.5 Segoe UI,Arial,sans-serif;color:#0F1B24;max-width:600px"><div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0E8C74;font-weight:700">Brahmastra</div><p>${htmlEsc(text)}</p>${link ? `<p><a href="${htmlEsc(link)}" style="background:#14B8A6;color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:600">Open my clients</a></p>` : ""}</div>` }); }
+      catch (e) { console.log("Responsibility email: " + (e && e.message)); }
+    }
+  }
+  for (const [uid, col] of removed) {
+    if (actor && uid === actor.id) continue;
+    await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), uid, now,
+      `${who} took you off ${client.name} (${col === "team" ? "billers" : RESP_LABEL[col]}).`, "clients", client.id);
+  }
+}
 /* ---- who sees which projects ----
    Admins and the VP (access_all) see every client, and so does an account added by hand that has no projects
    (the bootstrap account). Everyone else, billers included, sees the clients their projects are matched to:
@@ -1821,6 +1858,7 @@ const OPS = {
     const before = await describeProfile(env, c);
     const after = await describeProfile(env, { ...c, [mcol]: mode, [lcol]: lead, ...(bcol ? { [bcol]: backup } : {}) });
     await audit(env, user, "client.responsibility", c.id, diffLines(before, after).join("; ") || SERVICE_NAME[dept] + ": unchanged");
+    await noticeResponsibility(env, user, c, c, { ...c, [mcol]: mode, [lcol]: lead, ...(bcol ? { [bcol]: backup } : {}) });
     return { ok: true };
   },
   /* Every active person, name and designation only: for pickers that must reach outside the caller's own span (shares, RACI). */
@@ -2115,6 +2153,9 @@ const OPS = {
   "notify.list": async ({ env, user, payload }) => {
     const items = [], now = Date.now(), today = isoDate(payload.today) || isoToday(), plural = (n, a, b) => n + " " + (n === 1 ? a : b);
     const add = (key, tone, n, text, view, params) => { if (n > 0) items.push({ key, tone, n, text, view, params: params || null }); };
+    // what was done to this person: made responsible for a client, or taken off one (two weeks)
+    for (const n of await all(env, "SELECT id, text, view, client_id, at FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
+      items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: null, at: n.at });
     const ho = await OPS["handoffs.count"]({ env, user });
     add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the 24-hour TAT` : ""), "handoffs");
     if (user.role === "supervisor") {
@@ -2490,6 +2531,7 @@ const OPS = {
     const was = parseTeam(old && old.team_json), add = team.filter((x) => !was.includes(x)), gone = was.filter((x) => !team.includes(x));
     const nm = await namesOf(env, [...add, ...gone]);
     const bits = [...(add.length ? ["added " + add.map((x) => nm.get(x)).join(", ")] : []), ...(gone.length ? ["removed " + gone.map((x) => nm.get(x) || "someone").join(", ")] : []), ...(old && !!old.auto_allocate !== !!auto ? [auto ? "auto-allocation on" : "auto-allocation off"] : [])];
+    if (!payload.location_id) { const cl = await one(env, "SELECT id, name FROM clients WHERE id = ?", ex.client_id); await noticeResponsibility(env, user, cl, { team_json: old && old.team_json }, { team_json: JSON.stringify(team) }); }
     if (bits.length) await audit(env, user, "client.team", ex.client_id, (payload.location_id ? "Billers at " + (old && old.name) : "Billers on the client") + ": " + bits.join("; "));
     return { team, auto_allocate: !!auto };
   },
@@ -2521,6 +2563,7 @@ const OPS = {
         if (p.cols.submission_check_person) await followHandoffs(env, ex.id, "subcheck", p.cols.submission_check_person);
         const after = await describeProfile(env, { ...ex, ...p.cols, scope_json: JSON.stringify(p.scope), targets_json: JSON.stringify(p.targets) });
         changes.push(...diffLines(before, after));
+        await noticeResponsibility(env, user, { id: ex.id, name }, ex, { ...ex, ...p.cols });
       }
       if (changes.length) await audit(env, user, "client.save", ex.id, changes.join("; "));
       return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active, workbook_link: link } };
@@ -2539,6 +2582,7 @@ const OPS = {
     ]);
     await autoMapProjects(env);
     const created = await one(env, "SELECT * FROM clients WHERE id = ?", id);
+    await noticeResponsibility(env, user, created, {}, created);
     await audit(env, user, "client.save", id, `created with locations ${locNames.join(", ")}; production file ${link ? link : "kept by Brahmastra"}; ` + (await describeProfile(env, created)).join("; "));
     return { client: { id, name, code, follow_up_days: fu, active: !!active, created_at: now, team: [], auto_allocate: true, locations: [], workbook_link: link || "" } };
   },

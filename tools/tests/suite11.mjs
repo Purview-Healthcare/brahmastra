@@ -16,8 +16,9 @@ const feed = [
   P({ emp_id: "D3", name: "Mark Sub", project: "Lakeview Dental Group", department: "Submission", email: "mark@purview-healthcare.com" }),
   P({ emp_id: "A3", name: "Cara Agent", project: "Lakeview Dental Group", reports_to: "Leo Lead", email: "cara@purview-healthcare.com" }),
   P({ emp_id: "A2", name: "Bela Agent", project: "Lakeview Dental Group", reports_to: "Leo Lead", email: "bela@purview-healthcare.com" })];
-const fetchMock = async (url) => url.includes("brahmastra_roster") ? new Response(JSON.stringify({ ok: true, rows: feed }), { headers: { "Content-Type": "application/json" } }) : new Response("nope", { status: 500 });
-const rig = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48) }, fetchMock });
+const mails = [];
+const fetchMock = async (url, init) => { if (url.includes("brahmastra_roster")) return new Response(JSON.stringify({ ok: true, rows: feed }), { headers: { "Content-Type": "application/json" } }); if (url.includes("mail-hook.test")) { mails.push(JSON.parse(init.body)); return new Response("ok"); } return new Response("nope", { status: 500 }); };
+const rig = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48), EMAIL_PROVIDER: "webhook", EMAIL_WEBHOOK_URL: "https://mail-hook.test/send", EMAIL_API_KEY: "x".repeat(40), APP_URL: "https://brahmastra.example.test" }, fetchMock });
 const { as, tryOp, sha } = rig; const T = (fn) => tryOp(fn);
 const DB = rig.backend.env.DB; const sql = (q, ...a) => DB.prepare(q).bind(...a).run();
 await rig.app.seedDemo(() => {});
@@ -39,7 +40,12 @@ S("Responsibility gives the client and its claims");
 ok("before: Snail does not see Dr. Sunrise", !(await has(SN, sun)));
 let r = await T(async () => SN("claims.list", { client_id: sun.id }));
 ok("nor its claims", !r.ok, r);
+mails.length = 0;
 await TI("clients.saveResponsibility", { client_id: sun.id, dept: "posting", mode: "person", lead: U("Snail Post").id, backup: U("Paula PostLead").id });
+const snBell = (await SN("notify.list", {})).items.find((i) => /^notice:/.test(i.key));
+ok("Snail's bell tells him who made him responsible", snBell && /Tina Lead made you the Payment posting person for Sunrise Eye Care/.test(snBell.text) && snBell.view === "clients", snBell);
+ok("and he gets an email saying so", mails.some((m) => m.to === "snail@purview-healthcare.com" && /Payment posting person for Sunrise Eye Care/.test(m.subject)), mails.map((m) => m.to + ": " + m.subject));
+ok("the backup is told too", mails.some((m) => m.to === "paula@purview-healthcare.com" && /Payment posting backup/.test(m.subject)));
 const sc = await has(SN, sun);
 ok("set as the posting person, Snail sees the client profile", sc && sc.responsible_me, sc && Object.keys(sc).length);
 ok("read-only for a biller", sc && sc.can_edit === false);
@@ -65,6 +71,7 @@ await TI("clients.saveResponsibility", { client_id: sun.id, dept: "subcheck", mo
 ok("so does the follow-up checker", !!(await has(CA, sun)));
 await TI("clients.saveResponsibility", { client_id: sun.id, dept: "subcheck", mode: "biller" });
 ok("and loses it when taken off", !(await has(CA, sun)));
+ok("and is told it was taken off", (await CA("notify.list", {})).items.some((i) => /took you off Sunrise Eye Care/.test(i.text)));
 const BE = await firstIn("Bela Agent", "bela@purview-healthcare.com");
 ok("Bela (Lakeview) does not see Sunrise", !(await has(BE, sun)));
 await TI("clients.saveTeam", { client_id: sun.id, team: [U("Arun Agent").id, U("Bela Agent").id] });

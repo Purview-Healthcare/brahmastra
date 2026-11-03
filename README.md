@@ -213,6 +213,8 @@ keeps it, or the client's own workbook), and the **responsible person** for each
   claims. Supervisors set there can change the profile; billers only see it. Posting and submission people get a
   **Claims** page with every claim of the clients they are responsible for (their work still happens in their
   desk tab).
+- **They are told.** Whoever is made responsible (or put on the team) gets a line in their bell ("Sweety made you
+  the Submission person for Dr Vontela...") for two weeks and an email; someone taken off is told too.
 - **Change history.** Every change to a client (profile, responsible people with what they were before, teams,
   locations, shares, RACI, month-end) is kept with who and when; **Change history** on the client card shows it
   to everyone on the client, billers included.
