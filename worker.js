@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.54.1";
+const VERSION = "2.55.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -3446,6 +3446,15 @@ const OPS = {
         c.id AS claim_id, c.claim_no, c.account_no, c.patient, c.payer, c.provider, c.cpt, c.dos, c.balance, c.state, c.tier, c.bucket AS age_bucket, cl.name AS client_name, l.name AS location_name
       FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
       WHERE nt.user_id = ? AND nt.created_at BETWEEN ? AND ? ORDER BY nt.created_at DESC LIMIT 1000`, user.id, from, to);
+    // Where each claim stands with Payment posting / Submission now (the latest hand-off), so the biller sees it the moment the desk acts.
+    const ids = [...new Set(rows.map((x) => x.claim_id))];
+    const latest = new Map();
+    for (let i = 0; i < ids.length; i += 90) {
+      const part = ids.slice(i, i + 90);
+      for (const h of await all(env, `SELECT h.claim_id, h.dept, h.status, h.created_at, h.done_at, h.done_by_name, h.reason, u.name AS lead_name, a.name AS assigned_name FROM handoffs h
+          LEFT JOIN users u ON u.id = h.lead_id LEFT JOIN users a ON a.id = h.assigned_to WHERE h.dept <> 'subcheck' AND h.claim_id IN (${part.map(() => "?").join(",")}) ORDER BY h.created_at`, ...part)) latest.set(h.claim_id, h);
+    }
+    for (const x of rows) { const h = latest.get(x.claim_id); x.handoff = h ? { dept: h.dept, label: DEPT_LABEL[h.dept], status: h.status, at: h.done_at || h.created_at, by: h.done_by_name || "", to: h.assigned_name || h.lead_name || "", reason: h.reason || "" } : null; }
     return { rows };
   },
   "notes.add": async ({ env, user, payload }) => {
@@ -3957,6 +3966,16 @@ const OPS = {
       if (note) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]}: client answered. ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_resume", DEPT_LABEL[h.dept], { dept: h.dept, note, due_at: due }));
     } else throw bad("Pick what happened: completed, pending, need assistance from AR or need assistance from client.");
+    // The biller who sent it hears at once (bell + My work): completed, sent back, or waiting on the client.
+    const billerId = h.created_by && h.created_by !== user.id ? h.created_by : null;
+    const tellBiller = { complete: h.dept === "posting" ? "posted" : h.dept === "subcheck" ? "confirmed the payer accepted" : "submitted", back: "sent back to you", client: "is waiting on the client for" }[outcome];
+    if (billerId && tellBiller && h.dept !== "subcheck") {
+      const cno = c.claim_no || c.account_no || "a claim";
+      const text = outcome === "complete" ? `${user.name} ${tellBiller} claim ${cno} (${DEPT_LABEL[h.dept]} complete)`
+        : outcome === "back" ? `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${cno} back to you (${str(payload.reason, 80).trim()})`
+        : `${DEPT_LABEL[h.dept]}: claim ${cno} is waiting on the client (${str(payload.reason, 80).trim()})`;
+      stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), billerId, now, text.slice(0, 300), outcome === "back" ? "queue" : "history", h.client_id));
+    }
     await env.DB.batch(stmts);
     if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
     return { ok: true };
