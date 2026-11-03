@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.50.0";
+const VERSION = "2.51.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -2061,6 +2061,19 @@ const OPS = {
   },
 
   /* ---- Team today (team leads): the morning huddle and the live floor on one page ---- */
+  /* Any supervisor can pull the roster from Purview Shastra now (Team tab), the same sync the admin and the hourly job run.
+     A short pause between syncs keeps a busy morning from asking Shastra again and again. */
+  "team.rosterInfo": async ({ env }) => ({ connected: !!env.SHASTRA_FEED_KEY, last: await getSetting(env, "shastra_sync", null) }),
+  "team.syncRoster": async ({ env, user }) => {
+    const last = await getSetting(env, "shastra_sync", null);
+    if (last && last.at && Date.now() - last.at < 120000) {
+      const s = Math.ceil((120000 - (Date.now() - last.at)) / 1000);
+      throw new ApiError(429, `The roster was synced ${Math.round((Date.now() - last.at) / 1000)} seconds ago${last.by ? " (by " + last.by + ")" : ""}. Try again in ${s} seconds.`);
+    }
+    const r = await syncShastra(env, user.name || user.email);
+    await audit(env, user, "roster.sync", null, `${r.summary ? r.summary.new + " joined, " + r.summary.updated + " changed, " + r.summary.deactivated + " left" : "synced"}`);
+    return { summary: r.summary, removed: r.removed, last: await getSetting(env, "shastra_sync", null) };
+  },
   "team.huddle": async ({ env, user, payload }) => {
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const off = Math.round(num(payload.tz_offset_min, 0)), dayStart = Date.parse(today + "T00:00:00Z") - off * 60000;

@@ -204,6 +204,20 @@ ok("it shows on that person's desk as assigned", (await SN("handoffs.list", {}))
 r = await T(async () => AR("handoffs.assign", { id: hl.id, user_id: arun.id }));
 ok("an AR biller cannot assign desk work", !r.ok, r);
 
+S("Team tab: sync the roster from Purview Shastra");
+await sql("DELETE FROM settings WHERE key = 'shastra_sync'");
+feed.push(P({ emp_id: "N9", name: "Omar Newjoin", project: "Sunrise Eye Care", reports_to: "Tina Lead", email: "omar.n@purview-healthcare.com" }));
+r = await T(async () => TI("team.syncRoster"));
+ok("a team lead syncs the roster from the Team tab", r.ok && r.r.summary && r.r.summary.new >= 1, r);
+ok("the new person is there at once", (await A("users.list")).users.some((u) => u.name === "Omar Newjoin"));
+const ri = await TI("team.rosterInfo");
+ok("the tab shows when and by whom", ri.connected && ri.last && ri.last.ok && ri.last.by === "Tina Lead", ri);
+r = await T(async () => TI("team.syncRoster"));
+ok("a second sync within 2 minutes waits", !r.ok && r.status === 429 && /Try again in/.test(r.e), r);
+r = await T(async () => AR("team.syncRoster"));
+ok("billers cannot sync", !r.ok, r);
+ok("the sync is in the audit trail", (await A("audit.list", {})).rows.some((x) => x.action === "roster.sync" && x.user_name === "Tina Lead"));
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

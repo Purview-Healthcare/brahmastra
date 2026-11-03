@@ -355,8 +355,9 @@ resubmitted rejections carry a rejection code.
 
 #### Straight from Purview Shastra (automatic)
 
-The Worker pulls the roster from Shastra's database every hour (`[triggers]` in `wrangler.toml`), and an admin can
-press **Sync now** on the Roster page. It applies the changes at once
+The Worker pulls the roster from Shastra's database every hour (`[triggers]` in `wrangler.toml`). Any supervisor
+can press **⟳ Sync from Purview Shastra** on the Team tab (at most once every 2 minutes, recorded in the audit
+trail), and an admin can press **Sync now** on the Roster page. It applies the changes at once
 and keeps a list of what changed (joined, changed, left). Date of joining (DOJ) is kept too. If Shastra sends an
 empty or very short list (under half of the active people), nothing is changed and the Roster page says why.
 
