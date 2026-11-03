@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.54.0";
+const VERSION = "2.54.1";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -3083,7 +3083,7 @@ const OPS = {
     return { claims: rows };
   },
   "claims.get": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
+    const c = await one(env, "SELECT c.*, u.name AS assigned_name, wb.name AS last_worked_name, l.name AS location_name, cl.name AS client_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN users wb ON wb.id = c.last_worked_by LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
     if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     return claimBundle(env, user, c);

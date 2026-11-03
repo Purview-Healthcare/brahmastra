@@ -249,6 +249,11 @@ await TI("team.setOut", { user_id: cara.id, out: false });
 tt = await TI("team.today", { client_id: sun.id, day: today });
 ok("back in, back on the list", !tt.members.find((m) => m.id === cara.id).out);
 
+S("Claim: latest work at the top");
+{ const w = (await A("claims.list", { worked: "yes", page_size: 5 })).rows.find((x) => x.last_status_code);
+  const g = w ? (await A("claims.get", { id: w.id })).claim : null;
+  ok("the claim carries its latest SAAG, note and who worked it", g && g.last_status_code && typeof g.last_note === "string" && "last_worked_name" in g, g && { s: g.last_status_code, by: g.last_worked_name }); }
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
