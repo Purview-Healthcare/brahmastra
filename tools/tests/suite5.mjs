@@ -76,6 +76,17 @@ ok("Shreya no longer sees the inbox", (await SH("feedback.count")).reader === fa
 
 S("Email trouble never loses feedback");
 mails.length = 0;
+{ // Live server: the reply comes back at once and the emails go out after it (waitUntil), all at the same time.
+  const tok = (await login("arun@purview-healthcare.com", "pw-arun@purview-healthcare.com")).token, before = mails.length, bg = [];
+  const res = await rig.worker.default.fetch(new Request("https://api.example/api", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + tok },
+    body: JSON.stringify({ op: "feedback.send", payload: { kind: "bug", message: "The send button waits a long time" } }) }), { ...rig.backend.env, ...rig.liveEnv, DEMO: false, DB: rig.backend.env.DB }, { waitUntil: (p) => bg.push(p) });
+  const j = await res.json();
+  ok("live: replies before the emails go out", j.saved && (j.sending || []).length >= 1 && bg.length === 1, j);
+  await Promise.all(bg);
+  ok("live: then every email goes out", mails.length === before + j.sending.length, mails.length - before);
+  const row = (await SW("feedback.list")).rows.find((x) => /waits a long time/.test(x.message));
+  ok("live: the inbox records who it was emailed to", row && j.sending.every((n) => row.emailed_to.includes(n)), row && row.emailed_to);
+}
 const rig2 = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48), EMAIL_PROVIDER: "webhook", EMAIL_WEBHOOK_URL: "https://down.example/hook" }, fetchMock });
 await rig2.app.seedDemo(() => {});
 const A2 = rig2.as((await rig2.as(null)("auth.login", { email: "supervisor@purview-healthcare.com", passHash: await rig2.sha("brahmastra-demo") })).token);

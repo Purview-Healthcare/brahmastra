@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.53.0";
+const VERSION = "2.53.1";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1988,7 +1988,7 @@ const OPS = {
   /* ---- feedback: anyone signed in sends it (with a screenshot and snippets); it is emailed to the feedback people
      (Shreya and Sweety unless the admin picks others) and kept in their Feedback inbox. ---- */
   "feedback.recipients": async ({ env }) => ({ people: (await feedbackRecipients(env)).map((u) => ({ id: u.id, name: u.name })) }),
-  "feedback.send": async ({ env, user, payload }) => {
+  "feedback.send": async ({ env, user, payload, ctx: run_ctx }) => {
     const message = str(payload.message, 4000).trim();
     if (!commentOk(message)) throw bad("Write what happened or what you would like, a few words at least.");
     const kind = FEEDBACK_KINDS[payload.kind] ? payload.kind : "bug";
@@ -2015,17 +2015,25 @@ const OPS = {
     // Email the feedback people. A failed email never loses the feedback: it stays in their inbox.
     const to = (await feedbackRecipients(env)).filter((u) => u.email && !u.email_missing && mailOk(u.email));
     const sent = [], errors = [];
-    if (env.EMAIL_PROVIDER && to.length) {
+    const mail = async () => {
+      if (!env.EMAIL_PROVIDER || !to.length) return;
       const subject = "Brahmastra feedback · " + FEEDBACK_KINDS[kind] + " · from " + (user.name || user.email);
       const text = FEEDBACK_KINDS[kind] + " from " + (user.name || "") + " <" + (user.email || "") + ">\nPage: " + (page || "-") + "\n\n" + message + "\n\n" + (files.length ? files.length + " file(s) attached." : "No files.");
       const html = feedbackHtml({ kind, message, page, user, files: meta, ctx, at: now });
-      for (const u of to) {
+      // All at once, not one after the other.
+      await Promise.all(to.map(async (u) => {
         try { await sendEmail(env, { to: u.email, subject, text, html, attachments: files }); sent.push(u.name); }
         catch (e) { errors.push(u.name + ": " + String((e && e.message) || e).slice(0, 160)); }
-      }
+      }));
+    };
+    const record = () => run(env, "UPDATE feedback SET emailed_to = ?, email_error = ? WHERE id = ?", sent.join(", "), (!env.EMAIL_PROVIDER ? "Email is not set up on the server." : !to.length ? "Nobody to send it to." : errors.join("; ")).slice(0, 600), id);
+    // Saved already: on the live server the emails go out after the reply, so nobody waits on the mail server.
+    if (env.EMAIL_PROVIDER && to.length && !env.DEMO && run_ctx && run_ctx.waitUntil) {
+      run_ctx.waitUntil(mail().then(record).catch(() => {}));
+      return { ok: true, id, saved: true, emailed: [], sending: to.map((u) => u.name), email_error: "" };
     }
-    await run(env, "UPDATE feedback SET emailed_to = ?, email_error = ? WHERE id = ?", sent.join(", "), (!env.EMAIL_PROVIDER ? "Email is not set up on the server." : !to.length ? "Nobody to send it to." : errors.join("; ")).slice(0, 600), id);
-    return { ok: true, id, emailed: sent, saved: true, email_error: errors.length ? errors.join("; ") : !env.EMAIL_PROVIDER ? "email not set up" : "" };
+    await mail(); await record();
+    return { ok: true, id, emailed: sent.sort(), saved: true, email_error: errors.length ? errors.join("; ") : !env.EMAIL_PROVIDER ? "email not set up" : "" };
   },
   "feedback.list": async ({ env, user, payload }) => {
     await feedbackReader(env, user);
