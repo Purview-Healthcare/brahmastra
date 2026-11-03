@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.55.0";
+const VERSION = "2.56.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -2673,7 +2673,8 @@ const OPS = {
       if (changes.length) await audit(env, user, "client.save", ex.id, changes.join("; "));
       return { client: { id: ex.id, name, code, follow_up_days: fu, active: !!active, workbook_link: link } };
     }
-    if (user.scope) throw denied("Only a manager with every project, or an admin, can add a client. Ask them to add it.");
+    // Team leads and above add clients (SMEs and billers cannot). Someone with a span gets edit access to the client they add, so it opens for them.
+    if (user.scope && (user.role !== "supervisor" || isSME(user))) throw denied("Adding a client is for team leads and above. Ask your team lead.");
     // A new client needs its whole profile: scope of work, locations, targets, the people responsible.
     const locNames = [...new Set((Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter(Boolean))].slice(0, 50);
     const p = await checkProfile(env, payload.profile, { isNew: true, locations: locNames.length });
@@ -2684,6 +2685,7 @@ const OPS = {
       env.DB.prepare(`INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at, workbook_link, scope_json, targets_json, ${sets.join(", ")}) VALUES (?,?,?,?,?,?,?,?,?,?,${sets.map(() => "?").join(",")})`)
         .bind(id, name, code, active, fu, user.id, now, link || "", JSON.stringify(p.scope), JSON.stringify(p.targets), ...sets.map((k) => p.cols[k])),
       ...locNames.map((l) => env.DB.prepare("INSERT INTO locations (id, client_id, name, active, created_at) VALUES (?,?,?,1,?)").bind(uuid(), id, l, now)),
+      ...(user.scope ? [env.DB.prepare("INSERT INTO client_access (id, client_id, user_id, level, granted_by, granted_by_name, at) VALUES (?,?,?,'edit',?,?,?)").bind(uuid(), id, user.id, user.id, user.name || "", now)] : []),
     ]);
     await autoMapProjects(env);
     let created = await one(env, "SELECT * FROM clients WHERE id = ?", id);

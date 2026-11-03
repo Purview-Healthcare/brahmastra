@@ -249,6 +249,20 @@ await TI("team.setOut", { user_id: cara.id, out: false });
 tt = await TI("team.today", { client_id: sun.id, day: today });
 ok("back in, back on the list", !tt.members.find((m) => m.id === cara.id).out);
 
+S("Adding a client: team leads and above");
+{ const tinaId = (await TI("auth.me")).user.id;
+  const prof = { scope: ["ar"], targets: { ar: 10 }, resp: { ar: { lead: tinaId } } };
+  r = await T(async () => AR("clients.save", { name: "Biller Try Clinic", locations: ["Main"], profile: prof }));
+  ok("a biller cannot add a client", !r.ok, r);
+  r = await T(async () => TI("clients.save", { name: "Tina New Clinic", locations: ["Main"], profile: prof }));
+  ok("a team lead with a span adds a client", r.ok, r);
+  const mineNow = (await TI("clients.list")).clients.find((c) => c.name === "Tina New Clinic");
+  ok("and it opens for her straight away, editable", mineNow && mineNow.can_edit !== false, mineNow && { can_edit: mineNow.can_edit });
+  r = await T(async () => TI("clients.save", { id: mineNow.id, name: "Tina New Clinic", code: "TNC", follow_up_days: 20, active: true }));
+  ok("she can change it", r.ok, r);
+  r = await T(async () => TI("clients.delete", { id: mineNow.id, confirm: "Tina New Clinic" }));
+  ok("and delete it", r.ok, r); }
+
 S("Claim: latest work at the top");
 { const w = (await A("claims.list", { worked: "yes", page_size: 5 })).rows.find((x) => x.last_status_code);
   const g = w ? (await A("claims.get", { id: w.id })).claim : null;
