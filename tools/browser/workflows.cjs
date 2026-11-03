@@ -249,7 +249,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await m.locator('input[placeholder^="e.g. Dr. Montella"]').fill("Dr. Montella Eye Care");
     await m.locator('label.scope-opt:has-text("AR follow-up")').click(); await m.locator('label.scope-opt:has-text("Payment posting")').click();
     await m.locator('input[placeholder^="Location name"]').fill("Main Office"); await m.locator('button:has-text("Add")').first().click();
-    const tg = m.locator('input[placeholder="claims a day"]'); await tg.nth(0).fill("45"); await tg.nth(1).fill("60");
+    const tg = m.locator('input[placeholder="claims a day"]'); ok("no target box for Payment posting (AR only)", (await tg.count()) === 1, await tg.count()); await tg.nth(0).fill("45");
     const row = (l) => m.locator('.row:has(> b:text-is("' + l + '"))');
     await pick(row("AR follow-up"), "Tina Lead"); await pick(row("Payment posting"), "Snail Post");
     await m.locator('button:has-text("Create client")').click(); await t(2500);

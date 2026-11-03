@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.56.0";
+const VERSION = "2.56.1";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1206,6 +1206,7 @@ async function followHandoffs(env, clientId, dept, lead, backup) {
 }
 /* A client profile from the setup form: scope of work, a daily target and a responsible person for each, who
    rechecks submissions. Everything is required; the message lists what is missing. */
+const NO_TARGET = new Set(["posting"]);
 async function checkProfile(env, p, { isNew, locations }) {
   p = p || {};
   const scope = SERVICES.map(([k]) => k).filter((k) => Array.isArray(p.scope) && p.scope.includes(k));
@@ -1215,8 +1216,9 @@ async function checkProfile(env, p, { isNew, locations }) {
   for (const [s] of SERVICES) {
     const [m, l, b] = RESP_COLS[s];
     if (scope.includes(s)) {
-      const t = Math.round(num(p.targets && p.targets[s], 0));
-      if (t < 1 || t > 5000) miss.push(`a daily target for ${SERVICE_NAME[s]}`); else targets[s] = t;
+      // Payment posting has no daily target; every other part of the scope does.
+      if (!NO_TARGET.has(s)) { const t = Math.round(num(p.targets && p.targets[s], 0));
+        if (t < 1 || t > 5000) miss.push(`a daily target for ${SERVICE_NAME[s]}`); else targets[s] = t; }
       const lead = str(resp[s] && resp[s].lead, 60), backup = str(resp[s] && resp[s].backup, 60);
       if (!lead) miss.push(`who is responsible for ${SERVICE_NAME[s]}`);
       cols[m] = "person"; cols[l] = lead || null; cols[b] = backup && backup !== lead ? backup : null;
@@ -1479,7 +1481,7 @@ function profileGaps(c, locCount, activeIds) {
   if (!scope.length) g.push("scope of work");
   if (!locCount) g.push("a location");
   for (const s of scope) {
-    if (!(Number(targets[s]) > 0)) g.push(SERVICE_NAME[s] + " target");
+    if (!NO_TARGET.has(s) && !(Number(targets[s]) > 0)) g.push(SERVICE_NAME[s] + " target");
     const [m, l] = RESP_COLS[s];
     if (c[m] !== "person" || !c[l]) g.push(SERVICE_NAME[s] + " responsible person");
     else if (!activeIds.has(c[l])) g.push(SERVICE_NAME[s] + " responsible person (the one set is no longer active)");

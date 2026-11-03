@@ -104,7 +104,7 @@ const me = (await A("auth.me")).user.id;
 r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", code: "MON" }));
 ok("nothing but a name is refused", !r.ok && /scope of work/.test(r.e) && /at least one location/.test(r.e), r.e);
 r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", locations: ["Main"], profile: { scope: ["ar", "posting", "submission"], targets: { ar: 40 }, resp: { ar: { lead: U("Tina Lead").id } } } }));
-ok("each part of the scope needs a target and a person", !r.ok && /daily target for Payment posting/.test(r.e) && /responsible for Submission/.test(r.e) && /rechecks submitted claims/.test(r.e), r.e);
+ok("each part of the scope needs a target (not Payment posting) and a person", !r.ok && !/daily target for Payment posting/.test(r.e) && /responsible for Payment posting/.test(r.e) && /responsible for Submission/.test(r.e) && /rechecks submitted claims/.test(r.e), r.e);
 r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: "nobody-like-this" } } } }));
 ok("only active people", !r.ok && /only people who are active/.test(r.e), r.e);
 r = await T(async () => AR("clients.save", { name: "Dr. Montella Eye Care", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: U("Tina Lead").id } } } }));
@@ -114,7 +114,7 @@ const full = { scope: ["ar", "posting", "submission", "rejection"], targets: { a
 r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", code: "MON", follow_up_days: 30, locations: ["Main", "Westgate"], workbook_link: "", profile: full }));
 ok("with everything, it is created", r.ok, r);
 const mon = (await A("clients.list")).clients.find((x) => x.name === "Dr. Montella Eye Care");
-ok("with its locations, scope, targets and people", mon && mon.locations.length === 2 && mon.scope_of_work.join() === "ar,posting,submission,rejection" && mon.targets.posting === 60 && mon.posting_lead === U("Snail Post").id && mon.submission_check_person === U("Mark Sub").id, mon);
+ok("with its locations, scope, targets and people", mon && mon.locations.length === 2 && mon.scope_of_work.join() === "ar,posting,submission,rejection" && !mon.targets.posting && mon.targets.submission === 50 && mon.posting_lead === U("Snail Post").id && mon.submission_check_person === U("Mark Sub").id, mon);
 ok("and nothing missing", mon && !mon.profile_gaps.length, mon && mon.profile_gaps);
 ok("Snail and Mark see it in their login straight away", (await has(SN, mon)) && (await has(MK, mon)) && (await has(TI, mon)));
 ok("its history starts with how it was set up", /created with locations Main, Westgate/.test((await hist(A, mon)).slice(-1)[0].detail), (await hist(A, mon)).slice(-1)[0]);
@@ -129,7 +129,7 @@ ok("and the bell tells its team lead", nl.items.some((i) => i.key === "profiles"
 r = await T(async () => LE("clients.save", { id: lake.id, name: lk.name, code: lk.code, follow_up_days: lk.follow_up_days, active: true, profile: { scope: ["ar", "posting"], targets: { ar: 30, posting: 25 }, resp: { ar: { lead: U("Leo Lead").id }, posting: { lead: U("Snail Post").id } } } }));
 ok("the team lead completes it", r.ok, r);
 ok("gaps gone", !(await LE("clients.list")).clients.find((x) => x.id === lake.id).profile_gaps.length);
-ok("the history shows each change with what it was", (await hist(LE, lake)).some((x) => /AR follow-up: in scope, target 30 a day, Leo Lead/.test(x.detail) && /Payment posting: in scope, target 25 a day, Snail Post/.test(x.detail)), (await hist(LE, lake)).map((x) => x.detail));
+ok("the history shows each change with what it was", (await hist(LE, lake)).some((x) => /AR follow-up: in scope, target 30 a day, Leo Lead/.test(x.detail) && /Payment posting: in scope, Snail Post/.test(x.detail)), (await hist(LE, lake)).map((x) => x.detail));
 ok("Snail is responsible for both clients now", (await SN("auth.me")).user.resp_clients.length === 3, (await SN("auth.me")).user.resp_clients);
 await sql("UPDATE users SET active = 0 WHERE id = ?", U("Snail Post").id);
 const gone = (await LE("clients.list")).clients.find((x) => x.id === lake.id).profile_gaps;
