@@ -232,20 +232,34 @@ location) and **team lead** (assistant managers, managers and the VP; a team lea
 worked today against the target, closed today and **left over** (allocated before this shift and not worked) split
 into **high priority** (the High tier) and other.
 
-- **On the floor now**: each biller with their status (working, **idle** after 30 minutes without an entry in their
-  shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
+- **On the floor now**: each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
+  after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
   been on it (the claim number opens the claim), pace this shift against their target, on desk, closed today and left
   over. Managers and above see the billers grouped by team lead. Click a biller's name to open **their claims**.
 - Below the floor: unassigned claims, claims with Posting / Submission and follow-ups due today.
 - Posting and Submission people are not on the floor: they have their own desks.
+- **Shastra**: each person's attendance in Purview Shastra now, read every 2 minutes with Shastra's own rules
+  (the day rolls at 05:00 IST, late is 10 minutes past the shift start, Saturday and Sunday are the week off unless
+  Shastra says otherwise): **Present** or **Late** with the time in, **On break**, **Logged out**, **Not in yet**,
+  **On leave** (or week off, holiday) and **Not logged in** in red once someone has no punch in an hour after their
+  shift began. Needs `dev/shastra-live-feed.sql` run once in Shastra's Supabase (the same key as the roster feed).
+- **Not logged in** alert: the person's team lead (and the team leads of their clients) get a pop-up on whatever page
+  they have open, a red line on Live status, an entry in the bell and, once they allow it, a notification on their
+  computer while Brahmastra is open. Managers, the VP and admins see the bell. The pop-up shows the claims on their
+  desk not started (and how many are high priority) and exactly how they would be shared, with **Reallocate equally**,
+  **Mark out only**, **Remind me in 30 min** and **They told me · dismiss** (for everyone, for the day).
+- **Reallocate equally** shares the untouched claims (assigned, not started) of each client between the people on
+  that client's team who are logged in to Shastra and not marked out: the same number each (the extra one to the
+  lightest desk), highest priority first. Claims they already started stay with them. They are marked Out today
+  (*In after all* gives the day back). **Rebalance**, for someone marked **Out today**, follows the same equal rule.
+  Each move is in the audit trail and on the claim's history.
+- **New claims notice**: whenever claims are given to a biller (Allocate, reassigning, Rebalance, Reallocate), they
+  see "N new claims were allocated to you" at the top of their screen with who gave them and why, in the bell and,
+  once they allow it, on their computer. *Open my list* or *OK* closes it.
 - **Out today** marks someone absent with a reason (**Half day** counts 4 hours of floor time on Team status).
-  **Rebalance** then hands their untouched claims (assigned, not started) to the people in today on the same client
-  team, by the room left in their capacity, highest priority first; claims nobody has room for stay put. Each move
-  is in the audit trail and on the claim's history.
-- **Coaching** on a biller's row opens their **coaching card**: entries a day over 30 days against target, skips,
-  carried over, escalations, hand-offs sent back, average note length, days out, the statuses they enter most, and
-  **1:1 notes** (1:1, praise, concern, goal) that team leads and up see and the biller never does. Only the writer
-  removes a note. QA scores stay in Sasha's Third Eye.
+- The **coaching card** (entries a day over 30 days against target, skips, carried over, escalations, hand-offs sent
+  back, average note length, days out, the statuses they enter most, and **1:1 notes** that team leads and up see and
+  the biller never does) opens from **Search** (Ctrl+K) on a biller's name. QA scores stay in Sasha's Third Eye.
 - **Manage › Note templates**: text for RCA / findings, for every client or one, written by team leads and up.
   Billers pick one from **Insert a template** above the RCA box.
 - On **Work this claim**, a biller sees the three SAAG combinations the team used most in the last 90 days for

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.62.0";
+const VERSION = "2.63.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -121,6 +121,8 @@ const SCHEMA = [
      dos TEXT NOT NULL DEFAULT '', acct TEXT NOT NULL DEFAULT '', payer TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', done_by TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_ev_rows_client ON ev_rows (client_id, work_date)`,
   `CREATE INDEX IF NOT EXISTS idx_ev_rows_batch ON ev_rows (batch_id)`,
+  `CREATE TABLE IF NOT EXISTS shastra_alerts (user_id TEXT NOT NULL, day TEXT NOT NULL, by_id TEXT NOT NULL, state TEXT NOT NULL, until_at INTEGER, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
+     PRIMARY KEY (user_id, day, by_id))`,
   `CREATE TABLE IF NOT EXISTS ev_batches (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, location_id TEXT NOT NULL DEFAULT '', file_name TEXT NOT NULL DEFAULT '', from_day TEXT NOT NULL,
      to_day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS floor_days (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', tof_min INTEGER, idle_min INTEGER, locked_min INTEGER,
@@ -142,6 +144,8 @@ const SCHEMA = [
 /* Columns added after the first release. ensureReady() adds any that an
    existing database is missing, so upgrades need no manual migration. */
 const EXTRA_COLUMNS = {
+  // kind 'alloc': "N new claims were allocated to you"; seen_at once the biller has closed the banner
+  user_notices: [["kind", "TEXT NOT NULL DEFAULT ''"], ["seen_at", "INTEGER"]],
   notes: [["status", "TEXT NOT NULL DEFAULT ''"], ["sub_status", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT NOT NULL DEFAULT ''"], ["bucket", "TEXT NOT NULL DEFAULT ''"],
     ["effective", "TEXT NOT NULL DEFAULT ''"], ["note_action", "TEXT NOT NULL DEFAULT ''"], ["fields_json", "TEXT NOT NULL DEFAULT '{}'"], ["edited_at", "INTEGER"], ["edited_by", "TEXT"],
     // Minutes on the phone for this entry (from the call start / end times), for the dashboard's call time.
@@ -939,6 +943,136 @@ function shastraDay(status) {
   if (["approved_leave", "al", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { share: 0, kind: "leave" };
   if (["week_off", "wo", "holiday", "h", "ho", "comp_off", "co", "not_joined", "nj", "attrite", "att"].includes(s)) return { share: 0, kind: "off" };
   return null;
+}
+/* ---- Purview Shastra right now (dev/shastra-live-feed.sql): who is punched in, on a break, logged out, on leave or not
+   in yet, kept two minutes. Brahmastra works out each person's state with Shastra's own rules: the day rolls at 05:00
+   IST, late is 10 minutes past the shift start, Saturday and Sunday are the week off unless the roster says otherwise,
+   and someone with no punch an hour after their shift began has not logged in (the team lead is told). ---- */
+const LIVE_FRESH_MS = 2 * 60000, SH_GRACE_MS = 10 * 60000, SH_MISSING_MS = 60 * 60000;
+const SH_PRESENT = new Set(["present", "late", "half_day", "half-day", "half_day_lwp", "comp_off", "overtime"]);
+const SH_OFF = new Set(["approved_leave", "sick_leave", "maternity_leave", "lwp", "leave", "attrite", "sabbatical"]);
+async function fetchLive(env) {
+  const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
+  let r = null, data = null;
+  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_live", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json().catch(() => null); } catch (e) { r = null; }
+  if (r && (r.status === 404 || (data && data.code === "PGRST202"))) return { ok: false, state: "not_set_up", error: "The live attendance feed is not set up in Purview Shastra yet (dev/shastra-live-feed.sql)." };
+  if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.rows)) return { ok: false, state: "error", error: str((data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer"), 200) };
+  return { ok: true, rows: data.rows, day: isoDate(data.day) || "" };
+}
+async function shastraLive(env) {
+  if (!env.SHASTRA_FEED_KEY) return { state: "off", byUser: new Map(), day: "" };
+  const now = Date.now();
+  let st = (await getSetting(env, "live_sync", null)) || {};
+  if (!(st.at && now - st.at < LIVE_FRESH_MS) && !(st.fail_at && now - st.fail_at < LIVE_FRESH_MS)) {
+    const res = await fetchLive(env), ms = (v) => { const t = v ? Date.parse(v) : NaN; return isFinite(t) ? t : null; };
+    if (res.ok) st = { at: now, day: res.day, rows: res.rows.slice(0, 5000).map((x) => ({ e: str(x.emp_id, 40), m: str(x.email, 120).toLowerCase(), s: str(x.shift, 40), st: str(x.status, 40).toLowerCase(),
+      in: ms(x.in_at), out: ms(x.out_at), br: ms(x.break_since), lv: str(x.leave, 60), hol: !!x.holiday, wo: !!x.week_off, np: !!x.no_punch, ap: !!x.auto_present, lok: !!x.late_ok })) };
+    else st = { ...st, fail_at: now, state: res.state, error: res.error };
+    await setSetting(env, "live_sync", st);
+  }
+  const byUser = new Map();
+  if (st.rows) {
+    const byEmp = new Map(), byMail = new Map();
+    for (const x of st.rows) { if (x.e) byEmp.set(x.e.trim().toUpperCase(), x); if (x.m) byMail.set(x.m.trim(), x); }
+    for (const u of await all(env, "SELECT id, emp_id, email FROM users WHERE active = 1")) {
+      const x = (u.emp_id && byEmp.get(String(u.emp_id).trim().toUpperCase())) || (u.email && byMail.get(String(u.email).trim().toLowerCase()));
+      if (x) byUser.set(u.id, x);
+    }
+  }
+  return { state: st.at ? "ok" : st.state || "pending", error: st.error || "", at: st.at || null, day: st.day || istISO(Date.now() - 5 * 3600000), byUser };
+}
+const hhmmIST = (ms) => new Date(ms + IST_MIN * 60000).toISOString().slice(11, 16);
+const lateText = (ms) => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60); return (h ? h + " h " : "") + String(m % 60).padStart(h ? 2 : 1, "0") + " m"; };
+/* One person's state in Shastra now. x: their Shastra row (none when the roster does not match them); shift from Shastra, else the roster. */
+function liveState(x, u, now) {
+  if (!x) return { state: "none", label: "Not in Shastra", sub: "no match by Emp ID or email" };
+  const L = (state, label, sub, extra) => ({ state, label, sub: sub || "", ...(extra || {}) });
+  const win = shiftWindow(x.s || u.shift, now, 0);
+  if (x.np) return L("offclock", "Not on the clock", "no attendance kept");
+  if (x.br) return L("break", "On break", Math.max(0, Math.round((now - x.br) / 60000)) + " min", { in_at: x.in });
+  if (x.in && x.out) return L("out", "Logged out", "at " + hhmmIST(x.out), { in_at: x.in });
+  if (x.in) { const late = !!(win && !x.lok && x.in > win.start + SH_GRACE_MS && x.in < win.end); return L(late ? "late" : "present", late ? "Late" : "Present", "in " + hhmmIST(x.in), { in_at: x.in }); }
+  if (SH_PRESENT.has(x.st)) return L("present", "Present", "marked in Shastra");
+  if (SH_OFF.has(x.st) || x.lv) return L("leave", "On leave", String(x.lv || x.st).replace(/_/g, " "));
+  if (x.hol) return L("leave", "Holiday", "");
+  if (x.wo) return L("leave", "Week off", "");
+  if (x.ap) return L("present", "Present", "contract");
+  if (x.st === "absent") return L("absent", "Absent", "marked in Shastra");
+  if (!win) return L("notin", "Not in yet", "no shift on the roster");
+  // the business day starts at 05:00 IST: a shift that began before it and is over was yesterday's (today's is still to come)
+  const istNow = now + IST_MIN * 60000, bizStart = istNow - ((istNow - 5 * 3600000) % 86400000 + 86400000) % 86400000 - IST_MIN * 60000;
+  if (now >= win.end) return win.start < bizStart ? L("notin", "Not in yet", "shift " + hhmmIST(win.start)) : L("absent", "Absent", "no punch in");
+  const past = now - win.start;
+  if (past >= SH_MISSING_MS) return L("missing", "Not logged in", lateText(past) + " past " + hhmmIST(win.start), { since: win.start, late_min: Math.floor(past / 60000) });
+  return L("notin", "Not in yet", "shift " + hhmmIST(win.start));
+}
+const LIVE_IN = new Set(["present", "late", "break"]);
+/* The untouched claims (allocated, not started) of one biller, shared equally per client between the people on the
+   client's team who are in today: logged in to Shastra (or, without Shastra, not marked out), highest priority first,
+   one each in turn starting with the lightest desk. dry: only the plan. */
+async function shareEqually(env, user, src, o) {
+  const today = o.today || istISO(Date.now()), live = o.live || { state: "off", byUser: new Map() }, now = Date.now();
+  const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active && u.id !== src.id);
+  const out = new Set((await all(env, "SELECT user_id FROM attendance WHERE day IN (?, ?) AND status = 'out'", today, live.day || today)).map((x) => x.user_id));
+  const stateOf = (u) => liveState(live.byUser.get(u.id), u, now).state;
+  const isIn = (u) => !out.has(u.id) && (live.state !== "ok" || LIVE_IN.has(stateOf(u)) || stateOf(u) === "none");
+  const why = (u) => out.has(u.id) ? "out today" : ({ leave: "on leave", missing: "not logged in", notin: "not in yet", absent: "absent", out: "logged out", offclock: "not on the clock" })[stateOf(u)] || "not in";
+  const claims = await all(env, `SELECT id, client_id, priority, tier FROM claims WHERE assigned_to = ? AND state = 'assigned'${editScopeSql(user, "client_id")} ORDER BY priority DESC`, src.id, ...editScopeArgs(user));
+  const ids = [...new Set(claims.map((c) => c.client_id))];
+  const cls = ids.length ? await all(env, `SELECT id, name, team_json FROM clients WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids) : [];
+  const load = new Map((await all(env, "SELECT assigned_to, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_to IS NOT NULL GROUP BY assigned_to")).map((x) => [x.assigned_to, x.n]));
+  const given = new Map(), moves = [], skipped = new Map(), perClient = [];
+  let left = 0;
+  for (const c of cls) {
+    const mine = claims.filter((x) => x.client_id === c.id), on = new Set(parseTeam(c.team_json));
+    const members = team.filter((u) => on.has(u.id)), cands = members.filter(isIn);
+    members.filter((u) => !isIn(u)).forEach((u) => skipped.set(u.id, { name: u.name, why: why(u) }));
+    if (!cands.length) { left += mine.length; perClient.push({ id: c.id, name: c.name, n: mine.length, left: mine.length }); continue; }
+    cands.sort((a, b) => (load.get(a.id) || 0) - (load.get(b.id) || 0) || a.name.localeCompare(b.name));
+    mine.forEach((x, i) => { const u = cands[i % cands.length]; moves.push({ claim: x.id, to: u }); given.set(u.id, { id: u.id, name: u.name, count: ((given.get(u.id) || {}).count || 0) + 1 }); });
+    perClient.push({ id: c.id, name: c.name, n: mine.length, left: 0 });
+  }
+  const res = { n: claims.length, high: claims.filter((x) => x.tier === "High").length, moved: moves.length, left, to: [...given.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    skipped: [...skipped.values()], clients: perClient };
+  if (o.dry || !moves.length) return res;
+  const stmts = [];
+  for (const m of moves) {
+    stmts.push(env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned' AND assigned_to = ?").bind(m.to.id, now, now, m.claim, src.id));
+    stmts.push(claimEvent(env, m.claim, user, "assigned", m.to.name, { from: src.name, via: o.via || "rebalance" }));
+  }
+  await batchAll(env, stmts, 50);
+  await noticeAlloc(env, res.to.map((x) => [x.id, x.count]), (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you: from ${src.name}'s desk (${o.reason || "not in today"}), shared equally by ${user.name || "your team lead"}.`);
+  return res;
+}
+/* "N new claims were allocated to you": a notice on the biller's screen, in the bell and on their computer. */
+async function noticeAlloc(env, pairs, textOf) {
+  const now = Date.now(), stmts = pairs.filter(([, n]) => n > 0).map(([uid, n]) => env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id, kind) VALUES (?,?,?,?,?,?,?)").bind(uuid(), uid, now, str(textOf(n), 300), "queue", null, "alloc"));
+  if (stmts.length) await batchAll(env, stmts, 50);
+}
+/* The billers a supervisor should hear about: no punch in Shastra an hour after their shift began, not marked out,
+   not dismissed today. popup: the person's own team lead, or a team lead of a client they are on (managers, the VP and
+   admins see it in the bell). */
+async function missingAlerts(env, user) {
+  if (user.role !== "supervisor") return { state: "off", alerts: [] };
+  const live = await shastraLive(env);
+  if (live.state !== "ok") return { state: live.state, alerts: [] };
+  const now = Date.now(), day = live.day, today = istISO(now);
+  const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active && (!String(u.department || "").trim() || isAR(u)));
+  const out = new Set((await all(env, "SELECT user_id FROM attendance WHERE day IN (?, ?) AND status = 'out'", today, day)).map((x) => x.user_id));
+  const marks = await all(env, "SELECT user_id, by_id, state, until_at FROM shastra_alerts WHERE day = ?", day);
+  const gone = new Set(marks.filter((m) => m.state === "dismissed").map((m) => m.user_id));
+  const snoozed = new Set(marks.filter((m) => m.state === "snoozed" && m.by_id === user.id && m.until_at > now).map((m) => m.user_id));
+  const missing = team.filter((u) => !out.has(u.id) && !gone.has(u.id)).map((u) => ({ u, s: liveState(live.byUser.get(u.id), u, now) })).filter((x) => x.s.state === "missing");
+  if (!missing.length) return { state: "ok", alerts: [] };
+  const clients = await all(env, "SELECT id, team_json FROM clients WHERE active = 1");
+  const alerts = [];
+  for (const { u, s } of missing) {
+    const plan = await shareEqually(env, user, u, { dry: true, live, today });
+    const leadsClient = clients.some((c) => parseTeam(c.team_json).includes(u.id) && leadFor(user, c.id));
+    alerts.push({ user_id: u.id, name: u.name, shift: u.shift || "", day, since: s.since, late_min: s.late_min, sub: s.sub, n: plan.n, high: plan.high, plan: plan.to, skipped: plan.skipped,
+      left: plan.left, clients: plan.clients.map((c) => c.name), popup: (u.reports_to === user.id || (leadsClient && !isManagerUp(user))) && !snoozed.has(u.id), snoozed: snoozed.has(u.id) });
+  }
+  return { state: "ok", alerts };
 }
 /* How many times a claim came back to AR from Posting / Submission / Rejections (Back to AR or Need assistance). */
 async function returnsOf(env, claimId) {
@@ -2330,6 +2464,7 @@ const OPS = {
     const notes = await all(env, `SELECT nt.user_id, nt.kind, nt.created_at FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
     const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
     const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
+    const live = await shastraLive(env);
     const rows = people.map((u) => {
       const win = shiftWindow(u.shift, now, dayStart);
       const startOf = win ? win.start : dayStart;
@@ -2358,13 +2493,14 @@ const OPS = {
         on_desk: onDesk.length, carried: left.length, left_high: leftHigh, left_other: left.length - leftHigh, closed, worked: work.length, skips, first, last,
         idle_min: last ? Math.floor((now - last) / 60000) : null, expected, behind: status !== "out" && work.length < expected - 3,
         current: cur ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
-        status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, in_shift: inShift };
+        status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, in_shift: inShift,
+        untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null };
     });
     const rank = { idle: 0, not_started: 1, working: 2, done: 3, out: 4 };
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
     const present = rows.filter((r) => r.status !== "out");
     const add = (k) => rows.reduce((t, r) => t + r[k], 0);
-    return { rows, leads: f.leads, can_pick_lead: f.canPickLead, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
+    return { rows, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
       capacity: present.reduce((t, r) => t + r.capacity, 0), carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
       behind: rows.filter((r) => r.behind).length, working: rows.filter((r) => r.status === "working").length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
   },
@@ -2565,34 +2701,52 @@ const OPS = {
       id, today, str(payload.reason, 120).trim(), user.name || "", Date.now());
     return { ok: true };
   },
-  /* Hands an absent biller's untouched claims (assigned, not started) to the people on the same client who are in
-     today, by room left in their capacity, highest priority first. */
-  "team.rebalance": async ({ env, user, payload }) => {
-    const from = str(payload.user_id, 60), today = isoDate(payload.today) || isoToday();
-    const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
-    const src = team.find((u) => u.id === from);
+  /* The not-logged-in alert: Remind me in 30 min (for this person only) or They told me (for everyone, for the day). */
+  "team.alertSnooze": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60);
+    if (!(await visibleUsers(env, user)).some((u) => u.id === id)) throw denied("That person is not in your team.");
+    const live = await shastraLive(env), mins = Math.min(240, Math.max(5, Math.round(num(payload.minutes, 30)))), now = Date.now();
+    await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'snoozed',?,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'snoozed', until_at = excluded.until_at, at = excluded.at`,
+      id, live.day || istISO(now), user.id, now + mins * 60000, user.name || "", now);
+    return { ok: true, until_at: now + mins * 60000 };
+  },
+  "team.alertDismiss": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60);
+    const u = (await visibleUsers(env, user)).find((x) => x.id === id);
+    if (!u) throw denied("That person is not in your team.");
+    const live = await shastraLive(env), now = Date.now();
+    await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'dismissed',NULL,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'dismissed', at = excluded.at`, id, live.day || istISO(now), user.id, user.name || "", now);
+    await audit(env, user, "team.alert", null, `${u.name}: not logged in, dismissed (${str(payload.reason, 80) || "the team lead knows"})`);
+    return { ok: true };
+  },
+  /* Not logged in: hand the person's untouched claims out equally to the people in today on the same clients, and
+     (unless asked not to) mark them out today. Each person who gets claims is told. */
+  "team.shareOut": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60), today = isoDate(payload.today) || istISO(Date.now());
+    if (user.role !== "supervisor") throw denied("Only team leads and above can reallocate.");
+    const src = (await visibleUsers(env, user)).find((u) => u.id === id && u.role === "user");
     if (!src) throw denied("That person is not in your team.");
-    const out = new Set((await all(env, "SELECT user_id FROM attendance WHERE day = ? AND status = 'out'", today)).map((r) => r.user_id));
-    const claims = await all(env, `SELECT id, client_id, location_id, priority FROM claims WHERE assigned_to = ? AND state = 'assigned'${editScopeSql(user, "client_id")} ORDER BY priority DESC`, from, ...editScopeArgs(user));
-    if (!claims.length) return { moved: 0, left: 0, to: [] };
-    const teams = new Map((await all(env, "SELECT id, team_json FROM clients")).map((c) => [c.id, new Set(parseTeam(c.team_json))]));
-    const load = new Map((await all(env, "SELECT assigned_to, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_to IS NOT NULL GROUP BY assigned_to")).map((r) => [r.assigned_to, r.n]));
-    const cands = team.filter((u) => u.id !== from && !out.has(u.id));
-    const now = Date.now(), moved = new Map(), stmts = [];
-    let left = 0;
-    for (const c of claims) {
-      const onClient = cands.filter((u) => (teams.get(c.client_id) || new Set()).has(u.id));
-      const pick = onClient.map((u) => ({ u, room: (u.capacity || 35) - (load.get(u.id) || 0) })).filter((x) => x.room > 0).sort((a, b) => b.room - a.room)[0];
-      if (!pick) { left++; continue; }
-      load.set(pick.u.id, (load.get(pick.u.id) || 0) + 1);
-      moved.set(pick.u.name, (moved.get(pick.u.name) || 0) + 1);
-      stmts.push(env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned' AND assigned_to = ?").bind(pick.u.id, now, now, c.id, from));
-      stmts.push(claimEvent(env, c.id, user, "assigned", pick.u.name, { from: src.name, via: "rebalance" }));
-    }
-    if (stmts.length) await batchAll(env, stmts, 50);
-    const n = claims.length - left;
-    if (n) await audit(env, user, "team.rebalance", null, `${src.name}: ${n} claims to ` + [...moved.entries()].map(([k, v]) => k + " " + v).join(", "));
-    return { moved: n, left, to: [...moved.entries()].map(([name, count]) => ({ name, count })) };
+    const live = await shastraLive(env);
+    const res = await shareEqually(env, user, src, { live, today, via: "not logged in", reason: payload.mark_out === false ? "reallocated" : "not logged in today" });
+    if (payload.mark_out !== false) await run(env, `INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,'out',?,?,?) ON CONFLICT (user_id, day) DO UPDATE SET status = 'out', reason = excluded.reason, by_name = excluded.by_name, at = excluded.at`,
+      id, today, "Not logged in to Shastra", user.name || "", Date.now());
+    if (res.moved || payload.mark_out !== false) await audit(env, user, "team.rebalance", null, `${src.name} (not logged in): ${res.moved} claims shared equally` + (res.to.length ? " to " + res.to.map((x) => x.name + " " + x.count).join(", ") : "") + (res.left ? `; ${res.left} stayed` : ""));
+    return { moved: res.moved, left: res.left, to: res.to.map(({ name, count }) => ({ name, count })), marked_out: payload.mark_out !== false };
+  },
+  "notify.seen": async ({ env, user, payload }) => {
+    const ids = (Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 50);
+    if (ids.length) await run(env, `UPDATE user_notices SET seen_at = ? WHERE user_id = ? AND id IN (${ids.map(() => "?").join(",")})`, Date.now(), user.id, ...ids);
+    return { ok: true };
+  },
+  /* Hands an absent biller's untouched claims (assigned, not started) to the people on the same client who are in
+     today: the same number each, highest priority first (see shareEqually). */
+  "team.rebalance": async ({ env, user, payload }) => {
+    const from = str(payload.user_id, 60), today = isoDate(payload.today) || istISO(Date.now());
+    const src = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active).find((u) => u.id === from);
+    if (!src) throw denied("That person is not in your team.");
+    const res = await shareEqually(env, user, src, { live: await shastraLive(env), today, via: "rebalance", reason: "out today" });
+    if (res.moved) await audit(env, user, "team.rebalance", null, `${src.name}: ${res.moved} claims shared equally to ` + res.to.map((x) => x.name + " " + x.count).join(", "));
+    return { moved: res.moved, left: res.left, to: res.to.map(({ name, count }) => ({ name, count })) };
   },
   /* Coaching: one biller's last 30 days and the team lead's 1:1 notes. */
   "coach.profile": async ({ env, user, payload }) => {
@@ -2686,6 +2840,7 @@ const OPS = {
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
   "notify.list": async ({ env, user, payload }) => {
     const items = [], now = Date.now(), today = isoDate(payload.today) || isoToday(), plural = (n, a, b) => n + " " + (n === 1 ? a : b);
+    let alerts = [];
     const add = (key, tone, n, text, view, params) => { if (n > 0) items.push({ key, tone, n, text, view, params: params || null }); };
     // what was done to this person: made responsible for a client, or taken off one (two weeks)
     for (const n of await all(env, "SELECT id, text, view, client_id, at FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
@@ -2706,6 +2861,9 @@ const OPS = {
         const r = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE state = 'assigned' AND assigned_to IN (${absent.map(() => "?").join(",")})`, ...absent.map((u) => u.id));
         add("absent", "amber", (r && r.n) || 0, plural((r && r.n) || 0, "claim sits", "claims sit") + " on the desks of people out today", "teamtoday");
       }
+      const miss = await missingAlerts(env, user);
+      add("shastra_missing", "red", miss.alerts.length, (miss.alerts.length === 1 ? miss.alerts[0].name + " has" : miss.alerts.length + " people have") + " not logged in to Shastra an hour after the shift began", "live");
+      alerts = miss.alerts;
       const cl = (await OPS["clients.list"]({ env, user })).clients.filter((c) => c.active && c.can_edit && c.profile_gaps.length);
       add("profiles", "amber", cl.length, (cl.length === 1 ? cl[0].name + "'s profile is" : cl.length + " client profiles are") + " incomplete: " + (cl.length === 1 ? cl[0].profile_gaps.slice(0, 3).join(", ") : "scope of work, locations, targets or the people responsible"), "clients");
       const month = closingMonth(today);
@@ -2727,7 +2885,10 @@ const OPS = {
     }
     const fb = await OPS["feedback.count"]({ env, user });
     add("feedback", "info", fb.n, plural(fb.n, "new feedback item", "new feedback items"), "feedback");
-    return { items, at: now };
+    // new claims given to this person that they have not seen yet (the banner on their screen)
+    const allocNew = (await all(env, "SELECT id, text, at FROM user_notices WHERE user_id = ? AND kind = 'alloc' AND seen_at IS NULL AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 2 * 86400000))
+      .map((x) => ({ id: x.id, text: x.text, at: x.at, n: Number((/^(\d+)/.exec(x.text) || [])[1]) || 0 }));
+    return { items, at: now, alerts, alloc_new: allocNew };
   },
 
   /* ---- Monday digest: the spans this person can see (all for admins and the VP), who gets each, and when it went ---- */
@@ -3817,6 +3978,11 @@ const OPS = {
     const results = await batchAll(env, stmts, 50);
     const applied = results.reduce((s, r) => s + changesOf(r), 0);
     if (evs.length) await batchAll(env, evs, 50);
+    if (applied) {
+      const per = new Map(); for (const a of items) if (ok.has(str(a.user_id, 60)) && eligible(a)) per.set(str(a.user_id, 60), (per.get(str(a.user_id, 60)) || 0) + 1);
+      const cname = ((await one(env, "SELECT name FROM clients WHERE id = ?", client_id)) || {}).name || "";
+      await noticeAlloc(env, [...per.entries()], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}${cname ? " (" + cname + ")" : ""}.`);
+    }
     const id = uuid();
     await run(env, "INSERT INTO allocations (id, client_id, location_id, by_user, at, strategy, count, summary_json) VALUES (?,?,?,?,?,?,?,?)",
       id, client_id, location_id || null, user.id, now, str(strategy, 40), applied, str(JSON.stringify(payload.summary || {}), 20000));
@@ -3837,6 +4003,7 @@ const OPS = {
       changed += changesOf(r);
     }
     if (evs.length) await batchAll(env, evs, 50);
+    if (changed && u.id !== user.id) await noticeAlloc(env, [[u.id, changed]], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}.`);
     return { changed };
   },
   "alloc.unassign": async ({ env, user, payload }) => {

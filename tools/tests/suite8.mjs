@@ -62,7 +62,7 @@ r = await T(async () => TI("team.rebalance", { user_id: cara.id }));
 ok("rebalance moves their untouched claims to someone in today", r.ok && r.r.moved === 4 && r.r.left === 0 && r.r.to[0].name === "Arun Agent", r.r || r);
 h = await TI("team.huddle");
 ok("their desk is empty after", h.rows.find((x) => x.id === cara.id).on_desk === 0 && h.rows.find((x) => x.id === arun.id).on_desk === 13, h.rows.map((x) => x.name + " " + x.on_desk));
-ok("the move is in the audit trail", (await A("audit.list", {})).rows.some((x) => x.action === "team.rebalance" && /Cara Agent: 4 claims to Arun Agent 4/.test(x.detail)));
+ok("the move is in the audit trail", (await A("audit.list", {})).rows.some((x) => x.action === "team.rebalance" && /Cara Agent: 4 claims shared equally to Arun Agent 4/.test(x.detail)));
 r = await TI("team.rebalance", { user_id: cara.id });
 ok("rebalancing again moves nothing", r.moved === 0, r);
 await TI("team.setOut", { user_id: cara.id, out: false });

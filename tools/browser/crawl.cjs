@@ -20,6 +20,7 @@ const THEMES = (process.env.THEMES || 'light').split(',');
   const b = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}); const p = await b.newPage({ viewport: { width: 1440, height: 950 } });
   await routeCdn(p);
   await p.route('https://qhbgshnqugxqiwdywsas.supabase.co/**', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, rows: FEED }) }));
+  await p.route(/brahmastra_live/, (r) => r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ code: 'PGRST202', message: 'not set up' }) }));
   let errs = []; p.on('pageerror', (e) => errs.push('pageerror: ' + e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|fonts|net::ERR|brahmastra-api ApiError/.test(m.text())) errs.push('console: ' + m.text().slice(0, 200)); });
   const issues = []; const t = (ms) => p.waitForTimeout(ms);
   const clearModals = async () => { for (let k = 0; k < 4; k++) { const ov = p.locator('.overlay'); if (!(await ov.count())) break; const btn = p.locator('.overlay button:has-text("Later"), .overlay button:has-text("Skip for now"), .overlay button:has-text("Close"), .overlay button:has-text("Cancel")').first(); if (await btn.count()) { await btn.click().catch(() => {}); await t(700); } else break; } };

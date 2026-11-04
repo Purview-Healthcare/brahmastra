@@ -23,6 +23,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
   const p = await ctx.newPage();
   await routeCdn(p);
   await p.route("https://qhbgshnqugxqiwdywsas.supabase.co/**", (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, rows: FEED }) }));
+  await p.route(/brahmastra_live/, (r) => r.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "PGRST202", message: "not set up" }) }));
   const errs = []; p.on("pageerror", (e) => errs.push(e.message));
   const t = (ms) => p.waitForTimeout(ms);
   const results = []; let section = "";
@@ -329,6 +330,34 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("the client is created", /Dr\. Montella Eye Care/.test(await p.innerText(".main")));
     await as("snail");
     ok("the posting person sees it straight away", (await rpc("clients.list")).clients.some((c) => c.name === "Dr. Montella Eye Care"));
+  });
+
+  S("Live status: Shastra, the not-logged-in alert, equal reallocation");
+  await step("shastra-live", async () => {
+    // Shastra now: Arun has no punch 65 minutes into the shift; Cara punched in
+    const IST = 330 * 60000, hm = (ms) => new Date(ms + IST).toISOString().slice(11, 16), n0 = Date.now(), shift = (st) => hm(st) + "-" + hm(st + 9 * 3600000);
+    const day = new Date(n0 + IST - 5 * 3600000).toISOString().slice(0, 10);
+    const rows = [{ emp_id: "A1", email: "arun@purview-healthcare.com", shift: shift(n0 - 65 * 60000), status: "", in_at: null, out_at: null, break_since: null },
+      { emp_id: "A3", email: "cara@purview-healthcare.com", shift: shift(n0 - 2 * 3600000), status: "present", in_at: new Date(n0 - 2 * 3600000).toISOString(), out_at: null, break_since: null }];
+    await p.route("**/rest/v1/rpc/brahmastra_live", (rt) => rt.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, day, rows }) }));
+    await p.evaluate(async () => { await window.__sql("DELETE FROM settings WHERE key = 'live_sync'"); await window.__flush(); });
+    await as("tina"); await open("#/live"); await t(3500);
+    ok("the pop-up tells the team lead Arun has not logged in, with the claims and the equal plan", (await p.locator(".miss-modal").count()) === 1 && /Arun Agent has not logged in/.test(await p.innerText(".miss-modal")) && /Cara Agent/.test(await p.innerText(".miss-modal")));
+    await p.locator('.miss-modal button:has-text("Remind me in 30 min")').click(); await t(1500);
+    ok("Remind me in 30 min closes it", (await p.locator(".miss-modal").count()) === 0);
+    const live = await p.innerText(".dash-team");
+    ok("Live status: the Shastra column (Not logged in, Present) and the red line, no Coaching button", /Not logged in/.test(live) && /Present/.test(live) && /has not logged in to Shastra/.test(live) && !/Coaching/.test(live), live.slice(0, 300));
+    p.once("dialog", (d) => d.accept());
+    await p.locator('.sh-alert button:has-text("Reallocate")').first().click(); await t(2500);
+    const after = await p.innerText(".dash-team");
+    ok("Reallocate shares Arun's untouched claims and marks Arun out", /Out today/.test(after) && !/has not logged in to Shastra/.test(after), after.slice(0, 300));
+    await as("cara"); await t(1500);
+    ok("Cara sees the banner: new claims were allocated to her", /new claims? (were|was) allocated to you/.test(await p.innerText(".main")));
+    await p.locator('.alloc-note button:has-text("OK")').click(); await t(1500);
+    ok("OK closes the banner", (await p.locator(".alloc-note").count()) === 0);
+    await p.unroute("**/rest/v1/rpc/brahmastra_live");
+    await p.evaluate(async () => { await window.__sql("DELETE FROM settings WHERE key = 'live_sync'"); await window.__flush(); });
+    await as("tina");
   });
 
   ok("no script errors on any page", !errs.length, errs);
