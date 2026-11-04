@@ -151,25 +151,29 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("Live status shows the floor", (await p.locator(".dash-team").count()) === 1 && /On the floor now/i.test(await p.locator(".dash-team").innerText()));
     ok("no error on Live status", !(await p.locator(".alert.err").count()));
     ok("a team lead has no team lead filter", !/team lead/i.test(await p.locator(".dash-filters").innerText()));
-    // Dashboard: Team status and Client reports
+    // Dashboard: Team status, Inventory status, Client 360 report
     await open("#/dashboard"); await t(2500);
     ok("Dashboard opens on Team status", /Team status by team lead/i.test(await p.innerText(".main")));
     ok("Team status has the suggestions", /Suggestions/i.test(await p.innerText(".main")) && /Do today/i.test(await p.innerText(".main")));
-    ok("the Dashboard has no Client reports tab any more", !(await p.locator('.dash-subtabs button:has-text("Client reports")').count()));
+    ok("the Dashboard has three tabs: Team status, Inventory status, Client 360 report", (await p.locator(".dash-subtabs button").allInnerTexts()).map((x) => x.trim()).join("|") === "Team status|Inventory status|Client 360 report", await p.locator(".dash-subtabs button").allInnerTexts());
+    await p.locator('.dash-subtabs button:has-text("Inventory status")').click(); await t(3500);
+    ok("Inventory status is the client list: Drishti's score and the claims in detail", /Workable AR/i.test(await p.innerText(".main")) && /SLA score/i.test(await p.innerText(".main")) && /Claims in detail/i.test(await p.innerText(".main")) && (await p.locator(".psla-score").count()) > 0, (await p.innerText(".main")).slice(0, 200));
+    ok("no error on Inventory status", !(await p.locator(".alert.err").count()));
+    ok("no Monday digest card on Inventory status", !/Monday digest email/.test(await p.innerText(".main")));
     await open("#/sla"); await t(3500);
-    ok("Portfolio & SLA opens on the Portfolio: the client list, Drishti's score and the claims in detail", /Workable AR/i.test(await p.innerText(".main")) && /SLA score/i.test(await p.innerText(".main")) && /Claims in detail/i.test(await p.innerText(".main")) && (await p.locator(".psla-score").count()) > 0, (await p.innerText(".main")).slice(0, 200));
-    ok("no error on the Portfolio", !(await p.locator(".alert.err").count()));
+    ok("the SLA tab is one embedded app: Drishti's tabs with SLA scorecard and Monday digest beside them", (await p.locator(".ws-tabs button").allInnerTexts()).map((x) => x.trim()).slice(-2).join("|") === "SLA scorecard|Monday digest" && (await p.locator(".rh-iframe").count()) === 1, await p.locator(".ws-tabs button").allInnerTexts());
+    ok("no Portfolio sub-tabs on the SLA tab", !(await p.locator(".dash-subtabs").count()));
     await as("sasha"); await open("#/live"); await t(2500);
     const later = p.locator('button:has-text("Later")'); if (await later.count()) { await later.first().click(); await t(500); }
     ok("the VP gets the team lead filter", /team lead/i.test(await p.locator(".dash-filters").innerText()));
     ok("the VP sees billers grouped by team lead", (await p.locator(".dash-team .lead-grp").count()) > 0);
-    ok("one tab, Portfolio & SLA; no My day & reports tab", (await p.locator('.nav > button:has-text("Portfolio & SLA")').count()) === 1 && !(await p.locator('.nav > button:has-text("My day")').count()));
+    ok("one SLA tab; no Portfolio & SLA, no My day & reports tab", (await p.locator(".nav > button").filter({ hasText: /^SLA$/ }).count()) === 1 && !(await p.locator('.nav > button:has-text("Portfolio")').count()) && !(await p.locator('.nav > button:has-text("My day")').count()));
     const nm = (await p.locator(".dash-team .biller-link").first().innerText()).replace(/[\s›]+$/, "");
     await p.locator(".dash-team .biller-link").first().click(); await t(2500);
     ok("a biller's name opens their claims", /#\/claims/.test(p.url()) && (await p.innerText(".main")).includes(nm), { url: p.url(), nm });
     ok("Claims is a tab of its own", (await p.locator('.nav > button:has-text("Claims")').count()) === 1);
     await open("#/portfolio"); await t(2000);
-    ok("an old Portfolio link opens Portfolio & SLA › Portfolio", /on/.test(await p.locator('.dash-subtabs button:has-text("Portfolio")').getAttribute("class")));
+    ok("an old Portfolio link opens Dashboard › Inventory status", /on/.test(await p.locator('.dash-subtabs button:has-text("Inventory status")').getAttribute("class")));
     await open("#/dashboard"); await t(2500);
     await p.locator('.main button:has-text("allocations")').first().click(); await t(2500);
     ok("Team status: a person's allocations (allocated and worked, the dates picked) open from their row", (await p.locator('.modal:has-text("Allocations ·")').count()) === 1 && /On desks/i.test(await p.innerText(".modal")));
@@ -199,7 +203,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("a ticked month-end step shows done with who", /Internal reports reviewed[\s\S]{0,200}done/i.test(await p.innerText(".main")));
   });
 
-  S("Client report (Client 360)");
+  S("Client 360 report (Dashboard)");
   await step("creport", async () => {
     // a little activity in the month the report opens on (last month in the first ten days of a month, else this month)
     const ym = await p.evaluate(async (sun) => {
@@ -216,7 +220,9 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const ev = await rpc("creport.evUpload", { client_id: tok.sun, file_name: "EV production.xlsx", rows: [1, 2, 3, 4, 5].map((d) => ({ wd: ym + "-0" + d, py: d % 2 ? "Aetna" : "Medicare", st: "Active coverage", by: "Riya" })) });
     ok("an EV file is kept for the client", ev.ok && ev.n === 5, ev);
     await open("#/client"); await t(2000);
-    await p.locator('.c3-tabs button:has-text("Client report")').click(); await t(4000);
+    ok("Client 360 has no Client report tab and no digest card; a button goes to the Dashboard's report", !(await p.locator(".c3-tabs").count()) && !/Monday digest email/.test(await p.innerText(".main")) && (await p.locator('.main button:has-text("Client 360 report")').count()) === 1);
+    await p.locator('.main button:has-text("Client 360 report")').click(); await t(4000);
+    ok("it opens Dashboard › Client 360 report for that client", /#\/dashboard/.test(p.url()) && /on/.test(await p.locator('.dash-subtabs button:has-text("Client 360 report")').getAttribute("class")) && /Sunrise/.test(await p.locator(".dash-client").innerText()), { url: p.url() });
     const setupText = await p.innerText(".crx-setup").catch(() => "");
     ok("the report starts with the data and the dates", /New client report/.test(setupText) && /EV production\.xlsx/.test(setupText) && /Dates/.test(setupText), setupText.slice(0, 200));
     await p.locator(".crx-create").click(); await t(3000);
@@ -250,10 +256,10 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("Change data or dates goes back to the start", (await p.locator(".crx-setup").count()) === 1);
   });
 
-  S("Portfolio & SLA: the scorecard in Client 360's style");
+  S("SLA tab: the scorecard in Client 360's style, the Monday digest");
   await step("scorecard", async () => {
     await as("tina"); await open("#/sla"); await t(3000);
-    await p.locator('.dash-subtabs button:has-text("SLA scorecard")').click(); await t(3500);
+    await p.locator('.ws-tabs button:has-text("SLA scorecard")').click(); await t(3500);
     const txt = await p.innerText(".main");
     ok("the only client opens by itself: the score dial, the band and the counts", (await p.locator(".psla-dial").count()) === 1 && /green/.test(txt) && /red/.test(txt) && /October 2026/.test(txt), txt.slice(0, 300));
     ok("the scopes, what pulls it down and the strengths", (await p.locator(".psla-sc").count()) >= 3 && /What pulls it down/i.test(txt) && /AR Aging/.test(txt) && /Strengths/i.test(txt), { n: await p.locator(".psla-sc").count() });
@@ -262,10 +268,12 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const c = await dl(() => p.locator('.main button:has-text("CSV")').first().click());
     ok("the KPI CSV carries the formula column", /Scope,KPI,Value,Standard,Formula,Status,From,Comment/.test(fs.readFileSync(c, "utf8").split("\n")[0]));
     await p.locator('.main button:has-text("Upload this period")').click(); await t(1500);
-    ok("Upload this period's reports opens Inputs (Drishti), Drishti's own page", /on/.test(await p.locator('.dash-subtabs button:has-text("Inputs")').getAttribute("class")));
-    await p.locator('.dash-subtabs button:has-text("Portfolio")').click(); await t(2500);
+    ok("Upload this period's reports goes back to Drishti's own page, the scorecard tab off", !/on/.test(await p.locator('.ws-tabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".rh-frame-body:not([hidden])").count()) === 1 && !(await p.locator(".psla-dial").count()));
+    await p.locator('.ws-tabs button:has-text("Monday digest")').click(); await t(2500);
+    ok("Monday digest is a tab of the SLA tab", /Monday digest email/.test(await p.innerText(".main")) && (await p.locator(".rh-frame-body:not([hidden])").count()) === 0);
+    await open("#/dashboard"); await t(2000); await p.locator('.dash-subtabs button:has-text("Inventory status")').click(); await t(3000);
     await p.locator('.main button:has-text("scorecard ›")').first().click(); await t(2500);
-    ok("scorecard › on a Portfolio row opens that client's scorecard", /on/.test(await p.locator('.dash-subtabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".psla-dial").count()) === 1);
+    ok("scorecard › on an Inventory status row opens that client's scorecard on the SLA tab", /#\/sla/.test(p.url()) && /on/.test(await p.locator('.ws-tabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".psla-dial").count()) === 1, { url: p.url() });
   });
 
   S("Needs attention: answer an escalation");

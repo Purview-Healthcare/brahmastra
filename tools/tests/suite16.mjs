@@ -1,7 +1,7 @@
-// Dashboard › Team status and Client reports, and Live status.
+// Dashboard › Team status and Inventory status (the client list), and Live status.
 // Team status: status from the Shastra roster (Production, Training, OJT), ramp-up against the rules, attainment for the
 // weekdays someone was in (a half day counts half), floor time needed (8 h a day, 4 h a half day), the start / end /
-// comment kept in Brahmastra, and suggestions in plain pointers. Client reports: the client list (what was the Portfolio)
+// comment kept in Brahmastra, and suggestions in plain pointers. Inventory status: the client list (what was the Portfolio)
 // for team leads too, narrowed by team lead or client, with unassigned and collected for the dates.
 import { makeRig } from "./rig.mjs";
 const results = []; let section = "";
@@ -144,7 +144,7 @@ r = await VP("team.status", q);
   ok("an agreed date that has passed while the roster still says OJT: overdue, pointer to update Purview Shastra", c.ramp.flag === "over" && c.ramp.days === -1 && has(r.suggestions.today, "Cara Agent", /1 day ago.*update Purview Shastra/), { ramp: c.ramp, today: r.suggestions.today }); }
 ok("and the audit trail records the note", (await A("audit.list", {})).rows.some((x) => x.action === "team.note" && /Cara Agent/.test(x.detail)));
 
-S("Client reports: the client list for team leads too");
+S("Inventory status: the client list for team leads too");
 r = await TI("portfolio.overview", {});
 ok("a team lead gets their own clients", r.rows.length && r.rows.every((x) => x.client_id === sunrise.id), r.rows.map((x) => x.client));
 r = await VP("portfolio.overview", {});

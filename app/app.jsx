@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.74.0";
+const APP_VERSION = "2.75.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -1274,7 +1274,7 @@ function SettingsView({ me, setMe, ctx }) {
 
 /* ---------- shell ---------- */
 // Older screen names still open, inside the merged tabs.
-const NAV_ALIAS = { allocate: "inventory", locations: "clients", queue: "mydesk", teamtoday: "live", portfolio: "sla", reports: "claims" };
+const NAV_ALIAS = { allocate: "inventory", locations: "clients", queue: "mydesk", teamtoday: "live", portfolio: "dashboard", reports: "claims" };
 const USER_NAV = [["queue", "My day"], ["history", "My work"]];
 /* A person deletes their own sign-in. Typing the email is the confirmation. */
 function DeleteMyAccount({ me, onClose, onDeleted }) {
@@ -1321,7 +1321,7 @@ const navFor = (me, ho, fb, at) => {
   const inbox = fb && fb.reader ? [["feedback", "Feedback inbox"]] : [];
   const desk = deskOf(me, ho);
   // Posting and Submission work only on what is handed to them: no AR screens (SAAG, inventory, allocation, attention, TFL)
-  if (desk && me.role === "supervisor") return [["sla", "Portfolio & SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"],
+  if (desk && me.role === "supervisor") return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"],
     { g: "Manage", items: [["client", "Client 360"], ["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ...inbox] }];
   const respNav = (me.resp_clients || []).length ? [["claims", "Claims"]] : [];
   if (desk) return [["handoffs", DESK[desk].tab], ["history", "My work"], ...respNav, ["clients", "My clients"], ...inbox];
@@ -1333,7 +1333,7 @@ const navFor = (me, ho, fb, at) => {
   // and its count also shows on the Dashboard tab.
   const work = [["attention", "Needs attention"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["saag", "SAAG reference"], ...(at && at.my_desk > 0 ? [["mydesk", "My desk"]] : [])];
   const manage = [["client", "Client 360"], ["team", "Team"], ["templates", "Note templates"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : []), ...(me.is_admin || me.access_all ? [["audit", "Audit trail"]] : []), ...inbox];
-  return [["sla", "Portfolio & SLA"], ["thirdeye", "Sasha's Third Eye"], ["live", "Live status"], ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }];
+  return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["live", "Live status"], ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }];
 };
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
 const navItems = (nav) => nav.flatMap((x) => (Array.isArray(x) ? [x] : x.items));
@@ -1779,16 +1779,41 @@ function LiveStatusView({ ctx, me, go, params }) {
     </div>
   );
 }
-/* ---------- Dashboard: Team status and Client reports ---------- */
+/* ---------- Dashboard: Team status, Inventory status and the Client 360 report ---------- */
+const DASH_TABS = [["team", "Team status"], ["inventory", "Inventory status"], ["report", "Client 360 report"]];
+// an old Dashboard › Client reports or Portfolio link opens Inventory status
+const dashTab = (x) => { const t = x && x.tab; return t === "inventory" || t === "clients" || t === "client" || t === "portfolio" ? "inventory" : t === "report" ? "report" : "team"; };
 function DashboardHub(props) {
-  const { params, go } = props;
-  // the client list lives in Portfolio & SLA now; an old Dashboard › Client reports link goes there
-  useEffect(() => { if (params && (params.tab === "clients" || params.tab === "client") && go) go("sla", { tab: "portfolio" }); }, [params && params.tab]);
+  const { params } = props;
+  const [tab, setTab] = useState(() => dashTab(params));
+  useEffect(() => { if (params && params.tab) setTab(dashTab(params)); }, [params && params.tab]);
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const SUB = { team: "Team status: production and training, attainment and time on floor, for the dates picked.",
+    inventory: "Inventory status: each client's account at a glance, worst first. Click a client for its Client 360, its score for the SLA scorecard.",
+    report: "Client 360 report: the client's report pack, filled from Brahmastra, to present or send as one PDF." };
   return (
     <div className="stack">
-      <div className="row between top"><div><h1>Dashboard</h1><div className="sub">Team status: production and training, attainment and time on floor, for the dates picked.</div></div><span className="small muted">{stamp}</span></div>
-      <TeamStatusTab {...props} />
+      <div className="row between top"><div><h1>Dashboard</h1><div className="sub">{SUB[tab]}</div></div><span className="small muted">{stamp}</span></div>
+      <div className="seg2 dash-subtabs" role="tablist" style={{ alignSelf: "flex-start" }}>{DASH_TABS.map(([k, l]) =>
+        <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
+      {tab === "team" ? <TeamStatusTab {...props} /> : tab === "inventory" ? <ClientReportsTab {...props} /> : <DashClientReport {...props} />}
+    </div>
+  );
+}
+/* Dashboard › Client 360 report: pick the client, then its report studio (what Client 360 › Client report was). */
+function DashClientReport({ ctx, me, go, params }) {
+  const active = ctx.clients.filter((c) => c.active);
+  const [cid, setCid] = useState(() => { const want = (params && params.client_id) || c360Last(); return active.some((c) => c.id === want) ? want : (active[0] || {}).id || ""; });
+  useEffect(() => { if (params && params.client_id && active.some((c) => c.id === params.client_id)) setCid(params.client_id); }, [params && params.client_id]);
+  useEffect(() => { try { if (cid) localStorage.setItem("brahmastra:c360", cid); } catch (e) {} }, [cid]);
+  if (!active.length) return <div className="card"><Empty>No clients in your span yet.</Empty></div>;
+  return (
+    <div className="stack" style={{ gap: 12 }}>
+      <div className="row no-print dash-client" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ minWidth: 280 }}><Combo value={cid} onChange={(v) => v && setCid(v)} clearable={false} options={active.map((c) => ({ id: c.id, label: c.name + (c.code ? " (" + c.code + ")" : "") }))} /></span>
+        <button className="btn sm" onClick={() => go("client", { client_id: cid })} title="Everything about this client: health, AR, month-end, call log">Open Client 360</button>
+      </div>
+      {cid && <ClientReportStudio ctx={ctx} me={me} go={go} clientId={cid} />}
     </div>
   );
 }
@@ -5224,7 +5249,7 @@ function TemplatesView({ ctx, me }) {
 /* ---------- Portfolio (VP, admins, managers): every client worst first, managers side by side, data freshness ---------- */
 const HEALTH_UI = { good: ["green", "On track"], watch: ["amber", "Needs attention"], risk: ["red", "At risk"] };
 const isPortfolioUser = (me) => !!me && me.role === "supervisor" && (me.is_admin || me.access_all || me.roster_kind === "manager");
-/* Dashboard > Client reports: what was the Portfolio, for team leads too (their own clients): every client worst first,
+/* Dashboard > Inventory status: what was the Portfolio, for team leads too (their own clients): every client worst first,
    with the reasons, unassigned and collected for the dates; the claims in detail; managers side by side and data freshness. */
 const DR_BAND = { ok: ["teal-ink", "green", "Green"], warn: ["amber-ink", "amber", "Amber"], miss: ["red-ink", "red", "Red"] };
 const drDot = (b) => <i className={"psla-dot " + (b || "none")} />;
@@ -5296,7 +5321,6 @@ function ClientReportsTab({ ctx, me, go, openScorecard }) {
               : <Empty>Everything is fresh: inventories uploaded in the last week, SLA scored, roster in sync.</Empty>}
             <div className="tiny muted mt8">Numbers are only as good as the data behind them: inventory older than a week, an SLA not scored after its due day or a roster sync that failed are flagged here.</div></div>
         </div>
-        <DigestSpans me={me} />
       </>}
     </div>
   );
@@ -5344,8 +5368,8 @@ function TrendChart({ trend }) {
     </svg>
   );
 }
-/* The Monday digest: one email per manager's span. On Client 360 it shows the span this client is in; on
-   Portfolio, every span the person can see. Who gets each, a preview, a copy to yourself, and when it went. */
+/* The Monday digest: one email per manager's span, on the SLA tab: every span the person can see, who gets it, when it
+   last went, with a preview and a copy to yourself (clientId narrows it to the span one client is in). */
 function DigestSpans({ clientId, me }) {
   const q = useRpc("digest.spans", clientId ? { client_id: clientId } : {}, [clientId]);
   const [prev, setPrev] = useState(null);
@@ -5386,9 +5410,8 @@ function ClientView({ ctx, me, go, params }) {
   useEffect(() => { try { if (cid) localStorage.setItem("brahmastra:c360", cid); } catch (e) {} }, [cid]);
   const [dr, setDr] = useState(() => newRange("month"));
   const [month, setMonth] = useState("");
-  // Overview (the client at a glance) or Client report (the pack to send, filled from Brahmastra), same client and dates.
-  const [tab, setTab] = useState(() => (params && params.tab === "report" ? "report" : "overview"));
-  useEffect(() => { if (params && params.tab) setTab(params.tab === "report" ? "report" : "overview"); }, [params && params.tab]);
+  // The client report is Dashboard › Client 360 report now; an old Client 360 › Client report link goes there.
+  useEffect(() => { if (params && params.tab === "report" && cid) go("dashboard", { tab: "report", client_id: cid }); }, [params && params.tab]);
   const [how, setHow] = useState(false);
   const [from, to] = rangeSpan(dr);
   const q = useRpc("client.overview", { client_id: cid, from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1], month: month || undefined }, [cid, from, to, month], !!cid);
@@ -5412,11 +5435,10 @@ function ClientView({ ctx, me, go, params }) {
           <h1 style={{ margin: 0 }}>{d ? d.client.name : "Client 360"} {d && d.client.code && <span className="badge ink" style={{ fontSize: 12, verticalAlign: "middle" }}>{d.client.code}</span>}</h1>
           {d && <div className="sub">{[d.raci && d.raci.a.length ? "Team lead " + d.raci.a.map((p) => p.name).join(", ") : "", d.raci && d.raci.c.length ? "Manager " + d.raci.c.map((p) => p.name).join(", ") : "", d.client.team ? d.client.team + " billers" : "", d.client.locations.join(", ")].filter(Boolean).join(" · ")}</div>}
         </div>
-        {tab !== "report" && <div className="row no-print" style={{ gap: 8, flexWrap: "wrap" }}><DateRange value={dr} onChange={setDr} label="" /><button className="btn" onClick={() => window.print()} title="Print this page, or save it as a PDF for the client call">⬇ Client call pack (PDF)</button></div>}
+        <div className="row no-print" style={{ gap: 8, flexWrap: "wrap" }}><DateRange value={dr} onChange={setDr} label="" /><button className="btn" onClick={() => window.print()} title="Print this page, or save it as a PDF for the client call">⬇ Client call pack (PDF)</button>
+          <button className="btn" onClick={() => go("dashboard", { tab: "report", client_id: cid })} title="The client's report pack, on the Dashboard: its pages, charts and the PDF">Client 360 report ›</button></div>
       </div>
-      <div className="seg2 no-print c3-tabs" role="tablist" style={{ alignSelf: "flex-start" }}>{[["overview", "Overview"], ["report", "Client report"]].map(([k, l]) =>
-        <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
-      {tab === "report" ? <ClientReportStudio ctx={ctx} me={me} go={go} clientId={cid} /> : !d ? <Spinner label="Loading…" /> : <>
+      {!d ? <Spinner label="Loading…" /> : <>
         <div className={"c3-health " + hp[0]}><span className={"badge " + hp[0]}>● {hp[1]}</span>
           {d.reasons.length ? <ul>{d.reasons.map((r, i) => <li key={i} className={r.tone}>{r.text}</li>)}</ul> : <span className="small muted">Nothing needs attention: aging, timely filing, escalations and client requests are all within range.</span>}</div>
         <div className="c3-kpis">
@@ -5473,7 +5495,6 @@ function ClientView({ ctx, me, go, params }) {
             {d.log.length ? d.log.slice(0, 12).map((l) => <div key={l.id} className={"c3-log " + l.kind}><b>{l.kind === "next" ? "Next call · " + fmtDate(l.next_on) : C360_KIND.find(([k]) => k === l.kind)[1] + " · " + fmtWhen(l.at)} · {l.by_name}{(l.mine || (me.role === "supervisor" && d.monthend.can_edit)) && <button className="btn link sm no-print" style={{ padding: "0 4px" }} disabled={busy} onClick={() => delLog(l)}>remove</button>}</b>{l.text}</div>)
               : <Empty>No calls logged yet. Note what the client agreed and when the next call is, so the next person does not start from zero.</Empty>}</div>
         </div>
-        <DigestSpans clientId={cid} me={me} />
         <div className="tiny muted">Figures are Brahmastra's: AR from the latest inventory, collected from payment posting hand-offs, SLA from the score ticked at month-end. Over-90 target {d.ar.target}%.</div>
       </>}
     </div>
@@ -5661,15 +5682,25 @@ function useFrame(base, extra) {
   const go = (id) => { setTabs((ts) => ts.map((t) => ({ ...t, on: t.id === id }))); post({ type: "brahmastra:go", id }); };
   return { src, nonce, full, setFull, loading, setLoading, reload: () => setNonce((n) => n + 1), tabs, go, win, hello };
 }
-function EmbedPanel({ frame, frameRef, title, onLoad }) {
+/* The frame of an embedded app, its tabs in Brahmastra's row. `more` adds tabs of Brahmastra's own beside them (the SLA
+   scorecard, the Monday digest): `pick` is the one open and `children` what it shows; the frame stays behind, so the
+   app's own tabs come back at once. `ready` false keeps the frame out until the sign-in is in place. */
+function EmbedPanel({ frame, frameRef, title, onLoad, more = [], pick = null, setPick, ready = true, waitLabel, children }) {
   const setRef = (el) => { frame.win.current = el; if (frameRef) frameRef.current = el; };
+  const own = pick != null;
+  const tabs = [...frame.tabs.map((t) => ({ ...t, on: !own && t.on })), ...more.map((t) => ({ ...t, on: pick === t.id, own: true }))];
+  const open = (t) => { if (t.own) { if (setPick) setPick(t.id); return; } if (own && setPick) setPick(null); frame.go(t.id); };
   return (
     <div className={"rh-frame seam" + (frame.full ? " full" : "")}>
       {frame.full && <div className="rh-fullbar"><b>{title}</b><span className="muted small">Full screen · Esc to leave</span><button className="btn sm" style={{ marginLeft: "auto" }} onClick={() => frame.setFull(false)}>Exit full screen</button></div>}
-      {frame.tabs.length > 0 && <div className="ws-tabs" role="tablist">{frame.tabs.map((t) => <button key={t.id} type="button" role="tab" aria-selected={t.on} className={t.on ? "on" : ""} onClick={() => frame.go(t.id)}>{t.label}</button>)}</div>}
-      {frame.loading && <div className="rh-loading"><Spinner label={"Opening " + title + "…"} /></div>}
-      <iframe key={frame.src + frame.nonce} ref={setRef} src={frame.src} title={title} className="rh-iframe" style={frame.loading ? { visibility: "hidden" } : undefined}
-        onLoad={() => { frame.setLoading(false); frame.hello(); onLoad && onLoad(); }} allow="clipboard-write; fullscreen" />
+      {tabs.length > 0 && <div className="ws-tabs" role="tablist">{tabs.map((t) => <button key={(t.own ? "own:" : "app:") + t.id} type="button" role="tab" aria-selected={t.on} className={t.on ? "on" : ""} onClick={() => open(t)}>{t.label}</button>)}</div>}
+      {own && <div className="rh-own">{children}</div>}
+      {!ready ? (!own && <div className="card"><Spinner label={waitLabel || "Opening " + title + "…"} /></div>)
+        : <div className="rh-frame-body" hidden={own}>
+          {frame.loading && <div className="rh-loading"><Spinner label={"Opening " + title + "…"} /></div>}
+          <iframe key={frame.src + frame.nonce} ref={setRef} src={frame.src} title={title} className="rh-iframe" style={frame.loading ? { visibility: "hidden" } : undefined}
+            onLoad={() => { frame.setLoading(false); frame.hello(); onLoad && onLoad(); }} allow="clipboard-write; fullscreen" />
+        </div>}
     </div>
   );
 }
@@ -6970,7 +7001,25 @@ function CrPrintJob({ title, pages, slideFor, onDone }) {
 /* Drishti opens already signed in as the Brahmastra user: Brahmastra asks its server for Drishti's own session token
    and leaves it where the Drishti page looks for it (same web address, so the same browser storage). */
 const DRISHTI_TOKEN_KEY = "drishti:token:v1";
-function SlaPage({ ctx, me, onHow, compact }) {
+/* The SLA tab's heading, with Drishti's frame buttons (load again, own browser tab, full screen) while a Drishti tab is open. */
+function SlaHead({ title, sub, onHow, frame }) {
+  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return (
+    <div className="row between top" style={{ marginBottom: 12, flexWrap: "nowrap", gap: 16 }}>
+      <div style={{ minWidth: 0, flex: "1 1 auto" }}><h1>{title}</h1><div className="sub">{sub}</div></div>
+      <div className="rh-acts" style={{ alignItems: "center", flex: "0 0 auto" }}>
+        <span className="small muted">{stamp}</span>
+        <button className="btn" onClick={onHow}><Ico d={HUB_ICONS.info} size={15} /> How it works</button>
+        {frame && <>
+          <button className="btn icon" title="Load again" onClick={frame.reload}><Ico d={HUB_ICONS.reload} size={15} /></button>
+          <button className="btn icon" title="Open Drishti in its own browser tab (use this if a Microsoft sign-in window does not open here)" onClick={() => window.open(frame.src, "_blank", "noopener")}><Ico d={HUB_ICONS.ext} size={15} /></button>
+          <button className="btn icon" title="Full screen" onClick={() => frame.setFull(true)}><Ico d={HUB_ICONS.full} size={15} /></button>
+        </>}
+      </div>
+    </div>
+  );
+}
+function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) {
   const [sso, setSso] = useState({ state: "loading" });
   useEffect(() => {
     let alive = true;
@@ -7042,8 +7091,8 @@ function SlaPage({ ctx, me, onHow, compact }) {
   };
   return (
     <div>
-      <HubHead page="sla" onHow={onHow} frame={sso.state === "loading" ? null : frame} compact={compact} />
-      <div className="card rh-bar">
+      <SlaHead title={title} sub={sub} onHow={onHow} frame={pick == null && sso.state !== "loading" ? frame : null} />
+      {pick == null && <><div className="card rh-bar">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => { setF({ client_id: v, location_id: "" }); setSaved(null); }} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
         <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>
         <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : <><i className="rh-dot wait" />Sign in below</>}</div>
@@ -7059,8 +7108,8 @@ function SlaPage({ ctx, me, onHow, compact }) {
       {fed && fed.state === "error" && <div className="alert warn mb rh-note">The AR Inventory could not be added by itself: {fed.msg}</div>}
       {sso.state === "ok" && sso.created && <div className="alert info mb">Your scorecard account was made from your Brahmastra profile, under your reporting manager. From now on it opens signed in.</div>}
       {sso.state === "off" && <div className="alert info mb">The scorecard will open signed in once single sign-in is switched on (a one-time setting). Until then, sign in below.</div>}
-      {sso.state === "error" && <div className="alert warn mb"><b>The scorecard could not be opened signed in.</b> {sso.msg} You can still sign in below.</div>}
-      {sso.state === "loading" ? <div className="card"><Spinner label="Signing you in…" /></div> : <EmbedPanel frame={frame} frameRef={frameRef} title="SLA scorecard" />}
+      {sso.state === "error" && <div className="alert warn mb"><b>Drishti could not be opened signed in.</b> {sso.msg} You can still sign in below.</div>}</>}
+      <EmbedPanel frame={frame} frameRef={frameRef} title="Drishti" ready={sso.state !== "loading"} waitLabel="Signing you in…" more={more} pick={pick} setPick={setPick}>{children}</EmbedPanel>
     </div>
   );
 }
@@ -7167,25 +7216,26 @@ function ThirdEyeView({ ctx, me }) {
   );
 }
 /* SLA has its own tab in front of Dashboard, so the scorecard is one click away all day. */
-function PortfolioSlaView(props) {
-  const { params, me } = props;
-  const pick = (x) => (x && ["portfolio", "scorecard", "inputs"].includes(x.tab) ? x.tab : "portfolio");
-  const [tab, setTab] = useState(() => pick(params));
+/* The SLA tab reads as one embedded app, like Sasha's Third Eye: Drishti's own tabs (Overview, Clients, Formulas...)
+   in Brahmastra's tab row and Brahmastra's theme, with two tabs of Brahmastra's own beside them: the SLA scorecard in
+   Client 360's style and the Monday digest. */
+const SLA_OWN = [["scorecard", "SLA scorecard"], ["digest", "Monday digest"]];
+function SlaView(props) {
+  const { params, me, ctx } = props;
+  const own = (x) => (x && SLA_OWN.some(([k]) => k === x.tab) ? x.tab : null);
+  const [pick, setPick] = useState(() => own(params));
   const [scClient, setScClient] = useState((params && params.client_id) || "");
-  useEffect(() => { if (params && params.tab) setTab(pick(params)); if (params && params.client_id) setScClient(params.client_id); }, [params && params.tab, params && params.client_id]);
+  useEffect(() => { if (params && params.tab) setPick(own(params)); if (params && params.client_id) setScClient(params.client_id); }, [params && params.tab, params && params.client_id]);
   const [how, setHow] = useState(false);
-  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  const SUB = { portfolio: "Every client at a glance: health, AR, collections and the SLA scorecard, worst first. Click a client for its Client 360, its score for the scorecard.",
+  const SUB = { drishti: "Drishti, signed in as you: the overview, each client's uploads and figures, the formulas. Upload the period's reports or type a value here.",
     scorecard: "Did we meet what each client signed for? Drishti's scorecard for the client and period, in one page.",
-    inputs: "Drishti's own page: upload the period's reports or type a value. The scorecard reads them from here." };
+    digest: "One email per manager's span, every Monday morning, to the manager and the supervisors on those clients." };
   return (
     <div className="stack">
-      <div className="row between top"><div><h1>Portfolio &amp; SLA</h1><div className="sub">{SUB[tab]}</div></div><span className="small muted">{stamp}</span></div>
-      <div className="seg2 dash-subtabs" role="tablist" style={{ alignSelf: "flex-start" }}>{[["portfolio", "Portfolio"], ["scorecard", "SLA scorecard"], ["inputs", "Inputs (Drishti)"]].map(([k, l]) =>
-        <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
-      {tab === "portfolio" ? <ClientReportsTab {...props} openScorecard={(cid) => { setScClient(cid); setTab("scorecard"); }} />
-        : tab === "scorecard" ? <SlaScorecard {...props} clientId={scClient} setClientId={setScClient} openInputs={() => setTab("inputs")} />
-        : <><SlaPage ctx={props.ctx} me={me} onHow={() => setHow(true)} compact />{how && <HowDrawer page="sla" onClose={() => setHow(false)} />}</>}
+      <SlaPage ctx={ctx} me={me} onHow={() => setHow(true)} title="SLA" sub={SUB[pick || "drishti"]} more={SLA_OWN.map(([id, label]) => ({ id, label }))} pick={pick} setPick={setPick}>
+        {pick === "scorecard" ? <SlaScorecard {...props} clientId={scClient} setClientId={setScClient} openInputs={() => setPick(null)} /> : pick === "digest" ? <DigestSpans me={me} /> : null}
+      </SlaPage>
+      {how && <HowDrawer page="sla" onClose={() => setHow(false)} />}
     </div>
   );
 }
@@ -7564,7 +7614,7 @@ function App() {
   const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb };
   const body = !ctx.loaded ? <Spinner label="Loading…" />
     : view === "dashboard" ? (deskOf(me, handoffs) ? <DeskDashboard {...props} desk={deskOf(me, handoffs)} /> : <DashboardHub {...props} />)
-    : view === "portfolio" && me.role === "supervisor" ? <PortfolioSlaView {...props} params={{ ...(props.params || {}), tab: "portfolio" }} />
+    : view === "portfolio" && me.role === "supervisor" ? <DashboardHub {...props} params={{ ...(props.params || {}), tab: "inventory" }} />
     : (view === "live" || view === "teamtoday") && me.role === "supervisor" ? <LiveStatusView {...props} />
     : view === "attention" ? <AttentionView {...props} />
     : view === "inventory" || view === "allocate" ? <InventoryView {...props} initialTab={view === "allocate" ? "allocate" : undefined} />
@@ -7583,7 +7633,7 @@ function App() {
     : view === "audit" && (me.is_admin || me.access_all) ? <AuditView {...props} />
     : view === "feedback" ? <FeedbackInbox {...props} />
     : view === "templates" && me.role === "supervisor" ? <TemplatesView {...props} />
-    : view === "sla" && me.role === "supervisor" ? <PortfolioSlaView {...props} />
+    : view === "sla" && me.role === "supervisor" ? <SlaView {...props} />
     : view === "thirdeye" && me.role === "supervisor" ? <ThirdEyeView {...props} />
     : view === "limits" ? <LimitsView {...props} />
     : view === "settings" ? <SettingsView {...props} setMe={setMe} />
