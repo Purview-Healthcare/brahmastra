@@ -201,18 +201,23 @@ roster, grouped by team lead (no Emp ID):
 - **Status** and date of joining from Purview Shastra: Production, Training, OJT, Serving notice, Sabbatical.
 - **Ramp-up**: Training and OJT are due in production 6 weeks from their start (the start date kept on Team status,
   otherwise the date of joining), or on the date the lead agreed. People past it show in a red banner.
-- **Attainment**: entries against the target (the daily target for each weekday in the dates; a half day counts
-  half, other days out count nothing). It counts the days already finished (up to yesterday), so a day still under
+- **Attainment**: entries against the target (the daily target for each working day in the dates; a half day counts
+  half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a Saturday
+  worked, and Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
   way does not count against anyone; with only today picked, it is today's. Production people under 90% are
   **below the mark**; Training and OJT are **in ramp-up** and not judged against it.
-- **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** and **idle** come from Purview
-  Shastra once its feed sends them; until then they show –.
+- **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** comes from Purview Shastra (finished
+  shifts with breaks taken out; a shift still open counts up to now) and shows **met** or **short** on the finished
+  days. **Idle** is what Shastra Guard saw while the person was punched in, breaks left out: no movement plus screen
+  locked (the split is in the tooltip and the CSV). People with no attendance in Shastra for the dates, or no Guard
+  machine linked, are listed under roster checks. Until the feed is set up (below) they show –.
 - **Left over** now, with how many are high priority, and a **note** per person: start, due in production (or plan
   end) and a comment, seen by every lead who sees that person and kept in the audit trail.
 - **Suggestions** in plain pointers, from the same figures: **Do today** (past the ramp-up date; 3 or more high
   priority claims left over, or rebalance them when the person is out today; attainment under 60% on the finished
-  days), **This week** (attainment 60 to 89%; due in production within 7 days; out 2 days or more; 1 or 2 high
-  priority left over) and **Keep going** (100% or more with nothing flagged, and a teammate they could help). Each
+  days; on the floor under 75% of the time needed), **This week** (attainment 60 to 89%; due in production within 7
+  days; floor time short; idle 1 hour or more and at least 10% of their floor time; absent, sick or marked out 2 days
+  or more; 1 or 2 high priority left over) and **Keep going** (100% or more with nothing flagged, and a teammate they could help). Each
   says what we see and what to do. **Copy for my 1:1s** copies them.
 - At the bottom, **performance by status** and **roster checks** (no date of joining, no team lead, names that
   appear twice; fixed in Purview Shastra). **CSV for supervisors** downloads the table.
@@ -402,6 +407,13 @@ empty or very short list (under half of the active people), nothing is changed a
 
 Shastra answers through one read-only database function, `brahmastra_roster(p_key)` (`dev/shastra-roster-feed.sql`, run once in Shastra's Supabase SQL Editor), which returns the roster
 export's columns and nothing else, and only for the right key. Shastra stores only the key's hash.
+
+Time on the floor and idle time for Team status come from a second read-only function, `brahmastra_floor(p_key,
+p_from, p_to)` (`dev/shastra-floor-feed.sql`, run once the same way). It uses the same key (no new secret) and
+returns, for each person and day, the attendance status, time on the floor, time logged in, breaks, and the minutes
+Shastra Guard saw no movement or a locked screen while they were punched in; people are matched by Emp ID, then
+email. Brahmastra keeps the days it fetched, settles a day once it was fetched 12 hours after it ended, and asks
+again for newer days after 10 minutes. Until the function is added, Team status shows – for on floor and idle.
 
 | Name | Type | Value |
 |---|---|---|

@@ -19,8 +19,17 @@ const feed = [
   P({ emp_id: "A4", name: "Gita Agent", project: "Sunrise Eye Care", reports_to: "Tina Lead", status: "Training", doj: "2026-09-01", email: "gita@purview-healthcare.com" }),
   P({ emp_id: "A2", name: "Bela Agent", project: "Lakeview Dental Group", reports_to: "Leo Lead", email: "bela@purview-healthcare.com" }),
 ];
+// Purview Shastra's floor-time feed: not set up (404) until floorRows is set; "error" answers 500
+let floorRows = null, floorCalls = 0;
 const fetchMock = async (url, init, real) => {
   if (url.includes("supabase.co/rest/v1/rpc/brahmastra_roster")) return new Response(JSON.stringify({ ok: true, rows: feed }), { status: 200, headers: { "Content-Type": "application/json" } });
+  if (url.includes("supabase.co/rest/v1/rpc/brahmastra_floor")) {
+    floorCalls++;
+    const b = JSON.parse(init.body);
+    if (!floorRows) return new Response(JSON.stringify({ code: "PGRST202", message: "Could not find the function public.brahmastra_floor(p_from, p_key, p_to) in the schema cache" }), { status: 404, headers: { "Content-Type": "application/json" } });
+    if (floorRows === "error") return new Response(JSON.stringify({ message: "boom" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, rows: floorRows.filter((x) => x.date >= b.p_from && x.date <= b.p_to) }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
   if (url.includes("login.microsoftonline.com") || url.includes("graph.microsoft.com")) throw new Error("no Microsoft in tests");
   return real(url, init);
 };
@@ -73,7 +82,7 @@ ok("Arun: 20 entries; attainment on the finished days 14 of 52.5 = 27%", ar.work
 ok("Arun: today's 6 entries apart, against today's 35", ar.worked_today === 6 && ar.target_today === 35, { wt: ar.worked_today, tt: ar.target_today });
 ok("Arun: floor time needed 8 h + 8 h + 4 h = 20 h", ar.floor_needed_min === 20 * 60, ar.floor_needed_min);
 ok("Arun: 10 left over, 3 of them high priority", ar.left === 10 && ar.left_high === 3 && ar.left_other === 7, { left: ar.left, high: ar.left_high, other: ar.left_other });
-ok("on floor and idle wait for Purview Shastra", ar.on_floor_min === null && ar.idle_min === null && r.floor_source === "pending");
+ok("on floor and idle wait for Purview Shastra (its feed is not set up yet)", ar.on_floor_min === null && ar.idle_min === null && r.floor_source === "not_set_up", r.floor_source);
 ok("Arun is below the production mark (under 90%)", ar.perf === "below", ar.perf);
 ok("Training and OJT are in ramp-up, not judged against the production mark", row("Gita Agent").perf === "ramp" && row("Cara Agent").perf === "ramp", [row("Gita Agent").perf, row("Cara Agent").perf]);
 const cara = row("Cara Agent"), gita = row("Gita Agent");
@@ -166,6 +175,47 @@ r = await TI("team.huddle", {});
 const arun = r.rows.find((x) => x.name === "Arun Agent");
 ok("the claim open carries its number, id and balance", arun.current && arun.current.id === open1.id && arun.current.claim_no === open1.claim_no && typeof arun.current.balance === "number", arun.current);
 ok("working now counts people with a claim open", r.totals.working >= 1, r.totals);
+
+S("Team status: time on the floor and idle from Purview Shastra");
+r = await VP("team.status", q);
+ok("before the feed is set up in Shastra: on floor and idle wait", r.floor_source === "not_set_up" && r.rows.every((x) => x.on_floor_min === null && x.idle_min === null), { src: r.floor_source });
+{ const c0 = floorCalls; await VP("team.status", q); ok("and Shastra is not asked again for 10 minutes", floorCalls === c0, { before: c0, after: floorCalls }); }
+const F = (o) => ({ emp_id: "", email: "", status: "present", open: false, tof_min: 0, logged_min: 0, break_min: 0, guard: true, idle_min: 0, locked_min: 0, ...o });
+floorRows = [
+  F({ emp_id: "A1", date: mon, tof_min: 420, idle_min: 30, locked_min: 15 }),
+  F({ emp_id: "a1", date: tue, status: "half_day", tof_min: 235, idle_min: 10 }),
+  F({ emp_id: "A1", date: wed, open: true, tof_min: 95 }),
+  F({ email: "BELA@purview-healthcare.com", date: mon, tof_min: 490, guard: false }),
+  F({ email: "bela@purview-healthcare.com", date: tue, tof_min: 485, guard: false }),
+  F({ emp_id: "A3", date: mon, status: "sick_leave" }),
+  F({ emp_id: "A3", date: tue, tof_min: 480, idle_min: 200, locked_min: 40 }),
+  F({ emp_id: "A3", date: wed, open: true, tof_min: 60 }),
+  F({ emp_id: "Z9", date: mon, tof_min: 480 }),
+];
+await sql("DELETE FROM settings WHERE key = 'floor_sync'");
+r = await VP("team.status", q);
+const fa = r.rows.find((x) => x.name === "Arun Agent"), fb = r.rows.find((x) => x.name === "Bela Agent"), fc = r.rows.find((x) => x.name === "Cara Agent"), fg = r.rows.find((x) => x.name === "Gita Agent");
+ok("the feed answers: floor source ok", r.floor_source === "ok", r.floor_source);
+ok("Arun: on floor 7 h + 3 h 55 m + 1 h 35 m so far = 12 h 30 m; needed 8 h + 4 h (Shastra half day) + 8 h", fa.on_floor_min === 750 && fa.floor_needed_min === 1200, { on: fa.on_floor_min, need: fa.floor_needed_min });
+ok("Arun: short 1 h 05 m on the finished days (10 h 55 m of 12 h)", fa.floor === "short" && fa.on_floor_done_min === 655 && fa.floor_needed_done_min === 720 && fa.floor_short_min === 65, fa);
+ok("Arun: idle is no movement plus screen locked (55 m), locked apart (15 m)", fa.idle_min === 55 && fa.locked_min === 15 && fa.guard === true, { idle: fa.idle_min, locked: fa.locked_min });
+ok("Bela: matched by email; floor time met (16 h 15 m of 16 h)", fb.floor === "met" && fb.on_floor_done_min === 975, fb);
+ok("Bela: no Guard machine linked, so no idle time", fb.idle_min === null && fb.guard === false, fb.idle_min);
+ok("Cara: Shastra's sick leave on Monday is a day out (target and floor needed left out)", fc.days_out === 1 && fc.days_unplanned === 1 && fc.days_full === 2 && fc.floor_needed_done_min === 480 && fc.target === 70, { out: fc.days_out, full: fc.days_full, need: fc.floor_needed_done_min, target: fc.target });
+ok("Gita: no attendance in Shastra for these dates", fg.floor === "no_attendance" && fg.on_floor_min === null, fg.floor);
+ok("roster checks name who has no attendance in Shastra and who has no Guard", r.checks.some((c) => /no attendance in Purview Shastra/.test(c.text) && /Gita Agent/.test(c.text)) && r.checks.some((c) => /no Shastra Guard/.test(c.text) && /Bela Agent/.test(c.text)), r.checks);
+ok("totals: on floor, idle, met by 2 of 3", r.totals.on_floor_min === 750 + 975 + 540 && r.totals.idle_min === 55 + 240 && r.totals.floor_judged === 3 && r.totals.floor_met === 2, r.totals);
+ok("This week: Arun's floor time is short", has(r.suggestions.week, "Arun Agent", /On the floor 10 h 55 m of 12 h needed up to yesterday \(short 1 h 05 m\).*8-hour rule/), r.suggestions.week);
+ok("This week: Cara was idle 4 h of 8 h on the floor", has(r.suggestions.week, "Cara Agent", /Idle 4 h of 8 h on the floor/), r.suggestions.week);
+{ const c0 = floorCalls; await VP("team.status", q); ok("asked again within 10 minutes: the kept days are used", floorCalls === c0, { before: c0, after: floorCalls }); }
+{ const t1 = await VP("team.status", { from: wed, to: wed, today: wed, tz_offset_min: 0 }), a1 = t1.rows.find((x) => x.name === "Arun Agent");
+  ok("only today picked: on floor so far, not judged while the day is under way", a1.on_floor_min === 95 && a1.floor === "pending" && !has(t1.suggestions.today.concat(t1.suggestions.week), "Arun Agent", /On the floor/), { on: a1.on_floor_min, floor: a1.floor }); }
+r = await TI("team.status", q);
+ok("a team lead sees their own team's floor time", r.rows.find((x) => x.name === "Arun Agent").on_floor_min === 750 && !r.rows.some((x) => x.name === "Bela Agent"), r.rows.map((x) => x.name));
+floorRows = "error";
+await sql("UPDATE settings SET value_json = json_set(value_json, '$.days', json('{}'), '$.fail_at', 0) WHERE key = 'floor_sync'");
+r = await VP("team.status", q);
+ok("Shastra fails later: the kept figures stay, with the reason", r.floor_source === "ok" && /boom/.test(r.floor_error) && r.rows.find((x) => x.name === "Arun Agent").on_floor_min === 750, { src: r.floor_source, err: r.floor_error });
 
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

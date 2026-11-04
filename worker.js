@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.59.0";
+const VERSION = "2.60.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -114,6 +114,8 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
   `CREATE TABLE IF NOT EXISTS team_notes (user_id TEXT PRIMARY KEY, start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS floor_days (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', tof_min INTEGER, idle_min INTEGER, locked_min INTEGER,
+     logged_min INTEGER, break_min INTEGER, open INTEGER NOT NULL DEFAULT 0, guard INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, day))`,
   `CREATE TABLE IF NOT EXISTS coach_notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'one_to_one', text TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_coach_user ON coach_notes (user_id, at)`,
   `CREATE TABLE IF NOT EXISTS note_templates (id TEXT PRIMARY KEY, client_id TEXT, title TEXT NOT NULL, text TEXT NOT NULL, by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
@@ -864,6 +866,69 @@ async function syncShastra(env, by) {
     emails: res.warnings.slice(0, 200), no_access: res.excluded.length });
   return { ...res, removed, synced: true };
 }
+/* Purview Shastra's time on the floor and idle time (dev/shastra-floor-feed.sql): brahmastra_floor(p_key, p_from, p_to)
+   returns each person's days: the attendance status, time on the floor (finished shifts, breaks taken out; a shift still
+   open counts up to now), time logged in, breaks, and the minutes Shastra Guard saw no movement or a locked screen while
+   they were punched in (breaks left out). Team status asks for its dates; the days are kept in floor_days, a day is
+   settled once fetched 12 hours after it ended, and anything newer is asked again after 10 minutes. */
+const FLOOR_FRESH_MS = 10 * 60000;
+async function fetchFloor(env, from, to) {
+  const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
+  let r = null, data = null;
+  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_floor", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY, p_from: from, p_to: to }) }); data = await r.json(); } catch {}
+  if (r && (r.status === 404 || (data && data.code === "PGRST202"))) return { ok: false, state: "not_set_up", error: "The floor-time feed is not set up in Purview Shastra yet (dev/shastra-floor-feed.sql)." };
+  if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.rows)) return { ok: false, state: "error", error: str((data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer"), 200) };
+  return { ok: true, rows: data.rows };
+}
+async function shastraFloor(env, from, to, today, off) {
+  if (!env.SHASTRA_FEED_KEY) return { state: "off", byUser: new Map() };
+  const st = (await getSetting(env, "floor_sync", null)) || {};
+  st.days = st.days || {};
+  const now = Date.now(), last = to > today ? today : to, dayEnd = (d) => Date.parse(d + "T00:00:00Z") - off * 60000 + 86400000;
+  const stale = [];
+  for (let d = from; d <= last; d = addDays(d, 1)) { const at = st.days[d] || 0; if (!(at > dayEnd(d) + 12 * 3600000 || now - at < FLOOR_FRESH_MS)) stale.push(d); }
+  if (stale.length && !(st.fail_at && now - st.fail_at < FLOOR_FRESH_MS)) {
+    const a = stale[0], b = stale[stale.length - 1], res = await fetchFloor(env, a, b);
+    if (res.ok) {
+      const us = await all(env, "SELECT id, emp_id, email FROM users");
+      const byEmp = new Map(), byMail = new Map();
+      for (const u of us) { if (u.emp_id) byEmp.set(String(u.emp_id).trim().toUpperCase(), u.id); if (u.email) byMail.set(String(u.email).trim().toLowerCase(), u.id); }
+      const n = (v) => (v == null || v === "" || !isFinite(+v) ? null : Math.max(0, Math.round(+v)));
+      const put = []; let unmatched = 0;
+      for (const x of res.rows) {
+        const day = isoDate(x && x.date); if (!day) continue;
+        const uid = (x.emp_id && byEmp.get(String(x.emp_id).trim().toUpperCase())) || (x.email && byMail.get(String(x.email).trim().toLowerCase()));
+        if (!uid) { unmatched++; continue; }
+        const g = x.guard === true;
+        put.push(env.DB.prepare("INSERT OR REPLACE INTO floor_days (user_id, day, status, tof_min, idle_min, locked_min, logged_min, break_min, open, guard) VALUES (?,?,?,?,?,?,?,?,?,?)")
+          .bind(uid, day, str(x.status, 30).toLowerCase(), n(x.tof_min), g ? n(x.idle_min) : null, g ? n(x.locked_min) : null, n(x.logged_min), n(x.break_min), x.open ? 1 : 0, g ? 1 : 0));
+      }
+      await batchAll(env, [env.DB.prepare("DELETE FROM floor_days WHERE day BETWEEN ? AND ?").bind(a, b), ...put]);
+      for (let d = a; d <= b; d = addDays(d, 1)) st.days[d] = now;
+      const keep = addDays(today, -120); for (const d of Object.keys(st.days)) if (d < keep) delete st.days[d];
+      Object.assign(st, { ok_at: now, fail_at: 0, state: "ok", error: "", unmatched });
+    } else Object.assign(st, { fail_at: now, state: res.state, error: res.error });
+    await setSetting(env, "floor_sync", st);
+  }
+  // until the feed has answered once, there is nothing to show; after that, the kept days (with a note if the last ask failed)
+  const state = st.ok_at ? "ok" : st.state || "pending";
+  const byUser = new Map();
+  if (state === "ok") for (const x of await all(env, "SELECT * FROM floor_days WHERE day BETWEEN ? AND ?", from, last)) { if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Map()); byUser.get(x.user_id).set(x.day, x); }
+  return { state, error: st.fail_at && st.fail_at > (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser };
+}
+/* Shastra's attendance status for a day: in (a full day), a half day, unplanned (absent, sick, leave without pay),
+   leave (approved, maternity, sabbatical) or off (week off, holiday, comp off: not a working day). Unknown or missing:
+   Brahmastra's own Out today mark decides. */
+function shastraDay(status) {
+  const s = String(status || "").trim().toLowerCase();
+  if (!s) return null;
+  if (["present", "late", "p", "l"].includes(s)) return { share: 1, kind: "in" };
+  if (["half_day", "half_day_lwp", "hd", "hd-lwp"].includes(s)) return { share: 0.5, kind: "half" };
+  if (["absent", "a", "sick_leave", "sl", "lwp"].includes(s)) return { share: 0, kind: "unplanned" };
+  if (["approved_leave", "al", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { share: 0, kind: "leave" };
+  if (["week_off", "wo", "holiday", "h", "ho", "comp_off", "co", "not_joined", "nj", "attrite", "att"].includes(s)) return { share: 0, kind: "off" };
+  return null;
+}
 /* How many times a claim came back to AR from Posting / Submission / Rejections (Back to AR or Need assistance). */
 async function returnsOf(env, claimId) {
   const r = await one(env, "SELECT COUNT(*) AS n FROM handoffs WHERE claim_id = ? AND status IN ('back','assistance')", claimId);
@@ -1335,6 +1400,8 @@ function teamSuggestions(rows) {
   const item = (r, seen, todo) => ({ user_id: r.id, who: r.name, lead: r.lead_name || "", seen, do: todo });
   const flagged = new Set();
   const nDays = (n) => n + (n === 1 ? " day" : " days");
+  const hm = (m) => { m = Math.round(m || 0); const h = Math.floor(m / 60), mm = m % 60; return h ? h + " h" + (mm ? " " + String(mm).padStart(2, "0") + " m" : "") : mm + " m"; };
+  const floorSeen = (r) => `On the floor ${hm(r.on_floor_done_min)} of ${hm(r.floor_needed_done_min)} needed up to yesterday (short ${hm(r.floor_short_min)})`;
   const attainSeen = (r) => r.attain_basis === "done" ? `Attainment ${r.attain}% (${r.worked_done} of ${Math.round(r.target_done)} claims up to yesterday)` : `Attainment ${r.attain}% today (${r.worked_today} of ${Math.round(r.target_today)} claims)`;
   for (const r of rows) {
     const away = r.out_today === "out";
@@ -1343,17 +1410,20 @@ function teamSuggestions(rows) {
       : item(r, `${r.status}${r.ramp.start ? " since " + fmtD(r.ramp.start) : ""}, was due in production ${fmtD(r.ramp.due)} (${nDays(-r.ramp.days)} ago)`, "Decide today: move to production or extend, and note the new date on their row.")); flagged.add(r.id); }
     if (r.left_high >= 3) { today.push(item(r, `${r.left} claims left over, ${r.left_high} of them high priority` + (away ? "; out today" : ""), away ? `Rebalance the ${r.left_high} high priority claims to someone in today (Live status).` : `Have them work the ${r.left_high} high priority claims first, or rebalance them.`)); flagged.add(r.id); }
     if (r.status === "Production" && r.attain != null && r.attain_basis === "done" && r.target_done >= r.capacity && r.attain < 60) { today.push(item(r, attainSeen(r), away ? "Out today: sit with them when they are back and find out what is slowing them down." : "Sit with them today and find out what is slowing them down.")); flagged.add(r.id); }
+    if (r.floor === "short" && r.on_floor_done_min < r.floor_needed_done_min * 0.75) { today.push(item(r, floorSeen(r), away ? "Out today: when they are back, go through their punch-ins and breaks in Purview Shastra with them." : "Talk to them today about time on the floor: late punch-ins, long breaks, early punch-outs.")); flagged.add(r.id); }
   }
   for (const r of rows) {
     if (r.status === "Production" && r.attain != null && r.attain_basis === "done" && r.target_done >= r.capacity && r.attain >= 60 && r.attain < PERF_MARK) { week.push(item(r, attainSeen(r), "Check their claim mix and notes; agree a daily number for next week.")); flagged.add(r.id); }
     if (r.ramp.flag === "soon") { week.push(item(r, `${r.status}, due in production ${fmtD(r.ramp.due)} (${r.ramp.days === 0 ? "today" : nDays(r.ramp.days)})${r.ramp.extended ? ", the date agreed" : ""}`, `Plan the move: about ${Math.round(r.capacity * 0.85)} claims a day by ${fmtD(r.ramp.due)}; check in before then.`)); flagged.add(r.id); }
-    if (r.days_out >= 2) { week.push(item(r, `Out ${r.days_out} days in these dates`, "A short check-in on attendance.")); flagged.add(r.id); }
+    if (r.floor === "short" && r.on_floor_done_min >= r.floor_needed_done_min * 0.75) { week.push(item(r, floorSeen(r), "Remind them of the 8-hour rule and check their punch-ins and breaks in Purview Shastra.")); flagged.add(r.id); }
+    if (r.idle_done_min != null && r.on_floor_done_min > 0 && r.idle_done_min >= 60 && r.idle_done_min >= r.on_floor_done_min * 0.1) { week.push(item(r, `Idle ${hm(r.idle_done_min)} of ${hm(r.on_floor_done_min)} on the floor up to yesterday (Shastra Guard)`, "Ask what keeps them idle: an empty desk, system trouble, or waiting on someone.")); flagged.add(r.id); }
+    if ((r.days_unplanned || 0) >= 2) { week.push(item(r, `Out ${r.days_unplanned} days in these dates (absent, sick or marked out)`, "A short check-in on attendance.")); flagged.add(r.id); }
     if (r.left_high > 0 && r.left_high < 3) { week.push(item(r, `${r.left} claims left over, ${r.left_high} high priority`, "Clear the high priority ones first tomorrow.")); flagged.add(r.id); }
   }
   for (const r of rows) {
-    if (flagged.has(r.id) || r.status !== "Production" || r.attain == null || r.attain < 100) continue;
+    if (flagged.has(r.id) || r.status !== "Production" || r.attain == null || r.attain < 100 || r.floor === "short") continue;
     const helpee = rows.find((x) => x.lead_id && x.lead_id === r.lead_id && x.id !== r.id && x.status === "Production" && x.attain != null && x.attain < PERF_MARK);
-    good.push(item(r, attainSeen(r) + ", nothing high priority left over", "Thank them in the huddle" + (helpee ? `; they could help ${helpee.name}.` : ".")));
+    good.push(item(r, attainSeen(r) + (r.floor === "met" ? ", floor time met" : "") + ", nothing high priority left over", "Thank them in the huddle" + (helpee ? `; they could help ${helpee.name}.` : ".")));
   }
   return { today, week, good };
 }
@@ -2283,7 +2353,7 @@ const OPS = {
     const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
     let people = f.people;
     const weekday = (d) => { const w = new Date(d + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6; };
-    const days = []; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) days.push(d);
+    const days = [], span = []; for (let d = from; d <= to; d = addDays(d, 1)) { span.push(d); if (weekday(d)) days.push(d); }
     if (!people.length) return { rows: [], leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals: { people: 0 }, by_status: [], checks: [], suggestions: { today: [], week: [], good: [] }, floor_source: "pending" };
     const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
     const [work, closed, att, notes, desk, outNow] = await Promise.all([
@@ -2297,17 +2367,31 @@ const OPS = {
     ]);
     const outToday = new Map(outNow.map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x.n])), nb = new Map(notes.map((x) => [x.user_id, x]));
+    // time on the floor and idle time from Purview Shastra (and its attendance for each day), when its feed is set up
+    let fl; try { fl = await shastraFloor(env, from, to, today, off); } catch (e) { fl = { state: "error", error: str(e && e.message, 200), byUser: new Map() }; }
     if (f.narrow) people = people.filter((u) => wk.has(u.id) || f.teamIds.has(u.id));
     const statusOf = (u) => { const st = String(u.roster_status || "").trim().toLowerCase();
       return st === "training" ? "Training" : st === "ojt" ? "OJT" : st === "sabbatical" ? "Sabbatical" : /notice/.test(st) ? "Serving notice" : "Production"; };
     const rows = people.map((u) => {
       const w = wk.get(u.id) || {}, n = nb.get(u.id) || {}, st = statusOf(u), cap = Math.max(1, u.capacity || 35);
-      // each weekday: a full day, a half day (Out today · Half day) or out
-      let full = 0, half = 0, out = 0, tDone = 0, tToday = 0;
-      for (const d of days) { const a = att.find((x) => x.user_id === u.id && x.day === d); const share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
-        if (!a) full++; else if (share) half++; else out++;
-        if (d < today) tDone += share * cap; else if (d === today) tToday = share * cap; }
-      const target = Math.round(full * cap + half * cap / 2);
+      // each day: a full day, a half day or out. Purview Shastra's attendance decides when it has the day (leave, half
+      // day, week off, a Saturday worked); otherwise a weekday is a full day unless marked Out today here (Half day: half).
+      const fd = fl.byUser.get(u.id);
+      let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false;
+      for (const d of span) {
+        const x = fd && fd.get(d), sd = x ? shastraDay(x.status) : null, wd = weekday(d);
+        let share = 0;
+        if (sd) { share = sd.share; if (sd.kind === "in") full++; else if (sd.kind === "half") half++; else if (sd.kind !== "off") { out++; if (sd.kind === "unplanned") unplanned++; } }
+        else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
+          if (!a) full++; else if (share) half++; else { out++; unplanned++; } }
+        shares += share; needAll += share * 480;
+        if (d < today) { tDone += share * cap; needDone += share * 480; } else if (d === today) tToday = share * cap;
+        if (x) { const tof = x.tof_min || 0, idl = x.guard ? (x.idle_min || 0) + (x.locked_min || 0) : 0;
+          onAll += tof; idleAll += idl; if (x.guard) { lockedAll += x.locked_min || 0; guard = true; }
+          if (d < today) { onDone += tof; idleDone += idl; } }
+      }
+      const target = Math.round(shares * cap);
+      const inShastra = fl.state === "ok" && !!fd && fd.size > 0;
       const worked = w.worked || 0, workedDone = w.worked_done || 0, workedToday = worked - workedDone;
       // Attainment on the days already finished (up to yesterday), so a day still under way does not make everyone look behind;
       // with only today in the dates, today against today's target.
@@ -2326,9 +2410,14 @@ const OPS = {
       }
       const mine = desk.filter((c) => c.assigned_to === u.id), leftHigh = mine.filter((c) => c.tier === "High").length;
       return { id: u.id, name: u.name, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, doj: u.doj || "", status: st, capacity: cap,
-        days_full: full, days_half: half, days_out: out, days_worked: w.days_worked || 0, worked, closed: cl.get(u.id) || 0, target, attain, attain_basis: basis,
+        days_full: full, days_half: half, days_out: out, days_unplanned: unplanned, days_worked: w.days_worked || 0, worked, closed: cl.get(u.id) || 0, target, attain, attain_basis: basis,
         worked_done: workedDone, target_done: Math.round(tDone * 10) / 10, worked_today: workedToday, target_today: tToday,
-        floor_needed_min: full * 8 * 60 + half * 4 * 60, on_floor_min: null, idle_min: null,
+        // floor time: 8 h a working day, 4 h a half day; met or short on the finished days (a day under way is not judged)
+        floor_needed_min: needAll, floor_needed_done_min: needDone,
+        on_floor_min: inShastra ? onAll : null, on_floor_done_min: inShastra ? onDone : null,
+        idle_min: inShastra && guard ? idleAll : null, idle_done_min: inShastra && guard ? idleDone : null, locked_min: inShastra && guard ? lockedAll : null, guard,
+        floor: fl.state !== "ok" ? "none" : !inShastra ? "no_attendance" : needDone <= 0 ? "pending" : onDone >= needDone ? "met" : "short",
+        floor_short_min: inShastra && needDone > onDone ? needDone - onDone : 0,
         left: mine.length, left_high: leftHigh, left_other: mine.length - leftHigh, ramp,
         // judged against the production mark: production only, on finished days; Training and OJT are in ramp-up
         perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? "none" : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
@@ -2348,14 +2437,22 @@ const OPS = {
     const noLead = rows.filter((r) => !r.lead_id); if (noLead.length) checks.push({ n: noLead.length, text: (noLead.length === 1 ? "biller" : "billers") + " with no team lead on the roster" });
     const seen = new Map(); rows.forEach((r) => { const k = r.name.trim().toLowerCase(); seen.set(k, (seen.get(k) || 0) + 1); });
     const dup = [...seen.values()].filter((v) => v > 1).length; checks.push({ n: dup, text: "names that appear twice" });
+    if (fl.state === "ok") {
+      const noAtt = rows.filter((r) => r.floor === "no_attendance");
+      checks.push({ n: noAtt.length, text: (noAtt.length === 1 ? "person" : "people") + " with no attendance in Purview Shastra for these dates" + (noAtt.length ? ": " + noAtt.slice(0, 4).map((r) => r.name).join(", ") + (noAtt.length > 4 ? "…" : "") : "") });
+      const noGuard = rows.filter((r) => r.on_floor_min != null && !r.guard);
+      if (noGuard.length) checks.push({ n: noGuard.length, text: (noGuard.length === 1 ? "person" : "people") + " with no Shastra Guard machine linked (no idle time): " + noGuard.slice(0, 4).map((r) => r.name).join(", ") + (noGuard.length > 4 ? "…" : "") });
+    }
     const totals = { people: rows.length, leads: new Set(rows.map((r) => r.lead_id).filter(Boolean)).size, production: rows.filter((r) => r.status === "Production").length,
       training: rows.filter((r) => r.status === "Training" || r.status === "OJT").length, ramp_over: rows.filter((r) => r.ramp.flag === "over").length,
       below: rows.filter((r) => r.perf === "below").length, worked: sum("worked"), target: sum("target"), floor_needed_min: sum("floor_needed_min"),
-      worked_done: sum("worked_done"), target_done: sum("target_done"), worked_today: sum("worked_today"), target_today: sum("target_today") };
+      worked_done: sum("worked_done"), target_done: sum("target_done"), worked_today: sum("worked_today"), target_today: sum("target_today"),
+      on_floor_min: rows.some((r) => r.on_floor_min != null) ? sum("on_floor_min") : null, idle_min: rows.some((r) => r.idle_min != null) ? sum("idle_min") : null,
+      floor_judged: rows.filter((r) => r.floor === "met" || r.floor === "short").length, floor_met: rows.filter((r) => r.floor === "met").length };
     totals.attain_basis = totals.target_done > 0 ? "done" : "today";
     totals.attain = totals.attain_basis === "done" ? Math.round(totals.worked_done / totals.target_done * 100) : totals.target_today ? Math.round(totals.worked_today / totals.target_today * 100) : null;
     return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals, by_status: byStatus, checks, perf_mark: PERF_MARK, ramp_weeks: RAMP_WEEKS,
-      suggestions: teamSuggestions(rows), floor_source: "pending" };
+      suggestions: teamSuggestions(rows), floor_source: fl.state, floor_error: fl.error || "", floor_at: fl.at || null };
   },
   /* The start / end dates and comment on someone's Team status row: kept in Brahmastra, seen by every lead who sees them. */
   "team.saveNote": async ({ env, user, payload }) => {

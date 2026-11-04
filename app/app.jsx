@@ -1712,13 +1712,25 @@ const TS_STATUS_TONE = { Production: "green", Training: "blue", OJT: "blue", "Se
 const rampCell = (r) => { const x = r.ramp || {}; if (x.kind === "prod") return <span className="badge green">In production</span>; if (x.kind !== "ramp") return <span className="badge gray">{r.status}</span>;
   if (x.flag === "nodate") return <span className="badge gray">No start date</span>;
   const ext = x.extended ? " · date agreed" : "";
-  if (x.flag === "over") return <span className="badge red" title={"Was due in production " + fmtDate(x.due)}>Overdue · +{-x.days}d</span>; if (x.flag === "soon") return <span className="badge amber">Due {fmtDate(x.due)} · {x.days}d left{ext}</span>;
-  return <span className="badge gray">Due {fmtDate(x.due)} · {x.extended ? "date agreed" : "on track"}</span>; };
+  const md = (d) => { try { return new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); } catch { return d; } };
+  if (x.flag === "over") return <span className="badge red" title={"Was due in production " + fmtDate(x.due)}>Overdue · +{-x.days}d</span>; if (x.flag === "soon") return <span className="badge amber" title={"Due in production " + fmtDate(x.due)}>Due {md(x.due)} · {x.days}d left{ext}</span>;
+  return <span className="badge gray" title={"Due in production " + fmtDate(x.due)}>Due {md(x.due)} · {x.extended ? "date agreed" : "on track"}</span>; };
 const PERF_BADGE = { below: ["red", "Below the mark"], ok: ["green", "Meeting the mark"], ramp: ["blue", "In ramp-up"], pending: ["gray", "Day under way"], none: ["gray", "No entries yet"] };
 const perfCell = (r, mark) => { const b = PERF_BADGE[r.perf]; if (!b) return <span className="muted">–</span>;
   const tip = r.perf === "ramp" ? "Training and OJT are not judged against the production mark" : r.perf === "pending" ? "Judged once the day is finished" : r.perf === "below" ? "Under " + mark + "% attainment" : "";
   return <span className={"badge " + b[0]} title={tip}>{b[1]}</span>; };
 const attainStamp = (v) => v == null ? <span className="muted">–</span> : <span className={"stamp " + (v >= 95 ? "good" : v >= 80 ? "warn" : "bad")}>{v}%</span>;
+/* On floor and Idle on Team status, from Purview Shastra: met or short on the finished days; idle is Shastra Guard's no
+   movement plus screen locked while punched in, breaks left out. */
+const FLOOR_SRC = { off: "Purview Shastra is not connected", not_set_up: "waiting for the floor-time feed in Purview Shastra", error: "Purview Shastra did not answer", pending: "from Purview Shastra" };
+const floorCell = (r, src) => {
+  if (r.on_floor_min == null) return <span className="muted" title={r.floor === "no_attendance" ? "No attendance in Purview Shastra for these dates" : FLOOR_SRC[src] || ""}>–{r.floor === "no_attendance" ? <div className="tiny">no attendance</div> : null}</span>;
+  const sub = r.floor === "met" ? <div className="tiny teal-ink">met</div> : r.floor === "short" ? <div className={"tiny " + (r.on_floor_done_min < r.floor_needed_done_min * 0.75 ? "red-ink" : "amber-ink")}>short {fmtHM(r.floor_short_min)}</div> : r.floor === "pending" ? <div className="tiny muted">day under way</div> : null;
+  return <span title={r.floor === "pending" ? "Judged once the day is finished" : "On the finished days: " + fmtHM(r.on_floor_done_min) + " of " + fmtHM(r.floor_needed_done_min) + " needed"}>{fmtHM(r.on_floor_min)}{sub}</span>; };
+const idleCell = (r) => {
+  if (r.idle_min == null) return <span className="muted" title={r.on_floor_min != null && !r.guard ? "No Shastra Guard machine linked to this person" : ""}>–{r.on_floor_min != null && !r.guard ? <div className="tiny">no Guard</div> : null}</span>;
+  const pct = r.on_floor_min ? Math.round(r.idle_min / r.on_floor_min * 100) : 0;
+  return <span title={"No movement " + fmtHM(r.idle_min - (r.locked_min || 0)) + " · screen locked " + fmtHM(r.locked_min || 0) + " (Shastra Guard, while punched in, breaks left out)"}>{fmtHM(r.idle_min)}{r.on_floor_min ? <div className={"tiny " + (pct >= 10 && r.idle_min >= 60 ? "amber-ink" : "muted")}>{pct}% of floor</div> : null}</span>; };
 /* Dashboard > Team status: Sasha's Third Eye's Team Status, from Brahmastra's own data and the Purview Shastra roster.
    Time on floor and idle time come from Purview Shastra once its feed sends them. */
 function TeamStatusTab({ ctx, me, go }) {
@@ -1743,10 +1755,12 @@ function TeamStatusTab({ ctx, me, go }) {
     try { await navigator.clipboard.writeText(text); toast("Copied: paste it into your 1:1 notes."); } catch (e) { toast("Could not copy here; select the text instead.", "err"); }
   };
   const csv = () => {
-    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Entries", "Target", "Performance", "Floor time needed (h)", "Left over", "Of them high priority", "Start", "Due in production / plan end", "Comment"];
+    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Entries", "Target", "Performance", "Floor time needed (h)", "On floor (h)", "Floor time met", "Idle (h)", "Of it screen locked (h)", "Left over", "Of them high priority", "Start", "Due in production / plan end", "Comment"];
     const rampTxt = (x) => x.kind === "prod" ? "In production" : x.kind !== "ramp" ? "" : !x.due ? "No start date" : (x.flag === "over" ? "Overdue, was due " : "Due ") + x.due + (x.extended ? " (date agreed)" : "");
     const line = (r) => [r.lead_name, r.name, r.doj, r.status, rampTxt(r.ramp) || r.status, r.attain == null ? "" : r.attain, r.attain == null ? "" : r.attain_basis === "done" ? "days up to yesterday" : "today",
-      r.worked, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10, r.left, r.left_high, r.start_date, r.end_date, r.comment];
+      r.worked, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10,
+      r.on_floor_min == null ? "" : Math.round(r.on_floor_min / 6) / 10, r.floor === "met" ? "Met" : r.floor === "short" ? "Short " + Math.round(r.floor_short_min / 6) / 10 + " h" : r.floor === "pending" ? "Day under way" : r.floor === "no_attendance" ? "No attendance in Shastra" : "",
+      r.idle_min == null ? "" : Math.round(r.idle_min / 6) / 10, r.locked_min == null ? "" : Math.round(r.locked_min / 6) / 10, r.left, r.left_high, r.start_date, r.end_date, r.comment];
     downloadText(toCSV(rows, head.map((label, i) => ({ label, get: (r) => line(r)[i] }))), "Team status " + (span ? span[0] + " to " + span[1] : "") + ".csv");
   };
   const Sugg = ({ tone, title, list }) => { const people = []; for (const x of list) { let pp = people.find((y) => y.user_id === x.user_id); if (!pp) { pp = { user_id: x.user_id, who: x.who, lead: x.lead, items: [] }; people.push(pp); } pp.items.push(x); }
@@ -1765,13 +1779,16 @@ function TeamStatusTab({ ctx, me, go }) {
       </div>
       <ErrorBox error={q.error} />
       {!d && !q.error ? <Spinner label="Loading…" /> : d && !rows.length ? <div className="card"><Empty>Nobody here for this selection.</Empty></div> : d && <>
+        {d.floor_error && d.floor_source === "ok" && <div className="small muted">Purview Shastra did not answer just now ({d.floor_error}); on floor and idle show the last figures it sent.</div>}
         {t.ramp_over > 0 && <div className="alert" style={{ background: "var(--red-soft)", borderColor: "rgba(201,79,79,.35)" }}><b className="red-ink">{plural(t.ramp_over, "person", "people")} past their ramp-up date:</b> {rows.filter((r) => r.ramp.flag === "over").map((r) => r.name + " (+" + (-r.ramp.days) + "d)").join(", ")}</div>}
         <div className="grid dash-k6">
           <Kpi tone="accent" label="Headcount" value={fmtInt(t.people)} sub={plural(t.leads, "team lead")} />
           <Kpi label="In production" value={<span className="teal-ink">{fmtInt(t.production)}</span>} sub={t.people ? Math.round(t.production / t.people * 100) + "% of the team" : ""} />
           <Kpi label="In training" value={<span className={t.training ? "amber-ink" : ""}>{fmtInt(t.training)}</span>} sub="training and OJT" />
           <Kpi label="Floor time needed" value={fmtHM(t.floor_needed_min)} sub="8 h a working day, 4 h a half day" />
-          <Kpi label="On floor · idle" value={<span className="muted">–</span>} sub="from Purview Shastra (being connected)" />
+          {t.on_floor_min != null ? <Kpi label="On floor · idle" value={fmtHM(t.on_floor_min)}
+              sub={<>{t.idle_min != null ? "idle " + fmtHM(t.idle_min) + " · " : ""}{t.floor_judged ? t.floor_met + " of " + t.floor_judged + " met the floor time" : "from Purview Shastra"}</>} tone={t.floor_judged && t.floor_met < t.floor_judged ? "" : "good"} />
+            : <Kpi label="On floor · idle" value={<span className="muted">–</span>} sub={d.floor_source === "ok" ? "no attendance in Purview Shastra for these dates" : FLOOR_SRC[d.floor_source] || "from Purview Shastra"} />}
           <Kpi label="Attainment" value={t.attain == null ? "–" : t.attain + "%"} sub={t.attain_basis === "done" ? fmtInt(t.worked_done) + " of " + fmtInt(Math.round(t.target_done)) + " claims up to yesterday" : fmtInt(t.worked_today) + " of " + fmtInt(Math.round(t.target_today)) + " claims today"} />
         </div>
         <div className="card">
@@ -1782,7 +1799,9 @@ function TeamStatusTab({ ctx, me, go }) {
               return <React.Fragment key={g.key || "none"}>
                 <tr className="tlrow click" onClick={() => setClosed((c) => ({ ...c, [g.key || "none"]: open }))}><td><span className="caret">{open ? "▾" : "▸"}</span> <b>{g.name}</b></td>
                   <td colSpan={3} className="small muted">{plural(gr.length, "person", "people")} · {gr.filter((r) => r.status === "Production").length} production{gr.some((r) => r.status !== "Production") ? " · " + gr.filter((r) => r.status !== "Production").length + " other" : ""}</td>
-                  <td className="num">{attainStamp((() => { const wd = gr.reduce((a, r) => a + r.worked_done, 0), td = gr.reduce((a, r) => a + r.target_done, 0), wt = gr.reduce((a, r) => a + r.worked_today, 0), tt = gr.reduce((a, r) => a + r.target_today, 0); return td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null; })())}</td><td className="num">{fmtHM(gr.reduce((a, r) => a + r.floor_needed_min, 0))}</td><td className="num muted">–</td><td className="num muted">–</td>
+                  <td className="num">{attainStamp((() => { const wd = gr.reduce((a, r) => a + r.worked_done, 0), td = gr.reduce((a, r) => a + r.target_done, 0), wt = gr.reduce((a, r) => a + r.worked_today, 0), tt = gr.reduce((a, r) => a + r.target_today, 0); return td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null; })())}</td><td className="num">{fmtHM(gr.reduce((a, r) => a + r.floor_needed_min, 0))}</td>
+                  <td className="num">{gr.some((r) => r.on_floor_min != null) ? <>{fmtHM(gr.reduce((a, r) => a + (r.on_floor_min || 0), 0))}{gr.some((r) => r.floor === "short") ? <div className="tiny amber-ink">{gr.filter((r) => r.floor === "short").length} short</div> : null}</> : <span className="muted">–</span>}</td>
+                  <td className="num">{gr.some((r) => r.idle_min != null) ? fmtHM(gr.reduce((a, r) => a + (r.idle_min || 0), 0)) : <span className="muted">–</span>}</td>
                   <td>{gr.some((r) => r.perf === "below") ? <span className="badge amber">{plural(gr.filter((r) => r.perf === "below").length, "outlier")}</span> : <span className="badge green">Clear</span>}</td><td /></tr>
                 {open && gr.map((r) => <tr key={r.id}>
                   <td><span className="child">•</span><button type="button" className="btn link biller-link" style={{ padding: 0 }} onClick={() => go("claims", { assigned_to: r.id, state: "" })}>{r.name}</button></td>
@@ -1791,24 +1810,24 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td>{rampCell(r)}</td>
                   <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " of " + Math.round(r.target_done) + " to yesterday" : r.worked_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.worked_today ? " · " + r.worked_today + " today" : ""}</div></td>
                   <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
-                  <td className="num muted">–</td><td className="num muted">–</td>
+                  <td className="num">{floorCell(r, d.floor_source)}</td><td className="num">{idleCell(r)}</td>
                   <td>{perfCell(r, d.perf_mark)}{r.out_today ? <div className="tiny muted">{r.out_today === "half" ? "half day today" : "out today"}</div> : null}</td>
                   <td><button type="button" className="btn sm note-btn" title={r.comment || "Add a start, end or comment"} onClick={() => setEdit({ r, start: r.start_date, end: r.end_date, comment: r.comment })}>{r.comment ? <span className="clamp3">{r.comment}</span> : <span className="muted">+ Add note</span>}</button></td>
                 </tr>)}
               </React.Fragment>; })}</tbody></table></div>
-          <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> and <b>idle</b> come from Purview Shastra once its feed sends them. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
+          <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> comes from Purview Shastra (finished shifts, breaks taken out; a shift still open counts up to now) and is met or short on the finished days; Shastra's attendance also decides half days, leave and week offs. <b>Idle</b> is what Shastra Guard saw while they were punched in, breaks left out: no movement plus screen locked. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
         </div>
         <div className="card">
           <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>Suggestions · {word}</div><button className="btn sm" onClick={copy}>⬇ Copy for my 1:1s</button></div>
           <div className="sg-grid mt8"><Sugg tone="red" title="Do today" list={sg.today} /><Sugg tone="amber" title="This week" list={sg.week} /><Sugg tone="green" title="Keep going" list={sg.good} /></div>
-          <div className="tiny muted mt8">Built from the same figures as the table, urgent first. Each pointer says what we see and what to do. Time on floor and idle time join them once Purview Shastra sends them.</div>
+          <div className="tiny muted mt8">Built from the same figures as the table, urgent first. Each pointer says what we see and what to do. Time on the floor and idle time come from Purview Shastra.</div>
         </div>
         <div className="grid ts-foot">
           <div className="card"><div className="cv-sec">Performance by status · {word}{t.attain_basis === "done" ? " · counted up to yesterday" : ""}</div>
             <div className="table-wrap"><table className="t"><thead><tr><th>Status</th><th className="num">People</th><th className="num">Claims</th><th className="num">Target</th><th className="num">Attainment</th><th className="num">Claims a day</th></tr></thead>
               <tbody>{d.by_status.map((x) => <tr key={x.status}><td className="b">{x.status}</td><td className="num">{x.people}</td><td className="num">{fmtInt(x.worked)}</td><td className="num">{fmtInt(x.target)}</td><td className="num">{attainStamp(x.attain)}</td><td className="num">{x.per_day == null ? "–" : x.per_day}</td></tr>)}</tbody></table></div></div>
           <div className="card"><div className="cv-sec">Roster checks</div>
-            <div className="stack" style={{ gap: 8 }}>{d.checks.map((c, i) => <div key={i} className="row" style={{ gap: 8 }}><span className={"badge " + (c.n ? "amber" : "green")}>{c.n}</span><span className="small">{c.text}</span></div>)}
+            <div className="stack" style={{ gap: 8 }}>{d.checks.map((c, i) => <div key={i} className="row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "flex-start" }}><span className={"badge " + (c.n ? "amber" : "green")}>{c.n}</span><span className="small">{c.text}</span></div>)}
               <div className="tiny muted">Fix these in Purview Shastra; Brahmastra picks them up on the next roster sync.</div></div></div>
         </div>
       </>}
