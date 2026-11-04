@@ -220,8 +220,8 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const ev = await rpc("creport.evUpload", { client_id: tok.sun, file_name: "EV production.xlsx", rows: [1, 2, 3, 4, 5].map((d) => ({ wd: ym + "-0" + d, py: d % 2 ? "Aetna" : "Medicare", st: "Active coverage", by: "Riya" })) });
     ok("an EV file is kept for the client", ev.ok && ev.n === 5, ev);
     await open("#/client"); await t(2000);
-    ok("Client 360 has no Client report tab and no digest card; a button goes to the Dashboard's report", !(await p.locator(".c3-tabs").count()) && !/Monday digest email/.test(await p.innerText(".main")) && (await p.locator('.main button:has-text("Client 360 report")').count()) === 1);
-    await p.locator('.main button:has-text("Client 360 report")').click(); await t(4000);
+    ok("Client 360 has no Client report tab and no digest card; a button goes to the Dashboard's report", !(await p.locator(".c3-tabs").count()) && !/Monday digest email/.test(await p.innerText(".main")) && (await p.locator(".main button.c3-report").count()) === 1 && /Open Client 360 report/.test(await p.innerText(".main")));
+    await p.locator(".main button.c3-report").click(); await t(4000);
     ok("it opens Dashboard › Client 360 report for that client", /#\/dashboard/.test(p.url()) && /on/.test(await p.locator('.dash-subtabs button:has-text("Client 360 report")').getAttribute("class")) && /Sunrise/.test(await p.locator(".dash-client").innerText()), { url: p.url() });
     const setupText = await p.innerText(".crx-setup").catch(() => "");
     ok("the report starts with the data and the dates", /New client report/.test(setupText) && /EV production\.xlsx/.test(setupText) && /Dates/.test(setupText), setupText.slice(0, 200));

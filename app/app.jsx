@@ -5435,7 +5435,7 @@ function ClientView({ ctx, me, go, params }) {
           {d && <div className="sub">{[d.raci && d.raci.a.length ? "Team lead " + d.raci.a.map((p) => p.name).join(", ") : "", d.raci && d.raci.c.length ? "Manager " + d.raci.c.map((p) => p.name).join(", ") : "", d.client.team ? d.client.team + " billers" : "", d.client.locations.join(", ")].filter(Boolean).join(" · ")}</div>}
         </div>
         <div className="row no-print" style={{ gap: 8, flexWrap: "wrap" }}><DateRange value={dr} onChange={setDr} label="" /><button className="btn" onClick={() => window.print()} title="Print this page, or save it as a PDF for the client call">⬇ Client call pack (PDF)</button>
-          <button className="btn" onClick={() => go("dashboard", { tab: "report", client_id: cid })} title="The client's report pack, on the Dashboard: its pages, charts and the PDF">Client 360 report ›</button></div>
+          <button className="btn c3-report" onClick={() => go("dashboard", { tab: "report", client_id: cid })} title="The client's report pack, on the Dashboard: its pages, charts and the PDF">Client 360 report ›</button></div>
       </div>
       {!d ? <Spinner label="Loading…" /> : <>
         <div className={"c3-health " + hp[0]}><span className={"badge " + hp[0]}>● {hp[1]}</span>
