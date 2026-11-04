@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.72.0";
+const APP_VERSION = "2.73.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -175,6 +175,11 @@ function downloadText(text, name, type = "text/csv;charset=utf-8") {
   const blob = new Blob(["﻿" + text], { type });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+/* a CSV from a header row and array rows (the Production layout the server builds) */
+function arrayCSV(header, rows) {
+  const esc = (v) => { let s = v == null ? "" : String(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
+  return [header.map(esc).join(",")].concat(rows.map((r) => r.map(esc).join(","))).join("\r\n");
 }
 function toCSV(rows, cols) {
   const esc = (v) => { let s = v == null ? "" : String(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
@@ -1269,7 +1274,7 @@ function SettingsView({ me, setMe, ctx }) {
 
 /* ---------- shell ---------- */
 // Older screen names still open, inside the merged tabs.
-const NAV_ALIAS = { allocate: "inventory", locations: "clients", queue: "reports", teamtoday: "live", portfolio: "dashboard" };
+const NAV_ALIAS = { allocate: "inventory", locations: "clients", queue: "mydesk", teamtoday: "live", portfolio: "sla", reports: "claims" };
 const USER_NAV = [["queue", "My day"], ["history", "My work"]];
 /* A person deletes their own sign-in. Typing the email is the confirmation. */
 function DeleteMyAccount({ me, onClose, onDeleted }) {
@@ -1312,11 +1317,11 @@ function deskOf(me, ho) {
   return "both";
 }
 /* The tabs, with the less-used screens grouped under Work and Manage so the bar stays one row. */
-const navFor = (me, ho, fb) => {
+const navFor = (me, ho, fb, at) => {
   const inbox = fb && fb.reader ? [["feedback", "Feedback inbox"]] : [];
   const desk = deskOf(me, ho);
   // Posting and Submission work only on what is handed to them: no AR screens (SAAG, inventory, allocation, attention, TFL)
-  if (desk && me.role === "supervisor") return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"],
+  if (desk && me.role === "supervisor") return [["sla", "Portfolio & SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"],
     { g: "Manage", items: [["client", "Client 360"], ["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ...inbox] }];
   const respNav = (me.resp_clients || []).length ? [["claims", "Claims"]] : [];
   if (desk) return [["handoffs", DESK[desk].tab], ["history", "My work"], ...respNav, ["clients", "My clients"], ...inbox];
@@ -1326,9 +1331,9 @@ const navFor = (me, ho, fb) => {
   }
   // Team today is part of the Dashboard now; Claims (the inventory list) has its own tab; Needs attention sits under Work
   // and its count also shows on the Dashboard tab.
-  const work = [["attention", "Needs attention"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["saag", "SAAG reference"]];
+  const work = [["attention", "Needs attention"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["saag", "SAAG reference"], ...(at && at.my_desk > 0 ? [["mydesk", "My desk"]] : [])];
   const manage = [["client", "Client 360"], ["team", "Team"], ["templates", "Note templates"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : []), ...(me.is_admin || me.access_all ? [["audit", "Audit trail"]] : []), ...inbox];
-  return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["live", "Live status"], ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }, ["reports", "My day & reports"]];
+  return [["sla", "Portfolio & SLA"], ["thirdeye", "Sasha's Third Eye"], ["live", "Live status"], ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }];
 };
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
 const navItems = (nav) => nav.flatMap((x) => (Array.isArray(x) ? [x] : x.items));
@@ -1528,7 +1533,7 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   }, [notify]);
   const [openG, setOpenG] = useState(null);
   const [fbOpen, setFbOpen] = useState(false);
-  const nav = navFor(me, handoffs, fb);
+  const nav = navFor(me, handoffs, fb, attention);
   const pageLabel = (navItems(nav).find(([k]) => k === view) || [view, view === "settings" ? "Settings" : view])[1];
   const navKey = NAV_ALIAS[view] && me.role === "supervisor" ? NAV_ALIAS[view] : view;
   useEffect(() => { document.title = pageLabel + " · Brahmastra"; }, [pageLabel]);
@@ -1776,17 +1781,14 @@ function LiveStatusView({ ctx, me, go, params }) {
 }
 /* ---------- Dashboard: Team status and Client reports ---------- */
 function DashboardHub(props) {
-  const { params } = props;
-  const pick = (x) => (x && (x.tab === "clients" || x.tab === "client") ? "clients" : "team");
-  const [tab, setTab] = useState(() => pick(params));
-  useEffect(() => { if (params && params.tab) setTab(pick(params)); }, [params && params.tab]);
+  const { params, go } = props;
+  // the client list lives in Portfolio & SLA now; an old Dashboard › Client reports link goes there
+  useEffect(() => { if (params && (params.tab === "clients" || params.tab === "client") && go) go("sla", { tab: "portfolio" }); }, [params && params.tab]);
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
     <div className="stack">
-      <div className="row between top"><div><h1>Dashboard</h1><div className="sub">{tab === "team" ? "Team status: production and training, attainment and time on floor, for the dates picked." : "Client reports: each client's account at a glance. Click a client for its Client 360."}</div></div><span className="small muted">{stamp}</span></div>
-      <div className="seg2 dash-subtabs" role="tablist" style={{ alignSelf: "flex-start" }}>{[["team", "Team status"], ["clients", "Client reports"]].map(([k, l]) =>
-        <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
-      {tab === "team" ? <TeamStatusTab {...props} /> : <ClientReportsTab {...props} />}
+      <div className="row between top"><div><h1>Dashboard</h1><div className="sub">Team status: production and training, attainment and time on floor, for the dates picked.</div></div><span className="small muted">{stamp}</span></div>
+      <TeamStatusTab {...props} />
     </div>
   );
 }
@@ -1827,6 +1829,7 @@ function TeamStatusTab({ ctx, me, go }) {
   const d = q.data, rows = (d && d.rows) || [], t = (d && d.totals) || {};
   const [closed, setClosed] = useState({});
   const [edit, setEdit] = useState(null);
+  const [alloc, setAlloc] = useState(null);
   const [busy, setBusy] = useState(false);
   const save = async () => { setBusy(true); try { await rpc("team.saveNote", { user_id: edit.r.id, start_date: edit.start || "", end_date: edit.end || "", comment: edit.comment || "" }); toast("Saved for " + edit.r.name + "."); setEdit(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const groups = groupByLead(rows, true);
@@ -1853,6 +1856,8 @@ function TeamStatusTab({ ctx, me, go }) {
       {x.items.map((it, i) => <div key={i} className={i ? "mt8" : ""}><div className="small muted">{it.seen}</div><div className="sgdo">→ {it.do}</div></div>)}</div></li>)}</ul> : <div className="small muted" style={{ padding: "4px 10px" }}>Nothing here.</div>}</div>; };
   return (
     <div className="stack">
+      {alloc && span && <Modal title={"Allocations · " + alloc.name} sub={"Allocated and worked, " + word + ". The same list My day & reports had."} wide onClose={() => setAlloc(null)}>
+        <TeamDesk ctx={ctx} from={span[0]} to={span[1]} rangeLabel={word} fixedUser={alloc.id} /></Modal>}
       <div className="row dash-filters" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
         <div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
         {clientId && <div style={{ minWidth: 180 }}><LocationPicker ctx={ctx} clientId={clientId} locId={locId} setLocId={setLocId} /></div>}
@@ -1887,7 +1892,8 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td className="num">{gr.some((r) => r.idle_min != null) ? fmtHM(gr.reduce((a, r) => a + (r.idle_min || 0), 0)) : <span className="muted">–</span>}</td>
                   <td>{gr.some((r) => r.perf === "below") ? <span className="badge amber">{plural(gr.filter((r) => r.perf === "below").length, "outlier")}</span> : <span className="badge green">Clear</span>}</td><td /></tr>
                 {open && gr.map((r) => <tr key={r.id}>
-                  <td><span className="child">•</span><button type="button" className="btn link biller-link" style={{ padding: 0 }} onClick={() => go("claims", { assigned_to: r.id, state: "" })}>{r.name}</button></td>
+                  <td><span className="child">•</span><button type="button" className="btn link biller-link" style={{ padding: 0 }} onClick={() => go("claims", { assigned_to: r.id, state: "" })}>{r.name}</button>
+                    <div><button type="button" className="btn link tiny" style={{ padding: 0 }} title={"What was allocated to " + r.name + " and what they worked, " + word} onClick={() => setAlloc(r)}>allocations</button></div></td>
                   <td className="small nowrap">{r.doj ? fmtDate(r.doj) : <span className="muted">–</span>}</td>
                   <td><span className={"badge " + (TS_STATUS_TONE[r.status] || "gray")}>{r.status}</span></td>
                   <td>{rampCell(r)}</td>
@@ -3168,8 +3174,9 @@ function SaagCell({ r }) {
     {r.last_action_code || r.last_bucket ? <div className="tiny muted">{[r.last_action_code, r.last_bucket].filter(Boolean).join(" · ")}</div> : null}
     {r.last_note ? <div className="tiny saag-note" title={r.last_note}>{r.last_note}</div> : null}</div>;
 }
-function ClaimsView({ ctx, params, me }) {
+function ClaimsView({ ctx, params, me, initialTab }) {
   const p = params || {};
+  const [tab, setTab] = useState(initialTab === "entries" || p.tab === "entries" ? "entries" : "claims");
   const [f, setF] = useState({ client_id: p.clientId || "", location_id: p.locationId || "", state: p.state != null ? p.state : (p.follow_up_due || p.overdue || p.assigned_to || p.escalated ? "" : "workable"), tier: p.tier || "", bucket: p.bucket || "", status_class: p.status_class || "", inventory_kind: p.inventory_kind || "", assigned_to: p.assigned_to || "", q: p.payer || "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: p.saag_status || "", saag_bucket: p.saag_bucket || "", follow_up_due: !!p.follow_up_due, overdue: !!p.overdue, escalated: !!p.escalated, sort: "priority", dir: "desc", page: 1, page_size: 50 });
   const set = (k, v) => setF((x) => ({ ...x, [k]: v, page: k === "page" ? v : 1 }));
   const payload = useMemo(() => { const o = {}; for (const k in f) if (f[k] !== "" && f[k] !== false) o[k] = f[k]; return o; }, [f]);
@@ -3200,10 +3207,21 @@ function ClaimsView({ ctx, params, me }) {
     } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
+  // the CSV the team keeps: the Production Conso layout, one row per claim with its last entry
+  const exportProduction = async () => {
+    setBusy(true);
+    try { const r = await rpc("reports.claimsProduction", payload); downloadText(arrayCSV(r.header, r.rows), `Production - claims - ${todayISO()}.csv`); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
   const users = ctx.users.filter((u) => u.active);
   return (
     <div className="stack">
-      <div className="row between"><div><h1>Claims</h1><div className="sub">{deskOf(me, null) ? "The claims billers and AR team leads sent to " + DESK[deskOf(me, null)].tab + " through their SAAG action." : "Every claim on file, with filters, bulk actions and export."}</div></div><div className="row">{!deskOf(me, null) && <><AllocationLogicButton /><button className="btn" onClick={() => setPrioLog(true)} title="Every priority change with its reason">Priority changes</button></>}<button className="btn" onClick={exportCSV} disabled={busy || !rows.length}>Download CSV</button></div></div>
+      <div className="row between"><div><h1>Claims</h1><div className="sub">{deskOf(me, null) ? "The claims billers and AR team leads sent to " + DESK[deskOf(me, null)].tab + " through their SAAG action." : tab === "entries" ? "Every entry the team wrote, with the claim it belongs to, for any dates. The CSV is the Production layout." : "Every claim on file, with filters, bulk actions and export. The CSV is the Production layout the team keeps."}</div></div>
+        <div className="row" style={{ gap: 8 }}>{!deskOf(me, null) && <><AllocationLogicButton /><button className="btn" onClick={() => setPrioLog(true)} title="Every priority change with its reason">Priority changes</button></>}
+          {tab === "claims" && <><button className="btn" onClick={exportProduction} disabled={busy || !rows.length} title="One row per claim with its last entry, in the Production Conso columns">Download CSV</button><button className="btn link sm" onClick={exportCSV} disabled={busy || !rows.length} title="Brahmastra's own columns: priority, tier, state, assigned to, the SAAG fields">Brahmastra columns</button></>}</div></div>
+      {!deskOf(me, null) && <div className="seg2" style={{ alignSelf: "flex-start" }}>{[["claims", "Claims"], ["entries", "Entries"]].map(([k, l]) => <button key={k} type="button" className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>}
+      {tab === "entries" && !deskOf(me, null) ? <ReportsView ctx={ctx} embedded /> : <>
       <div className="card tight">
         <div className="grid g5">
           <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF((x) => ({ ...x, client_id: v, location_id: "", page: 1 }))} locId={f.location_id} setLocId={(v) => set("location_id", v)} allowAll />
@@ -3261,6 +3279,7 @@ function ClaimsView({ ctx, params, me }) {
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
       {prio && <PriorityModal ids={prio.ids} rows={prio.rows} onClose={() => setPrio(null)} onDone={() => { setPrio(null); setSel(new Set()); q.reload(); }} />}
       {prioLog && <PriorityLogModal onClose={() => setPrioLog(false)} onOpen={(id) => { setPrioLog(false); setOpen(id); }} />}
+    </>}
     </div>
   );
 }
@@ -5193,7 +5212,9 @@ const HEALTH_UI = { good: ["green", "On track"], watch: ["amber", "Needs attenti
 const isPortfolioUser = (me) => !!me && me.role === "supervisor" && (me.is_admin || me.access_all || me.roster_kind === "manager");
 /* Dashboard > Client reports: what was the Portfolio, for team leads too (their own clients): every client worst first,
    with the reasons, unassigned and collected for the dates; the claims in detail; managers side by side and data freshness. */
-function ClientReportsTab({ ctx, me, go }) {
+const DR_BAND = { ok: ["teal-ink", "green", "Green"], warn: ["amber-ink", "amber", "Amber"], miss: ["red-ink", "red", "Red"] };
+const drDot = (b) => <i className={"psla-dot " + (b || "none")} />;
+function ClientReportsTab({ ctx, me, go, openScorecard }) {
   const [clientId, setClientId] = useState(""), [leadId, setLeadId] = useState("");
   const [dr, setDr] = useState(() => newRange("month"));
   const [from, to] = rangeSpan(dr);
@@ -5221,11 +5242,12 @@ function ClientReportsTab({ ctx, me, go }) {
           <Kpi label="Unassigned" value={fmtInt(t.open_n)} sub={fmtMoney(t.open_bal) + " waiting for allocation"} />
           <Kpi label="Over 90 days" value={<span className={t.over90_pct > d.target ? "red-ink" : "teal-ink"}>{t.over90_pct}%</span>} sub={"target ≤ " + d.target + "%"} />
           <Kpi label={"Collected · " + rangeText(dr).toLowerCase()} value={<span className="teal-ink">{fmtMoney(t.collected_month)}</span>} sub="from payment posting" />
-          <Kpi label="TFL risk" value={<span className={t.tfl_soon_n ? "red-ink" : ""}>{fmtInt(t.tfl_soon_n)}</span>} sub={fmtMoney(t.tfl_soon) + " due in 30 days"} />
-          <Kpi label="SLA, average" value={t.sla_avg != null ? <span className={t.sla_avg < 90 ? "amber-ink" : "teal-ink"}>{t.sla_avg}%</span> : "–"} sub={fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
+          <Kpi label="KPIs in the red" value={d.drishti && d.drishti.state === "ok" ? <span className={d.drishti.red ? "red-ink" : "teal-ink"}>{fmtInt(d.drishti.red)}</span> : "–"} sub={d.drishti && d.drishti.state === "ok" ? (d.drishti.red ? d.drishti.red_names.join(", ") + " · " + plural(d.drishti.clients_red, "client") : "nothing red on the scorecards") : "Drishti's scorecard is not connected"} />
+          <Kpi label="SLA score, average" value={d.drishti && d.drishti.avg != null ? <span className={DR_BAND[d.drishti.avg >= 90 ? "ok" : d.drishti.avg >= 80 ? "warn" : "miss"][0]}>{d.drishti.avg}%</span> : t.sla_avg != null ? <span className={t.sla_avg < 90 ? "amber-ink" : "teal-ink"}>{t.sla_avg}%</span> : "–"}
+            sub={d.drishti && d.drishti.avg != null ? `${d.drishti.bands.ok} green · ${d.drishti.bands.warn} amber · ${d.drishti.bands.miss} red (Drishti)` : fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
         </div>
         <div className="card tight"><div className="table-wrap"><table className="t">
-          <thead><tr><th>Client · health</th><th>Team lead · manager</th><th className="num">AR</th><th className="num">Unassigned</th><th className="num">Over 90</th><th className="num">Collected</th><th className="num">SLA</th><th className="num">Missed</th><th>Waiting<br />on client</th><th className="num">TFL risk</th><th title="Claims still to work, at the pace of the last two weeks">Days to<br />clear</th><th>Last<br />inventory</th></tr></thead>
+          <thead><tr><th>Client · health</th><th>Team lead · manager</th><th className="num">AR</th><th className="num">Unassigned</th><th className="num">Over 90</th><th className="num">Collected</th><th>SLA score <span className="tiny muted" style={{ fontWeight: 400 }}>· Drishti</span></th><th>Pulling it down</th><th className="num">Missed</th><th>Waiting<br />on client</th><th className="num">TFL risk</th><th title="Claims still to work, at the pace of the last two weeks">Days to<br />clear</th><th>Last<br />inventory</th></tr></thead>
           <tbody>{d.rows.map((r) => (
             <tr key={r.client_id} className="click" onClick={() => go("client", { client_id: r.client_id })}>
               <td style={{ minWidth: 230, maxWidth: 320 }}><div className="row" style={{ gap: 8, flexWrap: "nowrap" }}><b style={{ whiteSpace: "nowrap" }}>{r.client}</b><span className={"badge " + HEALTH_UI[r.health][0]}>{HEALTH_UI[r.health][1]}</span></div>
@@ -5235,7 +5257,13 @@ function ClientReportsTab({ ctx, me, go }) {
               <td className="num">{fmtInt(r.open_n)}<div className="tiny muted">{fmtMoney(r.open_bal)}</div></td>
               <td className={"num " + (r.over90_pct > d.target ? "red-ink" : "")}>{r.over90_pct}%</td>
               <td className="num mono">{fmtMoney(r.collected_month)}</td>
-              <td className="num">{r.sla ? <span className={r.sla.score < 90 ? "amber-ink b" : ""}>{r.sla.score}%</span> : <span className="tiny muted">–</span>}</td>
+              <td onClick={(e) => e.stopPropagation()} style={{ minWidth: 150 }}>{r.drishti ? <>
+                  <div className={"psla-score " + DR_BAND[r.drishti.band][0]}>{r.drishti.score}%</div>
+                  <span className={"badge " + DR_BAND[r.drishti.band][1]}>{DR_BAND[r.drishti.band][2]}{r.drishti.delta != null && r.drishti.delta !== 0 ? ` · ${r.drishti.delta > 0 ? "+" : ""}${r.drishti.delta} pts` : ""}</span>
+                  <div className="psla-dots">{r.drishti.scopes.map((x) => <span key={x.key}>{drDot(x.band)}{x.short}</span>)}</div>
+                  <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => openScorecard ? openScorecard(r.client_id) : go("sla", { tab: "scorecard", client_id: r.client_id })}>scorecard ›</button></>
+                : r.sla ? <><span className={r.sla.score < 90 ? "amber-ink b" : "b"}>{r.sla.score}%</span><div className="tiny muted">typed at month-end</div></> : <span className="tiny muted">–</span>}</td>
+              <td style={{ minWidth: 150 }}>{r.drishti && r.drishti.drags.length ? r.drishti.drags.slice(0, 3).map((x) => <div key={x.name}><span className={"psla-drag " + x.status}>● {x.name} {x.shown}</span></div>) : r.drishti ? <span className="tiny teal-ink">all green</span> : <span className="tiny muted">–</span>}</td>
               <td className="num">{r.missed || "–"}</td>
               <td className="small">{r.waiting ? <>{fmtMoney(r.waiting.bal)} · {r.waiting.n}<div className="tiny muted">oldest {r.waiting.oldest} d</div></> : "–"}</td>
               <td className="num">{r.tfl_soon_n || r.tfl_past_n ? <span className="red-ink">{fmtMoney(r.tfl_soon)}</span> : "–"}{r.tfl_past_n ? <div className="tiny red-ink">{r.tfl_past_n} past</div> : null}</td>
@@ -5551,13 +5579,14 @@ function useReportsContext(me, client) {
   return { root, tl, folder: (sub) => [root, tl || "team lead", client ? client.name : "client", sub].join(" › ") };
 }
 /* The header of each page: who it is for, what it answers, and the frame's buttons. */
-function HubHead({ page, onHow, frame }) {
+function HubHead({ page, onHow, frame, compact }) {
   const p = HUB_PAGES[page];
   return (
     <div className="rh-head">
       <div style={{ minWidth: 0 }}>
+        {compact ? <p style={{ margin: 0 }}>{p.desc}</p> : <>
         <div className="rh-eyebrow"><span className={"rh-tag " + p.group}>{p.group === "int" ? "Internal" : "For clients"}</span></div>
-        <h1>{p.title}</h1><p>{p.desc}</p>
+        <h1>{p.title}</h1><p>{p.desc}</p></>}
       </div>
       <div className="rh-acts">
         {p.steps && <button className="btn" onClick={onHow}><Ico d={HUB_ICONS.info} size={15} /> How it works</button>}
@@ -6926,7 +6955,7 @@ function CrPrintJob({ title, pages, slideFor, onDone }) {
 /* Drishti opens already signed in as the Brahmastra user: Brahmastra asks its server for Drishti's own session token
    and leaves it where the Drishti page looks for it (same web address, so the same browser storage). */
 const DRISHTI_TOKEN_KEY = "drishti:token:v1";
-function SlaPage({ ctx, me, onHow }) {
+function SlaPage({ ctx, me, onHow, compact }) {
   const [sso, setSso] = useState({ state: "loading" });
   useEffect(() => {
     let alive = true;
@@ -6998,7 +7027,7 @@ function SlaPage({ ctx, me, onHow }) {
   };
   return (
     <div>
-      <HubHead page="sla" onHow={onHow} frame={sso.state === "loading" ? null : frame} />
+      <HubHead page="sla" onHow={onHow} frame={sso.state === "loading" ? null : frame} compact={compact} />
       <div className="card rh-bar">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => { setF({ client_id: v, location_id: "" }); setSaved(null); }} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
         <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>
@@ -7030,8 +7059,8 @@ function deskStatus(r, today) {
   if (r.state === "completed" && r.follow_up_on && r.follow_up_on > today) return { k: "later", label: "Follow-up " + fmtDate(r.follow_up_on), tone: "gray" };
   return { k: "waiting", label: "Not worked yet", tone: "amber" };
 }
-function TeamDesk({ ctx, from, to, rangeLabel }) {
-  const [f, setF] = useState({ client_id: "", location_id: "", user_id: "", show: "all" });
+function TeamDesk({ ctx, from, to, rangeLabel, fixedUser }) {
+  const [f, setF] = useState({ client_id: "", location_id: "", user_id: fixedUser || "", show: "all" });
   const payload = { client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1] };
   const q = useRpc("reports.desk", payload, [JSON.stringify(payload)]);
   const today = (q.data && q.data.today) || todayISO();
@@ -7063,7 +7092,7 @@ function TeamDesk({ ctx, from, to, rangeLabel }) {
           <span className="small muted">{p.worked} worked of {p.alloc || p.worked}{p.waiting ? <b style={{ color: "var(--amber-ink)" }}> · {p.waiting} waiting</b> : null}</span></button>; })}</div></div>}
       <div className="card tight row" style={{ alignItems: "flex-end", gap: 10 }}>
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF({ ...f, client_id: v, location_id: "" })} locId={f.location_id} setLocId={(v) => setF({ ...f, location_id: v })} allowAll />
-        <Field label="Biller"><Combo value={f.user_id} onChange={(v) => setF({ ...f, user_id: v })} placeholder="Everyone" options={[{ id: "", label: "Everyone" }, ...ctx.users.filter((u) => u.active).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))]} /></Field>
+        {!fixedUser && <Field label="Biller"><Combo value={f.user_id} onChange={(v) => setF({ ...f, user_id: v })} placeholder="Everyone" options={[{ id: "", label: "Everyone" }, ...ctx.users.filter((u) => u.active).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))]} /></Field>}
         <Field label="Show"><div className="seg2">{DESK_SHOW.map(([k, l]) => <button key={k} className={f.show === k ? "on" : ""} onClick={() => setF({ ...f, show: k })}>{l}{k !== "all" ? " " + count(k) : ""}</button>)}</div></Field>
         <button className="btn" style={{ marginLeft: "auto" }} disabled={!rows.length} onClick={csv}>Download CSV</button>
       </div>
@@ -7123,42 +7152,102 @@ function ThirdEyeView({ ctx, me }) {
   );
 }
 /* SLA has its own tab in front of Dashboard, so the scorecard is one click away all day. */
-function SlaView({ ctx, me }) {
+function PortfolioSlaView(props) {
+  const { params, me } = props;
+  const pick = (x) => (x && ["portfolio", "scorecard", "inputs"].includes(x.tab) ? x.tab : "portfolio");
+  const [tab, setTab] = useState(() => pick(params));
+  const [scClient, setScClient] = useState((params && params.client_id) || "");
+  useEffect(() => { if (params && params.tab) setTab(pick(params)); if (params && params.client_id) setScClient(params.client_id); }, [params && params.tab, params && params.client_id]);
   const [how, setHow] = useState(false);
-  return <div className="stack"><SlaPage ctx={ctx} me={me} onHow={() => setHow(true)} />{how && <HowDrawer page="sla" onClose={() => setHow(false)} />}</div>;
-}
-function ReportsHub(props) {
-  const lead = props.me && props.me.role === "supervisor";
-  const desk = deskOf(props.me, null);
-  const [dr, setDr] = useState(() => newRange("today"));
-  const range = rangeSpan(dr), rk = range.join("_"), isToday = dr.key === "today";
-  const [view, setView] = useState(lead ? "desk" : "mine");
-  const rangeLabel = rangeText(dr);
-  const views = lead ? [["desk", "Team allocations"], ["entries", "Every entry"], ["mine", "My own desk"]] : [];
-  const work = <>
-    <div className="row between" style={{ marginBottom: 12 }}>
-      {views.length ? <div className="seg2">{views.map(([k, l]) => <button key={k} className={view === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>)}</div>
-        : <div className="sub">{isToday ? "Your own day list, then everything the team wrote today." : "Work, notes and skips, " + rangeLabel + "."}</div>}
-      {view !== "mine" || !lead ? <DateRange value={dr} onChange={setDr} label="" /> : null}</div>
+  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const SUB = { portfolio: "Every client at a glance: health, AR, collections and the SLA scorecard, worst first. Click a client for its Client 360, its score for the scorecard.",
+    scorecard: "Did we meet what each client signed for? Drishti's scorecard for the client and period, in one page.",
+    inputs: "Drishti's own page: upload the period's reports or type a value. The scorecard reads them from here." };
+  return (
     <div className="stack">
-      {lead && view === "desk" && <TeamDesk key={rk} ctx={props.ctx} from={range[0]} to={range[1]} rangeLabel={rangeLabel} />}
-      {lead && view === "entries" && <ReportsView key={rk} ctx={props.ctx} from={range[0]} to={range[1]} embedded />}
-      {lead && view === "mine" && <QueueView {...props} />}
-      {!lead && isToday && <QueueView {...props} />}
-      {!lead && isToday && <h2 className="mt">Team activity today</h2>}
-      {!lead && <ReportsView key={rk} ctx={props.ctx} from={range[0]} to={range[1]} embedded />}
+      <div className="row between top"><div><h1>Portfolio &amp; SLA</h1><div className="sub">{SUB[tab]}</div></div><span className="small muted">{stamp}</span></div>
+      <div className="seg2 dash-subtabs" role="tablist" style={{ alignSelf: "flex-start" }}>{[["portfolio", "Portfolio"], ["scorecard", "SLA scorecard"], ["inputs", "Inputs (Drishti)"]].map(([k, l]) =>
+        <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
+      {tab === "portfolio" ? <ClientReportsTab {...props} openScorecard={(cid) => { setScClient(cid); setTab("scorecard"); }} />
+        : tab === "scorecard" ? <SlaScorecard {...props} clientId={scClient} setClientId={setScClient} openInputs={() => setTab("inputs")} />
+        : <><SlaPage ctx={props.ctx} me={me} onHow={() => setHow(true)} compact />{how && <HowDrawer page="sla" onClose={() => setHow(false)} />}</>}
     </div>
-  </>;
-  if (!lead) return <div className="stack"><div><h1>My day & reports</h1><div className="sub">Your own day list and the team's notes.</div></div>{work}</div>;
-  if (desk) return <ThirdEyeView ctx={props.ctx} me={props.me} />;
-  // Internal reports live in the Sasha's Third Eye tab, the client report in Client 360, the scorecard in SLA: one click from here too.
-  const openTE = () => { if (props.go) props.go("thirdeye"); };
-  return <div className="stack"><div className="row between" style={{ alignItems: "flex-start" }}><div><h1>My day &amp; reports</h1><div className="sub">Team allocations, every entry and your own desk, for any dates.</div></div>
-    <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><span className="tiny muted">Reports:</span>
-      <button className="btn sm" onClick={openTE} title="Sasha's Third Eye › Internal reports: Brahmastra's production loads by itself">Internal reports</button>
-      <button className="btn sm" onClick={() => props.go && props.go("client", { tab: "report" })} title="Client 360 › Client report: fill from Brahmastra">Client report</button>
-      <button className="btn sm" onClick={() => props.go && props.go("sla")} title="The Drishti SLA scorecard">SLA scorecard</button></div></div>{work}</div>;
+  );
 }
+/* The SLA scorecard, in Client 360's style: Drishti's figures and rules, read by Brahmastra (nothing in Drishti changes).
+   The period picked (the latest month unless asked), the score with its band, the scopes, what pulls it down, the
+   strengths, the score by period, where the figures come from, and every KPI with its formula. */
+const PSLA_KIND = [["latest", "Latest"], ["month", "Monthly"], ["week", "Weekly"]];
+const SLA_COLS = [{ key: "scope", label: "Scope" }, { key: "name", label: "KPI" }, { key: "shown", label: "Value" }, { key: "target", label: "Standard" }, { key: "formula", label: "Formula" },
+  { key: "status", label: "Status", get: (x) => (x.status === "ok" ? "Green" : x.status === "warn" ? "Amber" : x.status === "miss" ? "Red" : "Info") }, { key: "source", label: "From" }, { key: "reason", label: "Comment" }, { key: "std", label: "Drishti's standard" }];
+function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
+  const [kind, setKind] = useState("month");
+  const [to, setTo] = useState("");
+  useEffect(() => { setTo(""); }, [clientId, kind]);
+  const only = onlyClient(ctx);
+  useEffect(() => { if (!clientId && only) setClientId(only); }, [only]);
+  const q = useRpc("sla.scorecard", { client_id: clientId, kind, to: to || undefined, today: todayISO() }, [clientId, kind, to], !!clientId);
+  const d = q.data && q.data.client && q.data.client.id === clientId ? q.data : null;
+  const client = ctx.clients.find((c) => c.id === clientId);
+  const periods = d && d.periods ? d.periods.filter((p) => kind === "latest" || p.kind === kind) : [];
+  const cur = d && d.period ? d.period : null, idx = cur ? periods.findIndex((p) => p.id === cur.id) : -1;
+  const step = (n) => { const p = periods[idx + n]; if (p) setTo(p.to); };
+  const band = d && d.band ? DR_BAND[d.band] : null, first = client ? client.name : "";
+  const csv = () => downloadText(toCSV(d.items, SLA_COLS), `sla-scorecard-${first}-${cur ? cur.label : ""}.csv`.replace(/[\/:*?"<>|]+/g, " "));
+  const stWord = (x) => (x === "ok" ? "Green" : x === "warn" ? "Amber" : x === "miss" ? "Red" : "Info");
+  const stBadge = (x) => <span className={"badge " + (x === "ok" ? "green" : x === "warn" ? "amber" : x === "miss" ? "red" : "gray")}>{stWord(x)}</span>;
+  const Row = ({ it }) => <div className="psla-row">{stBadge(it.status)}<div className="m"><b>{it.name} · {it.scope}</b><span title={it.formula}>{it.reason || it.source}{it.formula ? <> · <em>{it.formula}</em></> : null}</span></div>
+    <div className="val">{it.shown || "–"}<small>{it.target ? "standard " + it.target : it.std}</small></div></div>;
+  const monthOf = (p) => (p && p.kind === "month" && p.from ? p.from.slice(0, 7) : "");
+  return (
+    <div className="stack" style={{ gap: 14 }}>
+      <div className="card rh-bar" style={{ display: "flex", gap: 18, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 260 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} /></div>
+        <Field label="Period"><div className="row" style={{ gap: 8, flexWrap: "wrap" }}><div className="seg2">{PSLA_KIND.map(([k, l]) => <button key={k} type="button" className={kind === k ? "on" : ""} onClick={() => setKind(k)}>{l}</button>)}</div>
+          {cur && <span className="crx-per"><button type="button" disabled={idx < 0 || idx >= periods.length - 1} onClick={() => step(1)} title="The period before">‹</button><b>{cur.label}</b><button type="button" disabled={idx <= 0} onClick={() => step(-1)} title="The period after">›</button></span>}
+          {d && d.prev && <span className="small muted">compared with {d.prev.label}</span>}</div></Field>
+        <span style={{ flex: 1 }} />
+        <button className="btn primary" onClick={openInputs} title="Drishti's page: upload the period's reports or type a value">Upload this period's reports →</button></div>
+      {!clientId ? <div className="card"><Empty>Pick a client to see its scorecard.</Empty></div> : q.error ? <ErrorBox error={q.error} /> : !d ? <div className="card"><Spinner label="Reading Drishti's scorecard…" /></div>
+        : d.state === "off" ? <div className="alert warn">Drishti's scorecard is not connected yet: the Worker secret DRISHTI_TOKEN_SECRET is not set (README › Drishti opens signed in). Until then, use <b>Inputs (Drishti)</b>.</div>
+        : d.state === "error" ? <div className="alert err">Drishti did not answer: {d.error} Brahmastra tries again in a few minutes.</div>
+        : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it in <b>Inputs (Drishti)</b>.</div>
+        : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports in <b>Inputs (Drishti)</b> and it shows here.</div>
+        : <>
+          <div className={"c3-health psla-head " + (d.band === "ok" ? "" : d.band === "warn" ? "amber" : "red")}>
+            <div className={"psla-dial " + (d.band || "none")} style={{ "--pct": (d.score || 0) + "%" }}><div><b>{d.score == null ? "–" : d.score + "%"}</b><small>{d.band ? DR_BAND[d.band][2].toUpperCase() : "NO SCORE"}</small></div></div>
+            <div style={{ flex: 1, minWidth: 260 }}><div style={{ fontSize: 17, fontWeight: 800 }}>{first} · {cur.label} <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("client", { client_id: clientId })}>Open Client 360 ›</button></div>
+              <div className="small" style={{ marginTop: 4 }}>{fmtInt(d.scored)} scored: <b className="teal-ink">{d.counts.ok} green</b> · <b className="amber-ink">{d.counts.warn} amber</b> · <b className="red-ink">{d.counts.miss} red</b>
+                {d.kpi_pct != null ? <> &nbsp;·&nbsp; KPI {d.kpi_pct}%</> : null}{d.sla_pct != null ? <> · SLA tasks {d.sla_pct}%</> : null}
+                {d.delta != null && d.prev ? <> &nbsp;·&nbsp; <b className={d.delta >= 0 ? "teal-ink" : "red-ink"}>{d.delta >= 0 ? "▲" : "▼"} {Math.abs(d.delta)} pts</b> from {d.prev.label} ({d.prev.pct}%)</> : null}</div>
+              {d.drags.length > 0 && <ul style={{ marginTop: 8 }}>{d.drags.slice(0, 3).map((x) => <li key={x.scope_key + x.key} className={x.status === "miss" ? "red" : ""}>{x.name} {x.shown}{x.target ? ", standard " + x.target : ""}</li>)}</ul>}</div>
+            <div style={{ textAlign: "right" }}>{monthOf(cur) && d.score != null && <div className="psla-tick">✓ Month-end: SLA scored {d.score}%, ticked by itself</div>}
+              <div className="tiny muted" style={{ marginTop: 6 }}>Maintained in Drishti by {d.drishti.owner || "the team"}{cur.created_by ? " · period saved by " + cur.created_by : ""}{cur.created_at ? " · " + fmtDate(cur.created_at.slice(0, 10)) : ""}</div></div>
+          </div>
+          {d.scopes.length > 0 && <div className="psla-scopes">{d.scopes.map((sc) => <div key={sc.key} className={"psla-sc " + (sc.band || "none")}><div className="l">{sc.name}</div><div className={"v " + (sc.band ? DR_BAND[sc.band][0] : "muted")}>{sc.pct == null ? "–" : sc.pct + "%"}</div>
+            <div className="s">{sc.scored ? `${sc.ok} of ${sc.scored} on target` : "nothing scored"}{sc.items.filter((x) => x.status === "miss" || x.status === "warn").length ? " · " + sc.items.filter((x) => x.status === "miss" || x.status === "warn").map((x) => x.name.toLowerCase()).slice(0, 2).join(", ") : ""}</div>
+            <div className="psla-dots">{sc.items.slice(0, 4).map((x) => <span key={x.name}>{drDot(x.status === "info" ? null : x.status)}{x.name} {x.shown}</span>)}</div></div>)}</div>}
+          <div className="c3-g2">
+            <div className="card"><div className="cv-sec">What pulls it down</div>{d.drags.length ? d.drags.map((it) => <Row key={it.scope_key + it.key} it={it} />) : <Empty>Nothing: every KPI scored is green.</Empty>}</div>
+            <div className="card"><div className="cv-sec">Strengths</div>{d.strengths.length ? d.strengths.slice(0, 8).map((it) => <Row key={it.scope_key + it.key} it={it} />) : <Empty>Nothing green yet.</Empty>}</div>
+          </div>
+          <div className="c3-g2" style={{ gridTemplateColumns: "1fr 1.2fr" }}>
+            <div className="card"><div className="cv-sec">Score by {cur.kind === "week" ? "week" : cur.kind === "month" ? "month" : "period"}</div>
+              {d.trend.length > 1 ? <div className="psla-trend">{d.trend.map((x) => <div key={x.id} className="b"><b>{x.pct == null ? "–" : x.pct + "%"}</b><i className={x.pct == null ? "none" : x.pct >= 90 ? "ok" : x.pct >= 80 ? "warn" : "miss"} style={{ height: Math.max(6, (x.pct || 0) - 55) + "%" }} /><span>{x.label.replace(/\s+\d{4}$/, "")}</span></div>)}</div> : <Empty>One period so far; the trend fills in as more are scored.</Empty>}
+              <div className="tiny muted" style={{ marginTop: 8 }}>Green 90% and above · Amber 80 to 89% · Red under 80%. The score is the green share of everything scored.</div></div>
+            <div className="card"><div className="cv-sec">Where the figures come from</div>
+              {d.sources.map((x) => <div key={x.from} className="c3-line"><span>{x.from}</span><span className="small muted" style={{ textAlign: "right" }}>{x.metrics.join(", ")}</span></div>)}
+              {cur.reports && cur.reports.length > 0 && <div className="tiny muted" style={{ marginTop: 8 }}>Files in Drishti for this period: {cur.reports.map((x) => x.file || x.key).join(", ")}.</div>}
+              <div className="tiny muted" style={{ marginTop: 6 }}>Figures are Drishti's and are read by Brahmastra; nothing in Drishti changes. Upload the period's reports or type a value in <b>Inputs (Drishti)</b>.</div></div>
+          </div>
+          <div className="card tight"><div className="row between" style={{ padding: "12px 14px 0" }}><div className="cv-sec" style={{ margin: 0 }}>Every KPI · {cur.label}</div><button className="btn sm" onClick={csv} disabled={!d.items.length}>⬇ CSV</button></div>
+            <div className="table-wrap" style={{ marginTop: 8 }}><table className="t psla-kpis"><thead><tr><th>Scope</th><th>KPI</th><th className="num">Value</th><th>Standard</th><th>Formula</th><th>Status</th><th>From</th><th>Comment</th></tr></thead>
+              <tbody>{d.items.map((it) => <tr key={it.scope_key + it.key}><td className="small muted">{it.scope}</td><td><b>{it.name}</b></td><td className="num mono">{it.shown || "–"}</td><td className="small muted" title={it.std}>{it.target || "–"}</td><td className="small" style={{ maxWidth: 260 }}>{it.formula}</td><td>{stBadge(it.status)}</td><td className="small muted">{it.source}</td><td className="small">{it.reason}</td></tr>)}</tbody></table></div></div>
+        </>}
+    </div>
+  );
+}
+function MyDeskView(props) { return <QueueView {...props} />; }
 function ReportsView({ ctx, from, to, embedded }) {
   const [f, setF] = useState({ client_id: "", location_id: "", user_id: "", kind: "work", from: from || addDaysISO(todayISO(), -6), to: to || todayISO() });
   const payload = { client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, kind: f.kind || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] };
@@ -7171,7 +7260,8 @@ function ReportsView({ ctx, from, to, embedded }) {
   return (
     <div className="stack">
       <div className="row between"><div>{!embedded && <h1>Reports</h1>}<div className="sub">Every note the team wrote, with the claim it belongs to. Download as CSV for the client or for QA.</div></div>
-        <button className="btn" disabled={!rows.length} onClick={() => downloadText(toCSV(rows.map(reportRow), REPORT_COLS), `brahmastra-work-${f.from}-to-${f.to}.csv`)}>Download CSV</button></div>
+        <div className="row" style={{ gap: 8 }}><button className="btn" disabled={!rows.length} title="One row per entry, in the Production Conso columns" onClick={async () => { try { const r = await rpc("reports.production", { scope: "ar", client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] }); downloadText(arrayCSV(r.header, r.rows), `Production - entries - ${f.from} to ${f.to}.csv`); } catch (e) { toast(e.message, "err"); } }}>Download CSV</button>
+          <button className="btn link sm" disabled={!rows.length} title="Brahmastra's own columns, the note fields apart" onClick={() => downloadText(toCSV(rows.map(reportRow), REPORT_COLS), `brahmastra-work-${f.from}-to-${f.to}.csv`)}>Brahmastra columns</button></div></div>
       <div className="card tight grid g5">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF({ ...f, client_id: v, location_id: "" })} locId={f.location_id} setLocId={(v) => setF({ ...f, location_id: v })} allowAll />
         <Field label="Team member"><Combo value={f.user_id} onChange={(v) => setF({ ...f, user_id: v })} placeholder="Everyone" options={[{ id: "", label: "Everyone" }, ...ctx.users.map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))]} /></Field>
@@ -7454,12 +7544,12 @@ function App() {
   if (me.must_change) return (
     <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
-  const allowed = [...navItems(navFor(me, handoffs, fb)).map((x) => x[0]), "settings", ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
+  const allowed = [...navItems(navFor(me, handoffs, fb, attention)).map((x) => x[0]), "settings", ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   const view = allowed.includes(nav.view) ? nav.view : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
   const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb };
   const body = !ctx.loaded ? <Spinner label="Loading…" />
     : view === "dashboard" ? (deskOf(me, handoffs) ? <DeskDashboard {...props} desk={deskOf(me, handoffs)} /> : <DashboardHub {...props} />)
-    : view === "portfolio" && me.role === "supervisor" ? <DashboardHub {...props} params={{ ...(props.params || {}), tab: "clients" }} />
+    : view === "portfolio" && me.role === "supervisor" ? <PortfolioSlaView {...props} params={{ ...(props.params || {}), tab: "portfolio" }} />
     : (view === "live" || view === "teamtoday") && me.role === "supervisor" ? <LiveStatusView {...props} />
     : view === "attention" ? <AttentionView {...props} />
     : view === "inventory" || view === "allocate" ? <InventoryView {...props} initialTab={view === "allocate" ? "allocate" : undefined} />
@@ -7468,7 +7558,8 @@ function App() {
     : (view === "clients" || view === "locations") && me.role !== "supervisor" ? <ClientsView {...props} />
     : view === "clients" || view === "locations" ? <ClientsHub {...props} initialTab={view === "locations" ? "billers" : undefined} />
     : view === "saag" ? <SaagView {...props} />
-    : view === "reports" || (view === "queue" && me.role === "supervisor") ? <ReportsHub {...props} initialTab={view === "queue" ? "today" : undefined} />
+    : view === "reports" && me.role === "supervisor" ? <ClaimsView {...props} initialTab="entries" />
+    : (view === "queue" || view === "mydesk") && me.role === "supervisor" ? <MyDeskView {...props} />
     : view === "history" ? <HistoryView {...props} />
     : view === "roster" ? <RosterView {...props} />
     : view === "handoffs" ? <HandoffsView {...props} />
@@ -7477,7 +7568,7 @@ function App() {
     : view === "audit" && (me.is_admin || me.access_all) ? <AuditView {...props} />
     : view === "feedback" ? <FeedbackInbox {...props} />
     : view === "templates" && me.role === "supervisor" ? <TemplatesView {...props} />
-    : view === "sla" && me.role === "supervisor" ? <SlaView {...props} />
+    : view === "sla" && me.role === "supervisor" ? <PortfolioSlaView {...props} />
     : view === "thirdeye" && me.role === "supervisor" ? <ThirdEyeView {...props} />
     : view === "limits" ? <LimitsView {...props} />
     : view === "settings" ? <SettingsView {...props} setMe={setMe} />
@@ -7488,7 +7579,7 @@ function App() {
         <React.Fragment key={view + JSON.stringify(nav.params || {})}>{body}</React.Fragment>
       </Shell>
       {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
-      {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
+      {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb, attention)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
       {palClaim && <ClaimDrawer id={palClaim} ctx={ctx} me={me} onClose={() => setPalClaim(null)} onChanged={() => {}} />}
       {palCoach && <CoachDrawer userId={palCoach} onClose={() => setPalCoach(null)} />}
       {idleLeft != null && <div className="idle-warn" role="alert"><b>Still there?</b> You will be signed out in {Math.floor(idleLeft / 60)}:{String(idleLeft % 60).padStart(2, "0")} to keep patient data safe. Move the mouse or press any key to stay signed in.</div>}

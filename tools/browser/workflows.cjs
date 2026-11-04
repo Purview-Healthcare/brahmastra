@@ -24,6 +24,13 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
   await routeCdn(p);
   await p.route("https://qhbgshnqugxqiwdywsas.supabase.co/**", (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, rows: FEED }) }));
   await p.route(/brahmastra_live/, (r) => r.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "PGRST202", message: "not set up" }) }));
+  const cell = (value, extra) => ({ value, method: "upload", ...(extra || {}) });
+  const drMonth = (id, label, from, to, ar, sub, pp, sla) => ({ id, kind: "month", label, range: { from, to }, numDays: 31, createdAt: to + "T09:00:00.000Z", createdBy: "tina@purview-healthcare.com", scopes: { ar: { crit: ar }, submission: { crit: sub }, pp: { crit: pp }, sla: { tasks: sla } }, reports: { inventory: { stub: true, fileName: "AR Inventory report - " + label + ".xlsx" } } });
+  const DR = [{ id: "d1", name: "Sunrise Eye Care", ownerName: "Tina Lead", scopes: ["ar", "submission", "pp"], rules: {}, periods: [
+      drMonth("p1", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.18, { reason: "Two payers hold 70% of the old balance" }), collectionRate: cell(0.91), denialRate: cell(0.124), daysInAR: cell(28), appeal: cell(0.04), quality: cell(0.965), escalations: cell(0) }, { cleanClaim: cell(0.842), submissionTAT: cell("Met", { method: "manual" }), rejectionRate: cell(0.021) }, { ppTAT: cell("Met", { method: "manual" }), paymentCycle: cell(21), varianceRate: cell(0.012) }, [{ name: "Production SLA", target: "1,380", received: 1380, achieved: 1420 }]),
+      drMonth("p0", "September 2026", "2026-09-01", "2026-09-30", { arAging: cell(0.16), collectionRate: cell(0.88), denialRate: cell(0.09), daysInAR: cell(31), quality: cell(0.99), escalations: cell(1) }, { cleanClaim: cell(0.93), submissionTAT: cell("Met") }, { ppTAT: cell("Not Met"), paymentCycle: cell(26) }, [{ name: "Production SLA", target: "1,300", received: 1300, achieved: 1250 }])] },
+    { id: "d2", name: "Lakeview Dental Group", ownerName: "Leo Lead", scopes: ["ar", "submission"], rules: {}, periods: [drMonth("p2", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.12), collectionRate: cell(0.93), daysInAR: cell(24) }, { cleanClaim: cell(0.96), rejectionRate: cell(0.02) }, {}, [])] }];
+  await p.route(/script\.google\.com/, (r) => { let a = ""; try { a = JSON.parse(r.request().postData() || "{}").a; } catch (e) {} r.fulfill({ contentType: "application/json", body: JSON.stringify(a === "overview" ? { ok: true, value: DR } : { ok: false, code: "auth", error: "stand-in" }) }); });
   const errs = []; p.on("pageerror", (e) => errs.push(e.message));
   const t = (ms) => p.waitForTimeout(ms);
   const results = []; let section = "";
@@ -123,28 +130,18 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
   await step("csv", async () => {
     await open("#/claims"); await t(1500);
     const f = await dl(() => p.locator('.main button:has-text("Download CSV")').first().click());
-    const head = fs.readFileSync(f, "utf8").split("\n")[0];
-    ok("Claims downloads a CSV with the last SAAG entry", /claim/i.test(head) && /saag|status/i.test(head), head.slice(0, 200));
-    await open("#/reports"); await t(1500);
-    const every = p.locator('text=Every entry').first(); if (await every.count()) { await every.click(); await t(1500); }
+    const head = fs.readFileSync(f, "utf8").replace(/^\ufeff/, "").split("\n")[0];
+    ok("Claims downloads the CSV in the Production Conso layout (one row per claim, its last entry)", /^Sr\. No,Location,Project,Practice,Uni,IG Claim ID#\/Charge ID#,Patient Name,DOS,Payer,Age,Bucket/.test(head) && /Associate Name,Status,Errors,Team Lead,Date Range,Week/.test(head), head.slice(0, 200));
+    const f2 = await dl(() => p.locator('.main button:has-text("Brahmastra columns")').first().click());
+    ok("Brahmastra's own columns are still there as a second choice", /Claim #/.test(fs.readFileSync(f2, "utf8").split("\n")[0]));
+    await p.locator('.main .seg2 button:has-text("Entries")').click(); await t(2000);
+    ok("Claims › Entries: every entry the team wrote (My day & reports is gone)", /Every entry the team wrote/.test(await p.innerText(".main")) && !(await p.locator('.nav > button:has-text("My day")').count()));
     const g = await dl(() => p.locator('.main button:has-text("Download CSV")').first().click());
-    const body = fs.readFileSync(g, "utf8");
-    ok("Every entry downloads with the SAAG fields and the note", /status/i.test(body.split("\n")[0]) && body.includes("Policy Active"), body.split("\n")[0].slice(0, 200));
-  });
-
-  S("Report shortcuts on My day & reports");
-  await step("shortcuts", async () => {
-    await open("#/reports"); await t(800);
-    await p.screenshot({ path: path.join(OUT, "reports-shortcuts.png") });
-    await p.locator('.main button:has-text("Internal reports")').first().click(); await t(2000);
-    ok("Internal reports opens Sasha's Third Eye (internal reports only, no client switch)", /#\/thirdeye/.test(p.url()) && !(await p.locator(".te-switch").count()), p.url());
-    await open("#/reports"); await t(800);
-    await p.locator('.main button:has-text("Client report")').first().click(); await t(2000);
-    ok("Client report opens Client 360 on its Client report tab", /#\/client/.test(p.url()) && /on/.test(await p.locator('.c3-tabs button:has-text("Client report")').getAttribute("class")), p.url());
-    ok("the client report starts with its data and dates (Monthly, Weekly, Custom)", /Monthly/.test(await p.locator(".crx-setup").innerText()));
-    await open("#/reports"); await t(800);
-    await p.locator('.main button:has-text("SLA scorecard")').first().click(); await t(1500);
-    ok("SLA scorecard opens the SLA tab", /#\/sla/.test(p.url()), p.url());
+    const gh = fs.readFileSync(g, "utf8").replace(/^\ufeff/, "").split("\n")[0];
+    ok("Entries downloads the Production layout too", /^Sr\. No,Location,Project/.test(gh) && /Date Worked,Emp\. ID,Associate Name/.test(gh), gh.slice(0, 160));
+    const g2 = await dl(() => p.locator('.main button:has-text("Brahmastra columns")').first().click());
+    const body = fs.readFileSync(g2, "utf8");
+    ok("and Brahmastra's columns with the SAAG fields and the note", /status/i.test(body.split("\n")[0]) && body.includes("Policy Active"), body.split("\n")[0].slice(0, 200));
   });
 
   S("Dashboard");
@@ -156,24 +153,27 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("a team lead has no team lead filter", !/team lead/i.test(await p.locator(".dash-filters").innerText()));
     // Dashboard: Team status and Client reports
     await open("#/dashboard"); await t(2500);
-    ok("Dashboard opens on Team status", /on/.test(await p.locator('.dash-subtabs button:has-text("Team status")').getAttribute("class")) && /Team status by team lead/i.test(await p.innerText(".main")));
+    ok("Dashboard opens on Team status", /Team status by team lead/i.test(await p.innerText(".main")));
     ok("Team status has the suggestions", /Suggestions/i.test(await p.innerText(".main")) && /Do today/i.test(await p.innerText(".main")));
-    await p.locator('.dash-subtabs button:has-text("Client reports")').click(); await t(2500);
-    const bar = p.locator(".main .bar, .main .hbar, .main [class*=bar]").first();
-    if (await bar.count()) { await bar.click().catch(() => {}); await t(1200); }
-    ok("Client reports: the client list and the claims in detail", /Workable AR/i.test(await p.innerText(".main")) && /Claims in detail/i.test(await p.innerText(".main")));
-    ok("no error on Client reports", !(await p.locator(".alert.err").count()));
+    ok("the Dashboard has no Client reports tab any more", !(await p.locator('.dash-subtabs button:has-text("Client reports")').count()));
+    await open("#/sla"); await t(3500);
+    ok("Portfolio & SLA opens on the Portfolio: the client list, Drishti's score and the claims in detail", /Workable AR/i.test(await p.innerText(".main")) && /SLA score/i.test(await p.innerText(".main")) && /Claims in detail/i.test(await p.innerText(".main")) && (await p.locator(".psla-score").count()) > 0, (await p.innerText(".main")).slice(0, 200));
+    ok("no error on the Portfolio", !(await p.locator(".alert.err").count()));
     await as("sasha"); await open("#/live"); await t(2500);
     const later = p.locator('button:has-text("Later")'); if (await later.count()) { await later.first().click(); await t(500); }
     ok("the VP gets the team lead filter", /team lead/i.test(await p.locator(".dash-filters").innerText()));
     ok("the VP sees billers grouped by team lead", (await p.locator(".dash-team .lead-grp").count()) > 0);
-    ok("no Portfolio tab any more", !(await p.locator('.nav > button:has-text("Portfolio")').count()));
+    ok("one tab, Portfolio & SLA; no My day & reports tab", (await p.locator('.nav > button:has-text("Portfolio & SLA")').count()) === 1 && !(await p.locator('.nav > button:has-text("My day")').count()));
     const nm = (await p.locator(".dash-team .biller-link").first().innerText()).replace(/[\s›]+$/, "");
     await p.locator(".dash-team .biller-link").first().click(); await t(2500);
     ok("a biller's name opens their claims", /#\/claims/.test(p.url()) && (await p.innerText(".main")).includes(nm), { url: p.url(), nm });
     ok("Claims is a tab of its own", (await p.locator('.nav > button:has-text("Claims")').count()) === 1);
     await open("#/portfolio"); await t(2000);
-    ok("an old Portfolio link opens Dashboard › Client reports", /on/.test(await p.locator('.dash-subtabs button:has-text("Client reports")').getAttribute("class")));
+    ok("an old Portfolio link opens Portfolio & SLA › Portfolio", /on/.test(await p.locator('.dash-subtabs button:has-text("Portfolio")').getAttribute("class")));
+    await open("#/dashboard"); await t(2500);
+    await p.locator('.main button:has-text("allocations")').first().click(); await t(2500);
+    ok("Team status: a person's allocations (allocated and worked, the dates picked) open from their row", (await p.locator('.modal:has-text("Allocations ·")').count()) === 1 && /On desks/i.test(await p.innerText(".modal")));
+    await p.keyboard.press("Escape"); await t(600);
     await as("tina");
   });
 
@@ -248,6 +248,24 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("after printing, the page is back", (await p.locator("#crPrint").count()) === 0);
     await p.locator('.crx-bar button:has-text("Change data or dates")').click(); await t(1200);
     ok("Change data or dates goes back to the start", (await p.locator(".crx-setup").count()) === 1);
+  });
+
+  S("Portfolio & SLA: the scorecard in Client 360's style");
+  await step("scorecard", async () => {
+    await as("tina"); await open("#/sla"); await t(3000);
+    await p.locator('.dash-subtabs button:has-text("SLA scorecard")').click(); await t(3500);
+    const txt = await p.innerText(".main");
+    ok("the only client opens by itself: the score dial, the band and the counts", (await p.locator(".psla-dial").count()) === 1 && /green/.test(txt) && /red/.test(txt) && /October 2026/.test(txt), txt.slice(0, 300));
+    ok("the scopes, what pulls it down and the strengths", (await p.locator(".psla-sc").count()) >= 3 && /What pulls it down/i.test(txt) && /AR Aging/.test(txt) && /Strengths/i.test(txt), { n: await p.locator(".psla-sc").count() });
+    ok("every KPI with its formula", /Formula/i.test(txt) && /Balance in >90-day buckets/.test(txt) && (await p.locator(".psla-kpis tbody tr").count()) >= 10, { n: await p.locator(".psla-kpis tbody tr").count() });
+    ok("the score by month and where the figures come from", /Score by month/i.test(txt) && /AR Inventory report/.test(txt));
+    const c = await dl(() => p.locator('.main button:has-text("CSV")').first().click());
+    ok("the KPI CSV carries the formula column", /Scope,KPI,Value,Standard,Formula,Status,From,Comment/.test(fs.readFileSync(c, "utf8").split("\n")[0]));
+    await p.locator('.main button:has-text("Upload this period")').click(); await t(1500);
+    ok("Upload this period's reports opens Inputs (Drishti), Drishti's own page", /on/.test(await p.locator('.dash-subtabs button:has-text("Inputs")').getAttribute("class")));
+    await p.locator('.dash-subtabs button:has-text("Portfolio")').click(); await t(2500);
+    await p.locator('.main button:has-text("scorecard ›")').first().click(); await t(2500);
+    ok("scorecard › on a Portfolio row opens that client's scorecard", /on/.test(await p.locator('.dash-subtabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".psla-dial").count()) === 1);
   });
 
   S("Needs attention: answer an escalation");

@@ -29,7 +29,7 @@ function prepareDemo({ thirdEye, drishti, base = "http://localhost:8766" } = {})
   html = html.replace(/<script src="app\/app\.js(\?v=[0-9a-f]*)?"><\/script>/, `<script src="app/app-test.js?r=${Date.now()}"></script><script>${HOOKS}</script>`);
   let app = fs.readFileSync(path.join(REPO, "app", "app.js"), "utf8");
   app = must(app, 'new URL("worker.js",document.baseURI)', 'new URL("worker-test.js",document.baseURI)');
-  app = must(app, "env:{DEMO:true,", 'env:{SHASTRA_FEED_KEY:"test-key-for-local-demo-only-0000000000",DEMO:true,');
+  app = must(app, "env:{DEMO:true,", 'env:{SHASTRA_FEED_KEY:"test-key-for-local-demo-only-0000000000",DRISHTI_TOKEN_SECRET:"test-secret-for-local-demo-only",DEMO:true,');
   fs.writeFileSync(path.join(REPO, "demo-test.html"), html);
   fs.writeFileSync(path.join(REPO, "app", "app-test.js"), app);
   fs.copyFileSync(path.join(REPO, "worker.js"), path.join(REPO, "worker-test.js"));

@@ -130,7 +130,7 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).
 - The top bar stays one row: SLA (the Drishti scorecard, first so it is one
-  click away all day), Sasha's Third Eye, Live status, Dashboard, Claims and My day & reports sit
+  click away all day), Sasha's Third Eye, Live status, Dashboard and Claims sit
   in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
   Inventory & allocation, SAAG reference) and **Manage** (Client 360, Team, Note templates, Clients &
   locations, RACI tracker, TFL / AFL, Roster for admins, Audit trail for admins and the VP). The escalation count shows on the
@@ -266,10 +266,10 @@ into **high priority** (the High tier) and other.
   that payer (or the client when the payer is new); one click fills status, sub-status, action, bucket and the
   note action.
 
-#### Dashboard: Team status and Client reports
+#### Dashboard: Team status
 
-**Dashboard** has two tabs with the same filters: client, **team lead** (managers and up) and the dates: **Today,
-This week, This month, Custom**.
+**Dashboard** is Team status, with the filters client, **team lead** (managers and up) and the dates: **Today,
+This week, This month, Custom**. (The client list moved to **Portfolio & SLA**, below.)
 
 **Team status** is Sasha's Third Eye's Team Status, built from Brahmastra's own entries and the Purview Shastra
 roster, grouped by team lead (no Emp ID):
@@ -298,13 +298,23 @@ roster, grouped by team lead (no Emp ID):
 - At the bottom, **performance by status** and **roster checks** (no date of joining, no team lead, names that
   appear twice; fixed in Purview Shastra). **CSV for supervisors** downloads the table.
 
-**Client reports** (what was the Portfolio; a team lead sees their own clients) lists every client worst first:
-health with its reasons, team lead and manager, AR against a month ago, unassigned, over 90, collected for the dates,
-SLA, missed tasks, dollars waiting on the client, timely-filing risk, **days to clear** (claims still to work divided
-by the team's entries a working day over the last two weeks; a client nobody worked shows that instead of a made-up
-number) and when its inventory was last uploaded. Totals sit on top; click a client for its Client 360. Below, the
-**claims in detail** (by client and location, value tier, age, status, buckets after work, SAAG statuses, payers,
-time on calls; click a bar to narrow the charts), then:
+Click **allocations** under a person's name for what was allocated to them and what they worked in the dates
+(the list My day & reports used to have), filtered to that person, with its CSV.
+
+#### Portfolio & SLA
+
+One tab, three parts, for team leads and above (a team lead sees their own clients, a manager their span):
+
+**Portfolio** lists every client worst first: health with its reasons, team lead and manager, AR against a month
+ago, unassigned, over 90, collected for the dates, the **SLA score** from Drishti (the score, its band and the change
+since the period before, with a dot per scope: AR, Submission, Payment Posting, EV, SLA tasks), **pulling it down**
+(the red and amber KPIs by name), missed tasks, dollars waiting on the client, timely-filing risk, **days to clear**
+(claims still to work divided by the team's entries a working day over the last two weeks; a client nobody worked
+shows that instead of a made-up number) and when its inventory was last uploaded. On top: Workable AR, unassigned,
+over 90, collected, **KPIs in the red** across the clients and the **SLA score, average** with the green, amber and
+red count. Click a client for its Client 360, **scorecard ›** for its scorecard. Below, the **claims in detail**
+(by client and location, value tier, age, status, buckets after work, SAAG statuses, payers, time on calls; click a
+bar to narrow the charts), then:
 
 - **Managers side by side** (the VP, admins and managers): clients, people under them, entries and skips by their
   people, missed tasks, escalations over 24 hours and SLA average, for the dates. The VP sees every manager, a
@@ -315,7 +325,22 @@ time on calls; click a bar to narrow the charts), then:
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
   with when and what.
 
-The old `#/portfolio`, `#/teamtoday` and `#/dashboard` links still work: they open Client reports, Live status and
+**SLA scorecard** is Drishti's scorecard for one client and period in Client 360's style, read by Brahmastra
+(nothing in Drishti changes): the score dial with its band (green 90 and above, amber 80 to 89, red under 80), how
+many KPIs are green, amber and red, the change from the period before, the month-end **SLA scored** step ticked by
+itself from the score; a card per scope (AR, Submission, Payment Posting, EV, SLA tasks) with its share on target;
+**what pulls it down** and **strengths**, each KPI with its value, standard and the comment; the **score by month**;
+**where the figures come from** (the report each KPI is read from, the files uploaded for the period); and **every
+KPI** with its value, standard, **formula** (Drishti's own wording, the same as its Formulas page), status, source
+and comment, with a CSV. Periods: Latest, Monthly or Weekly, with ‹ › between the periods Drishti has. The scoring is
+Drishti's clientScorecard copied line for line (the same thresholds, a client's own overrides, the locked Net
+Collection Rate formula). Brahmastra matches its clients to Drishti's by name; a client not found says so and
+lists Drishti's clients. Needs `DRISHTI_TOKEN_SECRET` (below); Drishti is asked once every ten minutes.
+
+**Inputs (Drishti)** is Drishti's own page, signed in (below): upload the period's reports or type a value there;
+the scorecard reads them a few minutes later. **Upload this period's reports** on the scorecard opens it.
+
+The old `#/portfolio`, `#/teamtoday` and `#/dashboard` links still work: they open Portfolio & SLA, Live status and
 Team status.
 
 #### Client profile: scope of work, responsibility, change history
@@ -362,7 +387,7 @@ keeps it, or the client's own workbook), and the **responsible person** for each
 
 Every Monday from about 8:30 AM IST the server sends **one email per manager's span**: Sweety's clients, Sandesh's
 clients and Joseph's clients (the managers on the roster and the clients their projects map to, as in Dashboard ›
-Client reports › Managers side by side). Each goes to **every supervisor on those clients**: the manager, the clients' team leads and
+Portfolio › Managers side by side). Each goes to **every supervisor on those clients**: the manager, the clients' team leads and
 SMEs, posting / submission leads, the VP and admins (view-only shares are left out). So a team lead gets their
 manager's span, a manager their own, and the VP all three. Active clients that are in no manager's span go in one
 more email, "Clients without a manager", to the VP and admins.
@@ -374,7 +399,7 @@ per client (health, AR and its change, over 90, collected, entries, SLA, month-e
 requests waiting on the client); who worked how much; and the denials worked. Clients, staff and figures only:
 no patient names, claim or account numbers.
 
-- **Dashboard › Client reports › Monday digest email** (VP, admins, managers) lists every span with its clients and who gets it, when
+- **Portfolio & SLA › Portfolio › Monday digest email** (VP, admins, managers) lists every span with its clients and who gets it, when
   it last went, any that did not arrive and why, **Preview this week's** and **Email me a copy**. Admins and the VP
   also get **Send this week's now** (only to people who have not had it this week; noted in the audit trail).
 - **Client 360** shows the span digest the client is in, with the same buttons.
@@ -632,7 +657,7 @@ sign-in emails). Optional Worker variables: `REPORTS_OWNER` (default `Purviewaut
 Sasha's Third Eye and Drishti still keep their own folders where they were: **Brahmastra Reports / Team lead /
 Client / QA tracker, Quality insights, SLA & KPI** (moving them needs changes in those two apps).
 
-## Drishti and Sasha's Third Eye inside My day & reports
+## Drishti and Sasha's Third Eye inside Brahmastra
 
 Both apps open **as part of Brahmastra**, not as a page inside a box: with `?embed=1` each hides its own
 logo, header and menu, takes the Brahmastra theme (Light, Navy, Gold) and lines up with Brahmastra's edge,
@@ -641,8 +666,9 @@ Production, Agent Quality...). A click there opens that tab inside the app (a `b
 `embed:tabs` / `brahmastra:go` message handshake). Opened on their own addresses, both apps look and work
 exactly as before. Both have their own tabs, first in the bar: **SLA** (the Drishti scorecard) and
 **Sasha's Third Eye** (the internal reports; Posting and Submission leads get Quality only, for their own
-work). The client report lives in **Client 360 › Client report**, next to everything else about the client. My day & reports holds the team's work: team allocations,
-every entry and your own desk.
+work). The client report lives in **Client 360 › Client report**, next to everything else about the client. There is no
+My day & reports tab any more: **Claims › Entries** lists every entry the team wrote (with the CSV QA uses), Team
+status opens a person's allocations, and a team lead who works claims gets **Work › My desk**.
 
 **Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:
 - *Internal reports*: Brahmastra's production (and the roster) loads into the Production Sheet box when the page
@@ -658,13 +684,12 @@ Where the reports are, for team leads and above:
 
 | Where | Page | What it is |
 |---|---|---|
-| My day & reports | Team allocations · Every entry · My own desk | the team's day lists, every entry (with CSV) and your own desk, for any dates (Brahmastra) |
+| Claims › Entries | Every entry | every entry the team wrote with its claim, for any dates, by client, location and biller; CSV in the Production Conso layout, or Brahmastra's columns |
+| Dashboard › Team status › allocations | Team allocations | what was allocated to a person and what they worked, the dates picked, with its CSV |
 | Sasha's Third Eye tab › Internal reports | Internal reports | Third Eye's Internal Reporting; Brahmastra's production and the roster load into it by themselves |
 | Client 360 › Client report | Client report | Brahmastra's own client report (Third Eye's pages and rules) to present, edit and send as a PDF; see *Client 360 › Client report* above (the month-end step "Client pack built" opens it) |
-| SLA tab | SLA scorecard | Drishti, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
-
-My day & reports also has **Internal reports**, **Client reports** and **SLA scorecard** buttons (top right) that
-open those tabs.
+| Portfolio & SLA › SLA scorecard | SLA scorecard | Drishti's scorecard in Client 360's style, read only (see *Portfolio & SLA* above) |
+| Portfolio & SLA › Inputs (Drishti) | Drishti | Drishti's own page, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
 
 Both apps run from their own addresses (`THIRD_EYE_URL`, `DRISHTI_URL` in the config block of `index.html`) with
 `?embed=1&theme=…`, which hides their own header and takes Brahmastra's theme; their formulas, Google Sheet and
@@ -836,11 +861,14 @@ The bucket mapping lives in `EFFECTIVE_BUCKET` in `index.html`.
 
 ### Reports
 
-**Reports** lists every entry with its claim (worked claims, skips, plain
-notes) for a date range, client, location or biller, with a CSV download that
-has the SAAG fields, every note field and the one-cell note. **Team** shows
-claims worked per person per day. **Claims** exports the filtered claim list,
-including the last SAAG entry per claim.
+**Claims › Entries** lists every entry with its claim (worked claims, skips, plain
+notes) for a date range, client, location or biller. **Download CSV** gives the
+Production Conso layout (the team's consolidation columns, one row per entry);
+**Brahmastra columns** gives the SAAG fields, every note field and the one-cell
+note. **Team** shows claims worked per person per day. **Claims** exports the
+filtered claim list in the Production layout too, one row per claim with its
+last SAAG entry (blank work columns for claims nobody worked), or Brahmastra's
+own columns.
 
 ## Limits and notes
 
