@@ -140,7 +140,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await open("#/reports"); await t(800);
     await p.locator('.main button:has-text("Client report")').first().click(); await t(2000);
     ok("Client report opens Client 360 on its Client report tab", /#\/client/.test(p.url()) && /on/.test(await p.locator('.c3-tabs button:has-text("Client report")').getAttribute("class")), p.url());
-    ok("the report bar takes the client and dates from Client 360", /from Client 360/.test(await p.locator(".rh-bar").innerText()));
+    ok("the client report has its own period bar (Monthly, Weekly, Custom)", /Monthly/.test(await p.locator(".crx-bar").innerText()));
     await open("#/reports"); await t(800);
     await p.locator('.main button:has-text("SLA scorecard")').first().click(); await t(1500);
     ok("SLA scorecard opens the SLA tab", /#\/sla/.test(p.url()), p.url());
@@ -196,6 +196,47 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await rpc("monthend.set", { client_id: tok.sun, month: ov.monthend.month, step: "internal", done: true });
     await open("#/dashboard"); await open("#/client"); await t(2000);
     ok("a ticked month-end step shows done with who", /Internal reports reviewed[\s\S]{0,200}done/i.test(await p.innerText(".main")));
+  });
+
+  S("Client report (Client 360)");
+  await step("creport", async () => {
+    // a little activity in the month the report opens on (last month in the first ten days of a month, else this month)
+    const ym = await p.evaluate(async (sun) => {
+      const t0 = new Date(), base = t0.getDate() <= 10 ? new Date(t0.getFullYear(), t0.getMonth() - 1, 5, 12) : new Date(t0.getFullYear(), t0.getMonth(), 5, 12);
+      const cl = (await window.__rpc("claims.list", { client_id: sun, state: "", page_size: 20 })).rows, at = base.getTime();
+      for (let i = 0; i < 6; i++) await window.__sql("INSERT INTO notes (id, claim_id, user_id, user_name, kind, status, sub_status, action, bucket, created_at) VALUES (?,?,?,?, 'work', ?,?,?,?,?)",
+        "wf-n" + i, cl[i].id, "u", "Arun Agent", i % 2 ? "Claim Denied" : "Claim Paid", i % 2 ? "CO-16 · Missing information" : "Paid in full", i % 2 ? "Appeal filed" : "Closed", i % 2 ? "Payer" : "Closed", at + i * 3600000);
+      await window.__sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by_name, due_at, done_at, done_by_name, proof_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "wf-p1", cl[0].id, sun, "posting", "complete", at, "Tina Lead", at + 86400000, at + 3600000, "Snail Post", JSON.stringify({ date: base.toISOString().slice(0, 10), ref: "EFT-9", amount: 125 }));
+      if (window.__flush) await window.__flush();
+      return base.toISOString().slice(0, 7);
+    }, tok.sun);
+    await open("#/client"); await t(2000);
+    await p.locator('.c3-tabs button:has-text("Client report")').click(); await t(4000);
+    ok("the report opens on the executive summary", (await p.locator('.crs[data-page="exec"]').count()) === 1 && /at a glance/.test(await p.innerText(".crx-stage")));
+    ok("the pages list has the report's pages, ticked for the PDF", (await p.locator(".crx-ri").count()) >= 10 && (await p.locator(".crx-ri .ck:not(.off)").count()) >= 3);
+    await p.locator('.crx-ri:has-text("AR production")').click(); await t(1500);
+    ok("AR production shows the entries of the month", /claims worked/i.test(await p.innerText(".crx-stage")), ym);
+    const bar = p.locator('.crs [data-dim="payerKey"]').first();
+    if (await bar.count()) { await bar.click({ force: true }); await t(1200); ok("clicking a bar filters the page (a chip shows the filter)", (await p.locator(".crx-chip").count()) === 1); await p.locator('.crx-fbar button:has-text("Clear all")').click(); await t(800); ok("Clear all removes it", (await p.locator(".crx-chip").count()) === 0); }
+    else ok("a payer bar to click", false);
+    const h2 = p.locator(".crs-h2.crs-ed").first();
+    await h2.click(); await p.keyboard.press("Control+A"); await p.keyboard.type("Our October AR in one page"); await p.locator(".crx-note").click(); await t(1800);
+    const pk = "month:" + ym, got = await rpc("creport.get", { client_id: tok.sun, from: ym + "-01", to: ym + "-28", prev_from: ym + "-01", prev_to: ym + "-01", period_key: pk });
+    ok("a changed title is saved for the team", got.edits && got.edits.ar && got.edits.ar.title === "Our October AR in one page", got.edits);
+    await p.locator('.crx-bar button:has-text("View as client")').click(); await t(800);
+    ok("View as client shows the page without the editing", (await p.locator(".crx-stage .crs-ed").count()) === 0 && (await p.locator(".crx-stage .crs-ct").count()) > 0);
+    await p.locator('.crx-bar button:has-text("Edit")').click(); await t(500);
+    await p.locator('.crx-bar button:has-text("Present")').click(); await t(1500);
+    const c0 = await p.innerText(".crx-pctl b"); await p.keyboard.press("ArrowRight"); await t(600);
+    ok("Present shows the pages full screen and the arrow keys move", (await p.locator(".crx-present").count()) === 1 && (await p.innerText(".crx-pctl b")) !== c0);
+    await p.keyboard.press("Escape"); await t(600); ok("Esc leaves", (await p.locator(".crx-present").count()) === 0);
+    await p.evaluate(() => { window.print = () => { window.__printed = true; }; window.__crHoldPrint = true; });
+    await p.locator('.crx-bar button:has-text("Download PDF")').click(); await t(1600);
+    const nPages = await p.locator("#crPrint .crx-pp").count(), nTicked = await p.locator(".crx-ri .ck:not(.off)").count();
+    ok("Download PDF lays out one page per ticked page and prints", nPages === nTicked && nPages >= 3 && await p.evaluate(() => !!window.__printed), { nPages, nTicked });
+    await p.evaluate(() => { window.__crPrintDone && window.__crPrintDone(); window.__crHoldPrint = false; }); await t(400);
+    ok("after printing, the page is back", (await p.locator("#crPrint").count()) === 0);
   });
 
   S("Needs attention: answer an escalation");

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.60.0";
+const VERSION = "2.61.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -114,6 +114,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
   `CREATE TABLE IF NOT EXISTS team_notes (user_id TEXT PRIMARY KEY, start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS inv_snapshots (client_id TEXT NOT NULL, day TEXT NOT NULL, cells_json TEXT NOT NULL DEFAULT '[]', at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
+  `CREATE TABLE IF NOT EXISTS creport_edits (client_id TEXT NOT NULL, period_key TEXT NOT NULL, loc TEXT NOT NULL DEFAULT '', page_id TEXT NOT NULL, json TEXT NOT NULL DEFAULT '{}',
+     by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (client_id, period_key, loc, page_id))`,
   `CREATE TABLE IF NOT EXISTS floor_days (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', tof_min INTEGER, idle_min INTEGER, locked_min INTEGER,
      logged_min INTEGER, break_min INTEGER, open INTEGER NOT NULL DEFAULT 0, guard INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, day))`,
   `CREATE TABLE IF NOT EXISTS coach_notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'one_to_one', text TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
@@ -165,7 +168,9 @@ const EXTRA_COLUMNS = {
     // The client's own folders in the Purviewautomate OneDrive: Brahmastra Clients / <Client> / Inventory, Production.
     ["od_drive_id", "TEXT"], ["od_folder_id", "TEXT"], ["od_inventory_id", "TEXT"], ["od_production_id", "TEXT"],
     ["od_link", "TEXT NOT NULL DEFAULT ''"], ["od_inventory_link", "TEXT NOT NULL DEFAULT ''"], ["od_production_link", "TEXT NOT NULL DEFAULT ''"], ["od_status_json", "TEXT NOT NULL DEFAULT '{}'"], ["od_prod_json", "TEXT NOT NULL DEFAULT '{}'"],
-    ["ar_mode", "TEXT NOT NULL DEFAULT ''"], ["ar_lead", "TEXT"], ["ar_backup", "TEXT"]],
+    ["ar_mode", "TEXT NOT NULL DEFAULT ''"], ["ar_lead", "TEXT"], ["ar_backup", "TEXT"],
+    // The client's logo for the client report (a small image as a data URL; never sent with the client list).
+    ["logo", "TEXT NOT NULL DEFAULT ''"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
   users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
@@ -946,6 +951,34 @@ async function removeLeftovers(env) {
   await batchAll(env, gone.flatMap((u) => [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id), env.DB.prepare("DELETE FROM users WHERE id = ?").bind(u.id)]), 40);
   return gone.length;
 }
+/* The client report's inventory at a day: live claims when the day is today (or later), else the snapshot kept that day
+   (or up to 3 days before), else rebuilt from the claims' history: on file by that day and not closed or excluded yet then. */
+async function crInventory(env, clientId, loc, day, today) {
+  const lw = loc ? " AND c.location_id = ?" : "", la = loc ? [loc] : [];
+  if (day >= today) {
+    const rows = await all(env, `SELECT c.id, c.claim_no, c.account_no, c.dos, c.age_days, c.payer, c.balance, c.billed, c.last_status_code AS st, c.file_status AS pms,
+        CASE WHEN c.last_sub_status <> '' THEN c.last_sub_status ELSE c.file_sub_status END AS sub, CASE WHEN c.last_action_code <> '' THEN c.last_action_code ELSE c.file_action END AS act,
+        c.last_bucket AS mv, COALESCE(c.location_id, '') AS loc, c.last_worked_on AS wd, u.name AS by_name
+      FROM claims c LEFT JOIN users u ON u.id = c.last_worked_by WHERE c.client_id = ? AND c.state IN ${WORKABLE}${lw} LIMIT 60000`, clientId, ...la);
+    return { as_of: today, source: "live", rows: rows.map((r) => { const age = crAge(r.dos, r.age_days, today); return { id: r.id, no: r.claim_no || r.account_no || "", dos: r.dos || "", py: r.payer || "",
+      amt: Number(r.balance) || 0, chg: r.billed == null ? null : Number(r.billed), age, bk: crBucket(age), st: r.st || "", pms: r.pms || "", sub: r.sub || "", act: r.act || "", mv: r.mv || "",
+      loc: r.loc, wd: r.wd || "", by: r.by_name || "" }; }) };
+  }
+  const snap = await one(env, "SELECT day, cells_json FROM inv_snapshots WHERE client_id = ? AND day <= ? AND day >= ? ORDER BY day DESC LIMIT 1", clientId, day, addDays(day, -3));
+  if (snap) { let cells = []; try { cells = JSON.parse(snap.cells_json); } catch {} return { as_of: snap.day, source: "snapshot", cells: loc ? cells.filter((x) => x.loc === loc) : cells }; }
+  const end = Date.parse(day + "T00:00:00Z") - IST_MIN * 60000 + 86400000 - 1;
+  // when a claim left AR: the state change that closed or excluded it, else the hand-off to a desk (in process, or closed by
+  // a posting), else the work that closed it; a claim closed with no such record came in closed (it never was open AR)
+  const rows = await all(env, `WITH lv AS (SELECT e.claim_id, MAX(e.at) AS left_at FROM claim_events e JOIN claims c ON c.id = e.claim_id
+        WHERE c.client_id = ? AND c.state IN ('closed', 'excluded') AND json_extract(e.data_json, '$.changes.state[1]') IN ('closed', 'excluded') GROUP BY e.claim_id),
+      ho AS (SELECT h.claim_id, MAX(h.created_at) AS sent_at FROM handoffs h WHERE h.client_id = ? GROUP BY h.claim_id)
+      SELECT ${CR_CELL_COLS} FROM claims c LEFT JOIN lv ON lv.claim_id = c.id LEFT JOIN ho ON ho.claim_id = c.id
+      WHERE c.client_id = ? AND c.created_at <= ?${lw} AND (c.state IN ${WORKABLE}
+        OR (c.state = 'in_process' AND COALESCE(ho.sent_at, c.updated_at) > ?)
+        OR (c.state IN ('closed', 'excluded') AND COALESCE(lv.left_at, CASE WHEN c.state_reason = 'Payment posted' THEN ho.sent_at END, c.completed_at, c.created_at) > ?)) LIMIT 60000`,
+    clientId, clientId, clientId, end, ...la, end, end);
+  return { as_of: day, source: "rebuilt", cells: crCells(rows, day) };
+}
 /* ------------------------------------------------------------- auth */
 async function userFromToken(env, token) {
   if (!token) return null;
@@ -1182,6 +1215,37 @@ async function snapshotClients(env) {
           FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id
     ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = excluded.ar_balance, ar_claims = excluded.ar_claims, over90_balance = excluded.over90_balance,
       over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, at = excluded.at`, day, now, today);
+  await snapshotInventory(env, day, now);
+}
+/* The client report's month against month needs the inventory as it stood at each period end: kept here as cells (location,
+   age group, payer, status, PMS status, action: claims and balance). The last write of the day wins. Days older than 45 are
+   pruned except month ends and Sundays (week ends). */
+const CR_BUCKETS = [[30, "0-30"], [60, "31-60"], [90, "61-90"], [120, "91-120"], [180, "121-180"], [365, "181-365"], [Infinity, "366+"]];
+const crBucket = (age) => (age == null || !isFinite(age) ? "" : CR_BUCKETS.find(([hi]) => age <= hi)[1]);
+function crAge(dos, ageDays, dayISO) {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(dos || ""));
+  if (m) return Math.max(0, Math.round((Date.parse(dayISO + "T00:00:00Z") - Date.parse(m[1] + "T00:00:00Z")) / 86400000));
+  return ageDays == null ? null : Number(ageDays);
+}
+function crCells(rows, dayISO) {
+  const m = new Map();
+  for (const r of rows) {
+    const bk = crBucket(crAge(r.dos, r.age_days, dayISO));
+    const e = { loc: r.loc || "", bk, py: r.payer || "", st: r.st || "", pms: r.pms || "", act: r.act || "" };
+    const key = [e.loc, e.bk, e.py, e.st, e.pms, e.act].join("\u0001");
+    const x = m.get(key) || { ...e, n: 0, amt: 0 }; x.n++; x.amt += Number(r.balance) || 0; m.set(key, x);
+  }
+  return [...m.values()].map((x) => ({ ...x, amt: Math.round(x.amt * 100) / 100 }));
+}
+const CR_CELL_COLS = `COALESCE(c.location_id, '') AS loc, c.dos, c.age_days, c.payer, c.last_status_code AS st, c.file_status AS pms,
+  CASE WHEN c.last_action_code <> '' THEN c.last_action_code ELSE c.file_action END AS act, c.balance`;
+async function snapshotInventory(env, day, now) {
+  const rows = await all(env, `SELECT c.client_id, ${CR_CELL_COLS} FROM claims c WHERE c.state IN ${WORKABLE}`);
+  const by = new Map(); for (const r of rows) { if (!by.has(r.client_id)) by.set(r.client_id, []); by.get(r.client_id).push(r); }
+  const stmts = [...by].map(([cid, rs]) => env.DB.prepare(`INSERT INTO inv_snapshots (client_id, day, cells_json, at) VALUES (?,?,?,?)
+    ON CONFLICT (client_id, day) DO UPDATE SET cells_json = excluded.cells_json, at = excluded.at`).bind(cid, day, JSON.stringify(crCells(rs, day)), now));
+  stmts.push(env.DB.prepare(`DELETE FROM inv_snapshots WHERE day < ? AND strftime('%d', day, '+1 day') <> '01' AND strftime('%w', day) <> '0'`).bind(addDays(day, -45)));
+  await batchAll(env, stmts, 40);
 }
 async function snapshotIfStale(env) {
   const last = await getSetting(env, "snap_at", 0);
@@ -2043,7 +2107,7 @@ const OPS = {
     const clients = (await all(env, "SELECT * FROM clients ORDER BY active DESC, name")).filter((c) => inScope(user, c.id));
     const locs = await all(env, "SELECT * FROM locations ORDER BY active DESC, name");
     const access = user.role === "supervisor" ? await all(env, "SELECT a.client_id, a.user_id, a.level, a.at, a.granted_by_name, u.name, u.designation, u.department, u.active FROM client_access a JOIN users u ON u.id = a.user_id ORDER BY u.name") : [];
-    const shape = (r) => { const { team_json, roster_names_json, caps_json, ...rest } = r; return { ...rest, active: !!r.active, auto_allocate: r.auto_allocate == null ? true : !!r.auto_allocate, team: parseTeam(team_json),
+    const shape = (r) => { const { team_json, roster_names_json, caps_json, logo, ...rest } = r; return { ...rest, has_logo: !!logo, active: !!r.active, auto_allocate: r.auto_allocate == null ? true : !!r.auto_allocate, team: parseTeam(team_json),
       ...(roster_names_json !== undefined ? { roster_names: jsonList(roster_names_json), caps: jsonObj(caps_json) } : {}) }; };
     const people = await all(env, "SELECT id, name, active FROM users");
     const nm = new Map(people.map((u) => [u.id, u.name])), activeIds = new Set(people.filter((u) => u.active).map((u) => u.id));
@@ -2803,6 +2867,127 @@ const OPS = {
     return { rows };
   },
 
+  /* ---- Client 360 › Client report: Sasha's Third Eye's client report pages, from Brahmastra's own data ---- */
+  /* Everything one report period needs, as records the page works on: the inventory at the period end and at the end of the
+     period before (live, a kept snapshot, or rebuilt from the claims' history), AR work entries, Payment posting, Submission and
+     Rejections hand-offs, requests waiting on the client, a six-month trend, what the client is asked for now, and the edits. */
+  "creport.get": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (!clientId) throw bad("Pick the client.");
+    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    if (!inScope(user, clientId)) throw outOfScope();
+    const client = await one(env, "SELECT id, name, logo FROM clients WHERE id = ?", clientId);
+    if (!client) throw bad("Unknown client.");
+    const loc = payload.location_id ? str(payload.location_id, 60) : "";
+    const from = isoDate(payload.from), to = isoDate(payload.to), pfrom = isoDate(payload.prev_from) || from, pto = isoDate(payload.prev_to) || from;
+    if (!from || !to || from > to || pfrom > pto) throw bad("Pick the report period.");
+    if ((Date.parse(to) - Date.parse(pfrom)) / 86400000 > 800) throw bad("Pick a shorter period.");
+    const periodKey = /^(month|week|custom):[0-9:-]{7,40}$/.test(String(payload.period_key || "")) ? payload.period_key : "custom:" + from + ":" + to;
+    await snapshotIfStale(env);
+    const now = Date.now(), today = istISO(now);
+    const t0 = (d) => Date.parse(d + "T00:00:00Z") - IST_MIN * 60000, t1 = (d) => t0(d) + 86400000 - 1;
+    const lw = loc ? " AND c.location_id = ?" : "", la = loc ? [loc] : [];
+    const A = t0(pfrom), B = t1(to);
+    const label = (s) => String(s || "");
+    const [invNow, invPrev, notes, posts, subs, rejs, reqs] = await Promise.all([
+      crInventory(env, clientId, loc, to, today), crInventory(env, clientId, loc, pto, today),
+      all(env, `SELECT n.claim_id, n.user_name, n.created_at, COALESCE(NULLIF(n.status, ''), n.status_code) AS st, n.sub_status AS sub, n.action AS act, n.bucket AS mv,
+          c.claim_no, c.account_no, c.dos, c.age_days, c.payer, c.balance, c.billed, COALESCE(c.location_id, '') AS loc
+        FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND c.client_id = ? AND n.created_at BETWEEN ? AND ?${lw} ORDER BY n.created_at LIMIT 60000`, clientId, A, B, ...la),
+      all(env, `SELECT h.claim_id, h.status, h.created_at, h.done_at, h.done_by_name, h.proof_json, c.claim_no, c.account_no, c.dos, c.payer, c.billed, COALESCE(c.location_id, '') AS loc
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = 'posting' AND h.client_id = ?${lw}
+          AND ((h.status = 'complete' AND h.done_at BETWEEN ? AND ?) OR (h.status <> 'complete' AND h.created_at BETWEEN ? AND ?)) LIMIT 60000`, clientId, ...la, A, B, A, B),
+      all(env, `SELECT h.claim_id, h.status, h.created_at, h.done_at, h.done_by_name, h.proof_json, h.reason, h.note, c.claim_no, c.account_no, c.dos, c.payer, c.billed, COALESCE(c.location_id, '') AS loc
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = 'submission' AND h.client_id = ?${lw}
+          AND ((h.status = 'complete' AND h.done_at BETWEEN ? AND ?) OR (h.status <> 'complete' AND h.created_at BETWEEN ? AND ?)) LIMIT 60000`, clientId, ...la, A, B, A, B),
+      all(env, `SELECT h.claim_id, h.status, h.created_at, h.done_at, h.done_by_name, h.proof_json, h.reason, c.claim_no, c.account_no, c.dos, c.payer, c.billed, c.balance, COALESCE(c.location_id, '') AS loc
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = 'rejection' AND h.client_id = ? AND h.created_at BETWEEN ? AND ?${lw} LIMIT 60000`, clientId, A, B, ...la),
+      all(env, `SELECT h.claim_id, h.dept, h.status, h.reason, h.note, h.paused_at, h.client_sent_at, h.chase_at, c.claim_no, c.account_no, c.dos, c.age_days, c.payer, c.balance, COALESCE(c.location_id, '') AS loc
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.paused_at IS NOT NULL AND (h.status = 'client' OR h.paused_at BETWEEN ? AND ?)${lw} LIMIT 20000`, clientId, A, B, ...la),
+    ]);
+    const no = (r) => r.claim_no || r.account_no || "";
+    const HO_STATE = { complete: "Done", pending: "Pending", assigned: "Being worked", client: "Waiting on the client", back: "Back with AR", assistance: "Back with AR", rejected: "Sent back" };
+    const weekOf = (d) => { const x = new Date(d + "T12:00:00Z"); return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][x.getUTCMonth()] + " week " + Math.ceil(x.getUTCDate() / 7); };
+    const data = {
+      inventory: invNow, inventoryPrev: invPrev,
+      worked: notes.map((n) => { const wd = istISO(n.created_at); return { id: n.claim_id, no: no(n), dos: n.dos || "", py: label(n.payer), chg: n.billed == null ? null : Number(n.billed), amt: Number(n.balance) || 0,
+        bk: crBucket(crAge(n.dos, n.age_days, wd)), st: label(n.st), sub: label(n.sub), act: label(n.act), mv: label(n.mv), wd, by: label(n.user_name), loc: n.loc }; }),
+      payment: posts.map((h) => { const pr = jsonObj(h.proof_json), done = h.status === "complete", d = istISO(done ? h.done_at : h.created_at);
+        return { id: h.claim_id, no: no(h), dos: h.dos || "", py: label(h.payer), chg: h.billed == null ? null : Number(h.billed), paid: done && pr.amount != null && pr.amount !== "" ? Number(pr.amount) : null,
+          chk: done ? str(pr.ref, 80) : "", pd: done ? (isoDate(pr.date) || d) : "", d, wk: weekOf(d), st: done ? "Posted" : HO_STATE[h.status] || "Pending", by: label(h.done_by_name), loc: h.loc }; }),
+      submission: subs.map((h) => { const pr = jsonObj(h.proof_json), done = h.status === "complete";
+        return { id: h.claim_id, no: no(h), dos: h.dos || "", py: label(h.payer), chg: h.billed == null ? null : Number(h.billed), ok: done, st: done ? "Submitted" : (h.reason || HO_STATE[h.status] || "Pending"),
+          cm: done ? "" : [h.reason, h.note].filter(Boolean).join(": "), mode: done ? str(pr.mode, 60) : "", sd: istISO(done ? h.done_at : h.created_at), by: label(h.done_by_name), loc: h.loc }; }),
+      rejection: rejs.map((h) => { const pr = jsonObj(h.proof_json);
+        return { id: h.claim_id, no: no(h), dos: h.dos || "", py: label(h.payer), chg: h.billed == null ? null : Number(h.billed), amt: Number(h.balance) || 0, st: str(pr.code, 120) || h.reason || "Not coded yet",
+          act: h.status === "complete" ? "Corrected and resubmitted" : HO_STATE[h.status] || "Pending", wd: istISO(h.created_at), by: label(h.done_by_name), loc: h.loc }; }),
+      clientAssistance: reqs.map((h) => ({ id: h.claim_id, no: no(h), dos: h.dos || "", py: label(h.payer), amt: Number(h.balance) || 0, bk: crBucket(crAge(h.dos, h.age_days, istISO(h.paused_at || now))),
+        st: h.reason || "Information from the client", act: h.status !== "client" ? "Answered" : h.client_sent_at ? (h.chase_at && now >= h.chase_at ? "Sent, chase now" : "Sent to the client") : "To send to the client",
+        wd: istISO(h.paused_at), open: h.status === "client", dept: DEPT_LABEL[h.dept] || h.dept, cm: h.note || "", loc: h.loc })),
+    };
+    // six months to the period's month: AR at each month end, and what was posted in the month
+    const months = []; { const d = new Date(to.slice(0, 7) + "-15T12:00:00Z"); for (let i = 5; i >= 0; i--) { const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - i, 1)); months.push(x.toISOString().slice(0, 7)); } }
+    const mEnd = (m) => { const x = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)); const e = x.toISOString().slice(0, 10); return e > today ? today : e; };
+    const coll = new Map((await all(env, `SELECT strftime('%Y-%m', (h.done_at / 1000) + ?, 'unixepoch') AS m, COALESCE(SUM(CAST(json_extract(h.proof_json, '$.amount') AS REAL)), 0) AS amt, COUNT(*) AS n
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = 'posting' AND h.status = 'complete' AND h.client_id = ? AND h.done_at BETWEEN ? AND ?${lw} GROUP BY m`,
+      IST_MIN * 60, clientId, t0(months[0] + "-01"), t1(mEnd(months[5])), ...la)).map((x) => [x.m, x]));
+    const trend = [];
+    for (const m of months) {
+      const e = mEnd(m); let ar = null, arN = null;
+      if (e >= m + "-01") {
+        const sn = await one(env, "SELECT day, cells_json FROM inv_snapshots WHERE client_id = ? AND day <= ? AND day >= ? ORDER BY day DESC LIMIT 1", clientId, e, m + "-01");
+        if (sn) { let cells = []; try { cells = JSON.parse(sn.cells_json); } catch {} if (loc) cells = cells.filter((x) => x.loc === loc); ar = cells.reduce((a, x) => a + (x.amt || 0), 0); arN = cells.reduce((a, x) => a + (x.n || 0), 0); }
+        else if (!loc) { const cs = await one(env, "SELECT ar_balance, ar_claims FROM client_snapshots WHERE client_id = ? AND day <= ? AND day >= ? ORDER BY day DESC LIMIT 1", clientId, e, m + "-01"); if (cs) { ar = cs.ar_balance; arN = cs.ar_claims; } }
+        if (e === today && ar == null && invNow.source === "live") { ar = invNow.rows.reduce((a, x) => a + x.amt, 0); arN = invNow.rows.length; }
+      }
+      const c = coll.get(m); trend.push({ m, ar: ar == null ? null : Math.round(ar * 100) / 100, ar_n: arN, coll: c ? Math.round(c.amt * 100) / 100 : 0, coll_n: c ? c.n : 0 });
+    }
+    // what the client is asked for right now: hand-off requests waiting on them, and AR claims whose ball is with the client
+    const [deskAsk, arAsk] = await Promise.all([
+      all(env, `SELECT h.reason AS what, h.dept, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt, MIN(h.paused_at) AS since, SUM(h.client_sent_at IS NOT NULL) AS sent
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client'${lw} GROUP BY h.reason, h.dept`, clientId, ...la),
+      all(env, `SELECT CASE WHEN c.last_sub_status <> '' THEN c.last_sub_status ELSE 'Information from the client' END AS what, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt, MIN(c.last_worked_on) AS since
+        FROM claims c WHERE c.client_id = ? AND c.state IN ${WORKABLE} AND c.last_bucket = 'Client'${lw} GROUP BY 1`, clientId, ...la),
+    ]);
+    const asks = deskAsk.map((x) => ({ what: x.what || "Information from the client", dept: DEPT_LABEL[x.dept] || x.dept, n: x.n, amt: Math.round(x.amt * 100) / 100, since: x.since ? istISO(x.since) : "", sent: x.sent || 0 }))
+      .concat(arAsk.map((x) => ({ what: x.what, dept: "AR", n: x.n, amt: Math.round(x.amt * 100) / 100, since: isoDate(x.since) || "", sent: null })))
+      .sort((a, b) => b.amt - a.amt);
+    const edits = {};
+    for (const e of await all(env, "SELECT page_id, json, by_name, at FROM creport_edits WHERE client_id = ? AND period_key = ? AND loc = ?", clientId, periodKey, loc)) edits[e.page_id] = { ...jsonObj(e.json), _by: e.by_name, _at: e.at };
+    const locs = await all(env, "SELECT id, name FROM locations WHERE client_id = ? AND active = 1 ORDER BY name", clientId);
+    return { client: { id: client.id, name: client.name, logo: client.logo || "" }, locations: locs, location_id: loc, period_key: periodKey, today,
+      period: { from, to, prev_from: pfrom, prev_to: pto }, data, trend, asks, edits, can_edit: canEditClient(user, clientId), prepared_by: user.name || "" };
+  },
+  /* A supervisor's words on a report page (title, insights, RCA and plan, the asks, the focus, which pages print), kept for the
+     client, period and location and shared with everyone who opens that report. */
+  "creport.save": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    editableOr(user, clientId);
+    const periodKey = String(payload.period_key || "");
+    if (!/^(month|week|custom):[0-9:-]{7,40}$/.test(periodKey)) throw bad("Unknown report period.");
+    const pageId = str(payload.page_id, 40);
+    if (!/^[a-z0-9_]{2,40}$/.test(pageId)) throw bad("Unknown report page.");
+    const loc = payload.location_id ? str(payload.location_id, 60) : "";
+    const json = JSON.stringify(payload.data && typeof payload.data === "object" ? payload.data : {});
+    if (json.length > 40000) throw bad("That is too much text for one page.");
+    const now = Date.now();
+    await run(env, `INSERT INTO creport_edits (client_id, period_key, loc, page_id, json, by_name, at) VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT (client_id, period_key, loc, page_id) DO UPDATE SET json = excluded.json, by_name = excluded.by_name, at = excluded.at`, clientId, periodKey, loc, pageId, json, user.name || "", now);
+    await audit(env, user, "creport.edit", clientId, `${pageId} · ${periodKey}${loc ? " · location" : ""}`);
+    return { ok: true, at: now, by: user.name || "" };
+  },
+  /* The client's logo on the client report: a small image (PNG, JPEG or WebP, up to about 200 KB as a data URL); empty removes it. */
+  "clients.setLogo": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (user.role !== "supervisor") throw denied("Only team leads and above can change a client's logo.");
+    editableOr(user, clientId);
+    const logo = String(payload.logo || "");
+    if (logo && (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(logo) || logo.length > 280000)) throw bad("Use a PNG, JPEG or WebP image under 200 KB.");
+    await run(env, "UPDATE clients SET logo = ? WHERE id = ?", logo, clientId);
+    await audit(env, user, "client.logo", clientId, logo ? "logo set" : "logo removed");
+    return { ok: true };
+  },
   /* ---- Client 360: everything about one client on one page ---- */
   "client.overview": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);

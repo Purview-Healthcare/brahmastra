@@ -162,6 +162,53 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 **Client call pack (PDF)** prints the page or saves it as a PDF for the meeting. Changes to the log and the
 month-end checklist are kept in the audit trail.
 
+#### Client 360 › Client report (present it, edit it, send the PDF)
+
+The client report is Brahmastra's own, built from Brahmastra's data: nothing is exported or uploaded. It follows
+Sasha's Third Eye's client report (its `client.html`) page for page and rule for rule; Third Eye itself is not
+changed and keeps working on its own address. Team leads and above, for their own clients.
+
+**Pages** (1280 x 720, like slides): Cover (with the client's logo), Executive summary, Inventory analysis,
+Inventory breakdown, Submission, Rejections, Payment posting, AR production, Denials, Top denials: RCA and Client
+assistance. A page with nothing in the period shows greyed out in the list and stays out of the PDF.
+
+**Where the figures come from**
+
+| Page | From |
+|---|---|
+| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service in Third Eye's seven groups: 0-30 ... 366+) |
+| AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet* |
+| Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof) |
+| Client assistance | requests sent to the client, with their reason and whether they were answered |
+| Executive summary | the headline of each page and the six-month AR and collections trend |
+
+**Inventory at a past date.** Brahmastra keeps a snapshot of every client's open inventory (every hour and after
+each upload; month ends and Sundays are kept, other days for 45 days). Today's inventory is live.
+For a date before the snapshots started, the inventory is rebuilt from the claims' history (claims loaded by then
+that had not yet been closed, excluded or sent to a desk) and the page says so.
+
+**Third Eye's rules, kept as they are:** periods by month, week (Monday to Sunday) or custom dates, each compared
+with the period of the same length before it; working days Monday to Friday; payer names merged across spellings;
+the Pareto rule (the reasons that make 80% are highlighted, the long tail folds into *Other*); the movers insights
+(a change counts at 3 claims or $500 and 5% of the total); the top denial set for the RCA (the 80% set when it has
+3 to 6 reasons, else the top 3 or 5); closed, rejected, denied and paid read the same way as Third Eye reads them.
+
+**Interactive, like Power BI.** Hover any bar for its figures; click a bar, a slice or a row to filter the page
+(Shift+click adds to the filter), or use the filter buttons; **Same filters on every page** keeps them when you
+change page. Each chart switches between claims (#) and dollars ($) and can show its table. **Claims behind this
+view**, under the page, lists them with search and CSV; click one to open the claim.
+
+**Editing (team leads and up).** Click any title or insight line to change it, remove a line or add your own; fill
+the RCA and the plan per denial reason, the asks of the client and the focus for next period. Edits are kept in
+Brahmastra for that client, period and location, so the whole team sees the same report, and each save is in the
+audit trail. Untick a page under **In PDF** to leave it out of the PDF and Present. **View as client** hides the editing.
+**Add the client's logo** takes a PNG, JPG or WebP from the Purviewautomate OneDrive (shrunk to a small image).
+
+**Present** shows the ticked pages full screen (arrow keys move, C clears the filters, Esc leaves).
+**Download PDF** gives one widescreen page per ticked page, always the full picture (no filters); **PDF of this view**
+appears when filters are set and prints the pages with them. The PDF is saved from the browser's print dialog
+(Save as PDF), named after the client and the period.
+
 #### Live status: what everyone is on now (team leads and up)
 
 **Live status** is the floor right now, refreshed every 30 seconds while the tab is open. Filters: client (and
@@ -571,8 +618,6 @@ every entry and your own desk.
 **Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:
 - *Internal reports*: Brahmastra's production (and the roster) loads into the Production Sheet box when the page
   opens and whenever the work, client or dates change.
-- *Client reports*: once a client is picked (or when someone has only one), its AR inventory, AR production,
-  Submission and Payment posting fill their boxes.
 - *SLA*: when a client's upload page is open in the scorecard, today's AR Inventory for the Brahmastra client
   of the same name is added to it, and the scorecard shows it in its "Check these before they are applied" list,
   so nothing is calculated until someone presses apply.
@@ -586,7 +631,7 @@ Where the reports are, for team leads and above:
 |---|---|---|
 | My day & reports | Team allocations · Every entry · My own desk | the team's day lists, every entry (with CSV) and your own desk, for any dates (Brahmastra) |
 | Sasha's Third Eye tab › Internal reports | Internal reports | Third Eye's Internal Reporting; Brahmastra's production and the roster load into it by themselves |
-| Client 360 › Client report | Client report | Third Eye's Client Reporting for the client and dates picked in Client 360; **Fill from Brahmastra** puts today's AR inventory and the dates' AR, submission and posting production in its boxes (the month-end step "Client pack built" opens it) |
+| Client 360 › Client report | Client report | Brahmastra's own client report (Third Eye's pages and rules) to present, edit and send as a PDF; see *Client 360 › Client report* above (the month-end step "Client pack built" opens it) |
 | SLA tab | SLA scorecard | Drishti, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
 
 My day & reports also has **Internal reports**, **Client reports** and **SLA scorecard** buttons (top right) that
