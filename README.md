@@ -694,8 +694,8 @@ days for Client Assistance, 7 for Purview internal review, 30 for the
 collectible buckets, or the client's default) and the claim comes back into the
 allocation pool when the date arrives.
 
-Entries can be **edited for 24 hours** by their author or a team lead; after
-that they are read-only (the server enforces it).
+Entries can be **edited at any time** by their author or a team lead (no time
+limit); another biller cannot edit them, and each edit shows in the claim history.
 
 ### SAAG reference and updates
 
