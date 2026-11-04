@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.57.0";
+const VERSION = "2.58.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1324,6 +1324,52 @@ const isSME = (u) => u && u.source === "roster" && /\bsme\b|subject matter/i.tes
 const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`);
 const scopeArgs = (user) => (user && user.scope) || [];
 const outOfScope = () => denied("That project is not one of yours.");
+/* Managers and above (assistant managers, managers, the VP, admins) can narrow the Dashboard to one team lead. */
+const isManagerUp = (u) => !!u && (u.is_admin || u.access_all || u.roster_kind === "manager" || (u.role === "supervisor" && !u.scope));
+/* The clients one team lead covers (their own span), for a manager who picked that team lead; null means no narrowing. */
+async function leadClientIds(env, user, leadId) {
+  if (!leadId) return null;
+  if (!isManagerUp(user)) throw denied("Only managers and above can pick a team lead.");
+  const id = str(leadId, 60);
+  if (!(await visibleUsers(env, user)).some((u) => u.id === id)) throw denied("That team lead is not in your span.");
+  const row = await one(env, "SELECT * FROM users WHERE id = ?", id);
+  if (!row) throw bad("Unknown team lead.");
+  const lead = publicUser(row);
+  const sc = await scopeOf(env, lead);
+  return sc == null ? null : sc.filter((c) => !user.scope || user.scope.includes(c));
+}
+/* Who the Dashboard's team part shows: the billers this person sees, grouped by whom they report to; narrowed by a
+   team lead (managers and above), and by a client or location (its people and anyone working its claims). */
+async function dashTeamFilter(env, user, payload) {
+  const all0 = await visibleUsers(env, user);
+  const byId = new Map(all0.map((u) => [u.id, u]));
+  // AR billers: people whose work is only Payment posting or Submission have their own desks and are left out here.
+  const billers = all0.filter((u) => u.role === "user" && u.active && (!String(u.department || "").trim() || isAR(u)));
+  const leadOf = (u) => { const l = u.reports_to && byId.get(u.reports_to); return l ? { id: l.id, name: l.name } : { id: "", name: "" }; };
+  const canPickLead = isManagerUp(user);
+  const counts = new Map();
+  for (const u of billers) { const l = leadOf(u); if (l.id) counts.set(l.id, { id: l.id, name: l.name, n: ((counts.get(l.id) || {}).n || 0) + 1 }); }
+  const leads = canPickLead ? [...counts.values()].sort((a, b) => a.name.localeCompare(b.name)) : [];
+  let people = billers;
+  const leadId = payload.lead_id ? str(payload.lead_id, 60) : "";
+  if (leadId) { if (!canPickLead) throw denied("Only managers and above can pick a team lead."); people = people.filter((u) => u.reports_to === leadId); }
+  let clientIds = null, locationId = "", teamIds = new Set();
+  if (payload.client_id) {
+    const cid = str(payload.client_id, 60);
+    if (user.scope && !user.scope.includes(cid)) throw outOfScope();
+    clientIds = [cid];
+    const c = await one(env, "SELECT team_json FROM clients WHERE id = ?", cid);
+    parseTeam(c && c.team_json).forEach((x) => teamIds.add(x));
+    if (payload.location_id) {
+      locationId = str(payload.location_id, 60);
+      const l = await one(env, "SELECT team_json FROM locations WHERE id = ? AND client_id = ?", locationId, cid);
+      const lt = parseTeam(l && l.team_json);
+      if (lt.length) teamIds = new Set(lt);
+    } else for (const l of await all(env, "SELECT team_json FROM locations WHERE client_id = ?", cid)) parseTeam(l.team_json).forEach((x) => teamIds.add(x));
+    for (const g of await all(env, "SELECT user_id FROM client_access WHERE client_id = ?", cid)) teamIds.add(g.user_id);
+  } else if (leadId) clientIds = await leadClientIds(env, user, leadId);
+  return { people, leads, canPickLead, leadOf, clientIds, locationId, teamIds, narrow: !!payload.client_id };
+}
 /* The people a scoped team lead may see and edit: themselves, everyone below them, and everyone on their projects. */
 async function visibleUsers(env, user) {
   const users = await all(env, "SELECT * FROM users ORDER BY role DESC, name, email");
@@ -2086,25 +2132,42 @@ const OPS = {
     await audit(env, user, "roster.sync", null, `${r.summary ? r.summary.new + " joined, " + r.summary.updated + " changed, " + r.summary.deactivated + " left" : "synced"}`);
     return { summary: r.summary, removed: r.removed, last: await getSetting(env, "shastra_sync", null) };
   },
+  /* ---- the Dashboard's team part ----
+     Today: the live floor (who is in, pace, on desk, closed today, left over split into high priority and other).
+     A date range: each biller's totals for those days against their target. Managers and above can narrow to one team lead. */
   "team.huddle": async ({ env, user, payload }) => {
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const off = Math.round(num(payload.tz_offset_min, 0)), dayStart = Date.parse(today + "T00:00:00Z") - off * 60000;
-    const people = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
-    if (!people.length) return { rows: [], totals: { people: 0 } };
-    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const f = await dashTeamFilter(env, user, payload);
+    let people = f.people;
     const since = now - 26 * 3600000;
-    const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
-      WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN (${qs})`, ...ids);
-    const notes = await all(env, `SELECT user_id, kind, created_at FROM notes WHERE kind IN ('work','skip') AND created_at > ? AND user_id IN (${qs})`, since, ...ids);
+    const cw = f.clientIds ? ` AND c.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "", ca = f.clientIds || [];
+    const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
+    if (f.narrow && people.length) {
+      // A client or location picked: the people on it (its team, people it is shared with) and anyone with claims or entries on it.
+      const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+      const touched = new Set((await all(env, `SELECT DISTINCT c.assigned_to AS id FROM claims c WHERE c.assigned_to IN (${qs}) AND c.state IN ('assigned','in_progress')${cw}${lw}`, ...ids, ...ca, ...la)).map((x) => x.id));
+      (await all(env, `SELECT DISTINCT nt.user_id AS id FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.user_id IN (${qs}) AND nt.created_at > ?${cw}${lw}`, ...ids, since, ...ca, ...la)).forEach((x) => touched.add(x.id));
+      people = people.filter((u) => touched.has(u.id) || f.teamIds.has(u.id));
+    }
+    if (!people.length) return { rows: [], totals: { people: 0 }, leads: f.leads, can_pick_lead: f.canPickLead };
+    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, c.tier, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
+      WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN (${qs})${cw}${lw}`, ...ids, ...ca, ...la);
+    const notes = await all(env, `SELECT nt.user_id, nt.kind, nt.created_at FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
+    const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
     const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
     const rows = people.map((u) => {
       const win = shiftWindow(u.shift, now, dayStart);
-      const mine = notes.filter((n) => n.user_id === u.id && n.created_at >= (win ? win.start : dayStart));
+      const startOf = win ? win.start : dayStart;
+      const mine = notes.filter((n) => n.user_id === u.id && n.created_at >= startOf);
       const work = mine.filter((n) => n.kind === "work"), skips = mine.length - work.length;
       const first = mine.length ? Math.min(...mine.map((n) => n.created_at)) : null, last = mine.length ? Math.max(...mine.map((n) => n.created_at)) : null;
       const onDesk = desk.filter((c) => c.assigned_to === u.id);
-      const startOf = win ? win.start : dayStart;
-      const carried = onDesk.filter((c) => c.assigned_at && c.assigned_at < startOf && c.state === "assigned").length;
+      // Left over: allocated before this shift and still not worked; high priority (the High tier) apart from the rest.
+      const left = onDesk.filter((c) => c.assigned_at && c.assigned_at < startOf && c.state === "assigned");
+      const leftHigh = left.filter((c) => c.tier === "High").length;
+      const closed = closedRows.filter((c) => c.user_id === u.id && c.completed_at >= startOf).length;
       const cur = onDesk.find((c) => c.state === "in_progress") || null;
       const target = Math.max(1, u.capacity || 35);
       const span = win ? win.len : 9 * 3600000, began = win ? win.start : first;
@@ -2118,7 +2181,8 @@ const OPS = {
       else if (!onDesk.length && work.length) status = "done";
       else if (last && now - last > 30 * 60000 && inShift) status = "idle";
       else if (work.length) status = "working";
-      return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", on_desk: onDesk.length, carried, worked: work.length, skips, first, last,
+      return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name,
+        on_desk: onDesk.length, carried: left.length, left_high: leftHigh, left_other: left.length - leftHigh, closed, worked: work.length, skips, first, last,
         idle_min: last ? Math.floor((now - last) / 60000) : null, expected, behind: status !== "out" && work.length < expected - 3,
         current: cur ? { claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
         status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, in_shift: inShift };
@@ -2126,9 +2190,65 @@ const OPS = {
     const rank = { idle: 0, not_started: 1, working: 2, done: 3, out: 4 };
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
     const present = rows.filter((r) => r.status !== "out");
-    return { rows, totals: { people: rows.length, out: rows.length - present.length, on_desk: rows.reduce((t, r) => t + r.on_desk, 0), worked: rows.reduce((t, r) => t + r.worked, 0),
-      capacity: present.reduce((t, r) => t + r.capacity, 0), carried: rows.reduce((t, r) => t + r.carried, 0), idle: rows.filter((r) => r.status === "idle").length,
-      out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
+    const add = (k) => rows.reduce((t, r) => t + r[k], 0);
+    return { rows, leads: f.leads, can_pick_lead: f.canPickLead, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
+      capacity: present.reduce((t, r) => t + r.capacity, 0), carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
+      behind: rows.filter((r) => r.behind).length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
+  },
+  /* A date range on the Dashboard: each biller's entries, claims closed and call time for those days, against their daily
+     target times the weekdays they were in (days marked Out today are left out of the target). */
+  "team.range": async ({ env, user, payload }) => {
+    const from = isoDate(payload.from), to0 = isoDate(payload.to), today = isoDate(payload.today) || isoToday();
+    if (!from || !to0 || from > to0) throw bad("Pick the dates.");
+    const to = to0 > today ? today : to0;
+    const off = Math.round(num(payload.tz_offset_min, 0));
+    const start = Date.parse(from + "T00:00:00Z") - off * 60000, end = Date.parse(to + "T00:00:00Z") - off * 60000 + 86400000 - 1;
+    const f = await dashTeamFilter(env, user, payload);
+    const cw = f.clientIds ? ` AND c.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "", ca = f.clientIds || [];
+    const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
+    let people = f.people;
+    if (!people.length) return { rows: [], totals: {}, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: 0 };
+    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const work = await all(env, `SELECT nt.user_id, COUNT(*) AS worked, COUNT(DISTINCT nt.claim_id) AS claims, SUM(nt.call_min IS NOT NULL) AS calls, COALESCE(SUM(nt.call_min), 0) AS call_min,
+        COUNT(DISTINCT date((nt.created_at / 1000) + ?, 'unixepoch')) AS days_worked
+      FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN (${qs})${cw}${lw} GROUP BY nt.user_id`, off * 60, start, end, ...ids, ...ca, ...la);
+    const closed = await all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?
+      AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la);
+    const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN (${qs})`, from, to, ...ids);
+    const weekday = (d) => { const w = new Date(d + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6; };
+    let workdays = 0; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) workdays++;
+    const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x]));
+    if (f.narrow) people = people.filter((u) => wk.has(u.id) || f.teamIds.has(u.id));
+    const rows = people.map((u) => {
+      const w = wk.get(u.id) || {}, c = cl.get(u.id) || {};
+      const out = outs.filter((o) => o.user_id === u.id && weekday(o.day)).length, daysIn = Math.max(0, workdays - out);
+      const cap = Math.max(1, u.capacity || 35), target = daysIn * cap;
+      return { id: u.id, name: u.name, capacity: cap, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, days_in: daysIn, days_out: out, days_worked: w.days_worked || 0,
+        worked: w.worked || 0, claims: w.claims || 0, closed: c.n || 0, closed_amt: c.amt || 0, calls: w.calls || 0, call_min: w.call_min || 0, target, pct: target ? Math.round((w.worked || 0) / target * 100) : null };
+    }).sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct) || a.name.localeCompare(b.name));
+    const add = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
+    return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays,
+      totals: { people: rows.length, worked: add("worked"), closed: add("closed"), closed_amt: add("closed_amt"), calls: add("calls"), call_min: add("call_min"), target: add("target") } };
+  },
+  /* The team leads a manager can pick on the Dashboard (empty for a team lead). */
+  "team.leads": async ({ env, user }) => { const f = await dashTeamFilter(env, user, {}); return { can_pick_lead: f.canPickLead, leads: f.leads }; },
+  /* The claims activity for the Dashboard's dates (the inventory figures themselves are always as of now). */
+  "team.activity": async ({ env, user, payload }) => {
+    const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
+    const lc = await leadClientIds(env, user, payload.lead_id);
+    const where = [], args = [];
+    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); args.push(...user.scope); }
+    if (lc) { where.push(`c.client_id IN (${lc.length ? lc.map(() => "?").join(",") : "NULL"})`); args.push(...lc); }
+    if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
+    if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
+    const w = where.length ? " AND " + where.join(" AND ") : "";
+    const [work, closed, loaded, assigned] = await Promise.all([
+      one(env, `SELECT COUNT(*) AS n, COUNT(DISTINCT nt.claim_id) AS claims FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${w}`, from, to, ...args),
+      one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?${w}`, from, to, ...args),
+      one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.created_at BETWEEN ? AND ?${w}`, from, to, ...args),
+      one(env, `SELECT COUNT(*) AS n FROM claims c WHERE c.assigned_at BETWEEN ? AND ?${w}`, from, to, ...args),
+    ]);
+    return { worked: work.n || 0, claims_worked: work.claims || 0, closed_n: closed.n || 0, closed_amt: closed.amt || 0, loaded_n: loaded.n || 0, loaded_amt: loaded.amt || 0, assigned_n: assigned.n || 0 };
   },
   "team.setOut": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60), today = isoDate(payload.today) || isoToday();
@@ -3022,6 +3142,8 @@ const OPS = {
     if (payload.from_ms != null || payload.to_ms != null) { where.push("updated_at BETWEEN ? AND ?"); params.push(num(payload.from_ms, 0), num(payload.to_ms, Date.now())); }
     if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(payload.location_id); }
+    // A manager who picked a team lead on the Dashboard: that team lead's clients.
+    if (payload.lead_id) { const lc = await leadClientIds(env, user, payload.lead_id); if (lc) { where.push(`client_id IN (${lc.length ? lc.map(() => "?").join(",") : "NULL"})`); params.push(...lc); } }
     // Dashboard cross-filters: click a bar and every other number is recomputed for that slice.
     for (const f of ["tier", "bucket", "status_class", "payer", "inventory_kind", "assigned_to"]) if (payload[f]) { where.push(`${f} = ?`); params.push(str(payload[f], 200)); }
     if (payload.saag_status) { where.push("last_status_code = ?"); params.push(str(payload.saag_status, 60)); }

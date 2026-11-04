@@ -130,11 +130,11 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).
 - The top bar stays one row: SLA (the Drishti scorecard, first so it is one
-  click away all day), Sasha's Third Eye, Dashboard, Needs attention and My day & reports sit in
-  front, the rest is grouped under **Work** (Posting & submission, Inventory &
-  allocation, Claims, SAAG reference) and **Manage** (Team, Clients & locations,
-  RACI tracker, TFL / AFL, and Roster for admins). The attention and hand-off
-  counts show on the group button while it is closed.
+  click away all day), Sasha's Third Eye, Dashboard, Claims and My day & reports sit in
+  front, the rest is grouped under **Work** (Needs attention, Posting & submission,
+  Inventory & allocation, SAAG reference) and **Manage** (Team, Clients & locations,
+  RACI tracker, TFL / AFL, and Roster for admins). The escalation count shows on the
+  Dashboard tab, and the attention and hand-off counts on the group button while it is closed.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
@@ -178,17 +178,28 @@ was last uploaded. Totals sit on top.
   feedback, a client, a responsibility, settings, a team member's role, projects or access, and month-end, with
   when and what.
 
-#### Team today, coaching, note templates (team leads)
+#### The Dashboard: claims and the team, coaching, note templates (team leads)
 
-**Work › Team today** is the morning huddle and the live floor on one page, refreshed every minute: each biller
-with what they are on now (claim, client, minutes on it), **idle** after 30 minutes without an entry in their shift,
-pace this shift against their target spread over the shift from the roster, claims on their desk and **carried over**
-(allocated before this shift, not worked), and first and last entry.
+**Dashboard** is claims and the team on one page, with one set of filters: client (and location), **team lead**
+(assistant managers, managers and the VP only; a team lead sees their own team) and the dates: **Today, This week,
+This month, Custom**. On top, **Needs you** lists escalations, client requests to send and missed tasks.
+
+- **Claims**: the inventory as of now (workable AR, unassigned, on desks, in process, follow-ups due and overdue)
+  and, for the dates, how many claims were closed, worked, loaded and allocated. Below the team part, the claims in
+  detail (by client and location, value tier, age, status, buckets, SAAG statuses, payers, time on calls): click a
+  bar to narrow the whole page. Picking a team lead narrows the claims to that team lead's clients.
+- **Team, Today**: the live floor, refreshed every 30 seconds: each biller with what they are on now, **idle** after
+  30 minutes without an entry in their shift, pace this shift against their target, on desk, **closed today**, and
+  **left over** (allocated before this shift, not worked) split into **high priority** (the High tier) and other.
+  Managers and above see the billers grouped by team lead. Click a biller's name to open **their claims**.
+- **Team, a week, a month or custom dates**: each biller's days in, entries, claims closed, calls and call time,
+  against their target (daily target times the weekdays they were in; days marked Out today are left out).
+- Posting and Submission people are not in the team list: they have their own desks.
 
 - **Out today** marks someone absent with a reason. **Rebalance** then hands their untouched claims (assigned, not
   started) to the people in today on the same client team, by the room left in their capacity, highest priority
   first; claims nobody has room for stay put. Each move is in the audit trail and on the claim's history.
-- Click a biller's name for their **coaching card**: entries a day over 30 days against target, skips, carried
+- **Coaching** on a biller's row opens their **coaching card**: entries a day over 30 days against target, skips, carried
   over, escalations, hand-offs sent back, average note length, days out, the statuses they enter most, and
   **1:1 notes** (1:1, praise, concern, goal) that team leads and up see and the biller never does. Only the writer
   removes a note. QA scores stay in Sasha's Third Eye.
@@ -345,7 +356,7 @@ resubmitted rejections carry a rejection code.
   otherwise a team lead is asked once). Active AR agents on a project become
   that client's billers.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
-  when it has one), each up to their daily target, minus anyone marked **Out today** in Team today. Automatic
+  when it has one), each up to their daily target, minus anyone marked **Out today** on the Dashboard. Automatic
   allocation after an upload and the Allocate screen both use that; there is no daily ticking.
 - Roster people sign in only with a Purview email, or an address the admin
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in
