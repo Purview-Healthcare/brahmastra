@@ -5412,7 +5412,6 @@ function ClientView({ ctx, me, go, params }) {
   const [month, setMonth] = useState("");
   // The client report is Dashboard › Client 360 report now; an old Client 360 › Client report link goes there.
   useEffect(() => { if (params && params.tab === "report" && cid) go("dashboard", { tab: "report", client_id: cid }); }, [params && params.tab]);
-  const [how, setHow] = useState(false);
   const [from, to] = rangeSpan(dr);
   const q = useRpc("client.overview", { client_id: cid, from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1], month: month || undefined }, [cid, from, to, month], !!cid);
   const d = q.data;
@@ -5481,7 +5480,7 @@ function ClientView({ ctx, me, go, params }) {
                 <button type="button" className={"c3-tick " + (stp.done ? "ok" : late ? "late" : "")} disabled={!d.monthend.can_edit || busy} title={d.monthend.can_edit ? (stp.done ? "Mark not done" : "Mark done") : "View only"}
                   onClick={() => (stp.done ? tick(stp, false) : stp.key === "sla" ? setScoreFor("") : tick(stp, true))}>{stp.done ? "✓" : late ? "!" : ""}</button>
                 <div style={{ flex: 1 }}><div className={stp.done ? "" : "b"}>{stp.label}{stp.key === "sla" && stp.score != null ? <span className="badge teal" style={{ marginLeft: 6 }}>{stp.score}%</span> : null}
-                  {stp.key === "pack" && <button type="button" className="btn sm link no-print" style={{ padding: "0 0 0 8px" }} onClick={() => setTab("report")}>Open Client report</button>}</div>
+                  {stp.key === "pack" && <button type="button" className="btn sm link no-print" style={{ padding: "0 0 0 8px" }} onClick={() => go("dashboard", { tab: "report", client_id: cid })}>Open Client 360 report</button>}</div>
                   <div className="tiny muted">{stp.done ? (stp.by_itself ? "done by itself" : "done") + " · " + fmtWhen(stp.done_at) + (stp.done_by_name && !stp.by_itself ? " · " + stp.done_by_name : "") : (late ? "was due " : "due ") + fmtDate(stp.due)}{!stp.done && stp.auto ? " · ticks by itself" : ""}</div>
                   {stp.key === "sla" && scoreFor !== null && !stp.done && <div className="row mt8" style={{ gap: 6 }}><input className="input sm" type="number" min="0" max="100" step="0.1" style={{ width: 110 }} placeholder="Score %" value={scoreFor} onChange={(e) => setScoreFor(e.target.value)} autoFocus />
                     <button className="btn sm primary" disabled={busy || scoreFor === ""} onClick={() => tick(stp, true, scoreFor)}>Save score</button><button className="btn sm link" onClick={() => setScoreFor(null)}>cancel</button><span className="tiny muted">from the SLA tab</span></div>}
