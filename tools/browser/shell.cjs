@@ -31,7 +31,7 @@ const { prepareDemo, serve, routeCdn } = require("./demo.cjs");
   await p.click("body", { position: { x: 30, y: 600 } }); await t(300);
   await p.setViewportSize({ width: 390, height: 844 });
   const wide = [];
-  for (const v of ["dashboard", "attention", "teamtoday", "claims", "inventory", "client", "portfolio", "audit", "team", "clients", "raci", "reports", "templates", "settings"]) {
+  for (const v of ["dashboard", "live", "attention", "teamtoday", "claims", "inventory", "client", "portfolio", "audit", "team", "clients", "raci", "reports", "templates", "settings"]) {
     await p.evaluate((x) => { location.hash = "#/" + x; }, v); await t(1500);
     const sw = await p.evaluate(() => document.documentElement.scrollWidth);
     if (sw > 392) wide.push(v + " " + sw);

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.58.0";
+const VERSION = "2.59.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -113,6 +113,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS digest_runs (week TEXT NOT NULL, client_id TEXT NOT NULL, at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id))`,
   `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
+  `CREATE TABLE IF NOT EXISTS team_notes (user_id TEXT PRIMARY KEY, start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS coach_notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'one_to_one', text TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_coach_user ON coach_notes (user_id, at)`,
   `CREATE TABLE IF NOT EXISTS note_templates (id TEXT PRIMARY KEY, client_id TEXT, title TEXT NOT NULL, text TEXT NOT NULL, by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
@@ -1324,6 +1325,38 @@ const isSME = (u) => u && u.source === "roster" && /\bsme\b|subject matter/i.tes
 const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`);
 const scopeArgs = (user) => (user && user.scope) || [];
 const outOfScope = () => denied("That project is not one of yours.");
+/* Team status rules: Training and OJT are due in production 6 weeks from their start (4 weeks training + 2 OJT);
+   attainment under 90% counts as below the production mark. */
+const RAMP_WEEKS = 6, PERF_MARK = 90;
+/* Suggestions on Team status: plain pointers, urgent first. Each says what we see and what to do. */
+function teamSuggestions(rows) {
+  const today = [], week = [], good = [];
+  const fmtD = (d) => { try { return new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); } catch { return d; } };
+  const item = (r, seen, todo) => ({ user_id: r.id, who: r.name, lead: r.lead_name || "", seen, do: todo });
+  const flagged = new Set();
+  const nDays = (n) => n + (n === 1 ? " day" : " days");
+  const attainSeen = (r) => r.attain_basis === "done" ? `Attainment ${r.attain}% (${r.worked_done} of ${Math.round(r.target_done)} claims up to yesterday)` : `Attainment ${r.attain}% today (${r.worked_today} of ${Math.round(r.target_today)} claims)`;
+  for (const r of rows) {
+    const away = r.out_today === "out";
+    if (r.ramp.flag === "over") { today.push(r.ramp.extended
+      ? item(r, `${r.status}, the date agreed for production was ${fmtD(r.ramp.due)} (${nDays(-r.ramp.days)} ago)`, "If they have moved to production, update Purview Shastra; if not, agree a new date on their row.")
+      : item(r, `${r.status}${r.ramp.start ? " since " + fmtD(r.ramp.start) : ""}, was due in production ${fmtD(r.ramp.due)} (${nDays(-r.ramp.days)} ago)`, "Decide today: move to production or extend, and note the new date on their row.")); flagged.add(r.id); }
+    if (r.left_high >= 3) { today.push(item(r, `${r.left} claims left over, ${r.left_high} of them high priority` + (away ? "; out today" : ""), away ? `Rebalance the ${r.left_high} high priority claims to someone in today (Live status).` : `Have them work the ${r.left_high} high priority claims first, or rebalance them.`)); flagged.add(r.id); }
+    if (r.status === "Production" && r.attain != null && r.attain_basis === "done" && r.target_done >= r.capacity && r.attain < 60) { today.push(item(r, attainSeen(r), away ? "Out today: sit with them when they are back and find out what is slowing them down." : "Sit with them today and find out what is slowing them down.")); flagged.add(r.id); }
+  }
+  for (const r of rows) {
+    if (r.status === "Production" && r.attain != null && r.attain_basis === "done" && r.target_done >= r.capacity && r.attain >= 60 && r.attain < PERF_MARK) { week.push(item(r, attainSeen(r), "Check their claim mix and notes; agree a daily number for next week.")); flagged.add(r.id); }
+    if (r.ramp.flag === "soon") { week.push(item(r, `${r.status}, due in production ${fmtD(r.ramp.due)} (${r.ramp.days === 0 ? "today" : nDays(r.ramp.days)})${r.ramp.extended ? ", the date agreed" : ""}`, `Plan the move: about ${Math.round(r.capacity * 0.85)} claims a day by ${fmtD(r.ramp.due)}; check in before then.`)); flagged.add(r.id); }
+    if (r.days_out >= 2) { week.push(item(r, `Out ${r.days_out} days in these dates`, "A short check-in on attendance.")); flagged.add(r.id); }
+    if (r.left_high > 0 && r.left_high < 3) { week.push(item(r, `${r.left} claims left over, ${r.left_high} high priority`, "Clear the high priority ones first tomorrow.")); flagged.add(r.id); }
+  }
+  for (const r of rows) {
+    if (flagged.has(r.id) || r.status !== "Production" || r.attain == null || r.attain < 100) continue;
+    const helpee = rows.find((x) => x.lead_id && x.lead_id === r.lead_id && x.id !== r.id && x.status === "Production" && x.attain != null && x.attain < PERF_MARK);
+    good.push(item(r, attainSeen(r) + ", nothing high priority left over", "Thank them in the huddle" + (helpee ? `; they could help ${helpee.name}.` : ".")));
+  }
+  return { today, week, good };
+}
 /* Managers and above (assistant managers, managers, the VP, admins) can narrow the Dashboard to one team lead. */
 const isManagerUp = (u) => !!u && (u.is_admin || u.access_all || u.roster_kind === "manager" || (u.role === "supervisor" && !u.scope));
 /* The clients one team lead covers (their own span), for a manager who picked that team lead; null means no narrowing. */
@@ -2152,7 +2185,7 @@ const OPS = {
     }
     if (!people.length) return { rows: [], totals: { people: 0 }, leads: f.leads, can_pick_lead: f.canPickLead };
     const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
-    const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, c.tier, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
+    const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, c.tier, c.balance, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
       WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN (${qs})${cw}${lw}`, ...ids, ...ca, ...la);
     const notes = await all(env, `SELECT nt.user_id, nt.kind, nt.created_at FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
     const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
@@ -2184,7 +2217,7 @@ const OPS = {
       return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name,
         on_desk: onDesk.length, carried: left.length, left_high: leftHigh, left_other: left.length - leftHigh, closed, worked: work.length, skips, first, last,
         idle_min: last ? Math.floor((now - last) / 60000) : null, expected, behind: status !== "out" && work.length < expected - 3,
-        current: cur ? { claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
+        current: cur ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
         status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, in_shift: inShift };
     });
     const rank = { idle: 0, not_started: 1, working: 2, done: 3, out: 4 };
@@ -2193,7 +2226,7 @@ const OPS = {
     const add = (k) => rows.reduce((t, r) => t + r[k], 0);
     return { rows, leads: f.leads, can_pick_lead: f.canPickLead, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
       capacity: present.reduce((t, r) => t + r.capacity, 0), carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
-      behind: rows.filter((r) => r.behind).length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
+      behind: rows.filter((r) => r.behind).length, working: rows.filter((r) => r.status === "working").length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
   },
   /* A date range on the Dashboard: each biller's entries, claims closed and call time for those days, against their daily
      target times the weekdays they were in (days marked Out today are left out of the target). */
@@ -2232,6 +2265,113 @@ const OPS = {
   },
   /* The team leads a manager can pick on the Dashboard (empty for a team lead). */
   "team.leads": async ({ env, user }) => { const f = await dashTeamFilter(env, user, {}); return { can_pick_lead: f.canPickLead, leads: f.leads }; },
+  /* ---- Dashboard › Team status ----
+     Each AR biller in this person's span (one team lead's, for a manager who picks one): status from Purview Shastra
+     (Production, Training, OJT, Serving notice, Sabbatical), date of joining, ramp-up against the rules, attainment
+     (entries against target for the weekdays they were in), floor time needed (8 h a working day, 4 h a half day),
+     left over now, the start / end dates and comment kept in Brahmastra, and suggestions in plain pointers.
+     Time on floor and idle time come from Purview Shastra once its feed sends them. */
+  "team.status": async ({ env, user, payload }) => {
+    const from = isoDate(payload.from), to0 = isoDate(payload.to), today = isoDate(payload.today) || isoToday();
+    if (!from || !to0 || from > to0) throw bad("Pick the dates.");
+    const to = to0 > today ? today : to0;
+    const off = Math.round(num(payload.tz_offset_min, 0)), now = Date.now();
+    const start = Date.parse(from + "T00:00:00Z") - off * 60000, end = Date.parse(to + "T00:00:00Z") - off * 60000 + 86400000 - 1;
+    const todayStart = Date.parse(today + "T00:00:00Z") - off * 60000;
+    const f = await dashTeamFilter(env, user, payload);
+    const cw = f.clientIds ? ` AND c.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "", ca = f.clientIds || [];
+    const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
+    let people = f.people;
+    const weekday = (d) => { const w = new Date(d + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6; };
+    const days = []; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) days.push(d);
+    if (!people.length) return { rows: [], leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals: { people: 0 }, by_status: [], checks: [], suggestions: { today: [], week: [], good: [] }, floor_source: "pending" };
+    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const [work, closed, att, notes, desk, outNow] = await Promise.all([
+      all(env, `SELECT nt.user_id, COUNT(*) AS worked, SUM(nt.created_at < ?) AS worked_done, COUNT(DISTINCT date((nt.created_at / 1000) + ?, 'unixepoch')) AS days_worked FROM notes nt JOIN claims c ON c.id = nt.claim_id
+        WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN (${qs})${cw}${lw} GROUP BY nt.user_id`, todayStart, off * 60, start, end, ...ids, ...ca, ...la),
+      all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ? AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la),
+      all(env, `SELECT user_id, day, reason FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN (${qs})`, from, to, ...ids),
+      all(env, `SELECT * FROM team_notes WHERE user_id IN (${qs})`, ...ids),
+      all(env, `SELECT c.assigned_to, c.tier FROM claims c WHERE c.state = 'assigned' AND c.assigned_at < ? AND c.assigned_to IN (${qs})${cw}${lw}`, todayStart, ...ids, ...ca, ...la),
+      all(env, `SELECT user_id, reason FROM attendance WHERE status = 'out' AND day = ? AND user_id IN (${qs})`, today, ...ids),
+    ]);
+    const outToday = new Map(outNow.map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
+    const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x.n])), nb = new Map(notes.map((x) => [x.user_id, x]));
+    if (f.narrow) people = people.filter((u) => wk.has(u.id) || f.teamIds.has(u.id));
+    const statusOf = (u) => { const st = String(u.roster_status || "").trim().toLowerCase();
+      return st === "training" ? "Training" : st === "ojt" ? "OJT" : st === "sabbatical" ? "Sabbatical" : /notice/.test(st) ? "Serving notice" : "Production"; };
+    const rows = people.map((u) => {
+      const w = wk.get(u.id) || {}, n = nb.get(u.id) || {}, st = statusOf(u), cap = Math.max(1, u.capacity || 35);
+      // each weekday: a full day, a half day (Out today · Half day) or out
+      let full = 0, half = 0, out = 0, tDone = 0, tToday = 0;
+      for (const d of days) { const a = att.find((x) => x.user_id === u.id && x.day === d); const share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
+        if (!a) full++; else if (share) half++; else out++;
+        if (d < today) tDone += share * cap; else if (d === today) tToday = share * cap; }
+      const target = Math.round(full * cap + half * cap / 2);
+      const worked = w.worked || 0, workedDone = w.worked_done || 0, workedToday = worked - workedDone;
+      // Attainment on the days already finished (up to yesterday), so a day still under way does not make everyone look behind;
+      // with only today in the dates, today against today's target.
+      const basis = tDone > 0 ? "done" : "today";
+      const attain = basis === "done" ? Math.round(workedDone / tDone * 100) : tToday ? Math.round(workedToday / tToday * 100) : null;
+      // ramp-up: Training and OJT are due in production 6 weeks (4 training + 2 OJT) from their start (the start date kept here,
+      // otherwise the date of joining); an end date kept here is the date agreed instead (an extension or an earlier move)
+      const startD = n.start_date || u.doj || "";
+      let ramp = { kind: st === "Production" ? "prod" : st === "Training" || st === "OJT" ? "ramp" : "other" };
+      if (ramp.kind === "ramp") {
+        const due = n.end_date || (startD ? addDays(startD, RAMP_WEEKS * 7) : "");
+        if (!due) ramp = { kind: "ramp", flag: "nodate" };
+        else { const left = Math.round((Date.parse(due) - Date.parse(today)) / 86400000);
+          ramp = { kind: "ramp", start: startD, due, extended: !!n.end_date, weeks_in: startD ? Math.max(0, Math.round((Date.parse(today) - Date.parse(startD)) / 86400000 / 7 * 10) / 10) : null,
+            flag: left < 0 ? "over" : left <= 7 ? "soon" : "track", days: left }; }
+      }
+      const mine = desk.filter((c) => c.assigned_to === u.id), leftHigh = mine.filter((c) => c.tier === "High").length;
+      return { id: u.id, name: u.name, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, doj: u.doj || "", status: st, capacity: cap,
+        days_full: full, days_half: half, days_out: out, days_worked: w.days_worked || 0, worked, closed: cl.get(u.id) || 0, target, attain, attain_basis: basis,
+        worked_done: workedDone, target_done: Math.round(tDone * 10) / 10, worked_today: workedToday, target_today: tToday,
+        floor_needed_min: full * 8 * 60 + half * 4 * 60, on_floor_min: null, idle_min: null,
+        left: mine.length, left_high: leftHigh, left_other: mine.length - leftHigh, ramp,
+        // judged against the production mark: production only, on finished days; Training and OJT are in ramp-up
+        perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? "none" : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
+        out_today: outToday.get(u.id) || "",
+        start_date: n.start_date || "", end_date: n.end_date || "", comment: n.comment || "", comment_by: n.by_name || "", comment_at: n.at || null };
+    }).sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.name.localeCompare(b.name));
+    const sum = (k, rs = rows) => rs.reduce((t, r) => t + (r[k] || 0), 0);
+    const byStatus = [...new Set(rows.map((r) => r.status))].map((st) => { const rs = rows.filter((r) => r.status === st), wkd = sum("worked", rs), tg = sum("target", rs), dw = sum("days_worked", rs);
+      const wd = sum("worked_done", rs), td = sum("target_done", rs), wt = sum("worked_today", rs), tt = sum("target_today", rs);
+      // claims and target on the same days as the attainment: the finished days, or today when only today is picked
+      return { status: st, people: rs.length, worked: td > 0 ? wd : wt, target: td > 0 ? Math.round(td) : tt, all_worked: wkd, all_target: tg,
+        attain: td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null, per_day: dw ? Math.round(wkd / dw * 10) / 10 : null }; })
+      .sort((a, b) => b.people - a.people);
+    // roster checks: what would make these figures wrong
+    const checks = [];
+    const noDoj = rows.filter((r) => !r.doj); if (noDoj.length) checks.push({ n: noDoj.length, text: (noDoj.length === 1 ? "person" : "people") + " with no date of joining: " + noDoj.slice(0, 4).map((r) => r.name).join(", ") });
+    const noLead = rows.filter((r) => !r.lead_id); if (noLead.length) checks.push({ n: noLead.length, text: (noLead.length === 1 ? "biller" : "billers") + " with no team lead on the roster" });
+    const seen = new Map(); rows.forEach((r) => { const k = r.name.trim().toLowerCase(); seen.set(k, (seen.get(k) || 0) + 1); });
+    const dup = [...seen.values()].filter((v) => v > 1).length; checks.push({ n: dup, text: "names that appear twice" });
+    const totals = { people: rows.length, leads: new Set(rows.map((r) => r.lead_id).filter(Boolean)).size, production: rows.filter((r) => r.status === "Production").length,
+      training: rows.filter((r) => r.status === "Training" || r.status === "OJT").length, ramp_over: rows.filter((r) => r.ramp.flag === "over").length,
+      below: rows.filter((r) => r.perf === "below").length, worked: sum("worked"), target: sum("target"), floor_needed_min: sum("floor_needed_min"),
+      worked_done: sum("worked_done"), target_done: sum("target_done"), worked_today: sum("worked_today"), target_today: sum("target_today") };
+    totals.attain_basis = totals.target_done > 0 ? "done" : "today";
+    totals.attain = totals.attain_basis === "done" ? Math.round(totals.worked_done / totals.target_done * 100) : totals.target_today ? Math.round(totals.worked_today / totals.target_today * 100) : null;
+    return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals, by_status: byStatus, checks, perf_mark: PERF_MARK, ramp_weeks: RAMP_WEEKS,
+      suggestions: teamSuggestions(rows), floor_source: "pending" };
+  },
+  /* The start / end dates and comment on someone's Team status row: kept in Brahmastra, seen by every lead who sees them. */
+  "team.saveNote": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60);
+    if (!(await visibleUsers(env, user)).some((u) => u.id === id)) throw denied("That person is not in your team.");
+    const start = payload.start_date ? isoDate(payload.start_date) : "", end = payload.end_date ? isoDate(payload.end_date) : "";
+    if (payload.start_date && !start) throw bad("The start date is not a date.");
+    if (payload.end_date && !end) throw bad("The end date is not a date.");
+    if (start && end && end < start) throw bad("The end date is before the start date.");
+    const comment = str(payload.comment, 500).trim();
+    await run(env, `INSERT INTO team_notes (user_id, start_date, end_date, comment, by_name, at) VALUES (?,?,?,?,?,?)
+      ON CONFLICT(user_id) DO UPDATE SET start_date = excluded.start_date, end_date = excluded.end_date, comment = excluded.comment, by_name = excluded.by_name, at = excluded.at`, id, start, end, comment, user.name || "", Date.now());
+    const who = await one(env, "SELECT name FROM users WHERE id = ?", id);
+    await audit(env, user, "team.note", null, (who ? who.name : id) + ": " + [start ? "start " + start : "", end ? "end " + end : "", comment ? "comment: " + comment : ""].filter(Boolean).join(" · "));
+    return { ok: true };
+  },
   /* The claims activity for the Dashboard's dates (the inventory figures themselves are always as of now). */
   "team.activity": async ({ env, user, payload }) => {
     const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
@@ -2465,12 +2605,14 @@ const OPS = {
   "portfolio.overview": async ({ env, user, payload }) => {
     await snapshotIfStale(env);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
-    const clients = (await all(env, "SELECT id, name, code, team_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id));
+    const lc = await leadClientIds(env, user, payload.lead_id);
+    const clients = (await all(env, "SELECT id, name, code, team_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id) && (!lc || lc.includes(c.id)) && (!payload.client_id || c.id === payload.client_id));
     const ids = new Set(clients.map((c) => c.id));
     const mapOf = (rows, k = "client_id") => new Map(rows.filter((r) => ids.has(r[k])).map((r) => [r[k], r]));
     const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(dos, 1, 10)) ELSE age_days END";
     const ar = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0) AS o90,
-        SUM(CASE WHEN state IN ('open','assigned','in_progress') THEN 1 ELSE 0 END) AS to_work
+        SUM(CASE WHEN state IN ('open','assigned','in_progress') THEN 1 ELSE 0 END) AS to_work,
+        SUM(CASE WHEN state = 'open' THEN 1 ELSE 0 END) AS open_n, COALESCE(SUM(CASE WHEN state = 'open' THEN balance ELSE 0 END), 0) AS open_bal
       FROM (SELECT client_id, balance, state, ${ageSql} AS age FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id`, today));
     const ago = mapOf(await all(env, `SELECT s.client_id, s.ar_balance FROM client_snapshots s WHERE s.day = (SELECT MAX(day) FROM client_snapshots WHERE client_id = s.client_id AND day <= ?)`, istISO(now - 30 * 86400000)));
     const sla = mapOf(await all(env, `SELECT m.client_id, m.score, m.month FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`));
@@ -2484,8 +2626,9 @@ const OPS = {
     let wd = 0; for (let t = since14; t < now; t += 86400000) { const w = new Date(t + IST_MIN * 60000).getUTCDay(); if (w !== 0 && w !== 6) wd++; }
     const pace = mapOf(await all(env, `SELECT c.client_id, COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND n.created_at > ? GROUP BY c.client_id`, since14));
     const lastInv = mapOf(await all(env, `SELECT client_id, MAX(uploaded_at) AS at FROM batches WHERE undone_at IS NULL GROUP BY client_id`));
-    const monthStart = Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
-    const coll = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt FROM handoffs WHERE dept = 'posting' AND status = 'complete' AND done_at >= ? GROUP BY client_id`, monthStart));
+    const monthStart = payload.from_ms != null ? num(payload.from_ms, 0) : Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
+    const collTo = payload.to_ms != null ? num(payload.to_ms, now) : now;
+    const coll = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt FROM handoffs WHERE dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ? GROUP BY client_id`, monthStart, collTo));
     const raci = new Map((await OPS["raci.list"]({ env, user, payload })).rows.map((r) => [r.client_id, r]));
     const closing = closingMonth(today), slaDue = nthWorkingDayAfter(closing, 4);
     const rows = clients.map((c) => {
@@ -2501,7 +2644,8 @@ const OPS = {
         ar: a.bal, claims: a.n, ar_month_ago: ago.get(c.id) ? ago.get(c.id).ar_balance : null, over90_pct: pct, sla: sl ? { score: sl.score, month: sl.month } : null,
         missed: missN, waiting: w ? { n: w.n, bal: w.bal, oldest } : null, escalations_late: e ? e.late || 0 : 0, tfl_soon: t.soon_bal, tfl_soon_n: t.soon_n, tfl_past_n: t.past_n,
         to_work: a.to_work || 0, per_day: Math.round(perDay * 10) / 10, people: pc ? pc.people : 0, days_to_clear: perDay ? Math.ceil((a.to_work || 0) / perDay) : null,
-        last_inventory: lastInv.get(c.id) ? lastInv.get(c.id).at : null, collected_month: coll.get(c.id) ? coll.get(c.id).amt : 0 };
+        last_inventory: lastInv.get(c.id) ? lastInv.get(c.id).at : null, collected_month: coll.get(c.id) ? coll.get(c.id).amt : 0,
+        open_n: a.open_n || 0, open_bal: a.open_bal || 0 };
     });
     const rank = { risk: 0, watch: 1, good: 2 };
     rows.sort((x, y) => rank[x.health] - rank[y.health] || y.reasons.length - x.reasons.length || y.ar - x.ar);
@@ -2521,6 +2665,7 @@ const OPS = {
     const slas = rows.filter((r) => r.sla); 
     return { rows, freshness: fresh, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, over90_pct: totAr ? Math.round(totO90 / totAr * 1000) / 10 : 0,
       sla_avg: slas.length ? Math.round(slas.reduce((t, r) => t + r.sla.score, 0) / slas.length * 10) / 10 : null, collected_month: sum("collected_month"),
+      open_bal: sum("open_bal"), open_n: sum("open_n"), tfl_soon: sum("tfl_soon"), tfl_soon_n: sum("tfl_soon_n"),
       waiting_bal: rows.reduce((t, r) => t + (r.waiting ? r.waiting.bal : 0), 0), at_risk: rows.filter((r) => r.health === "risk").length, watch: rows.filter((r) => r.health === "watch").length, missed: sum("missed") },
       target: OVER90_TARGET, working_days: wd };
   },

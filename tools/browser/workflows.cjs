@@ -148,24 +148,31 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
 
   S("Dashboard");
   await step("dashboard", async () => {
+    // Live status: its own tab, right after Sasha's Third Eye
+    await open("#/live"); await t(2500);
+    ok("Live status shows the floor", (await p.locator(".dash-team").count()) === 1 && /On the floor now/i.test(await p.locator(".dash-team").innerText()));
+    ok("no error on Live status", !(await p.locator(".alert.err").count()));
+    ok("a team lead has no team lead filter", !/team lead/i.test(await p.locator(".dash-filters").innerText()));
+    // Dashboard: Team status and Client reports
     await open("#/dashboard"); await t(2500);
+    ok("Dashboard opens on Team status", /on/.test(await p.locator('.dash-subtabs button:has-text("Team status")').getAttribute("class")) && /Team status by team lead/i.test(await p.innerText(".main")));
+    ok("Team status has the suggestions", /Suggestions/i.test(await p.innerText(".main")) && /Do today/i.test(await p.innerText(".main")));
+    await p.locator('.dash-subtabs button:has-text("Client reports")').click(); await t(2500);
     const bar = p.locator(".main .bar, .main .hbar, .main [class*=bar]").first();
     if (await bar.count()) { await bar.click().catch(() => {}); await t(1200); }
-    ok("cards and charts show", /Workable AR/i.test(await p.innerText(".main")));
-    ok("no error on the dashboard", !(await p.locator(".alert.err").count()));
-    ok("the team part is on the Dashboard", (await p.locator(".dash-team").count()) === 1 && /Team · today/i.test(await p.locator(".dash-team").innerText()));
-    ok("a team lead has no team lead filter", !/team lead/i.test(await p.locator(".dash-filters").innerText()));
-    await as("sasha"); await open("#/dashboard"); await t(2500);
+    ok("Client reports: the client list and the claims in detail", /Workable AR/i.test(await p.innerText(".main")) && /Claims in detail/i.test(await p.innerText(".main")));
+    ok("no error on Client reports", !(await p.locator(".alert.err").count()));
+    await as("sasha"); await open("#/live"); await t(2500);
     const later = p.locator('button:has-text("Later")'); if (await later.count()) { await later.first().click(); await t(500); }
     ok("the VP gets the team lead filter", /team lead/i.test(await p.locator(".dash-filters").innerText()));
     ok("the VP sees billers grouped by team lead", (await p.locator(".dash-team .lead-grp").count()) > 0);
-    await p.locator('.drange button:has-text("This week")').first().click(); await t(2500);
-    ok("This week: each biller against target", /of target/i.test(await p.locator(".dash-team").innerText()));
-    await p.locator('.drange button:has-text("Today")').first().click(); await t(2000);
+    ok("no Portfolio tab any more", !(await p.locator('.nav > button:has-text("Portfolio")').count()));
     const nm = (await p.locator(".dash-team .biller-link").first().innerText()).replace(/[\s›]+$/, "");
     await p.locator(".dash-team .biller-link").first().click(); await t(2500);
     ok("a biller's name opens their claims", /#\/claims/.test(p.url()) && (await p.innerText(".main")).includes(nm), { url: p.url(), nm });
     ok("Claims is a tab of its own", (await p.locator('.nav > button:has-text("Claims")').count()) === 1);
+    await open("#/portfolio"); await t(2000);
+    ok("an old Portfolio link opens Dashboard › Client reports", /on/.test(await p.locator('.dash-subtabs button:has-text("Client reports")').getAttribute("class")));
     await as("tina");
   });
 

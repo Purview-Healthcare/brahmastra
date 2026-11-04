@@ -109,7 +109,7 @@ sign-in), then **Clients** and **Inventory**.
 
 ### Roles
 
-- **Team lead**: Dashboard, Inventory, Allocate, Claims, Team, Clients, SAAG,
+- **Team lead**: Live status, Dashboard, Inventory, Allocate, Claims, Team, Clients, SAAG,
   Reports, and a day list of their own.
 - **Biller**: My day (the allocations, one claim at a time) and My work (their
   history).
@@ -130,11 +130,11 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).
 - The top bar stays one row: SLA (the Drishti scorecard, first so it is one
-  click away all day), Sasha's Third Eye, Dashboard, Claims and My day & reports sit in
-  front, the rest is grouped under **Work** (Needs attention, Posting & submission,
-  Inventory & allocation, SAAG reference) and **Manage** (Team, Clients & locations,
-  RACI tracker, TFL / AFL, and Roster for admins). The escalation count shows on the
-  Dashboard tab, and the attention and hand-off counts on the group button while it is closed.
+  click away all day), Sasha's Third Eye, Live status, Dashboard, Claims and My day & reports sit
+  in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
+  Inventory & allocation, SAAG reference) and **Manage** (Client 360, Team, Note templates, Clients &
+  locations, RACI tracker, TFL / AFL, Roster for admins, Audit trail for admins and the VP). The escalation count shows on the
+  Live status tab, and the attention and hand-off counts on the group button while it is closed.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
@@ -162,45 +162,26 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 **Client call pack (PDF)** prints the page or saves it as a PDF for the meeting. Changes to the log and the
 month-end checklist are kept in the audit trail.
 
-#### Portfolio, managers side by side, data freshness, audit trail
+#### Live status: what everyone is on now (team leads and up)
 
-**Portfolio** (a tab for the VP, admins and managers; managers see their own span) lists every client worst first:
-health with its reasons, team lead and manager, AR against a month ago, over 90, SLA, missed tasks, dollars waiting
-on the client, timely-filing risk, **days to clear** (claims still to work divided by the team's entries a working
-day over the last two weeks; a client nobody worked shows that instead of a made-up number) and when its inventory
-was last uploaded. Totals sit on top.
+**Live status** is the floor right now, refreshed every 30 seconds while the tab is open. Filters: client (and
+location) and **team lead** (assistant managers, managers and the VP; a team lead sees their own team). On top,
+**Needs you** lists escalations, client requests to send and missed tasks; then in today, working now, idle now,
+worked today against the target, closed today and **left over** (allocated before this shift and not worked) split
+into **high priority** (the High tier) and other.
 
-- **Managers side by side**: clients, people under them, entries and skips by their people, missed tasks,
-  escalations over 24 hours and SLA average, for any dates. The VP sees every manager, a manager their own line.
-- **Data freshness**: inventory older than a week, an SLA not scored after its due day, a failed or late roster
-  sync.
-- **Audit trail** (Manage, admins and the VP): who shared a client or took it back, changed the RACI, who gets
-  feedback, a client, a responsibility, settings, a team member's role, projects or access, and month-end, with
-  when and what.
-
-#### The Dashboard: claims and the team, coaching, note templates (team leads)
-
-**Dashboard** is claims and the team on one page, with one set of filters: client (and location), **team lead**
-(assistant managers, managers and the VP only; a team lead sees their own team) and the dates: **Today, This week,
-This month, Custom**. On top, **Needs you** lists escalations, client requests to send and missed tasks.
-
-- **Claims**: the inventory as of now (workable AR, unassigned, on desks, in process, follow-ups due and overdue)
-  and, for the dates, how many claims were closed, worked, loaded and allocated. Below the team part, the claims in
-  detail (by client and location, value tier, age, status, buckets, SAAG statuses, payers, time on calls): click a
-  bar to narrow the whole page. Picking a team lead narrows the claims to that team lead's clients.
-- **Team, Today**: the live floor, refreshed every 30 seconds: each biller with what they are on now, **idle** after
-  30 minutes without an entry in their shift, pace this shift against their target, on desk, **closed today**, and
-  **left over** (allocated before this shift, not worked) split into **high priority** (the High tier) and other.
-  Managers and above see the billers grouped by team lead. Click a biller's name to open **their claims**.
-- **Team, a week, a month or custom dates**: each biller's days in, entries, claims closed, calls and call time,
-  against their target (daily target times the weekdays they were in; days marked Out today are left out).
-- Posting and Submission people are not in the team list: they have their own desks.
-
-- **Out today** marks someone absent with a reason. **Rebalance** then hands their untouched claims (assigned, not
-  started) to the people in today on the same client team, by the room left in their capacity, highest priority
-  first; claims nobody has room for stay put. Each move is in the audit trail and on the claim's history.
-- **Coaching** on a biller's row opens their **coaching card**: entries a day over 30 days against target, skips, carried
-  over, escalations, hand-offs sent back, average note length, days out, the statuses they enter most, and
+- **On the floor now**: each biller with their status (working, **idle** after 30 minutes without an entry in their
+  shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
+  been on it (the claim number opens the claim), pace this shift against their target, on desk, closed today and left
+  over. Managers and above see the billers grouped by team lead. Click a biller's name to open **their claims**.
+- Below the floor: unassigned claims, claims with Posting / Submission and follow-ups due today.
+- Posting and Submission people are not on the floor: they have their own desks.
+- **Out today** marks someone absent with a reason (**Half day** counts 4 hours of floor time on Team status).
+  **Rebalance** then hands their untouched claims (assigned, not started) to the people in today on the same client
+  team, by the room left in their capacity, highest priority first; claims nobody has room for stay put. Each move
+  is in the audit trail and on the claim's history.
+- **Coaching** on a biller's row opens their **coaching card**: entries a day over 30 days against target, skips,
+  carried over, escalations, hand-offs sent back, average note length, days out, the statuses they enter most, and
   **1:1 notes** (1:1, praise, concern, goal) that team leads and up see and the biller never does. Only the writer
   removes a note. QA scores stay in Sasha's Third Eye.
 - **Manage › Note templates**: text for RCA / findings, for every client or one, written by team leads and up.
@@ -208,6 +189,53 @@ This month, Custom**. On top, **Needs you** lists escalations, client requests t
 - On **Work this claim**, a biller sees the three SAAG combinations the team used most in the last 90 days for
   that payer (or the client when the payer is new); one click fills status, sub-status, action, bucket and the
   note action.
+
+#### Dashboard: Team status and Client reports
+
+**Dashboard** has two tabs with the same filters: client, **team lead** (managers and up) and the dates: **Today,
+This week, This month, Custom**.
+
+**Team status** is Sasha's Third Eye's Team Status, built from Brahmastra's own entries and the Purview Shastra
+roster, grouped by team lead (no Emp ID):
+
+- **Status** and date of joining from Purview Shastra: Production, Training, OJT, Serving notice, Sabbatical.
+- **Ramp-up**: Training and OJT are due in production 6 weeks from their start (the start date kept on Team status,
+  otherwise the date of joining), or on the date the lead agreed. People past it show in a red banner.
+- **Attainment**: entries against the target (the daily target for each weekday in the dates; a half day counts
+  half, other days out count nothing). It counts the days already finished (up to yesterday), so a day still under
+  way does not count against anyone; with only today picked, it is today's. Production people under 90% are
+  **below the mark**; Training and OJT are **in ramp-up** and not judged against it.
+- **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** and **idle** come from Purview
+  Shastra once its feed sends them; until then they show –.
+- **Left over** now, with how many are high priority, and a **note** per person: start, due in production (or plan
+  end) and a comment, seen by every lead who sees that person and kept in the audit trail.
+- **Suggestions** in plain pointers, from the same figures: **Do today** (past the ramp-up date; 3 or more high
+  priority claims left over, or rebalance them when the person is out today; attainment under 60% on the finished
+  days), **This week** (attainment 60 to 89%; due in production within 7 days; out 2 days or more; 1 or 2 high
+  priority left over) and **Keep going** (100% or more with nothing flagged, and a teammate they could help). Each
+  says what we see and what to do. **Copy for my 1:1s** copies them.
+- At the bottom, **performance by status** and **roster checks** (no date of joining, no team lead, names that
+  appear twice; fixed in Purview Shastra). **CSV for supervisors** downloads the table.
+
+**Client reports** (what was the Portfolio; a team lead sees their own clients) lists every client worst first:
+health with its reasons, team lead and manager, AR against a month ago, unassigned, over 90, collected for the dates,
+SLA, missed tasks, dollars waiting on the client, timely-filing risk, **days to clear** (claims still to work divided
+by the team's entries a working day over the last two weeks; a client nobody worked shows that instead of a made-up
+number) and when its inventory was last uploaded. Totals sit on top; click a client for its Client 360. Below, the
+**claims in detail** (by client and location, value tier, age, status, buckets after work, SAAG statuses, payers,
+time on calls; click a bar to narrow the charts), then:
+
+- **Managers side by side** (the VP, admins and managers): clients, people under them, entries and skips by their
+  people, missed tasks, escalations over 24 hours and SLA average, for the dates. The VP sees every manager, a
+  manager their own line.
+- **Data freshness**: inventory older than a week, an SLA not scored after its due day, a failed or late roster
+  sync.
+- **Audit trail** (admins and the VP): who shared a client or took it back, changed the RACI, who gets feedback, a
+  client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
+  with when and what.
+
+The old `#/portfolio`, `#/teamtoday` and `#/dashboard` links still work: they open Client reports, Live status and
+Team status.
 
 #### Client profile: scope of work, responsibility, change history
 
@@ -252,8 +280,8 @@ keeps it, or the client's own workbook), and the **responsible person** for each
 #### Monday digest email
 
 Every Monday from about 8:30 AM IST the server sends **one email per manager's span**: Sweety's clients, Sandesh's
-clients and Joseph's clients (the managers on the roster and the clients their projects map to, as in Portfolio ›
-Managers side by side). Each goes to **every supervisor on those clients**: the manager, the clients' team leads and
+clients and Joseph's clients (the managers on the roster and the clients their projects map to, as in Dashboard ›
+Client reports › Managers side by side). Each goes to **every supervisor on those clients**: the manager, the clients' team leads and
 SMEs, posting / submission leads, the VP and admins (view-only shares are left out). So a team lead gets their
 manager's span, a manager their own, and the VP all three. Active clients that are in no manager's span go in one
 more email, "Clients without a manager", to the VP and admins.
@@ -265,7 +293,7 @@ per client (health, AR and its change, over 90, collected, entries, SLA, month-e
 requests waiting on the client); who worked how much; and the denials worked. Clients, staff and figures only:
 no patient names, claim or account numbers.
 
-- **Portfolio › Monday digest email** (VP, admins, managers) lists every span with its clients and who gets it, when
+- **Dashboard › Client reports › Monday digest email** (VP, admins, managers) lists every span with its clients and who gets it, when
   it last went, any that did not arrive and why, **Preview this week's** and **Email me a copy**. Admins and the VP
   also get **Send this week's now** (only to people who have not had it this week; noted in the audit trail).
 - **Client 360** shows the span digest the client is in, with the same buttons.
@@ -356,7 +384,7 @@ resubmitted rejections carry a rejection code.
   otherwise a team lead is asked once). Active AR agents on a project become
   that client's billers.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
-  when it has one), each up to their daily target, minus anyone marked **Out today** on the Dashboard. Automatic
+  when it has one), each up to their daily target, minus anyone marked **Out today** on Live status. Automatic
   allocation after an upload and the Allocate screen both use that; there is no daily ticking.
 - Roster people sign in only with a Purview email, or an address the admin
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in

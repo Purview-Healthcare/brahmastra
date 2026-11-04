@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.68.0";
+const APP_VERSION = "2.69.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -1269,7 +1269,7 @@ function SettingsView({ me, setMe, ctx }) {
 
 /* ---------- shell ---------- */
 // Older screen names still open, inside the merged tabs.
-const NAV_ALIAS = { allocate: "inventory", locations: "clients", queue: "reports", teamtoday: "dashboard" };
+const NAV_ALIAS = { allocate: "inventory", locations: "clients", queue: "reports", teamtoday: "live", portfolio: "dashboard" };
 const USER_NAV = [["queue", "My day"], ["history", "My work"]];
 /* A person deletes their own sign-in. Typing the email is the confirmation. */
 function DeleteMyAccount({ me, onClose, onDeleted }) {
@@ -1328,7 +1328,7 @@ const navFor = (me, ho, fb) => {
   // and its count also shows on the Dashboard tab.
   const work = [["attention", "Needs attention"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["saag", "SAAG reference"]];
   const manage = [["client", "Client 360"], ["team", "Team"], ["templates", "Note templates"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : []), ...(me.is_admin || me.access_all ? [["audit", "Audit trail"]] : []), ...inbox];
-  return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ...(isPortfolioUser(me) ? [["portfolio", "Portfolio"]] : []), ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }, ["reports", "My day & reports"]];
+  return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["live", "Live status"], ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }, ["reports", "My day & reports"]];
 };
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
 const navItems = (nav) => nav.flatMap((x) => (Array.isArray(x) ? [x] : x.items));
@@ -1357,7 +1357,7 @@ function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {
   const results = [];
   pages.filter(([, l]) => !needle || has(l)).slice(0, needle ? 6 : 14).forEach(([k, l]) => results.push({ kind: "Page", key: "p" + k, label: l, run: () => go(k) }));
   if (needle && can("client")) ctx.clients.filter((c) => c.active && (has(c.name) || has(c.code))).slice(0, 5).forEach((c) => results.push({ kind: "Client", key: "c" + c.id, label: c.name, sub: "open Client 360", run: () => go("client", { client_id: c.id }) }));
-  if (needle && me.role === "supervisor" && can("dashboard")) (ctx.users || []).filter((u) => u.active && u.role === "user" && (has(u.name) || has(u.email))).slice(0, 5).forEach((u) => results.push({ kind: "Person", key: "u" + u.id, label: u.name, sub: "coaching card", run: () => openCoach(u.id) }));
+  if (needle && me.role === "supervisor" && can("live")) (ctx.users || []).filter((u) => u.active && u.role === "user" && (has(u.name) || has(u.email))).slice(0, 5).forEach((u) => results.push({ kind: "Person", key: "u" + u.id, label: u.name, sub: "coaching card", run: () => openCoach(u.id) }));
   found.rows.forEach((c) => results.push({ kind: "Claim", key: "k" + c.id, label: c.claim_no, phi: c.patient, sub: [c.client_name, c.payer, fmtMoney(c.balance), c.assigned_name ? "with " + c.assigned_name : c.state].filter(Boolean).join(" · "), run: () => openClaim(c.id) }));
   results.sort((a, b) => CMDK_ORDER.indexOf(a.kind) - CMDK_ORDER.indexOf(b.kind));
   const pick = (r) => { if (!r) return; onClose(); r.run(); };
@@ -1452,7 +1452,7 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   useEffect(() => { document.title = pageLabel + " · Brahmastra"; }, [pageLabel]);
   const allowedViews = [...navItems(nav).map(([k]) => k), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   useEffect(() => { if (!menu && !openG) return; const h = () => { setMenu(false); setOpenG(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu, openG]);
-  const navBadge = (k) => (k === "attention" || (k === "dashboard" && !deskOf(me, handoffs))) && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+  const navBadge = (k) => (k === "attention" || k === "live") && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
     : k === "handoffs" && handoffs && handoffs.n > 0 ? <span className={"badge " + (handoffs.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{handoffs.n}</span>
     : k === "feedback" && fb && fb.n > 0 ? <span className="badge amber" style={{ marginLeft: 6 }}>{fb.n}</span> : null;
   return (
@@ -1644,29 +1644,118 @@ function DeskDashboard({ ctx, desk, go }) {
     </div>
   );
 }
-/* ---------- the Dashboard: claims and the team in one place ----------
-   One set of filters (client, location, team lead for managers and above, dates) drives both parts. The inventory figures
-   are always as of now; what was worked, closed and loaded follows the dates. The team part is the live floor for Today
-   and each biller's totals for a week, a month or custom dates. */
-function DashboardView({ ctx, me, go, params }) {
+/* ---------- Live status: what everyone is working on right now ----------
+   Its own tab after Sasha's Third Eye. The live floor (who is in, on which claim and for how long, pace, left over split
+   into high priority and other), what is waiting on this person, and the claims waiting to be worked. Refreshes every
+   30 seconds; managers and above can narrow it to one team lead. */
+function LiveStatusView({ ctx, me, go, params }) {
   const p = params || {};
   const [clientId, setClientId] = useState(p.clientId || p.client_id || "");
   const [locId, setLocId] = useState(p.locationId || "");
   const [leadId, setLeadId] = useState("");
-  const [range, setRange] = useState(() => newRange("today"));
-  const span = rangeSpan(range);
-  const rangeMs = useMemo(() => (span && span[0] && span[1] ? { from_ms: dayBounds(span[0])[0], to_ms: dayBounds(span[1])[1] } : null), [range.key, range.from, range.to]);
-  const rangeLabel = rangeText(range);
   const leadsQ = useRpc("team.leads", {}, []);
   const canLead = !!(leadsQ.data && leadsQ.data.can_pick_lead && leadsQ.data.leads.length);
-  const leadName = leadId && leadsQ.data ? ((leadsQ.data.leads.find((l) => l.id === leadId) || {}).name || "") : "";
+  const base = { client_id: clientId || undefined, location_id: locId || undefined, lead_id: leadId || undefined };
+  const live = useRpc("team.huddle", base, [clientId, locId, leadId]);
+  const stats = useRpc("claims.stats", base, [clientId, locId, leadId]);
+  useEffect(() => { const t = setInterval(() => { if (document.visibilityState === "visible") { live.reload(); stats.reload(); } }, 30000); return () => clearInterval(t); }, [clientId, locId, leadId]);
+  const t = (live.data && live.data.totals) || {}, d = stats.data;
+  const st = (k) => (d && d.states.find((x) => x.state === k)) || { n: 0, amt: 0 };
+  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const openClaims = (extra) => go("claims", { clientId, locationId: locId, ...extra });
+  return (
+    <div className="stack">
+      <div className="row between top"><div><h1>Live status</h1><div className="sub">What everyone is working on right now, and the claims on their desks.</div></div><span className="small muted">{stamp}</span></div>
+      <div className="row dash-filters" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
+        {clientId && <div style={{ minWidth: 180 }}><LocationPicker ctx={ctx} clientId={clientId} locId={locId} setLocId={setLocId} /></div>}
+        {canLead && <div style={{ minWidth: 210 }}><Field label="Team lead"><Combo value={leadId} onChange={setLeadId} placeholder="All team leads"
+          options={leadsQ.data.leads.map((l) => ({ id: l.id, label: l.name + " · " + plural(l.n, "biller") }))} /></Field></div>}
+        <span className="badge teal live-badge">● Live · refreshes every 30 seconds</span>
+      </div>
+      <NeedsStrip go={go} />
+      {live.data && live.data.rows.length > 0 && <div className="grid dash-k6">
+        <Kpi tone="accent" label="In today" value={(t.people - t.out) + " of " + t.people} sub={t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
+        <Kpi label="Working now" value={<span className="teal-ink">{fmtInt(t.working)}</span>} sub="a claim open or entries in the last 30 minutes" />
+        <Kpi label="Idle now" value={<span className={t.idle ? "red-ink" : ""}>{t.idle}</span>} sub="no entry for 30 minutes" />
+        <Kpi label="Worked today" value={fmtInt(t.worked)} sub={"of " + fmtInt(t.capacity) + " target"} />
+        <Kpi label="Closed today" value={<span className="teal-ink">{fmtInt(t.closed)}</span>} sub="worked to closed" tone="good" />
+        <Kpi label="Left over" value={<span className={t.carried ? "amber-ink" : ""}>{fmtInt(t.carried)}</span>} sub={t.carried ? <><span className="red-ink b">{fmtInt(t.left_high)} high priority</span> · {fmtInt(t.carried - t.left_high)} other</> : "allocated before this shift, all worked"} />
+      </div>}
+      <LiveFloor ctx={ctx} me={me} go={go} q={live} clientId={clientId} locId={locId} grouped={canLead && !leadId} filtered={!!(clientId || leadId)} />
+      {d && <div className="grid g3">
+        <Kpi label="Unassigned" value={fmtInt(st("open").n)} sub={fmtMoney(st("open").amt) + " waiting for allocation"} onClick={() => openClaims({ state: "open" })} />
+        <Kpi label="With Posting / Submission" value={fmtInt(st("in_process").n)} sub={fmtMoney(st("in_process").amt) + " in process"} onClick={() => openClaims({ state: "in_process" })} />
+        <Kpi label="Follow-ups due today" value={<span className={d.follow_ups_due && d.follow_ups_due.n ? "amber-ink" : ""}>{fmtInt(d.follow_ups_due ? d.follow_ups_due.n : 0)}</span>} sub={fmtInt(d.overdue ? d.overdue.n : 0) + " overdue"} onClick={() => openClaims({ follow_up_due: true })} />
+      </div>}
+    </div>
+  );
+}
+/* ---------- Dashboard: Team status and Client reports ---------- */
+function DashboardHub(props) {
+  const { params } = props;
+  const pick = (x) => (x && (x.tab === "clients" || x.tab === "client") ? "clients" : "team");
+  const [tab, setTab] = useState(() => pick(params));
+  useEffect(() => { if (params && params.tab) setTab(pick(params)); }, [params && params.tab]);
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
     <div className="stack">
-      <div className="row between top">
-        <div><h1>Dashboard</h1><div className="sub">Claims and the team in one place. Pick the dates: every number below follows them.</div></div>
-        <span className="small muted">{stamp}</span>
-      </div>
+      <div className="row between top"><div><h1>Dashboard</h1><div className="sub">{tab === "team" ? "Team status: production and training, attainment and time on floor, for the dates picked." : "Client reports: each client's account at a glance. Click a client for its Client 360."}</div></div><span className="small muted">{stamp}</span></div>
+      <div className="seg2 dash-subtabs" role="tablist" style={{ alignSelf: "flex-start" }}>{[["team", "Team status"], ["clients", "Client reports"]].map(([k, l]) =>
+        <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
+      {tab === "team" ? <TeamStatusTab {...props} /> : <ClientReportsTab {...props} />}
+    </div>
+  );
+}
+const fmtHM = (m) => { if (m == null) return "–"; m = Math.round(m); const h = Math.floor(m / 60), mm = m % 60; return h ? h + " h" + (mm ? " " + String(mm).padStart(2, "0") + " m" : "") : mm + " m"; };
+const TS_STATUS_TONE = { Production: "green", Training: "blue", OJT: "blue", "Serving notice": "amber", Sabbatical: "gray" };
+const rampCell = (r) => { const x = r.ramp || {}; if (x.kind === "prod") return <span className="badge green">In production</span>; if (x.kind !== "ramp") return <span className="badge gray">{r.status}</span>;
+  if (x.flag === "nodate") return <span className="badge gray">No start date</span>;
+  const ext = x.extended ? " · date agreed" : "";
+  if (x.flag === "over") return <span className="badge red" title={"Was due in production " + fmtDate(x.due)}>Overdue · +{-x.days}d</span>; if (x.flag === "soon") return <span className="badge amber">Due {fmtDate(x.due)} · {x.days}d left{ext}</span>;
+  return <span className="badge gray">Due {fmtDate(x.due)} · {x.extended ? "date agreed" : "on track"}</span>; };
+const PERF_BADGE = { below: ["red", "Below the mark"], ok: ["green", "Meeting the mark"], ramp: ["blue", "In ramp-up"], pending: ["gray", "Day under way"], none: ["gray", "No entries yet"] };
+const perfCell = (r, mark) => { const b = PERF_BADGE[r.perf]; if (!b) return <span className="muted">–</span>;
+  const tip = r.perf === "ramp" ? "Training and OJT are not judged against the production mark" : r.perf === "pending" ? "Judged once the day is finished" : r.perf === "below" ? "Under " + mark + "% attainment" : "";
+  return <span className={"badge " + b[0]} title={tip}>{b[1]}</span>; };
+const attainStamp = (v) => v == null ? <span className="muted">–</span> : <span className={"stamp " + (v >= 95 ? "good" : v >= 80 ? "warn" : "bad")}>{v}%</span>;
+/* Dashboard > Team status: Sasha's Third Eye's Team Status, from Brahmastra's own data and the Purview Shastra roster.
+   Time on floor and idle time come from Purview Shastra once its feed sends them. */
+function TeamStatusTab({ ctx, me, go }) {
+  const [clientId, setClientId] = useState(""), [locId, setLocId] = useState(""), [leadId, setLeadId] = useState("");
+  const [range, setRange] = useState(() => newRange("week"));
+  const span = rangeSpan(range);
+  const leadsQ = useRpc("team.leads", {}, []);
+  const canLead = !!(leadsQ.data && leadsQ.data.can_pick_lead && leadsQ.data.leads.length);
+  const q = useRpc("team.status", { client_id: clientId || undefined, location_id: locId || undefined, lead_id: leadId || undefined, from: span && span[0], to: span && span[1] },
+    [clientId, locId, leadId, span && span[0], span && span[1]], !!(span && span[0]));
+  const d = q.data, rows = (d && d.rows) || [], t = (d && d.totals) || {};
+  const [closed, setClosed] = useState({});
+  const [edit, setEdit] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const save = async () => { setBusy(true); try { await rpc("team.saveNote", { user_id: edit.r.id, start_date: edit.start || "", end_date: edit.end || "", comment: edit.comment || "" }); toast("Saved for " + edit.r.name + "."); setEdit(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const groups = groupByLead(rows, true);
+  const word = rangeText(range).toLowerCase();
+  const sg = (d && d.suggestions) || { today: [], week: [], good: [] };
+  const copy = async () => {
+    const block = (title, list) => list.length ? title + "\n" + list.map((x) => "- " + x.who + (x.lead ? " (" + x.lead + ")" : "") + ": " + x.seen + ". " + x.do).join("\n") : "";
+    const text = ["Team status, " + word, block("Do today", sg.today), block("This week", sg.week), block("Keep going", sg.good)].filter(Boolean).join("\n\n");
+    try { await navigator.clipboard.writeText(text); toast("Copied: paste it into your 1:1 notes."); } catch (e) { toast("Could not copy here; select the text instead.", "err"); }
+  };
+  const csv = () => {
+    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Entries", "Target", "Performance", "Floor time needed (h)", "Left over", "Of them high priority", "Start", "Due in production / plan end", "Comment"];
+    const rampTxt = (x) => x.kind === "prod" ? "In production" : x.kind !== "ramp" ? "" : !x.due ? "No start date" : (x.flag === "over" ? "Overdue, was due " : "Due ") + x.due + (x.extended ? " (date agreed)" : "");
+    const line = (r) => [r.lead_name, r.name, r.doj, r.status, rampTxt(r.ramp) || r.status, r.attain == null ? "" : r.attain, r.attain == null ? "" : r.attain_basis === "done" ? "days up to yesterday" : "today",
+      r.worked, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10, r.left, r.left_high, r.start_date, r.end_date, r.comment];
+    downloadText(toCSV(rows, head.map((label, i) => ({ label, get: (r) => line(r)[i] }))), "Team status " + (span ? span[0] + " to " + span[1] : "") + ".csv");
+  };
+  const Sugg = ({ tone, title, list }) => { const people = []; for (const x of list) { let pp = people.find((y) => y.user_id === x.user_id); if (!pp) { pp = { user_id: x.user_id, who: x.who, lead: x.lead, items: [] }; people.push(pp); } pp.items.push(x); }
+    return <div><div className={"sg-h " + tone}>{title} · {people.length}</div>
+    {people.length ? <ul className="sg-list">{people.map((x) => <li key={x.user_id} className="sg"><span className={"sgdot " + tone} /><div>
+      <div><button type="button" className="btn link biller-link" style={{ padding: 0 }} onClick={() => go("claims", { assigned_to: x.user_id, state: "" })}>{x.who}</button>{x.lead ? <span className="tiny muted"> · {x.lead}</span> : null}</div>
+      {x.items.map((it, i) => <div key={i} className={i ? "mt8" : ""}><div className="small muted">{it.seen}</div><div className="sgdo">→ {it.do}</div></div>)}</div></li>)}</ul> : <div className="small muted" style={{ padding: "4px 10px" }}>Nothing here.</div>}</div>; };
+  return (
+    <div className="stack">
       <div className="row dash-filters" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
         <div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
         {clientId && <div style={{ minWidth: 180 }}><LocationPicker ctx={ctx} clientId={clientId} locId={locId} setLocId={setLocId} /></div>}
@@ -1674,9 +1763,63 @@ function DashboardView({ ctx, me, go, params }) {
           options={leadsQ.data.leads.map((l) => ({ id: l.id, label: l.name + " · " + plural(l.n, "biller") }))} /></Field></div>}
         <DateRange value={range} onChange={setRange} />
       </div>
-      <NeedsStrip go={go} />
-      <ClaimsSection ctx={ctx} go={go} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} locId={locId} setLocId={setLocId} leadId={leadId} leadName={leadName} rangeMs={rangeMs} rangeLabel={rangeLabel}
-        middle={<TeamSection ctx={ctx} me={me} go={go} clientId={clientId} locId={locId} leadId={leadId} range={range} span={span} rangeLabel={rangeLabel} grouped={canLead && !leadId} />} />
+      <ErrorBox error={q.error} />
+      {!d && !q.error ? <Spinner label="Loading…" /> : d && !rows.length ? <div className="card"><Empty>Nobody here for this selection.</Empty></div> : d && <>
+        {t.ramp_over > 0 && <div className="alert" style={{ background: "var(--red-soft)", borderColor: "rgba(201,79,79,.35)" }}><b className="red-ink">{plural(t.ramp_over, "person", "people")} past their ramp-up date:</b> {rows.filter((r) => r.ramp.flag === "over").map((r) => r.name + " (+" + (-r.ramp.days) + "d)").join(", ")}</div>}
+        <div className="grid dash-k6">
+          <Kpi tone="accent" label="Headcount" value={fmtInt(t.people)} sub={plural(t.leads, "team lead")} />
+          <Kpi label="In production" value={<span className="teal-ink">{fmtInt(t.production)}</span>} sub={t.people ? Math.round(t.production / t.people * 100) + "% of the team" : ""} />
+          <Kpi label="In training" value={<span className={t.training ? "amber-ink" : ""}>{fmtInt(t.training)}</span>} sub="training and OJT" />
+          <Kpi label="Floor time needed" value={fmtHM(t.floor_needed_min)} sub="8 h a working day, 4 h a half day" />
+          <Kpi label="On floor · idle" value={<span className="muted">–</span>} sub="from Purview Shastra (being connected)" />
+          <Kpi label="Attainment" value={t.attain == null ? "–" : t.attain + "%"} sub={t.attain_basis === "done" ? fmtInt(t.worked_done) + " of " + fmtInt(Math.round(t.target_done)) + " claims up to yesterday" : fmtInt(t.worked_today) + " of " + fmtInt(Math.round(t.target_today)) + " claims today"} />
+        </div>
+        <div className="card">
+          <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>Team status by team lead</div><button className="btn sm" onClick={csv}>⬇ CSV for supervisors</button></div>
+          <div className="table-wrap mt8"><table className="t ts">
+            <thead><tr><th>Team lead / associate</th><th>DOJ</th><th>Status</th><th>Ramp-up / plan</th><th className="num">Attainment</th><th className="num" title="Floor time needed: 8 h a working day, 4 h a half day">Floor needed</th><th className="num">On floor</th><th className="num">Idle</th><th>Performance</th><th>Comment</th></tr></thead>
+            <tbody>{groups.map((g) => { const open = !closed[g.key || "none"]; const gr = g.rows, wk = gr.reduce((a, r) => a + r.worked, 0), tg = gr.reduce((a, r) => a + r.target, 0);
+              return <React.Fragment key={g.key || "none"}>
+                <tr className="tlrow click" onClick={() => setClosed((c) => ({ ...c, [g.key || "none"]: open }))}><td><span className="caret">{open ? "▾" : "▸"}</span> <b>{g.name}</b></td>
+                  <td colSpan={3} className="small muted">{plural(gr.length, "person", "people")} · {gr.filter((r) => r.status === "Production").length} production{gr.some((r) => r.status !== "Production") ? " · " + gr.filter((r) => r.status !== "Production").length + " other" : ""}</td>
+                  <td className="num">{attainStamp((() => { const wd = gr.reduce((a, r) => a + r.worked_done, 0), td = gr.reduce((a, r) => a + r.target_done, 0), wt = gr.reduce((a, r) => a + r.worked_today, 0), tt = gr.reduce((a, r) => a + r.target_today, 0); return td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null; })())}</td><td className="num">{fmtHM(gr.reduce((a, r) => a + r.floor_needed_min, 0))}</td><td className="num muted">–</td><td className="num muted">–</td>
+                  <td>{gr.some((r) => r.perf === "below") ? <span className="badge amber">{plural(gr.filter((r) => r.perf === "below").length, "outlier")}</span> : <span className="badge green">Clear</span>}</td><td /></tr>
+                {open && gr.map((r) => <tr key={r.id}>
+                  <td><span className="child">•</span><button type="button" className="btn link biller-link" style={{ padding: 0 }} onClick={() => go("claims", { assigned_to: r.id, state: "" })}>{r.name}</button></td>
+                  <td className="small nowrap">{r.doj ? fmtDate(r.doj) : <span className="muted">–</span>}</td>
+                  <td><span className={"badge " + (TS_STATUS_TONE[r.status] || "gray")}>{r.status}</span></td>
+                  <td>{rampCell(r)}</td>
+                  <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " of " + Math.round(r.target_done) + " to yesterday" : r.worked_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.worked_today ? " · " + r.worked_today + " today" : ""}</div></td>
+                  <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
+                  <td className="num muted">–</td><td className="num muted">–</td>
+                  <td>{perfCell(r, d.perf_mark)}{r.out_today ? <div className="tiny muted">{r.out_today === "half" ? "half day today" : "out today"}</div> : null}</td>
+                  <td><button type="button" className="btn sm note-btn" title={r.comment || "Add a start, end or comment"} onClick={() => setEdit({ r, start: r.start_date, end: r.end_date, comment: r.comment })}>{r.comment ? <span className="clamp3">{r.comment}</span> : <span className="muted">+ Add note</span>}</button></td>
+                </tr>)}
+              </React.Fragment>; })}</tbody></table></div>
+          <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> and <b>idle</b> come from Purview Shastra once its feed sends them. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
+        </div>
+        <div className="card">
+          <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>Suggestions · {word}</div><button className="btn sm" onClick={copy}>⬇ Copy for my 1:1s</button></div>
+          <div className="sg-grid mt8"><Sugg tone="red" title="Do today" list={sg.today} /><Sugg tone="amber" title="This week" list={sg.week} /><Sugg tone="green" title="Keep going" list={sg.good} /></div>
+          <div className="tiny muted mt8">Built from the same figures as the table, urgent first. Each pointer says what we see and what to do. Time on floor and idle time join them once Purview Shastra sends them.</div>
+        </div>
+        <div className="grid ts-foot">
+          <div className="card"><div className="cv-sec">Performance by status · {word}{t.attain_basis === "done" ? " · counted up to yesterday" : ""}</div>
+            <div className="table-wrap"><table className="t"><thead><tr><th>Status</th><th className="num">People</th><th className="num">Claims</th><th className="num">Target</th><th className="num">Attainment</th><th className="num">Claims a day</th></tr></thead>
+              <tbody>{d.by_status.map((x) => <tr key={x.status}><td className="b">{x.status}</td><td className="num">{x.people}</td><td className="num">{fmtInt(x.worked)}</td><td className="num">{fmtInt(x.target)}</td><td className="num">{attainStamp(x.attain)}</td><td className="num">{x.per_day == null ? "–" : x.per_day}</td></tr>)}</tbody></table></div></div>
+          <div className="card"><div className="cv-sec">Roster checks</div>
+            <div className="stack" style={{ gap: 8 }}>{d.checks.map((c, i) => <div key={i} className="row" style={{ gap: 8 }}><span className={"badge " + (c.n ? "amber" : "green")}>{c.n}</span><span className="small">{c.text}</span></div>)}
+              <div className="tiny muted">Fix these in Purview Shastra; Brahmastra picks them up on the next roster sync.</div></div></div>
+        </div>
+      </>}
+      {edit && <Modal title={edit.r.name} sub="Start, end and comment on Team status: every lead who sees this person sees them." narrow onClose={() => setEdit(null)}
+        footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={save}>Save</button></>}>
+        <div className="stack">
+          <div className="grid g2"><Field label="Start (training, OJT or a plan)" hint="Empty: the date of joining"><input className="input" type="date" value={edit.start || ""} onChange={(e) => setEdit({ ...edit, start: e.target.value })} /></Field>
+            <Field label="Due in production (or plan end)" hint={"Empty: " + d.ramp_weeks + " weeks from the start"}><input className="input" type="date" value={edit.end || ""} onChange={(e) => setEdit({ ...edit, end: e.target.value })} /></Field></div>
+          <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={edit.comment || ""} onChange={(e) => setEdit({ ...edit, comment: e.target.value })} placeholder="What was agreed, what to check next" /></Field>
+          {edit.r.comment_by && <div className="tiny muted">Last saved by {edit.r.comment_by}{edit.r.comment_at ? " · " + fmtWhen(edit.r.comment_at) : ""}</div>}
+        </div></Modal>}
     </div>
   );
 }
@@ -1694,7 +1837,7 @@ function NeedsStrip({ go }) {
   );
 }
 /* The claims part: the inventory as of now (click a bar to narrow the page to it) and the activity for the dates. */
-function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId, leadName, rangeMs, rangeLabel, middle }) {
+function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId, leadName, rangeMs, rangeLabel, middle, compact }) {
   /* Cross-filters, Power BI style: a clicked slice narrows every figure on the page. */
   const [fl, setFl] = useState({});
   const toggleFl = (k, v) => setFl((f) => (f[k] === v ? Object.fromEntries(Object.entries(f).filter(([x]) => x !== k)) : { ...f, [k]: v }));
@@ -1715,8 +1858,8 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
   const word = rangeLabel.toLowerCase();
   return (
     <>
-    <div className="card dash-claims">
-      <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>Claims</div><span className="small muted">the inventory as of now · worked, closed and loaded for {word}</span></div>
+    <div className={compact ? "dash-claims" : "card dash-claims"} style={compact ? { padding: "6px 2px 0" } : undefined}>
+      <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>{compact ? "Claims in detail" : "Claims"}</div><span className="small muted">{compact ? "the inventory as of now · click a bar to narrow these charts" : "the inventory as of now · worked, closed and loaded for " + word}</span></div>
       {overdueOpen && <OverdueModal ctx={ctx} clientId={clientId} locId={locId} onClose={() => setOverdueOpen(false)} onChanged={() => stats.reload()} />}
       {d && d.overdue && d.overdue.n > 0 && (
         <div className="row between mt8" style={{ borderLeft: "4px solid var(--red)", background: "var(--red-soft)", borderRadius: 8, padding: "8px 12px" }}>
@@ -1736,7 +1879,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
       )}
       <ErrorBox error={stats.error || act.error} />
       {!d && !stats.error && <div className="mt8"><Spinner label="Loading…" /></div>}
-      {d && (
+      {d && !compact && (
         <div className="stack mt8">
           <div className="grid dash-k6">
             <Kpi label="Workable AR" value={fmtMoney(workableAmt)} sub={plural(workable, "claim") + " open, on desks or worked"} tone="accent" onClick={() => openClaims({ state: "workable" })} />
@@ -1760,7 +1903,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
     {middle}
     {d && (
         <div className="stack dash-details">
-          <div className="cv-sec" style={{ margin: "6px 0 0" }}>Claims in detail · click a bar to narrow the whole page</div>
+          {!compact && <div className="cv-sec" style={{ margin: "6px 0 0" }}>Claims in detail · click a bar to narrow the whole page</div>}
           <CallTimeCard clientId={clientId} locId={locId} rangeMs={rangeMs} rangeLabel={rangeLabel} />
           <div className="card"><h3>By client and location</h3><div className="sub mb">Where the inventory stands at each location. Click a row to focus the dashboard on it.</div>
             <div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Location</th><th className="r">Unassigned</th><th className="r">On desks</th><th className="r">Worked, awaiting follow-up</th><th className="r">In process</th><th className="r">Overdue</th><th className="r">Closed</th><th className="r">Workable $</th></tr></thead>
@@ -4805,71 +4948,46 @@ function FeedbackInbox({ ctx, me, refreshFb }) {
 }
 /* ---------- Team today (team leads): who is on what right now, pace, carried over, out today, one-click rebalance ---------- */
 const TT_STATUS = { working: ["green", "Working"], idle: ["red", "Idle"], not_started: ["amber", "Not started"], done: ["teal", "Desk cleared"], out: ["gray", "Out today"] };
-/* The Dashboard's team part. Today: the live floor (who is in, pace against target, on desk, closed today, left over split
-   into high priority and other), with Out today, Rebalance and the coaching card. Other dates: each biller's totals against
-   their target for the days they were in. A biller's name opens their claims. Managers and above see the billers grouped by
-   team lead (or one team lead's billers when they pick one). */
+/* The live floor on Live status: each biller's status, the claim they have open (and for how long), pace today, on desk,
+   closed today and left over (high priority / other), with Out today, Rebalance and the coaching card. A biller's name
+   opens their claims; the claim number opens the claim. Managers and above see the billers grouped by team lead. */
 const leftCell = (r) => !r.carried ? <span className="muted">0</span> : <span className="row" style={{ gap: 5, flexWrap: "nowrap" }}><b className="mono">{r.carried}</b>
   {r.left_high ? <span className="badge red">{r.left_high} high</span> : null}{r.left_other ? <span className="badge gray">{r.left_other} other</span> : null}</span>;
-const fmtMin = (m) => { m = Math.round(m || 0); return m >= 60 ? Math.floor(m / 60) + " h " + String(m % 60).padStart(2, "0") + " m" : m + " m"; };
 function groupByLead(rows, grouped) {
   if (!grouped) return [{ key: "", rows }];
   const g = new Map();
   for (const r of rows) { const k = r.lead_id || ""; if (!g.has(k)) g.set(k, { key: k, name: r.lead_name || "No team lead on the roster", rows: [] }); g.get(k).rows.push(r); }
   return [...g.values()].sort((a, b) => (a.key ? 0 : 1) - (b.key ? 0 : 1) || a.name.localeCompare(b.name));
 }
-function TeamSection({ ctx, me, go, clientId, locId, leadId, range, span, rangeLabel, grouped }) {
-  const today = range.key === "today";
-  const base = { client_id: clientId || undefined, location_id: locId || undefined, lead_id: leadId || undefined };
-  const live = useRpc("team.huddle", base, [clientId, locId, leadId], today);
-  const per = useRpc("team.range", { ...base, from: span && span[0], to: span && span[1] }, [clientId, locId, leadId, span && span[0], span && span[1]], !today && !!(span && span[0]));
-  useEffect(() => { if (!today) return undefined; const t = setInterval(() => { if (document.visibilityState === "visible") live.reload(); }, 30000); return () => clearInterval(t); }, [today, clientId, locId, leadId]);
-  const q = today ? live : per;
+function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
   const [busy, setBusy] = useState(false);
   const [coach, setCoach] = useState(null);
   const [outFor, setOutFor] = useState(null);
-  const rows = (q.data && q.data.rows) || [], t = (q.data && q.data.totals) || {};
-  const setOut = async (r, out, reason) => { setBusy(true); try { await rpc("team.setOut", { user_id: r.id, out, reason }); setOutFor(null); live.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const [claim, setClaim] = useState(null);
+  const rows = (q.data && q.data.rows) || [];
+  const setOut = async (r, out, reason) => { setBusy(true); try { await rpc("team.setOut", { user_id: r.id, out, reason }); setOutFor(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const rebalance = async (r) => {
     setBusy(true);
-    try { const x = await rpc("team.rebalance", { user_id: r.id }); toast(x.moved ? `Moved ${x.moved} of ${r.name}'s claims: ` + x.to.map((y) => y.name + " " + y.count).join(", ") + (x.left ? `. ${x.left} stayed (nobody on that client had room).` : ".") : "Nothing to move: no untouched claims, or nobody on those clients has room."); live.reload(); }
+    try { const x = await rpc("team.rebalance", { user_id: r.id }); toast(x.moved ? `Moved ${x.moved} of ${r.name}'s claims: ` + x.to.map((y) => y.name + " " + y.count).join(", ") + (x.left ? `. ${x.left} stayed (nobody on that client had room).` : ".") : "Nothing to move: no untouched claims, or nobody on those clients has room."); q.reload(); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
-  const nameCell = (r, sub) => <td><button type="button" className="btn link biller-link" style={{ padding: 0, fontWeight: 700 }} title={"Open " + r.name + "'s claims"} onClick={() => go("claims", { assigned_to: r.id, clientId, locationId: locId, state: "" })}>{r.name} ›</button>{sub ? <div className="tiny muted">{sub}</div> : null}</td>;
   const groups = groupByLead(rows, grouped);
-  const cols = today ? 7 : 8;
-  const word = rangeLabel.toLowerCase();
   return (
     <div className="card dash-team">
-      <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>Team · {word}</div>
-        <span className="small muted">{today ? "the live floor · refreshes every 30 seconds · click a name to open their claims" : "totals for these dates · click a name to open their claims"}</span></div>
-      {q.error ? <div className="alert err mt8">{q.error}</div> : !q.data ? <div className="mt8"><Spinner label="Loading…" /></div> : !rows.length ? <div className="mt8"><Empty>{clientId || leadId ? "Nobody here for this selection." : "Nobody on your team yet. Billers come from the roster and the clients' teams."}</Empty></div> : <>
-        {today ? <div className="grid g5 mt8">
-          <Kpi tone="accent" label="In today" value={(t.people - t.out) + " of " + t.people} sub={t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
-          <Kpi label="Worked this shift" value={<span className="teal-ink">{fmtInt(t.worked)}</span>} sub={"of " + fmtInt(t.capacity) + " target · " + fmtInt(t.closed) + " closed"} />
-          <Kpi label="Idle now" value={<span className={t.idle ? "red-ink" : ""}>{t.idle}</span>} sub="no entry for 30 minutes" />
-          <Kpi label="Left over" value={<span className={t.carried ? "amber-ink" : ""}>{fmtInt(t.carried)}</span>} sub={t.carried ? <><span className="red-ink b">{fmtInt(t.left_high)} high priority</span> · {fmtInt(t.carried - t.left_high)} other</> : "allocated before this shift, all worked"} />
-          <Kpi label={t.out_on_desk ? "On absent desks" : "Behind pace"} value={<span className={t.out_on_desk ? "red-ink" : t.behind ? "amber-ink" : ""}>{fmtInt(t.out_on_desk || t.behind)}</span>} sub={t.out_on_desk ? "rebalance them below" : plural(t.behind, "biller")} />
-        </div> : <div className="grid g4 mt8">
-          <Kpi tone="accent" label={"Worked · " + word} value={<span className="teal-ink">{fmtInt(t.worked)}</span>} sub={"of " + fmtInt(t.target) + " target" + (t.target ? " · " + Math.round(t.worked / t.target * 100) + "%" : "")} />
-          <Kpi label="Closed" value={fmtInt(t.closed)} sub={fmtMoney(t.closed_amt)} tone="good" />
-          <Kpi label="Call time" value={fmtMin(t.call_min)} sub={plural(t.calls, "call")} />
-          <Kpi label="Weekdays" value={fmtInt(q.data.workdays)} sub={fmtDate(q.data.from) + " to " + fmtDate(q.data.to)} />
-        </div>}
+      <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>On the floor now</div><span className="small muted">click a name to open their claims, a claim number to open the claim</span></div>
+      {q.error ? <div className="alert err mt8">{q.error}</div> : !q.data ? <div className="mt8"><Spinner label="Loading…" /></div> : !rows.length ? <div className="mt8"><Empty>{filtered ? "Nobody here for this selection." : "Nobody on your team yet. Billers come from the roster and the clients' teams."}</Empty></div> : <>
         <div className="table-wrap mt8"><table className="t">
-          {today
-            ? <thead><tr><th>Biller</th><th>Now</th><th>Pace this shift</th><th className="num">On desk</th><th className="num">Closed today</th><th>Left over <span className="tiny" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 500 }}>(allocated, not worked)</span></th><th /></tr></thead>
-            : <thead><tr><th>Biller</th><th className="num">Days in</th><th className="num">Worked</th><th className="num">Closed</th><th className="num">Calls</th><th className="num">Call time</th><th className="num">Target</th><th>Of target</th></tr></thead>}
+          <thead><tr><th>Biller</th><th>Now</th><th>Working on</th><th>Pace today</th><th className="num">On desk</th><th className="num">Closed today</th><th title="Allocated before this shift and not worked yet">Left over</th><th /></tr></thead>
           <tbody>{groups.map((g) => <React.Fragment key={g.key || "none"}>
-            {grouped && <tr className="lead-grp"><td colSpan={cols}><b>{g.name}</b> <span className="muted">· {plural(g.rows.length, "biller")}{today && g.rows.some((r) => r.status === "out") ? " · " + g.rows.filter((r) => r.status === "out").length + " out today" : ""}</span></td></tr>}
-            {g.rows.map((r) => today ? (
+            {grouped && <tr className="lead-grp"><td colSpan={8}><b>{g.name}</b> <span className="muted">· {plural(g.rows.length, "biller")}{g.rows.some((r) => r.status === "out") ? " · " + g.rows.filter((r) => r.status === "out").length + " out today" : ""}</span></td></tr>}
+            {g.rows.map((r) => (
               <tr key={r.id}>
-                {nameCell(r, (r.shift || "no shift on the roster") + " · target " + r.capacity)}
-                <td style={{ minWidth: 170 }}><span className={"badge " + TT_STATUS[r.status][0]}>{TT_STATUS[r.status][1]}{r.status === "idle" && r.idle_min != null ? " · " + r.idle_min + " min" : ""}</span>
-                  {r.current ? <div className="tiny muted" style={{ marginTop: 3 }}>on <span className="mono">{r.current.claim_no}</span> · {r.current.client}{r.current.minutes != null ? " · " + r.current.minutes + " min" : ""}</div>
-                    : r.out ? <div className="tiny muted" style={{ marginTop: 3 }}>{r.out.reason || "marked out"} · by {r.out.by}</div> : null}</td>
-                <td style={{ minWidth: 190 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
+                <td><button type="button" className="btn link biller-link" style={{ padding: 0, fontWeight: 700 }} title={"Open " + r.name + "'s claims"} onClick={() => go("claims", { assigned_to: r.id, clientId, locationId: locId, state: "" })}>{r.name} ›</button><div className="tiny muted">{(r.shift || "no shift on the roster") + " · target\u00a0" + r.capacity}</div></td>
+                <td><span className={"badge " + TT_STATUS[r.status][0]}>{TT_STATUS[r.status][1]}{r.status === "idle" && r.idle_min != null ? " · " + r.idle_min + " min" : ""}</span></td>
+                <td style={{ minWidth: 190 }}>{r.current ? <><button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.current.id)}>{r.current.claim_no || "claim"}</button>{r.current.minutes != null ? <span className="small muted"> · {r.current.minutes} min</span> : null}<div className="tiny muted">{[r.current.client, r.current.payer, r.current.balance != null ? fmtMoney(r.current.balance) : ""].filter(Boolean).join(" · ")}</div></>
+                  : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span> : <span className="tiny muted">–</span>}</td>
+                <td style={{ minWidth: 180 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
                   <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}</div></>}</td>
                 <td className="num">{r.on_desk}</td>
                 <td className="num">{r.closed || <span className="muted">0</span>}</td>
@@ -4879,24 +4997,15 @@ function TeamSection({ ctx, me, go, clientId, locId, leadId, range, span, rangeL
                   {r.status === "out" ? <><button className="btn sm" disabled={busy} onClick={() => setOut(r, false)}>In after all</button> {r.on_desk > 0 && <button className="btn sm primary" disabled={busy} onClick={() => rebalance(r)}>Rebalance {r.on_desk}</button>}</>
                     : <button className="btn sm" disabled={busy} onClick={() => setOutFor({ r, reason: "" })}>Out today</button>}
                 </td>
-              </tr>) : (
-              <tr key={r.id}>
-                {nameCell(r, "target " + r.capacity + " a day" + (r.days_out ? " · out " + plural(r.days_out, "day") : ""))}
-                <td className="num">{r.days_in}</td>
-                <td className="num b">{fmtInt(r.worked)}</td>
-                <td className="num">{fmtInt(r.closed)}</td>
-                <td className="num">{fmtInt(r.calls)}</td>
-                <td className="num">{fmtMin(r.call_min)}</td>
-                <td className="num">{fmtInt(r.target)}</td>
-                <td style={{ minWidth: 170 }}>{r.pct == null ? <span className="tiny muted">no target days</span> : <div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.pct) + "%", background: r.pct < 90 ? "#E8A13C" : undefined }} /></div><span className="small mono">{r.pct}%</span></div>}</td>
               </tr>))}
           </React.Fragment>)}</tbody></table></div>
-        <div className="tiny muted mt8">{today ? "Pace compares entries this shift with the target spread over the shift from the roster. Left over is what was allocated before this shift and is still not worked; high priority is the High tier. Rebalance hands untouched claims to people in today on the same client." : "Target is each biller's daily target times the weekdays in these dates they were in (days marked Out today are left out). Closed counts the claims they worked to closed in these dates."}</div>
+        <div className="tiny muted mt8">Pace compares entries this shift with the target spread over the shift from the roster. Left over is what was allocated before this shift and is still not worked; high priority is the High tier. Rebalance hands untouched claims to people in today on the same client.</div>
       </>}
       {outFor && <Modal title={"Out today · " + outFor.r.name} narrow onClose={() => setOutFor(null)} footer={<><button className="btn" onClick={() => setOutFor(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => setOut(outFor.r, true, outFor.reason)}>Mark out</button></>}>
         <div className="stack"><Field label="Reason (optional)"><Combo value={outFor.reason} onChange={(v) => setOutFor({ ...outFor, reason: v })} placeholder="Pick or leave empty…" options={["Leave", "Sick", "Half day", "Training", "Other work"].map((x) => ({ id: x, label: x }))} /></Field>
-          <div className="small muted">Then use Rebalance to hand their {outFor.r.on_desk} claims to the people in today.</div></div></Modal>}
+          <div className="small muted">Then use Rebalance to hand their {outFor.r.on_desk} claims to the people in today. A half day counts 4 hours of floor time on Team status.</div></div></Modal>}
       {coach && <CoachDrawer userId={coach} onClose={() => setCoach(null)} />}
+      {claim && <ClaimDrawer id={claim} ctx={ctx} me={me} onClose={() => setClaim(null)} onChanged={() => q.reload()} />}
     </div>
   );
 }
@@ -4965,36 +5074,50 @@ function TemplatesView({ ctx, me }) {
 /* ---------- Portfolio (VP, admins, managers): every client worst first, managers side by side, data freshness ---------- */
 const HEALTH_UI = { good: ["green", "On track"], watch: ["amber", "Needs attention"], risk: ["red", "At risk"] };
 const isPortfolioUser = (me) => !!me && me.role === "supervisor" && (me.is_admin || me.access_all || me.roster_kind === "manager");
-function PortfolioView({ me, go }) {
-  const q = useRpc("portfolio.overview", {}, []);
+/* Dashboard > Client reports: what was the Portfolio, for team leads too (their own clients): every client worst first,
+   with the reasons, unassigned and collected for the dates; the claims in detail; managers side by side and data freshness. */
+function ClientReportsTab({ ctx, me, go }) {
+  const [clientId, setClientId] = useState(""), [leadId, setLeadId] = useState("");
   const [dr, setDr] = useState(() => newRange("month"));
   const [from, to] = rangeSpan(dr);
-  const mq = useRpc("portfolio.managers", { from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1] }, [from, to]);
+  const ms = { from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1] };
+  const leadsQ = useRpc("team.leads", {}, []);
+  const canLead = !!(leadsQ.data && leadsQ.data.can_pick_lead && leadsQ.data.leads.length);
+  const leadName = leadId && leadsQ.data ? ((leadsQ.data.leads.find((l) => l.id === leadId) || {}).name || "") : "";
+  const q = useRpc("portfolio.overview", { client_id: clientId || undefined, lead_id: leadId || undefined, ...ms }, [clientId, leadId, from, to]);
+  const mgr = isPortfolioUser(me);
+  const mq = useRpc("portfolio.managers", ms, [from, to], mgr);
   const d = q.data, t = d && d.totals;
   const chg = (cur, prev, goodDown) => { if (prev == null || !prev) return null; const c = Math.round((cur - prev) / Math.abs(prev) * 100); if (!c) return null; const good = goodDown ? c < 0 : c > 0; return <span className={"c3-d " + (good ? "up" : "dn")}>{c > 0 ? "▲" : "▼"}{Math.abs(c)}%</span>; };
   const ago = (ms) => { if (!ms) return "never"; const dd = Math.floor((Date.now() - ms) / 86400000); return dd <= 0 ? "today" : dd === 1 ? "yesterday" : dd + " days ago"; };
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <div className="row between"><div><h1>Portfolio</h1><div className="sub">Every client{me.access_all || me.is_admin ? "" : " in your span"}, worst first, with the reasons. Click a client for its Client 360.</div></div>
-        {(me.is_admin || me.access_all) && <button className="btn" onClick={() => go("audit")}>Audit trail</button>}</div>
+      <div className="row dash-filters" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div>
+        {canLead && <div style={{ minWidth: 210 }}><Field label="Team lead"><Combo value={leadId} onChange={setLeadId} placeholder="All team leads"
+          options={leadsQ.data.leads.map((l) => ({ id: l.id, label: l.name + " · " + plural(l.n, "biller") }))} /></Field></div>}
+        <DateRange value={dr} onChange={setDr} />
+        {(me.is_admin || me.access_all) && <button className="btn" style={{ marginLeft: "auto" }} onClick={() => go("audit")}>Audit trail</button>}</div>
       {!d ? <Spinner label="Loading…" /> : <>
-        <div className="c3-kpis" style={{ gridTemplateColumns: "repeat(6,minmax(0,1fr))" }}>
-          <Kpi tone="accent" label="Clients" value={t.clients} sub={<>{t.at_risk ? <span className="red-ink b">{t.at_risk} at risk</span> : "none at risk"}{t.watch ? " · " + t.watch + " to watch" : ""}</>} />
-          <Kpi label="AR, all clients" value={fmtMoney(t.ar)} sub={t.ar_month_ago ? <>{chg(t.ar, t.ar_month_ago, true) || "no change"} vs a month ago</> : "change shows after a month of readings"} />
+        <div className="grid dash-k6">
+          <Kpi tone="accent" label="Workable AR" value={fmtMoney(t.ar)} sub={<>{plural(t.clients, "client")} · {t.at_risk ? <span className="red-ink b">{t.at_risk} at risk</span> : "none at risk"}{t.ar_month_ago ? <> · {chg(t.ar, t.ar_month_ago, true) || "no change"} vs a month ago</> : null}</>} />
+          <Kpi label="Unassigned" value={fmtInt(t.open_n)} sub={fmtMoney(t.open_bal) + " waiting for allocation"} />
           <Kpi label="Over 90 days" value={<span className={t.over90_pct > d.target ? "red-ink" : "teal-ink"}>{t.over90_pct}%</span>} sub={"target ≤ " + d.target + "%"} />
-          <Kpi label="SLA, average" value={t.sla_avg != null ? <span className={t.sla_avg < 90 ? "amber-ink" : "teal-ink"}>{t.sla_avg}%</span> : "–"} sub="latest score per client" />
-          <Kpi label="Collected this month" value={<span className="teal-ink">{fmtMoney(t.collected_month)}</span>} sub="from payment posting" />
-          <Kpi label="Missed tasks" value={fmtInt(t.missed)} sub={fmtMoney(t.waiting_bal) + " waiting on clients"} />
+          <Kpi label={"Collected · " + rangeText(dr).toLowerCase()} value={<span className="teal-ink">{fmtMoney(t.collected_month)}</span>} sub="from payment posting" />
+          <Kpi label="TFL risk" value={<span className={t.tfl_soon_n ? "red-ink" : ""}>{fmtInt(t.tfl_soon_n)}</span>} sub={fmtMoney(t.tfl_soon) + " due in 30 days"} />
+          <Kpi label="SLA, average" value={t.sla_avg != null ? <span className={t.sla_avg < 90 ? "amber-ink" : "teal-ink"}>{t.sla_avg}%</span> : "–"} sub={fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
         </div>
         <div className="card tight"><div className="table-wrap"><table className="t">
-          <thead><tr><th>Client</th><th>Health</th><th>Team lead · manager</th><th className="num">AR</th><th className="num">Over 90</th><th className="num">SLA</th><th className="num">Missed</th><th>Waiting on client</th><th className="num">TFL risk</th><th title="Claims still to work, at the pace of the last two weeks">Days to clear</th><th>Last inventory</th></tr></thead>
+          <thead><tr><th>Client · health</th><th>Team lead · manager</th><th className="num">AR</th><th className="num">Unassigned</th><th className="num">Over 90</th><th className="num">Collected</th><th className="num">SLA</th><th className="num">Missed</th><th>Waiting<br />on client</th><th className="num">TFL risk</th><th title="Claims still to work, at the pace of the last two weeks">Days to<br />clear</th><th>Last<br />inventory</th></tr></thead>
           <tbody>{d.rows.map((r) => (
             <tr key={r.client_id} className="click" onClick={() => go("client", { client_id: r.client_id })}>
-              <td className="b" style={{ whiteSpace: "nowrap" }}>{r.client}</td>
-              <td style={{ maxWidth: 280 }}><span className={"badge " + HEALTH_UI[r.health][0]}>{HEALTH_UI[r.health][1]}</span>{r.reasons.length ? <div className="tiny muted" style={{ marginTop: 3 }} title={r.reasons.join("\n")}>{r.reasons[0]}{r.reasons.length > 1 ? " · +" + (r.reasons.length - 1) + " more" : ""}</div> : null}</td>
+              <td style={{ minWidth: 230, maxWidth: 320 }}><div className="row" style={{ gap: 8, flexWrap: "nowrap" }}><b style={{ whiteSpace: "nowrap" }}>{r.client}</b><span className={"badge " + HEALTH_UI[r.health][0]}>{HEALTH_UI[r.health][1]}</span></div>
+                {r.reasons.length ? <div className="tiny muted" style={{ marginTop: 3 }} title={r.reasons.join("\n")}>{r.reasons[0]}{r.reasons.length > 1 ? " · +" + (r.reasons.length - 1) + " more" : ""}</div> : null}</td>
               <td className="small">{r.tl.join(", ") || "–"}<div className="tiny muted">{r.manager.join(", ")}</div></td>
               <td className="num mono">{fmtMoney(r.ar)} {chg(r.ar, r.ar_month_ago, true)}</td>
+              <td className="num">{fmtInt(r.open_n)}<div className="tiny muted">{fmtMoney(r.open_bal)}</div></td>
               <td className={"num " + (r.over90_pct > d.target ? "red-ink" : "")}>{r.over90_pct}%</td>
+              <td className="num mono">{fmtMoney(r.collected_month)}</td>
               <td className="num">{r.sla ? <span className={r.sla.score < 90 ? "amber-ink b" : ""}>{r.sla.score}%</span> : <span className="tiny muted">–</span>}</td>
               <td className="num">{r.missed || "–"}</td>
               <td className="small">{r.waiting ? <>{fmtMoney(r.waiting.bal)} · {r.waiting.n}<div className="tiny muted">oldest {r.waiting.oldest} d</div></> : "–"}</td>
@@ -5002,12 +5125,13 @@ function PortfolioView({ me, go }) {
               <td className="small">{r.days_to_clear != null ? <><b className={r.days_to_clear > 20 ? "red-ink" : r.days_to_clear > 10 ? "amber-ink" : ""}>{r.days_to_clear} days</b><div className="tiny muted">{fmtInt(r.to_work)} claims · {r.per_day}/day · {r.people} people</div></> : <span className="tiny muted">{r.to_work ? fmtInt(r.to_work) + " claims, no work in 2 weeks" : "nothing to work"}</span>}</td>
               <td className="small">{ago(r.last_inventory)}</td>
             </tr>))}</tbody></table></div></div>
+        <ClaimsSection compact ctx={ctx} go={go} clientId={clientId} setClientId={setClientId} locId="" setLocId={() => {}} leadId={leadId} leadName={leadName} rangeMs={ms} rangeLabel={rangeText(dr)} />
         <div className="c3-g2">
-          <div className="card"><div className="row between"><h3 className="c3-h">Managers side by side</h3><DateRange value={dr} onChange={setDr} label="" /></div>
+          {mgr && <div className="card"><div className="row between"><h3 className="c3-h">Managers side by side · {rangeText(dr).toLowerCase()}</h3></div>
             {!mq.data ? <Spinner label="Loading…" /> : !mq.data.rows.length ? <Empty>No managers on the roster yet.</Empty> : <div className="table-wrap"><table className="t">
               <thead><tr><th>Manager</th><th className="num">Clients</th><th className="num">People</th><th className="num">Entries</th><th className="num">Skips</th><th className="num">Missed</th><th className="num">Escalations &gt; 24 h</th><th className="num">SLA avg</th></tr></thead>
               <tbody>{mq.data.rows.map((m) => <tr key={m.id}><td className="b">{m.name}</td><td className="num" title={m.clients.join(", ")}>{m.clients.length}</td><td className="num">{m.people}</td><td className="num">{fmtInt(m.entries)}</td><td className="num">{m.skips}</td><td className="num">{m.missed}</td><td className={"num " + (m.escalations_late ? "red-ink b" : "")}>{m.escalations_late}</td><td className="num">{m.sla_avg != null ? m.sla_avg + "%" : "–"}</td></tr>)}</tbody></table></div>}
-            <div className="tiny muted mt8">Entries and skips by everyone under each manager in the roster; missed tasks, escalations and SLA for the clients in their span.</div></div>
+            <div className="tiny muted mt8">Entries and skips by everyone under each manager in the roster; missed tasks, escalations and SLA for the clients in their span.</div></div>}
           <div className="card"><h3 className="c3-h">Data freshness</h3>
             {d.freshness.length ? d.freshness.slice(0, 12).map((f, i) => <div key={i} className="c3-line"><span><span className={"badge " + (f.tone === "red" ? "red" : "amber")} style={{ marginRight: 8 }}>{f.tone === "red" ? "stale" : "check"}</span>{f.text}</span>{f.client_id && <button className="btn link sm" onClick={() => go("client", { client_id: f.client_id })}>open</button>}</div>)
               : <Empty>Everything is fresh: inventories uploaded in the last week, SLA scored, roster in sync.</Empty>}
@@ -6074,7 +6198,9 @@ function App() {
   const view = allowed.includes(nav.view) ? nav.view : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
   const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb };
   const body = !ctx.loaded ? <Spinner label="Loading…" />
-    : view === "dashboard" ? (deskOf(me, handoffs) ? <DeskDashboard {...props} desk={deskOf(me, handoffs)} /> : <DashboardView {...props} />)
+    : view === "dashboard" ? (deskOf(me, handoffs) ? <DeskDashboard {...props} desk={deskOf(me, handoffs)} /> : <DashboardHub {...props} />)
+    : view === "portfolio" && me.role === "supervisor" ? <DashboardHub {...props} params={{ ...(props.params || {}), tab: "clients" }} />
+    : (view === "live" || view === "teamtoday") && me.role === "supervisor" ? <LiveStatusView {...props} />
     : view === "attention" ? <AttentionView {...props} />
     : view === "inventory" || view === "allocate" ? <InventoryView {...props} initialTab={view === "allocate" ? "allocate" : undefined} />
     : view === "claims" ? (me.role === "supervisor" ? <ClaimsView {...props} /> : <DeskClaimsView {...props} />)
@@ -6088,7 +6214,6 @@ function App() {
     : view === "handoffs" ? <HandoffsView {...props} />
     : view === "raci" ? <RaciView {...props} />
     : view === "client" && me.role === "supervisor" ? <ClientView {...props} />
-    : view === "portfolio" && isPortfolioUser(me) ? <PortfolioView {...props} />
     : view === "audit" && (me.is_admin || me.access_all) ? <AuditView {...props} />
     : view === "feedback" ? <FeedbackInbox {...props} />
     : view === "templates" && me.role === "supervisor" ? <TemplatesView {...props} />
