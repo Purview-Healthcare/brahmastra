@@ -168,9 +168,23 @@ The client report is Brahmastra's own, built from Brahmastra's data: nothing is 
 Sasha's Third Eye's client report (its `client.html`) page for page and rule for rule; Third Eye itself is not
 changed and keeps working on its own address. Team leads and above, for their own clients.
 
-**Pages** (1280 x 720, like slides): Cover (with the client's logo), Executive summary, Inventory analysis,
-Inventory breakdown, Submission, Rejections, Payment posting, AR production, Denials, Top denials: RCA and Client
-assistance. A page with nothing in the period shows greyed out in the list and stays out of the PDF.
+**It starts with the data and the dates.** Opening the tab shows the start screen:
+1. **Data.** EV production is the one thing to upload, because Brahmastra does not do eligibility checks: *Upload EV
+   from OneDrive* reads the file in the browser, finds its columns by their usual names (date of the check, DOS,
+   insurance, status or verification type, action, done by, account, comment) and shows what it found before
+   *Save to the report*. The patient's name, birth date, member ID, phone and address are never read. The rows are
+   kept for the client (and location), so the whole team sees the same EV page; a new file for the same dates
+   replaces the old rows, and *Remove* takes a file out. Below, everything Brahmastra fills by itself is listed with
+   the figure each page will show (or "nothing in these dates; the page is left out").
+2. **Dates.** Monthly, Weekly or Custom, whether to compare with the period before, and the location.
+
+**Create dashboard** opens the report. *Made before* reopens a period the team already made in one click, and
+*Change data or dates* on the dashboard goes back to the start.
+
+**Pages** (1280 x 720, like slides), in this order everywhere (the pages list, Present and the PDF): Cover (with the
+client's logo), Executive summary, EV, Submission, Rejections, Payment posting, Inventory analysis, Inventory
+breakdown, AR production, Denials, Top denials: RCA and Client assistance. A page with nothing in the period shows
+greyed out in the list and stays out of the PDF.
 
 **Where the figures come from**
 
@@ -180,6 +194,7 @@ assistance. A page with nothing in the period shows greyed out in the list and s
 | AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet* |
 | Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof) |
 | Client assistance | requests sent to the client, with their reason and whether they were answered |
+| EV | the EV production file uploaded on the start screen (verifications, insurance wise, verification type or status) |
 | Executive summary | the headline of each page and the six-month AR and collections trend |
 
 **Inventory at a past date.** Brahmastra keeps a snapshot of every client's open inventory (every hour and after
@@ -205,7 +220,7 @@ audit trail. Untick a page under **In PDF** to leave it out of the PDF and Prese
 **Add the client's logo** takes a PNG, JPG or WebP from the Purviewautomate OneDrive (shrunk to a small image).
 
 **Present** shows the ticked pages full screen (arrow keys move, C clears the filters, Esc leaves).
-**Download PDF** gives one widescreen page per ticked page, always the full picture (no filters); **PDF of this view**
+**Download PDF** gives one file with one widescreen page per ticked page, in the order above, always the full picture (no filters); **PDF of this view**
 appears when filters are set and prints the pages with them. The PDF is saved from the browser's print dialog
 (Save as PDF), named after the client and the period.
 

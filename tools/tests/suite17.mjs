@@ -132,6 +132,32 @@ r = await T(() => TI("clients.setLogo", { client_id: sunrise.id, logo: "data:ima
 r = await T(() => AR("clients.setLogo", { client_id: sunrise.id, logo: PNG })); ok("billers cannot change it", !r.ok, r);
 r = await TI("clients.setLogo", { client_id: sunrise.id, logo: "" }); ok("empty removes it", r.ok && !(await TI("creport.get", OCT)).client.logo);
 
+S("EV production: the file uploaded for the report");
+const evRow = (wd, py, st, by) => ({ wd, dos: "2026-10-20", no: "A1", py, st, act: "Verified on the portal", by, cm: "" });
+const octEV = [1, 2, 3, 4, 5, 6].map((d) => evRow("2026-10-0" + d, d % 2 ? "Aetna" : "Medicare", d % 3 ? "Active coverage" : "Inactive coverage", "Riya"));
+r = await T(() => AR("creport.evUpload", { client_id: sunrise.id, file_name: "ev.xlsx", rows: octEV })); ok("billers cannot upload one", !r.ok, r);
+r = await T(() => LE("creport.evUpload", { client_id: sunrise.id, file_name: "ev.xlsx", rows: octEV })); ok("a team lead of another client cannot", !r.ok, r);
+r = await TI("creport.evUpload", { client_id: sunrise.id, file_name: "EV Oct.xlsx", rows: [...octEV, { wd: "", py: "Cigna" }] });
+ok("the client's team lead uploads it: 6 rows kept, the row without a date left out", r.ok && r.n === 6 && r.skipped === 1 && r.from === "2026-10-01" && r.to === "2026-10-06", r);
+r = await TI("creport.get", OCT);
+ok("the report carries the EV rows and the file", r.data.ev.length === 6 && r.ev_files.length === 1 && r.ev_files[0].n === 6 && r.ev_files[0].file === "EV Oct.xlsx", { ev: r.data.ev.length, files: r.ev_files });
+ok("only the report's columns are kept (nothing about the patient)", Object.keys(r.data.ev[0]).sort().join(",") === "act,by,cm,dos,id,loc,no,py,st,wd", Object.keys(r.data.ev[0]));
+const ev2 = [4, 5, 6, 7, 8, 9, 10].map((d) => evRow("2026-10-" + String(d).padStart(2, "0"), "BCBS", "Benefits verified", "Sam"));
+r = await TI("creport.evUpload", { client_id: sunrise.id, file_name: "EV week 2.xlsx", rows: ev2 }); ok("a second file is taken", r.ok && r.n === 7, r);
+r = await TI("creport.get", OCT);
+ok("it replaces the same dates: 3 rows of the first file stay, 10 in all", r.data.ev.length === 10 && r.ev_files.length === 2 && r.ev_files.find((f) => f.file === "EV Oct.xlsx").n === 3, { n: r.data.ev.length, files: r.ev_files.map((f) => [f.file, f.n]) });
+r = await TI("creport.get", { ...OCT, from: "2026-11-01", to: "2026-11-30", prev_from: "2026-10-01", prev_to: "2026-10-31", period_key: "month:2026-11" });
+ok("November's report has October's EV for the comparison only", r.data.ev.length === 10 && r.ev_files.length === 2);
+r = await T(() => TI("creport.evUpload", { client_id: sunrise.id, file_name: "x", rows: [{ wd: "2025-01-01" }, { wd: "2026-10-05" }] })); ok("one file over more than a year is refused", !r.ok, r);
+r = await T(() => TI("creport.evUpload", { client_id: sunrise.id, file_name: "x", rows: [{ py: "Aetna" }] })); ok("a file with no dates is refused", !r.ok, r);
+ok("uploads are in the audit trail", (await A("audit.list", {})).rows.some((x) => x.action === "creport.ev" && /EV week 2\.xlsx: 7 EV rows/.test(x.detail || "")));
+let evFiles = (await TI("creport.get", OCT)).ev_files;
+r = await T(() => AR("creport.evRemove", { client_id: sunrise.id, id: evFiles[0].id })); ok("billers cannot remove one", !r.ok, r);
+r = await TI("creport.evRemove", { client_id: sunrise.id, id: evFiles.find((f) => f.file === "EV week 2.xlsx").id }); ok("the team lead removes a file", r.ok);
+r = await TI("creport.get", OCT); ok("its rows go with it", r.data.ev.length === 3 && r.ev_files.length === 1, { n: r.data.ev.length, files: r.ev_files.length });
+await TI("creport.save", { ...OCT, page_id: "_made", data: { made: true } });
+r = await TI("creport.get", OCT); ok("reports made before are listed for the start screen", r.made.some((m) => m.period_key === "month:2026-10"), r.made);
+
 S("The page engine: Third Eye's rules on Brahmastra's records");
 const raw = await TI("creport.get", OCT);
 // a fixed inventory for the engine: September 1,000 in 31-60 days; October 400 in 31-60 and 300 in 0-30
@@ -165,6 +191,20 @@ const ca = app.crBuildCA(ctxOf("ca"));
 ok("client assistance: the desk's request and the AR entry with the ball at the client", ca.kpis[0].value === "2", ca.kpis.map((k) => k.value));
 const ex = app.crBuildExec(ctxOf("exec"), raw);
 ok("executive summary: AR $700, collected $200, the ask and a focus line", ex.kpis[0].value === "$700" && ex.kpis[1].value === "$200" && ex.exec.asks.some((a) => /No EOB/.test(a)) && ex.exec.focus.length >= 1, { k: ex.kpis.map((k) => k.value), asks: ex.exec.asks, focus: ex.exec.focus });
+
+// EV: the columns read from a file, never the patient's; the EV page
+const mEV = app.crMatchEV(["Patient Name", "DOB", "Member ID", "Date of Service", "Verified On", "Insurance Name", "Eligibility Status", "Verification Type", "Verified By", "Effective Date", "Comments"]);
+ok("EV file: the columns are found by their usual names", mEV.wd === "Verified On" && mEV.dos === "Date of Service" && mEV.py === "Insurance Name" && mEV.st === "Eligibility Status" && mEV.ty === "Verification Type" && mEV.by === "Verified By" && mEV.cm === "Comments", mEV);
+ok("EV file: the patient's name, birth date and member ID are never read", !Object.values(mEV).some((h) => /Patient|DOB|Member/.test(h)), mEV);
+const mEV2 = app.crMatchEV(["Account #", "DOS", "Effective Date", "Term Date", "Payer", "Status"]);
+ok("EV file: a coverage date is not taken for the date of the check", !mEV2.wd && mEV2.dos === "DOS" && mEV2.no === "Account #", mEV2);
+ok("a saved report period reads back", app.crRangeFromKey("month:2026-10").kind === "month" && app.crRangeFromKey("week:2026-10-26").start.getDate() === 26 && app.crRangeFromKey("custom:2026-10-01:2026-10-15").end.getDate() === 15 && app.crRangeFromKey("x") === null);
+const rawEV = { ...raw, data: { ...raw.data, ev: [...octEV, ...[1, 2, 3].map((d) => evRow("2026-09-0" + d, "Aetna", "Active coverage", "Sam"))] } };
+const DSE = app.crDatasets(rawEV);
+const evp = app.crBuildEV(app.crCtx(DSE, R, "ev", {}));
+ok("EV page: 6 verifications in October, up from 3, Active coverage the largest group", evp.kpis[0].value === "6" && evp.headline === "6 eligibility verifications" && evp.insights.some((x) => /Active coverage made up 67%/.test(x)) && evp.insights.some((x) => /3 to 6/.test(x)), { k: evp.kpis.map((k) => k.value), i: evp.insights });
+ok("EV page: by insurance and by verification type / status", evp.cards.length === 2 && evp.cards[0].title === "Insurance wise breakdown", evp.cards.map((c) => c.title));
+ok("no EV file, no EV page", app.crHasPage(app.crDatasets({ ...raw, data: { ...raw.data, ev: [] } }), "ev") === false && app.crHasPage(DSE, "ev") === true);
 
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

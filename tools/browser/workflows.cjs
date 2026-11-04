@@ -140,7 +140,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await open("#/reports"); await t(800);
     await p.locator('.main button:has-text("Client report")').first().click(); await t(2000);
     ok("Client report opens Client 360 on its Client report tab", /#\/client/.test(p.url()) && /on/.test(await p.locator('.c3-tabs button:has-text("Client report")').getAttribute("class")), p.url());
-    ok("the client report has its own period bar (Monthly, Weekly, Custom)", /Monthly/.test(await p.locator(".crx-bar").innerText()));
+    ok("the client report starts with its data and dates (Monthly, Weekly, Custom)", /Monthly/.test(await p.locator(".crx-setup").innerText()));
     await open("#/reports"); await t(800);
     await p.locator('.main button:has-text("SLA scorecard")').first().click(); await t(1500);
     ok("SLA scorecard opens the SLA tab", /#\/sla/.test(p.url()), p.url());
@@ -211,9 +211,17 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
       if (window.__flush) await window.__flush();
       return base.toISOString().slice(0, 7);
     }, tok.sun);
+    // EV rows for the month, as a file picked from OneDrive would give (the picker itself needs the Microsoft sign-in)
+    const ev = await rpc("creport.evUpload", { client_id: tok.sun, file_name: "EV production.xlsx", rows: [1, 2, 3, 4, 5].map((d) => ({ wd: ym + "-0" + d, py: d % 2 ? "Aetna" : "Medicare", st: "Active coverage", by: "Riya" })) });
+    ok("an EV file is kept for the client", ev.ok && ev.n === 5, ev);
     await open("#/client"); await t(2000);
     await p.locator('.c3-tabs button:has-text("Client report")').click(); await t(4000);
-    ok("the report opens on the executive summary", (await p.locator('.crs[data-page="exec"]').count()) === 1 && /at a glance/.test(await p.innerText(".crx-stage")));
+    const setupText = await p.innerText(".crx-setup").catch(() => "");
+    ok("the report starts with the data and the dates", /New client report/.test(setupText) && /EV production\.xlsx/.test(setupText) && /Dates/.test(setupText), setupText.slice(0, 200));
+    await p.locator(".crx-create").click(); await t(3000);
+    ok("Create dashboard opens it on the executive summary", (await p.locator('.crs[data-page="exec"]').count()) === 1 && /at a glance/.test(await p.innerText(".crx-stage")));
+    const order = await p.evaluate(() => [...document.querySelectorAll(".crx-ri .nm")].map((x) => x.firstChild.textContent.trim()));
+    ok("the pages run EV, Submission, Rejections, Payment posting, then the AR pages", order.indexOf("EV") === 2 && order.indexOf("EV") < order.indexOf("Submission") && order.indexOf("Payment posting") < order.indexOf("Inventory analysis"), order);
     ok("the pages list has the report's pages, ticked for the PDF", (await p.locator(".crx-ri").count()) >= 10 && (await p.locator(".crx-ri .ck:not(.off)").count()) >= 3);
     await p.locator('.crx-ri:has-text("AR production")').click(); await t(1500);
     ok("AR production shows the entries of the month", /claims worked/i.test(await p.innerText(".crx-stage")), ym);
@@ -237,6 +245,8 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("Download PDF lays out one page per ticked page and prints", nPages === nTicked && nPages >= 3 && await p.evaluate(() => !!window.__printed), { nPages, nTicked });
     await p.evaluate(() => { window.__crPrintDone && window.__crPrintDone(); window.__crHoldPrint = false; }); await t(400);
     ok("after printing, the page is back", (await p.locator("#crPrint").count()) === 0);
+    await p.locator('.crx-bar button:has-text("Change data or dates")').click(); await t(1200);
+    ok("Change data or dates goes back to the start", (await p.locator(".crx-setup").count()) === 1);
   });
 
   S("Needs attention: answer an escalation");

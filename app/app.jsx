@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.70.0";
+const APP_VERSION = "2.71.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -5163,7 +5163,7 @@ function ClientReportsTab({ ctx, me, go }) {
 }
 const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took a share back", "raci.save": "Changed the RACI", "feedback.recipients": "Changed who gets feedback",
   "client.responsibility": "Changed posting / submission responsibility", "settings.save": "Changed settings", "client.delete": "Deleted a client", "client.save": "Edited a client",
-  "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the client report", "client.logo": "Changed the client's logo",
+  "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the client report", "creport.ev": "EV file for the client report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
@@ -5716,6 +5716,8 @@ function crDatasets(raw) {
     ? { id: r.id, invoice: r.no, dos: r.dos, payer: r.py, amount: r.amt, balance: r.amt, bucket: r.bk, status: r.st, action: r.act, workDate: r.wd, open: r.open, dept: r.dept, comment: r.cm, loc: r.loc }
     : { id: r.id, invoice: r.no, dos: r.dos, payer: r.py, amount: r.amt, balance: r.amt, bucket: r.bk, status: r.sub || "Information from the client", action: r.act || "Waiting on the client", workDate: r.wd, dept: "AR", workBy: r.by, loc: r.loc },
     { dateField: "workDate" });
+  // eligibility checks: the EV production file uploaded for the client (Brahmastra does not do EV itself)
+  if (d.ev && d.ev.length) out.ev = crDataset("ev", d.ev, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, status: r.st, action: r.act, workDate: r.wd, workBy: r.by, comment: r.cm, loc: r.loc }), { dateField: "workDate" });
   return out;
 }
 /* ---------- aggregation (Third Eye's agg, Pareto, folding, cross-filter) ---------- */
@@ -5836,6 +5838,7 @@ const CR_CLAIM_COLS = {
   payment: ["invoice", "dos", "payerKey", "checkNo", "paidDate", "charge", "paid", "status", "workBy"],
   rejection: ["invoice", "dos", "payerKey", "amount", "status", "action", "workDate", "workBy"],
   denial: ["invoice", "dos", "bucket", "payerKey", "amount", "status", "action", "workDate", "workBy"],
+  ev: ["invoice", "dos", "payerKey", "status", "action", "workDate", "workBy", "comment"],
   clientAssistance: ["invoice", "dos", "bucket", "payerKey", "amount", "status", "action", "dept", "workDate", "comment"],
 };
 const crClaims = (ds, rows, role) => ({ ds, rows, cols: CR_CLAIM_COLS[role] || CR_CLAIM_COLS.worked });
@@ -6101,6 +6104,25 @@ function crBuildCA(c) {
   return { title: "Client assistance", headline: `${crF.int(all.length)} claims need the client, ${crF.money(amt, 0)} on hold`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "CLIENT", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "bucket", "dept"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "clientAssistance") };
 }
+/* EV: Third Eye's EV page (verifications, insurance wise, type / status) from the uploaded EV production file */
+function crBuildEV(c) {
+  const R = c.R, ds = c.ds("ev"); if (!ds) return null;
+  const all = c.rows("ev", null), prev = c.hasPrev("ev") ? c.prev("ev") : null, wd = crWorkingDays(c.range.start, c.range.end);
+  const payers = new Set(all.map((r) => r.payerKey).filter(Boolean)).size, people = new Set(all.map((r) => r.workBy).filter(Boolean)).size;
+  const kpis = [crKpi("Verifications", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
+    crKpi("A working day", wd ? crF.int(all.length / wd) : "–", { sub: wd + " working days" }),
+    crKpi("Insurances", crF.int(payers), { sub: "checked at least once" })];
+  if (people) kpis.push(crKpi("Done by", crF.int(people), { sub: people === 1 ? "person" : "people" }));
+  const cards = [];
+  crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "ev", cols: 6, prev: true, maxRows: 12 }), 1);
+  crAddCard(cards, crCardBar(c, "status", "Verification type / status", { role: "ev", cols: 6, type: "col" }), 1);
+  const ins = [`${crF.int(all.length)} eligibility verifications were completed in ${crRangeLabel(c.range)}${wd ? `, about ${crF.int(all.length / wd)} a working day` : ""}.`];
+  const st = crAgg(all, "status", ds); if (st[0]) ins.push(`${st[0].label} made up ${crF.pct(st[0].share, 0)} of verifications.`);
+  const py = crAgg(all, "payerKey", ds); if (py[0]) ins.push(`${py[0].label} was checked most: ${crF.int(py[0].count)} verifications (${crF.pct(py[0].share, 0)}).`);
+  if (prev) { const h = crHeadline(R, "Verifications", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); }
+  return { title: `${crPeriodWord(R)} EV report`, headline: `${crF.int(all.length)} eligibility verifications`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "EV", kpis, cards, insights: ins,
+    slicers: ["payerKey", "status", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "ev") };
+}
 /* the executive summary: the headline numbers from the pages, the six-month trend, what we need from the client, the focus */
 function crBuildExec(c, raw) {
   const R = c.R, DS = c.DS;
@@ -6126,6 +6148,7 @@ function crBuildExec(c, raw) {
   if (collP != null && collP) ins.push(`Collections ${coll >= collP ? "rose" : "fell"} ${crF.pct(Math.abs(coll / collP - 1), 0)} to ${crF.money(coll, 0)}${pay.length ? (() => { const p = crAgg(pay, "payerKey", DS.payment, { measure: "amount" })[0]; return p ? `; ${p.label} paid ${crF.pct(p.share, 0)} of it` : ""; })() : ""}.`);
   else if (coll) ins.push(`${crF.money(coll, 0)} was collected across ${crF.int(pay.length)} payment lines.`);
   if (dr != null) { const top = den.length ? crAgg(den, "status", DS.worked, { measure: "amount" })[0] : null; ins.push(`Denials were ${crF.pct(dr, 1)} of claims worked${drP != null ? ` (${crF.pct(drP, 1)} in the ${crPrevWord(R)})` : ""}${top ? `; ${top.label} is the top reason` : ""}.`); }
+  const evN = c0.ds("ev") ? c0.rowsAll("ev").length : 0; if (evN) ins.push(`${crF.int(evN)} eligibility verifications were done${wd ? `, about ${crF.int(evN / wd)} a working day` : ""}.`);
   if (o90 != null) ins.push(`${crF.pct(o90, 0)} of the open balance is older than 90 days${o90p != null ? ` (${crF.pct(o90p, 0)} before)` : ""}.`);
   // what we need from the client: open requests, biggest first
   const asks = (raw.asks || []).slice(0, 4).map((a) => `${a.what} · ${crF.int(a.n)} claim${a.n === 1 ? "" : "s"} · ${crF.money(a.amt, 0)}${a.since ? " · since " + crF.dateShort(crD(a.since)) : ""}`);
@@ -6142,11 +6165,12 @@ function crBuildExec(c, raw) {
 const CR_PAGES = [
   { id: "cover", title: "Cover" },
   { id: "exec", title: "Executive summary" },
-  { id: "inventory", title: "Inventory analysis", build: crBuildInventory },
-  { id: "inventory2", title: "Inventory breakdown", build: crBuildInventory2 },
+  { id: "ev", title: "EV", build: crBuildEV },
   { id: "submission", title: "Submission", build: crBuildSubmission },
   { id: "rejection", title: "Rejections", build: crBuildRejection },
   { id: "payment", title: "Payment posting", build: crBuildPayment },
+  { id: "inventory", title: "Inventory analysis", build: crBuildInventory },
+  { id: "inventory2", title: "Inventory breakdown", build: crBuildInventory2 },
   { id: "ar", title: "AR production", build: crBuildAR },
   { id: "denials", title: "Denials", build: crBuildDenials },
   { id: "rca", title: "Top denials: RCA", build: crBuildRCA },
@@ -6459,13 +6483,13 @@ function CrCover({ rep, pages, mode }) {
 /* which datasets feed a page, for its slicers */
 function crSliceSource(c, pid) {
   if (pid === "inventory" || pid === "inventory2") { const s = crInvSets({ ...c, sel: {} }); return { ds: s.ds, rows: s.curSet }; }
-  const role = { submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
+  const role = { ev: "ev", submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
   return role && c.ds(role) ? { ds: c.ds(role), rows: c.rowsAll(role) } : null;
 }
 function crHasPage(DS, pid) {
   if (pid === "cover" || pid === "exec") return true;
   if (pid === "inventory" || pid === "inventory2") return !!(DS.inventory && DS.inventory.recs.length);
-  const role = { submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
+  const role = { ev: "ev", submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
   return !!crDerived(DS, role);
 }
 /* the claims behind what the page shows (current filters), with search and CSV */
@@ -6493,6 +6517,58 @@ function CrClaims({ spec, ctx, me, title, onOpen }) {
   </div>;
 }
 /* the image the client report shows as the client's logo: picked from OneDrive, shrunk to a small PNG */
+/* ---------- EV production files: read in the browser; only the report's columns go to Brahmastra ---------- */
+const CR_EV_COLS = [
+  ["dos", "DOS", ["dos", "date of service", "service date", "dos date", "dos from", "from dos", "appointment date", "appt date", "visit date"]],
+  ["wd", "Date", ["work date", "worked date", "date worked", "date of work", "verification date", "verified date", "date verified", "verified on", "ev date", "eligibility date", "date of verification",
+    "checked on", "check date", "date checked", "done on", "completed on", "completed date", "processed date", "processed on", "activity date", "entry date", "date"]],
+  ["py", "Insurance", ["insurance", "insurance name", "payer", "payer name", "primary insurance", "primary payer", "insurance company", "insurance carrier", "carrier", "payor", "payor name", "plan", "plan name", "ins name", "ins"]],
+  ["st", "Status", ["status", "verification status", "eligibility status", "ev status", "coverage status", "result", "outcome", "eligibility", "findings", "remarks", "remark"]],
+  ["ty", "Verification type", ["verification type", "ev type", "type of verification", "check type", "type"]],
+  ["act", "Action", ["action", "action taken", "mode", "method", "verified via", "verified through", "verification mode", "source", "channel"]],
+  ["by", "Done by", ["done by", "verified by", "worked by", "work by", "checked by", "processed by", "ev done by", "agent", "agent name", "user", "employee", "associate", "resource", "analyst", "team member"]],
+  ["no", "Account", ["account", "account no", "account number", "acct", "acct no", "mrn", "chart", "chart no", "invoice", "invoice no", "claim id", "encounter", "encounter no", "visit no", "visit id", "ticket"]],
+  ["cm", "Comment", ["comment", "comments", "notes", "note", "description", "details"]],
+];
+const CR_EV_LABEL = Object.fromEntries(CR_EV_COLS.map(([k, l]) => [k, l]));
+const crNormHead = (h) => String(h == null ? "" : h).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+function crMatchEV(headers) {
+  const H = headers.map((h) => ({ h, n: crNormHead(h) })), used = new Set(), map = {};
+  // the patient's name, birth date and member IDs are never read; coverage dates are not the date of the check
+  for (const c of H) if (/\b(patient|member|subscriber|guarantor|insured)\b|\b(first|last|full) name\b|\bdob\b|date of birth|\bssn\b|\bphone\b|\baddress\b/.test(c.n)) used.add(c.h);
+  const notCheck = /service|\bdos\b|appoint|appt|visit|birth|effective|\beff\b|term|expir|start|end|from|thru|through/;
+  for (const [key, , syns] of CR_EV_COLS) {
+    let x = null;
+    for (const sy of syns) { x = H.find((c) => !used.has(c.h) && c.n === sy); if (x) break; }
+    if (!x) for (const sy of syns) { if (sy.length < 4 || (key === "wd" && sy === "date")) continue; x = H.find((c) => !used.has(c.h) && (" " + c.n + " ").includes(" " + sy + " ") && !(key === "wd" && notCheck.test(c.n))); if (x) break; }
+    if (x) { used.add(x.h); map[key] = x.h; }
+  }
+  return map;
+}
+function crReadEV(bytes, name) {
+  let best = null;
+  for (const sh of readWorkbook(bytes, name)) { const t = tableFromSheet(sh.rows), map = crMatchEV(t.headers), score = Object.keys(map).length + (map.wd ? 5 : 0) + Math.min(3, t.rows.length / 100);
+    if (!best || score > best.score) best = { t, map, score }; }
+  if (!best || !best.t.rows.length) throw new Error("That file has no rows to read.");
+  const { t, map } = best, txt = (r, k, n) => (map[k] ? crClean(r[map[k]]) : "").slice(0, n);
+  const found = CR_EV_COLS.filter(([k]) => map[k]).map(([k]) => [CR_EV_LABEL[k], String(map[k])]);
+  if (!map.wd) return { file: name, noDate: true, found, n: t.rows.length };
+  const rows = []; let skipped = 0;
+  for (const x of t.rows) {
+    const wd = parseDateAny(x[map.wd]); if (!wd) { skipped++; continue; }
+    rows.push({ wd, dos: map.dos ? parseDateAny(x[map.dos]) : "", no: txt(x, "no", 60), py: txt(x, "py", 120), st: (txt(x, "st", 120) || txt(x, "ty", 120)), act: txt(x, "act", 120), by: txt(x, "by", 80), cm: txt(x, "cm", 300) });
+  }
+  if (!rows.length) return { file: name, noDate: true, found, n: t.rows.length };
+  let from = rows[0].wd, to = from; for (const x of rows) { if (x.wd < from) from = x.wd; if (x.wd > to) to = x.wd; }
+  return { file: name, rows, n: rows.length, skipped, from, to, found };
+}
+/* the report period a saved key names (month:2026-10, week:2026-10-26, custom:2026-10-01:2026-10-15) */
+function crRangeFromKey(k) {
+  let m = /^month:(\d{4})-(\d{2})$/.exec(k || ""); if (m) return crRangeMonth(new Date(+m[1], +m[2] - 1, 1));
+  m = /^week:(\d{4}-\d{2}-\d{2})$/.exec(k || ""); if (m) return crRangeWeek(crD(m[1]));
+  m = /^custom:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(k || ""); if (m) return crRangeCustom(crD(m[1]), crD(m[2]));
+  return null;
+}
 async function crLogoFromBytes(bytes, name) {
   const type = /\.png$/i.test(name) ? "image/png" : /\.webp$/i.test(name) ? "image/webp" : "image/jpeg";
   const url = URL.createObjectURL(new Blob([bytes], { type }));
@@ -6559,6 +6635,12 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
   const [present, setPresent] = useState(null);
   const [printJob, setPrintJob] = useState(null);
   const [logoOpen, setLogoOpen] = useState(false);
+  // the start screen: the EV file and the dates first, then Create dashboard
+  const [stage, setStage] = useState("setup");
+  useEffect(() => { setStage("setup"); }, [clientId]);
+  const [evOpen, setEvOpen] = useState(false);
+  const [evDraft, setEvDraft] = useState(null);
+  const [evBusy, setEvBusy] = useState(false);
   const locName = raw && locId ? ((raw.locations || []).find((l) => l.id === locId) || {}).name || "" : "";
   const nextName = range.kind === "month" ? CRM_L[crAddM(range.start, 1).getMonth()] : range.kind === "week" ? "next week" : "the next period";
   const R = useMemo(() => ({ range, compare, client: client.name || "", periodName: range.kind === "month" ? CRM_L[range.start.getMonth()] : crRangeLabel(range), cardMeasure }), [range, compare, client.name, cardMeasure]);
@@ -6597,16 +6679,78 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
     try { await rpc("clients.setLogo", { client_id: clientId, logo: "" }); toast("Logo removed."); q.reload(); } catch (e) { toast(e.message, "err"); }
   };
   if (!clientId) return <div className="card"><Empty>Pick a client.</Empty></div>;
+  const periodControls = <>
+    <div className="seg3">{[["month", "Monthly"], ["week", "Weekly"], ["custom", "Custom"]].map(([k, l]) => <button key={k} type="button" className={ptype === k ? "on" : ""} onClick={() => { setPtype(k); if (k !== "custom") setAnchor(range.end <= new Date() ? range.end : crDefaultAnchor()); }}>{l}</button>)}</div>
+    {ptype === "custom" ? <span className="row" style={{ gap: 6 }}><input type="date" className="input sm" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} /><span className="muted small">to</span><input type="date" className="input sm" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></span>
+      : <span className="crx-per"><button type="button" onClick={() => step(-1)} title="Previous period">‹</button><b>{crRangeLabel(range)}</b><button type="button" onClick={() => step(1)} title="Next period">›</button></span>}
+    <label className="crx-cmp" title={"Compare with the " + crPrevWord(R)}><input type="checkbox" checked={compare} onChange={(e) => setCompare(e.target.checked)} /> Compare with {crRangeLabel(prevRange)}</label>
+    {raw && (raw.locations || []).length > 1 && <select className="input sm" value={locId} onChange={(e) => setLocId(e.target.value)} style={{ width: 170 }}><option value="">All locations</option>{raw.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select>}
+  </>;
+  const pickEV = async ({ bytes, name }) => { setEvOpen(false); try { setEvDraft(crReadEV(bytes, name)); } catch (e) { toast(e.message, "err"); } };
+  const saveEV = async () => {
+    setEvBusy(true);
+    try { const x = await rpc("creport.evUpload", { client_id: clientId, location_id: locId || undefined, file_name: evDraft.file, rows: evDraft.rows });
+      toast(`EV saved: ${crF.int(x.n)} rows, ${crF.date(crD(x.from))} to ${crF.date(crD(x.to))}.`); setEvDraft(null); q.reload(); }
+    catch (e) { toast(e.message, "err"); }
+    setEvBusy(false);
+  };
+  const removeEV = async (f) => {
+    if (!window.confirm(`Remove ${f.file} (${crF.int(f.n)} EV rows) from ${client.name || "this client"}'s reports?`)) return;
+    try { await rpc("creport.evRemove", { client_id: clientId, id: f.id }); toast("EV file removed."); q.reload(); } catch (e) { toast(e.message, "err"); }
+  };
+  const create = () => {
+    setStage("dashboard"); setPage("exec");
+    if (canEdit && raw && !(raw.edits || {})._made) rpc("creport.save", { client_id: clientId, location_id: locId || undefined, period_key: periodKey, page_id: "_made", data: { made: true } }).catch(() => {});
+  };
+  const openMade = (k) => { const x = crRangeFromKey(k); if (!x) return; setPtype(x.kind); if (x.kind === "custom") setCustom({ from: crF.iso(x.start), to: crF.iso(x.end) }); else setAnchor(x.start); setStage("dashboard"); setPage("exec"); };
+  if (stage === "setup") {
+    const evFiles = (raw && raw.ev_files) || [], made = ((raw && raw.made) || []).map((m) => ({ ...m, r: crRangeFromKey(m.period_key) })).filter((m) => m.r);
+    const pageLine = (pid) => { if (!DS || !crHasPage(DS, pid)) return null; const m = buildModel(pid, {}); return m ? m.headline || m.title : null; };
+    const inv = raw && raw.data && raw.data.inventory;
+    const invNote = !inv ? "" : inv.source === "live" ? "today's inventory" : inv.source === "snapshot" ? "kept at " + crF.date(crD(inv.as_of)) : "rebuilt from the claims' history for " + crF.date(crD(inv.as_of));
+    const SRC = [["submission", "Submission", "Submission desk"], ["rejection", "Rejections", "Rejections desk"], ["payment", "Payment posting", "Posting desk"], ["inventory", "AR inventory", "inventory uploads"], ["ar", "AR production", "billers' entries"], ["ca", "Client assistance", "requests to the client"]];
+    return (
+      <div className="stack crx crx-setup" style={{ gap: 12 }}>
+        <div className="card"><div className="row between" style={{ gap: 12, flexWrap: "wrap" }}>
+          <div><h2 style={{ margin: 0 }}>New client report · {client.name}</h2><div className="sub">Add what Brahmastra does not have, pick the dates, then create the dashboard.</div></div>
+          {made.length > 0 && <div className="small">Made before: {made.map((m, i) => <React.Fragment key={m.period_key}>{i ? " · " : ""}<button type="button" className="btn link" style={{ padding: 0, fontWeight: 700 }} onClick={() => openMade(m.period_key)}>{crRangeLabel(m.r)}</button></React.Fragment>)}</div>}
+        </div></div>
+        <div className="card"><div className="crx-step"><span className="crx-n">1</span><b>Data</b><span className="small muted">what goes into the dashboard for {crRangeLabel(range)}{locName ? " · " + locName : ""}</span></div>
+          {q.error ? <ErrorBox error={q.error} /> : !raw ? <Spinner label="Reading Brahmastra for these dates…" /> : <div className="crx-src">
+            <div className="crx-sec">Upload (Brahmastra does not do EV)</div>
+            <span className="up">⬆</span><b>EV production</b><span className="from">from OneDrive</span>
+            <div className="crx-evbox">
+              {evFiles.map((f) => <div key={f.id} className="crx-file"><span>📄 <b>{f.file}</b></span><span className="badge green">{crF.int(f.n)} rows · {crF.dateShort(crD(f.from))} to {crF.date(crD(f.to))}</span>
+                <span className="tiny muted">{f.by} · {fmtWhen(f.at)}{locId && f.all_locations ? " · for all locations" : ""}</span>{canEdit && <button type="button" className="btn sm link" onClick={() => removeEV(f)}>Remove</button>}</div>)}
+              {evDraft && (evDraft.noDate
+                ? <div className="alert err" style={{ margin: 0 }}><b>{evDraft.file}:</b> Brahmastra could not find the date each check was done (a column such as Date, Work date or Verified on). Add that column and pick the file again.
+                    <div className="row" style={{ marginTop: 6 }}><button type="button" className="btn sm" onClick={() => setEvDraft(null)}>OK</button></div></div>
+                : <div className="crx-file draft"><span>📄 <b>{evDraft.file}</b></span><span className="badge blue">{crF.int(evDraft.n)} rows · {crF.dateShort(crD(evDraft.from))} to {crF.date(crD(evDraft.to))}</span>
+                    <span className="tiny muted" style={{ flexBasis: "100%" }}>Columns found: {evDraft.found.map(([l, h]) => l + (l.toLowerCase() === h.toLowerCase() ? "" : " (" + h + ")")).join(", ")}{evDraft.skipped ? ` · ${crF.int(evDraft.skipped)} rows without a date left out` : ""}. Patient names are not read.</span>
+                    <button type="button" className="btn primary sm" disabled={evBusy} onClick={saveEV}>{evBusy ? "Saving…" : "Save to the report"}</button><button type="button" className="btn sm" disabled={evBusy} onClick={() => setEvDraft(null)}>Cancel</button></div>)}
+              {!evFiles.length && !evDraft && <span className="small muted">No EV file covers these dates yet; the EV page is left out until one is added.</span>}
+              {canEdit && !evDraft && <div><button type="button" className="btn sm" onClick={() => setEvOpen(true)}>{evFiles.length ? "Add or replace from OneDrive" : "Upload EV from OneDrive"}</button></div>}
+            </div>
+            <div className="crx-sec">From Brahmastra (nothing to upload)</div>
+            {SRC.map(([pid, l, from]) => { const line = pageLine(pid); return <React.Fragment key={pid}><span className={line ? "ok" : "no"}>{line ? "✓" : "–"}</span><b>{l}</b><span className="from">{from}</span>
+              <span>{line || <span className="muted">nothing in these dates; the page is left out</span>}{pid === "inventory" && line && invNote ? <span className="tiny muted"> · {invNote}</span> : null}</span></React.Fragment>; })}
+          </div>}
+        </div>
+        <div className="card"><div className="crx-step"><span className="crx-n">2</span><b>Dates</b></div><div className="row" style={{ gap: 14, flexWrap: "wrap", alignItems: "center" }}>{periodControls}</div></div>
+        <div className="row" style={{ justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}><span className="small muted" style={{ alignSelf: "center" }}>Opens the dashboard: every page, filters, edits, Present and the PDF</span>
+          <button type="button" className="btn primary lg crx-create" disabled={!raw} onClick={create}>Create dashboard →</button></div>
+        {evOpen && <OneDrivePicker folderLink={client.od && client.od.link} onClose={() => setEvOpen(false)} onPick={pickEV} />}
+      </div>
+    );
+  }
   const slideFor = (pid, s, m) => pid === "cover" ? <CrCover rep={rep} pages={included} mode={m} /> : <CrSlide page={CR_PAGE_BY[pid]} model={pid === page && s === sel ? model : buildModel(pid, s)} rep={rep} n={numOf(pid) || 1} total={included.length || 1}
     mode={m} ed={edits[pid]} onEd={(d) => saveEd(pid, d)} tools={tools} filterText={filterText(s)} />;
   return (
     <div className="stack crx" style={{ gap: 12 }}>
       <div className="card crx-bar">
-        <div className="seg3">{[["month", "Monthly"], ["week", "Weekly"], ["custom", "Custom"]].map(([k, l]) => <button key={k} type="button" className={ptype === k ? "on" : ""} onClick={() => { setPtype(k); if (k !== "custom") setAnchor(range.end <= new Date() ? range.end : crDefaultAnchor()); }}>{l}</button>)}</div>
-        {ptype === "custom" ? <span className="row" style={{ gap: 6 }}><input type="date" className="input sm" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} /><span className="muted small">to</span><input type="date" className="input sm" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></span>
-          : <span className="crx-per"><button type="button" onClick={() => step(-1)} title="Previous period">‹</button><b>{crRangeLabel(range)}</b><button type="button" onClick={() => step(1)} title="Next period">›</button></span>}
-        <label className="crx-cmp" title={"Compare with the " + crPrevWord(R)}><input type="checkbox" checked={compare} onChange={(e) => setCompare(e.target.checked)} /> Compare with {crRangeLabel(prevRange)}</label>
-        {raw && (raw.locations || []).length > 1 && <select className="input sm" value={locId} onChange={(e) => setLocId(e.target.value)} style={{ width: 150 }}><option value="">All locations</option>{raw.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select>}
+        <b className="crx-made">{crRangeLabel(range)}</b>
+        <span className="muted small">{compare ? "compared with " + crRangeLabel(prevRange) : "no comparison"}{locName ? " · " + locName : ""}{DS && DS.ev ? " · EV from the uploaded file" : ""}</span>
+        <button type="button" className="btn sm" onClick={() => setStage("setup")}>Change data or dates</button>
         <span style={{ flex: 1 }} />
         {canEdit && <div className="seg3"><button type="button" className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")}>✎ Edit</button><button type="button" className={mode === "view" ? "on" : ""} onClick={() => setMode("view")}>👁 View as client</button></div>}
         <button className="btn" disabled={!raw} title="Every ticked page, the full picture (no filters), one widescreen page per slide" onClick={() => setPrintJob({ sel: {}, pages: included.map((p) => p.id) })}>⬇ Download PDF</button>

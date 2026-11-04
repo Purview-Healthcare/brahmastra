@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.61.0";
+const VERSION = "2.62.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -117,6 +117,12 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS inv_snapshots (client_id TEXT NOT NULL, day TEXT NOT NULL, cells_json TEXT NOT NULL DEFAULT '[]', at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
   `CREATE TABLE IF NOT EXISTS creport_edits (client_id TEXT NOT NULL, period_key TEXT NOT NULL, loc TEXT NOT NULL DEFAULT '', page_id TEXT NOT NULL, json TEXT NOT NULL DEFAULT '{}',
      by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (client_id, period_key, loc, page_id))`,
+  `CREATE TABLE IF NOT EXISTS ev_rows (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, location_id TEXT NOT NULL DEFAULT '', batch_id TEXT NOT NULL, work_date TEXT NOT NULL,
+     dos TEXT NOT NULL DEFAULT '', acct TEXT NOT NULL DEFAULT '', payer TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', done_by TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_rows_client ON ev_rows (client_id, work_date)`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_rows_batch ON ev_rows (batch_id)`,
+  `CREATE TABLE IF NOT EXISTS ev_batches (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, location_id TEXT NOT NULL DEFAULT '', file_name TEXT NOT NULL DEFAULT '', from_day TEXT NOT NULL,
+     to_day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS floor_days (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', tof_min INTEGER, idle_min INTEGER, locked_min INTEGER,
      logged_min INTEGER, break_min INTEGER, open INTEGER NOT NULL DEFAULT 0, guard INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, day))`,
   `CREATE TABLE IF NOT EXISTS coach_notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'one_to_one', text TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
@@ -2955,8 +2961,17 @@ const OPS = {
     const edits = {};
     for (const e of await all(env, "SELECT page_id, json, by_name, at FROM creport_edits WHERE client_id = ? AND period_key = ? AND loc = ?", clientId, periodKey, loc)) edits[e.page_id] = { ...jsonObj(e.json), _by: e.by_name, _at: e.at };
     const locs = await all(env, "SELECT id, name FROM locations WHERE client_id = ? AND active = 1 ORDER BY name", clientId);
+    // EV: the rows of the uploaded EV files in both periods (a location's report adds the files kept for the whole client)
+    const ew = loc ? " AND (location_id = ? OR location_id = '')" : "";
+    data.ev = (await all(env, `SELECT acct, dos, payer, status, action, work_date, done_by, comment, location_id FROM ev_rows WHERE client_id = ? AND work_date BETWEEN ? AND ?${ew} ORDER BY work_date LIMIT 60000`, clientId, pfrom, to, ...la))
+      .map((x) => ({ id: "", no: x.acct, dos: x.dos, py: x.payer, st: x.status, act: x.action, wd: x.work_date, by: x.done_by, cm: x.comment, loc: x.location_id }));
+    const evFiles = (await all(env, `SELECT id, file_name, from_day, to_day, n, by_name, at, location_id FROM ev_batches WHERE client_id = ? AND from_day <= ? AND to_day >= ?${ew} ORDER BY at DESC LIMIT 20`, clientId, to, pfrom, ...la))
+      .map((x) => ({ id: x.id, file: x.file_name, from: x.from_day, to: x.to_day, n: x.n, by: x.by_name, at: x.at, all_locations: !x.location_id }));
+    // reports made before for this client (a period with the team's words, or one created from the start screen)
+    const made = (await all(env, `SELECT period_key, MAX(at) AS at FROM creport_edits WHERE client_id = ? AND loc = ? GROUP BY period_key ORDER BY at DESC LIMIT 8`, clientId, loc))
+      .map((x) => ({ period_key: x.period_key, at: x.at }));
     return { client: { id: client.id, name: client.name, logo: client.logo || "" }, locations: locs, location_id: loc, period_key: periodKey, today,
-      period: { from, to, prev_from: pfrom, prev_to: pto }, data, trend, asks, edits, can_edit: canEditClient(user, clientId), prepared_by: user.name || "" };
+      period: { from, to, prev_from: pfrom, prev_to: pto }, data, trend, asks, edits, ev_files: evFiles, made, can_edit: canEditClient(user, clientId), prepared_by: user.name || "" };
   },
   /* A supervisor's words on a report page (title, insights, RCA and plan, the asks, the focus, which pages print), kept for the
      client, period and location and shared with everyone who opens that report. */
@@ -2976,6 +2991,53 @@ const OPS = {
       ON CONFLICT (client_id, period_key, loc, page_id) DO UPDATE SET json = excluded.json, by_name = excluded.by_name, at = excluded.at`, clientId, periodKey, loc, pageId, json, user.name || "", now);
     await audit(env, user, "creport.edit", clientId, `${pageId} · ${periodKey}${loc ? " · location" : ""}`);
     return { ok: true, at: now, by: user.name || "" };
+  },
+  /* EV production for the client report. Brahmastra does not do eligibility checks, so the team uploads the EV file from
+     OneDrive; the browser reads it and sends only the columns the report uses (no patient names). A file replaces what
+     was kept for the same client, location and dates. */
+  "creport.evUpload": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    editableOr(user, clientId);
+    const loc = payload.location_id ? str(payload.location_id, 60) : "";
+    if (loc && !(await one(env, "SELECT id FROM locations WHERE id = ? AND client_id = ?", loc, clientId))) throw bad("Unknown location.");
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (!rows.length) throw bad("The file has no EV rows.");
+    if (rows.length > 20000) throw bad("Up to 20,000 EV rows at a time.");
+    const clean = [];
+    for (const x of rows) { const wd = x && isoDate(x.wd); if (!wd) continue;
+      clean.push([isoDate(x.dos) || "", str(x.no, 60), str(x.py, 120), str(x.st, 120), str(x.act, 120), str(x.by, 80), str(x.cm, 300), wd]); }
+    if (!clean.length) throw bad("No row has the date the check was done.");
+    let from = clean[0][7], to = from; for (const c of clean) { if (c[7] < from) from = c[7]; if (c[7] > to) to = c[7]; }
+    if ((Date.parse(to) - Date.parse(from)) / 86400000 > 400) throw bad("One EV file can cover up to a year.");
+    const batch = uuid(), now = Date.now(), file = str(payload.file_name, 200) || "EV file";
+    const touched = (await all(env, "SELECT id FROM ev_batches WHERE client_id = ? AND location_id = ? AND from_day <= ? AND to_day >= ?", clientId, loc, to, from)).map((x) => x.id);
+    await run(env, "DELETE FROM ev_rows WHERE client_id = ? AND location_id = ? AND work_date BETWEEN ? AND ?", clientId, loc, from, to);
+    const stmts = [], per = 8;
+    for (let i = 0; i < clean.length; i += per) {
+      const part = clean.slice(i, i + per);
+      stmts.push(env.DB.prepare("INSERT INTO ev_rows (id, client_id, location_id, batch_id, dos, acct, payer, status, action, done_by, comment, work_date) VALUES " + part.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?)").join(","))
+        .bind(...part.flatMap((c) => [uuid(), clientId, loc, batch, ...c])));
+    }
+    stmts.push(env.DB.prepare("INSERT INTO ev_batches (id, client_id, location_id, file_name, from_day, to_day, n, by_name, at) VALUES (?,?,?,?,?,?,?,?,?)").bind(batch, clientId, loc, file, from, to, clean.length, user.name || "", now));
+    await batchAll(env, stmts, 50);
+    // files that lost rows to this one: their counts follow, and a file with nothing left goes
+    for (const id of touched) {
+      const n = await one(env, "SELECT COUNT(*) AS n FROM ev_rows WHERE batch_id = ?", id);
+      if (n && n.n) await run(env, "UPDATE ev_batches SET n = ? WHERE id = ?", n.n, id); else await run(env, "DELETE FROM ev_batches WHERE id = ?", id);
+    }
+    await audit(env, user, "creport.ev", clientId, `${file}: ${clean.length} EV rows, ${from} to ${to}${loc ? " · location" : ""}`);
+    return { ok: true, id: batch, n: clean.length, from, to, skipped: rows.length - clean.length };
+  },
+  "creport.evRemove": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60), id = str(payload.id, 60);
+    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    editableOr(user, clientId);
+    const b = await one(env, "SELECT id, file_name, n FROM ev_batches WHERE id = ? AND client_id = ?", id, clientId);
+    if (!b) throw bad("That EV file is not kept any more.");
+    await batchAll(env, [env.DB.prepare("DELETE FROM ev_rows WHERE batch_id = ?").bind(id), env.DB.prepare("DELETE FROM ev_batches WHERE id = ?").bind(id)]);
+    await audit(env, user, "creport.ev", clientId, `${b.file_name}: removed (${b.n} EV rows)`);
+    return { ok: true };
   },
   /* The client's logo on the client report: a small image (PNG, JPEG or WebP, up to about 200 KB as a data URL); empty removes it. */
   "clients.setLogo": async ({ env, user, payload }) => {
