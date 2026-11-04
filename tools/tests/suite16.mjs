@@ -182,8 +182,8 @@ ok("before the feed is set up in Shastra: on floor and idle wait", r.floor_sourc
 { const c0 = floorCalls; await VP("team.status", q); ok("and Shastra is not asked again for 10 minutes", floorCalls === c0, { before: c0, after: floorCalls }); }
 const F = (o) => ({ emp_id: "", email: "", status: "present", open: false, tof_min: 0, logged_min: 0, break_min: 0, guard: true, idle_min: 0, locked_min: 0, ...o });
 floorRows = [
-  F({ emp_id: "A1", date: mon, tof_min: 420, idle_min: 30, locked_min: 15 }),
-  F({ emp_id: "a1", date: tue, status: "half_day", tof_min: 235, idle_min: 10 }),
+  F({ emp_id: "A1", date: mon, tof_min: 420, idle_min: 30, locked_min: 15, break_min: 60 }),
+  F({ emp_id: "a1", date: tue, status: "half_day", tof_min: 235, idle_min: 10, break_min: 75 }),
   F({ emp_id: "A1", date: wed, open: true, tof_min: 95 }),
   F({ email: "BELA@purview-healthcare.com", date: mon, tof_min: 490, guard: false }),
   F({ email: "bela@purview-healthcare.com", date: tue, tof_min: 485, guard: false }),
@@ -199,6 +199,7 @@ ok("the feed answers: floor source ok", r.floor_source === "ok", r.floor_source)
 ok("Arun: on floor 7 h + 3 h 55 m + 1 h 35 m so far = 12 h 30 m; needed 8 h + 4 h (Shastra half day) + 8 h", fa.on_floor_min === 750 && fa.floor_needed_min === 1200, { on: fa.on_floor_min, need: fa.floor_needed_min });
 ok("Arun: short 1 h 05 m on the finished days (10 h 55 m of 12 h)", fa.floor === "short" && fa.on_floor_done_min === 655 && fa.floor_needed_done_min === 720 && fa.floor_short_min === 65, fa);
 ok("Arun: idle is no movement plus screen locked (55 m), locked apart (15 m)", fa.idle_min === 55 && fa.locked_min === 15 && fa.guard === true, { idle: fa.idle_min, locked: fa.locked_min });
+ok("Arun: breaks 2 h 15 m over 3 days with floor time, 1 day over the hour Shastra allows", fa.break_min === 135 && fa.break_days === 3 && fa.break_over_days === 1 && r.totals.break_min >= 135, { b: fa.break_min, d: fa.break_days, o: fa.break_over_days, t: r.totals.break_min });
 ok("Bela: matched by email; floor time met (16 h 15 m of 16 h)", fb.floor === "met" && fb.on_floor_done_min === 975, fb);
 ok("Bela: no Guard machine linked, so no idle time", fb.idle_min === null && fb.guard === false, fb.idle_min);
 ok("Cara: Shastra's sick leave on Monday is a day out (target and floor needed left out)", fc.days_out === 1 && fc.days_unplanned === 1 && fc.days_full === 2 && fc.floor_needed_done_min === 480 && fc.target === 70, { out: fc.days_out, full: fc.days_full, need: fc.floor_needed_done_min, target: fc.target });

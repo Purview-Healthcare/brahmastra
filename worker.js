@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.64.0";
+const VERSION = "2.65.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -1021,7 +1021,7 @@ async function syncShastra(env, by) {
    open counts up to now), time logged in, breaks, and the minutes Shastra Guard saw no movement or a locked screen while
    they were punched in (breaks left out). Team status asks for its dates; the days are kept in floor_days, a day is
    settled once fetched 12 hours after it ended, and anything newer is asked again after 10 minutes. */
-const FLOOR_FRESH_MS = 10 * 60000;
+const FLOOR_FRESH_MS = 10 * 60000, SH_BREAK_ALLOW_MIN = 60;
 async function fetchFloor(env, from, to) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
   let r = null, data = null;
@@ -2718,7 +2718,7 @@ const OPS = {
       // each day: a full day, a half day or out. Purview Shastra's attendance decides when it has the day (leave, half
       // day, week off, a Saturday worked); otherwise a weekday is a full day unless marked Out today here (Half day: half).
       const fd = fl.byUser.get(u.id);
-      let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false;
+      let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0;
       for (const d of span) {
         const x = fd && fd.get(d), sd = x ? shastraDay(x.status) : null, wd = weekday(d);
         let share = 0;
@@ -2729,6 +2729,8 @@ const OPS = {
         if (d < today) { tDone += share * cap; needDone += share * 480; } else if (d === today) tToday = share * cap;
         if (x) { const tof = x.tof_min || 0, idl = x.guard ? (x.idle_min || 0) + (x.locked_min || 0) : 0;
           onAll += tof; idleAll += idl; if (x.guard) { lockedAll += x.locked_min || 0; guard = true; }
+          // breaks taken that day (Shastra's own figure); Shastra allows 60 minutes a day
+          brkAll += x.break_min || 0; if (tof > 0) brkDays++; if ((x.break_min || 0) > SH_BREAK_ALLOW_MIN) brkOver++;
           if (d < today) { onDone += tof; idleDone += idl; } }
       }
       const target = Math.round(shares * cap);
@@ -2757,6 +2759,7 @@ const OPS = {
         floor_needed_min: needAll, floor_needed_done_min: needDone,
         on_floor_min: inShastra ? onAll : null, on_floor_done_min: inShastra ? onDone : null,
         idle_min: inShastra && guard ? idleAll : null, idle_done_min: inShastra && guard ? idleDone : null, locked_min: inShastra && guard ? lockedAll : null, guard,
+        break_min: inShastra ? brkAll : null, break_days: brkDays, break_over_days: brkOver,
         floor: fl.state !== "ok" ? "none" : !inShastra ? "no_attendance" : needDone <= 0 ? "pending" : onDone >= needDone ? "met" : "short",
         floor_short_min: inShastra && needDone > onDone ? needDone - onDone : 0,
         left: mine.length, left_high: leftHigh, left_other: mine.length - leftHigh, ramp,
@@ -2789,6 +2792,7 @@ const OPS = {
       below: rows.filter((r) => r.perf === "below").length, worked: sum("worked"), target: sum("target"), floor_needed_min: sum("floor_needed_min"),
       worked_done: sum("worked_done"), target_done: sum("target_done"), worked_today: sum("worked_today"), target_today: sum("target_today"),
       on_floor_min: rows.some((r) => r.on_floor_min != null) ? sum("on_floor_min") : null, idle_min: rows.some((r) => r.idle_min != null) ? sum("idle_min") : null,
+      break_min: rows.some((r) => r.break_min != null) ? sum("break_min") : null, break_over_days: sum("break_over_days"),
       floor_judged: rows.filter((r) => r.floor === "met" || r.floor === "short").length, floor_met: rows.filter((r) => r.floor === "met").length };
     totals.attain_basis = totals.target_done > 0 ? "done" : "today";
     totals.attain = totals.attain_basis === "done" ? Math.round(totals.worked_done / totals.target_done * 100) : totals.target_today ? Math.round(totals.worked_today / totals.target_today * 100) : null;

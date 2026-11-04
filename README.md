@@ -235,7 +235,9 @@ into **high priority** (the High tier) and other.
 - **On the floor now**: each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
   after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
   been on it (the claim number opens the claim), pace this shift against their target, on desk, closed today and left
-  over. Managers and above see the billers grouped by team lead. Click a biller's name to open **their claims**.
+  over. Managers and above see the billers grouped by team lead: each group opens and closes (a closed group shows
+  working, idle and on desks), **Expand all** / **Collapse all**, or **One list**. Click a biller's name to open
+  **their claims**.
 - Below the floor: unassigned claims, claims with Posting / Submission and follow-ups due today.
 - Posting and Submission people are not on the floor: they have their own desks.
 - **Shastra**: each person's attendance in Purview Shastra now, read every 2 minutes with Shastra's own rules
@@ -285,7 +287,9 @@ roster, grouped by team lead (no Emp ID):
 - **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** comes from Purview Shastra (finished
   shifts with breaks taken out; a shift still open counts up to now) and shows **met** or **short** on the finished
   days. **Idle** is what Shastra Guard saw while the person was punched in, breaks left out: no movement plus screen
-  locked (the split is in the tooltip and the CSV). People with no attendance in Shastra for the dates, or no Guard
+  locked (the split is in the tooltip and the CSV). **Breaks** is the break time Shastra recorded on the days with
+  floor time, with the average a day and the days over the hour Shastra allows (the KPI and the CSV carry it
+  too). People with no attendance in Shastra for the dates, or no Guard
   machine linked, are listed under roster checks. Until the feed is set up (below) they show –.
 - **Left over** now, with how many are high priority, and a **note** per person: start, due in production (or plan
   end) and a comment, seen by every lead who sees that person and kept in the audit trail.
@@ -666,7 +670,7 @@ Production, Agent Quality...). A click there opens that tab inside the app (a `b
 `embed:tabs` / `brahmastra:go` message handshake). Opened on their own addresses, both apps look and work
 exactly as before. Both have their own tabs, first in the bar: **SLA** (the Drishti scorecard) and
 **Sasha's Third Eye** (the internal reports; Posting and Submission leads get Quality only, for their own
-work). The client report lives in **Client 360 › Client report**, next to everything else about the client. There is no
+work; Third Eye's own Team Status tab is not drawn, because Brahmastra's Dashboard has Team status). The client report lives in **Client 360 › Client report**, next to everything else about the client. There is no
 My day & reports tab any more: **Claims › Entries** lists every entry the team wrote (with the CSV QA uses), Team
 status opens a person's allocations, and a team lead who works claims gets **Work › My desk**.
 
