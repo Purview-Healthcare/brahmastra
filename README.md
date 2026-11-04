@@ -524,8 +524,8 @@ and **Brahmastra draws their tabs in its own tab row** (Drishti: Overview, Clien
 Production, Agent Quality...). A click there opens that tab inside the app (a `brahmastra:hello` /
 `embed:tabs` / `brahmastra:go` message handshake). Opened on their own addresses, both apps look and work
 exactly as before. Both have their own tabs, first in the bar: **SLA** (the Drishti scorecard) and
-**Sasha's Third Eye** (a switch between Internal reports and Client reports; Posting and Submission
-leads get Quality only, for their own work). My day & reports holds the team's work: team allocations,
+**Sasha's Third Eye** (the internal reports; Posting and Submission leads get Quality only, for their own
+work). The client report lives in **Client 360 › Client report**, next to everything else about the client. My day & reports holds the team's work: team allocations,
 every entry and your own desk.
 
 **Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:
@@ -546,7 +546,7 @@ Where the reports are, for team leads and above:
 |---|---|---|
 | My day & reports | Team allocations · Every entry · My own desk | the team's day lists, every entry (with CSV) and your own desk, for any dates (Brahmastra) |
 | Sasha's Third Eye tab › Internal reports | Internal reports | Third Eye's Internal Reporting; Brahmastra's production and the roster load into it by themselves |
-| Sasha's Third Eye tab › Client reports | Client reports | Third Eye's Client Reporting; **Fill from Brahmastra** puts today's AR inventory and the month's AR, submission and posting production in its boxes |
+| Client 360 › Client report | Client report | Third Eye's Client Reporting for the client and dates picked in Client 360; **Fill from Brahmastra** puts today's AR inventory and the dates' AR, submission and posting production in its boxes (the month-end step "Client pack built" opens it) |
 | SLA tab | SLA scorecard | Drishti, signed in. **Save AR Inventory to OneDrive** writes the AR Inventory report to the client's SLA & KPI folder for Drishti to pick |
 
 My day & reports also has **Internal reports**, **Client reports** and **SLA scorecard** buttons (top right) that

@@ -136,10 +136,11 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await open("#/reports"); await t(800);
     await p.screenshot({ path: path.join(OUT, "reports-shortcuts.png") });
     await p.locator('.main button:has-text("Internal reports")').first().click(); await t(2000);
-    ok("Internal reports opens Sasha's Third Eye on Internal reports", /#\/thirdeye/.test(p.url()) && /on/.test(await p.locator('.te-switch button:has-text("Internal reports")').getAttribute("class")), p.url());
+    ok("Internal reports opens Sasha's Third Eye (internal reports only, no client switch)", /#\/thirdeye/.test(p.url()) && !(await p.locator(".te-switch").count()), p.url());
     await open("#/reports"); await t(800);
-    await p.locator('.main button:has-text("Client reports")').first().click(); await t(2000);
-    ok("Client reports opens it on Client reports", /on/.test(await p.locator('.te-switch button:has-text("Client reports")').getAttribute("class")));
+    await p.locator('.main button:has-text("Client report")').first().click(); await t(2000);
+    ok("Client report opens Client 360 on its Client report tab", /#\/client/.test(p.url()) && /on/.test(await p.locator('.c3-tabs button:has-text("Client report")').getAttribute("class")), p.url());
+    ok("the report bar takes the client and dates from Client 360", /from Client 360/.test(await p.locator(".rh-bar").innerText()));
     await open("#/reports"); await t(800);
     await p.locator('.main button:has-text("SLA scorecard")').first().click(); await t(1500);
     ok("SLA scorecard opens the SLA tab", /#\/sla/.test(p.url()), p.url());
