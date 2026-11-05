@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.73.0";
+const VERSION = "2.74.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -580,6 +580,54 @@ async function escalationReminders(env) {
     }
   }
   return rows.length;
+}
+/* Workforce Management from Purview Shastra: each project's Billable (what the manager set in WFM) and Assigned FTE, worked
+   out the way WFM's Explore does (working agents split evenly across their projects, a fresher counting half), plus everyone on
+   it. Read with the roster key from brahmastra_wfm (dev/shastra-wfm-feed.sql, run once in Shastra). Until that is run, the
+   numbers just do not show. */
+async function syncWfm(env) {
+  const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
+  let r = null, data = null;
+  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_wfm", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch (e) {}
+  if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.projects)) {
+    const prev = await getSetting(env, "wfm_projects", null);
+    await setSetting(env, "wfm_projects", { ...(prev || {}), ok: false, tried_at: Date.now(), error: str((data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer"), 200) });
+    return null;
+  }
+  const n = (v) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
+  const rows = data.projects.filter((x) => x && x.name).map((x) => ({ name: str(x.name, 120), billable: n(x.billable), assigned_fte: n(x.assigned_fte) || 0, agents: n(x.agents) || 0,
+    training: n(x.training) || 0, team_fte: n(x.team_fte) || 0, people: n(x.people) || 0 }));
+  await setSetting(env, "wfm_projects", { ok: true, at: Date.now(), today: data.today || "", rows });
+  return rows;
+}
+/* Each client's people from WFM: the projects matched to it (its roster project names), added up. */
+async function clientWfm(env, clientIds) {
+  const w = await getSetting(env, "wfm_projects", null), out = new Map();
+  if (!w || !Array.isArray(w.rows) || !w.rows.length) return out;
+  const byKey = new Map(w.rows.map((x) => [projKey(x.name), x]));
+  for (const id of clientIds) {
+    const c = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", id);
+    const ps = [...new Set(jsonList(c && c.roster_names_json).map(projKey))].map((k) => byKey.get(k)).filter(Boolean);
+    if (!ps.length) continue;
+    const sum = (f) => Math.round(ps.reduce((t, x) => t + (x[f] || 0), 0) * 100) / 100;
+    const bills = ps.filter((x) => x.billable != null);
+    out.set(id, { projects: ps.map((x) => x.name), billable: bills.length ? sum("billable") : null, assigned_fte: sum("assigned_fte"), agents: sum("agents"), training: sum("training"),
+      team_fte: sum("team_fte"), people: sum("people"), at: w.at, today: w.today });
+  }
+  return out;
+}
+const fteTxt = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
+/* A client's escalations received in a period, for the SLA (threshold 0). */
+async function escSummary(env, clientId, from, to, now = Date.now()) {
+  const rows = await all(env, "SELECT * FROM escalations WHERE client_id = ? AND day >= ? AND day <= ? ORDER BY day DESC, sr DESC", clientId, from, to);
+  const open = rows.filter((e) => e.status !== "resolved"), closed = rows.filter((e) => e.status === "resolved" && e.resolved_at);
+  const by = new Map(); rows.forEach((e) => by.set(e.dept, (by.get(e.dept) || 0) + 1));
+  return { from, to, target: ESC_SLA_TARGET, n: rows.length, met: rows.length <= ESC_SLA_TARGET, open: open.length,
+    over24: open.filter((e) => now - e.created_at > ESC_TAT_MS).length, over24_reason: open.filter((e) => now - e.created_at > ESC_TAT_MS && e.delay_reason).length,
+    errors: rows.filter((e) => e.is_error === "Y").length, avg_hours: closed.length ? Math.round(closed.reduce((t, e) => t + escHours(e), 0) / closed.length) : null,
+    by_dept: [...by.entries()].map(([dept, n]) => ({ dept, n })),
+    rows: rows.slice(0, 20).map((e) => ({ id: e.id, sr: e.sr, dept: e.dept, day: e.day, description: e.description, is_error: e.is_error, owner_name: e.owner_name, status: e.status,
+      close_on: e.close_on, open_hours: e.status !== "resolved" ? Math.floor((now - e.created_at) / 3600000) : null, delay_reason: e.delay_reason, expected_on: e.expected_on })) };
 }
 /* Fire-and-forget after a save: find the workbook (location first, then client) and append the entry. */
 async function syncEntryToWorkbook(env, claimId, by, extra) {
@@ -1142,6 +1190,7 @@ async function syncShastra(env, by) {
   }
   await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings, removed,
     emails: res.warnings.slice(0, 200), no_access: res.excluded.length });
+  try { await syncWfm(env); } catch (e) {}
   return { ...res, removed, synced: true };
 }
 /* Purview Shastra's time on the floor and idle time (dev/shastra-floor-feed.sql): brahmastra_floor(p_key, p_from, p_to)
@@ -1509,6 +1558,19 @@ const HEALTH_LOOK = { good: ["On track", "#0E8C74", "#E3F4EF"], watch: ["Watch",
    red under 80), worst first, with its team leads and SMEs, the scopes and what pulls it down. Clients Drishti has no month for
    are named at the end. */
 const BAND_LOOK = { ok: ["Green", "#127A4D", "#E3F5EC", "#1A9E6A"], warn: ["Amber", "#935300", "#FDF0D7", "#E8A13C"], miss: ["Red", "#BA2340", "#FDE7EB", "#C94F4F"] };
+/* One client's escalations this month on the SLA: green at 0, red at 1 or more (no patient or claim details). */
+function escLineHtml(d) {
+  const e = d.esc; if (!e) return "";
+  const red = !e.met, pill = `<span style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:${red ? "#FDE7EB" : "#E3F5EC"};color:${red ? "#BA2340" : "#127A4D"}">${red ? "Red" : "Green"}</span>`;
+  const bits = red ? [e.by_dept.map((x) => x.dept + " " + x.n).join(", "), e.open ? `<b>${e.open} open</b>` : "all closed", e.over24 ? `${e.over24} over 24 h${e.over24_reason ? ` (${e.over24_reason} with a reason)` : ", no reason yet"}` : "", e.errors ? `our error: ${e.errors}` : ""].filter(Boolean) : [];
+  return `<div style="font-size:12.5px;margin-top:8px;padding:7px 10px;border-radius:8px;background:${red ? "#FDE7EB" : "#E3F5EC"}">Escalations · ${htmlEsc(monthLabel(e.from.slice(0, 7)))}: <b>${e.n}</b> (target ${e.target}) ${pill}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
+}
+function escBoxesHtml(ds) {
+  const es = ds.filter((d) => d.esc); if (!es.length) return "";
+  const t = (f) => es.reduce((x, d) => x + (d.esc[f] || 0), 0), month = monthLabel(es[0].esc.from.slice(0, 7));
+  const box = (v, label, color) => `<td style="padding:8px 10px;border:1px solid #DFE4EA;border-radius:8px;width:25%"><div style="font-size:19px;font-weight:700;color:${color}">${v}</div><div style="font-size:11.5px;color:#627079">${label}</div></td>`;
+  return `<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:8px -6px 0"><tr>${box(t("n"), `escalations · ${htmlEsc(month)} so far (target ${ESC_SLA_TARGET})`, t("n") ? "#BA2340" : "#127A4D")}${box(t("open"), "still open", t("open") ? "#BA2340" : "#0F1B24")}${box(t("over24"), `open over 24 h${t("over24") ? ", " + t("over24_reason") + " with a reason" : ""}`, t("over24") ? "#935300" : "#0F1B24")}${box(t("errors"), "our error (Y)", "#0F1B24")}</tr></table>`;
+}
 function slaCardHtml(ds, appUrl) {
   const scored = ds.filter((d) => d.card).sort((a, b) => b.card.score - a.card.score), none = ds.filter((d) => !d.card);
   if (!scored.length) return "";
@@ -1518,13 +1580,15 @@ function slaCardHtml(ds, appUrl) {
   const card = (d) => {
     const c = d.card, L = BAND_LOOK[c.band], k = c.items.filter((i) => i.kind === "KPI"), t = c.items.filter((i) => i.kind === "SLA");
     const okN = (xs) => xs.filter((i) => i.status === "ok").length, drags = c.drags.slice(0, c.band === "miss" ? 5 : 3);
-    const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : ""].filter(Boolean).join(" · ");
+    const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : "",
+      d.wfm ? `Resources: ${d.wfm.people} people · Billable ${fteTxt(d.wfm.billable)} · Assigned ${fteTxt(d.wfm.assigned_fte)} FTE` : ""].filter(Boolean).join(" · ");
     return `<div style="border:1px solid #DFE4EA;border-left:6px solid ${L[3]};border-radius:10px;padding:12px 14px;margin:10px 0">
 <table style="border-collapse:collapse"><tr><td style="width:58px;height:58px;border-radius:50%;background:${L[2]};color:${L[1]};text-align:center;font-weight:800;font-size:16px">${c.score}%</td>
 <td style="padding-left:12px"><div style="font-size:15.5px;font-weight:700">${htmlEsc(d.client.name)} ${pill(c.band)}</div>
 <div style="font-size:12.5px;color:#627079">${htmlEsc(c.period.label)} · ${okN(k)} of ${k.length} KPIs on target${t.length ? ` · ${okN(t)} of ${t.length} SLAs met` : ""}${c.delta != null ? ` · <b style="color:${c.delta >= 0 ? "#127A4D" : "#BA2340"}">${c.delta >= 0 ? "▲" : "▼"} ${Math.abs(c.delta)} pts</b> vs ${htmlEsc(c.prev ? c.prev.label : "the month before")}` : ""}</div>
 ${ppl ? `<div style="font-size:12.5px;margin-top:2px">${htmlEsc(ppl)}</div>` : ""}</td></tr></table>
 <div style="margin-top:8px">${c.scopes.filter((x) => x.scored).map((x) => `<span style="display:inline-block;font-size:11.5px;border:1px solid #DFE4EA;border-radius:999px;padding:2px 9px;margin:0 5px 4px 0"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${BAND_LOOK[x.band || "miss"][3]};margin-right:5px"></span>${htmlEsc(x.short)} ${x.pct}%</span>`).join("")}</div>
+${escLineHtml(d)}
 ${drags.length ? `<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px"><tr><th style="text-align:left;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">PULLING IT DOWN${c.band === "miss" ? " (WORST FIRST)" : ""}</th><th style="text-align:right;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">VALUE</th><th style="text-align:right;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">STANDARD</th><th style="border-bottom:1px solid #DFE4EA"></th></tr>
 ${drags.map((i) => `<tr><td style="padding:5px 6px;border-bottom:1px solid #F0F2F5">${htmlEsc(i.scope)} · ${htmlEsc(i.name)}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${htmlEsc(String(i.shown))}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${htmlEsc(String(i.target || ""))}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${pill(i.status)}</td></tr>`).join("")}</table>`
       + (c.drags.length > drags.length ? `<div style="font-size:12px;color:#627079;margin-top:6px">+ ${c.drags.length - drags.length} more in red or amber · open the scorecard for every KPI and its formula</div>` : "")
@@ -1535,6 +1599,7 @@ ${c.band === "ok" && c.strengths.length ? `<div style="font-size:12.5px;color:#1
   return `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:20px 0 4px">SLA report card</div>
 <div style="font-size:12.5px;color:#627079;margin-bottom:8px">The last finished month in Drishti: the share of each client's KPIs and SLAs on target (green 90% and above, amber 80 to 89%, red under 80%), against the month before.</div>
 <table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>${box(avg + "%", "average SLA score, " + scored.length + " client" + (scored.length === 1 ? "" : "s"), "#0F1B24")}${box(n("ok"), "green", "#127A4D")}${box(n("warn"), "amber", "#935300")}${box(n("miss"), n("miss") ? "red · needs a plan this week" : "red", "#BA2340")}</tr></table>
+${escBoxesHtml(ds)}
 ${scored.map(card).join("")}
 ${none.length ? `<div style="font-size:12px;color:#627079">No finished month in Drishti yet for ${htmlEsc(none.map((d) => d.client.name).join(", "))}.</div>` : ""}
 ${appUrl ? `<p style="margin:10px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/sla")}" style="background:#0E8C74;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;font-weight:700;font-size:13px">Open the SLA scorecards in Brahmastra</a></p>` : ""}`;
@@ -1566,6 +1631,9 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
   const den = new Map(); ds.forEach((d) => d.denials.forEach((r) => { const t = den.get(r.reason) || { reason: r.reason, n: 0, bal: 0 }; t.n += r.n; t.bal += r.bal; den.set(r.reason, t); }));
   const denRows = [...den.values()].sort((a, b) => b.bal - a.bal).slice(0, 5);
   const weekTxt = `${dDay(wk.first)} to ${dDay(wk.last)}`;
+  // the people on these clients' projects in Shastra WFM: everyone (split across their projects), Billable and Assigned FTE
+  const wf = ds.filter((d) => d.wfm), wsum = (f) => wf.reduce((t, d) => t + (d.wfm[f] || 0), 0);
+  const teamLine = wf.length ? `${Math.round(wsum("team_fte"))} people · Billable ${wf.some((d) => d.wfm.billable != null) ? fteTxt(wsum("billable")) : "–"} · Assigned ${fteTxt(wsum("assigned_fte"))} FTE (Shastra WFM)` : "";
   const sec = (title) => `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:20px 0 6px">${title}</div>`;
   const kpi = (label, value, sub) => `<td style="padding:10px 12px;border:1px solid #DFE4EA;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700">${label}</div><div style="font-size:20px;font-weight:700;margin:2px 0">${value}</div><div style="font-size:12px;color:#3B4A55">${sub}</div></td>`;
   const th = (cells, align) => `<tr>${cells.map((c, i) => `<th style="padding:6px 8px 6px 0;text-align:${(align && align[i]) || "right"};font-size:11px;color:#627079;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #DFE4EA;white-space:nowrap">${c}</th>`).join("")}</tr>`;
@@ -1577,8 +1645,8 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
 <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0E8C74;font-weight:700">Brahmastra · Monday digest</div>
 <h2 style="margin:4px 0 6px;font-size:22px">Weekly client digest</h2>
 <table style="border-collapse:collapse;font-size:13.5px;margin:0 0 4px">${[["Manager name", extra.manager ? extra.manager.name : "No manager (VP and admins)"], ["Designation", extra.manager ? extra.manager.designation : "–"],
-  ["Period", "Week of " + weekTxt], ["Clients", ds.length + ": " + ds.map((d) => d.client.name).join(", ")]].map(([k, v]) => `<tr><td style="padding:2px 18px 2px 0;color:#627079">${k}</td><td style="padding:2px 0"><b>${htmlEsc(v)}</b></td></tr>`).join("")}</table>
-${slaCardHtml(ds, appUrl)}
+  ["Period", "Week of " + weekTxt], ["Clients", ds.length + ": " + ds.map((d) => d.client.name).join(", ")], ...(teamLine ? [["Total team", teamLine]] : [])].map(([k, v]) => `<tr><td style="padding:2px 18px 2px 0;color:#627079">${k}</td><td style="padding:2px 0"><b>${htmlEsc(v)}</b></td></tr>`).join("")}</table>
+${slaCardHtml(ds, appUrl) || (ds.some((d) => d.esc) ? sec("Escalations") + escBoxesHtml(ds) + ds.map((d) => `<div style="margin-top:6px"><b>${htmlEsc(d.client.name)}</b>${d.wfm ? ` <span style="font-size:12px;color:#627079">· ${d.wfm.people} people · Billable ${fteTxt(d.wfm.billable)} · Assigned ${fteTxt(d.wfm.assigned_fte)} FTE</span>` : ""}${escLineHtml(d)}</div>`).join("") : "")}
 <div style="margin:12px 0">${["risk", "watch", "good"].filter((k) => count[k]).map((k) => `<span style="display:inline-block;margin:0 6px 4px 0;padding:4px 10px;border-radius:999px;background:${HEALTH_LOOK[k][2]};color:${HEALTH_LOOK[k][1]};font-weight:700;font-size:13px">${count[k]} ${HEALTH_LOOK[k][0].toLowerCase()}</span>`).join("")}</div>
 <table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>
 ${kpi("AR now", dMoney(ar), withAgo.length ? `<span style="color:${agoNow <= ago ? "#0E8C74" : "#A32D2D"}">${agoNow === ago ? "same as" : (agoNow < ago ? "down " : "up ") + dMoney(Math.abs(agoNow - ago)) + " vs"} a week before</span>` : "no reading a week ago")}
@@ -1607,6 +1675,8 @@ ${appUrl ? `<p style="margin:20px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/,
   const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`,
     `Manager name: ${extra.manager ? extra.manager.name : "No manager"} · Designation: ${extra.manager ? extra.manager.designation : "-"} · Period: week of ${weekTxt}`,
     ...ds.filter((d) => d.card).map((d) => `SLA ${d.card.period.label}: ${d.client.name} ${d.card.score}% (${{ ok: "green", warn: "amber", miss: "red" }[d.card.band]})${d.card.delta != null ? ", " + (d.card.delta >= 0 ? "+" : "") + d.card.delta + " pts" : ""}`), ["risk", "watch", "good"].filter((k) => count[k]).map((k) => count[k] + " " + HEALTH_LOOK[k][0].toLowerCase()).join(", "), "",
+    ...(teamLine ? ["Total team: " + teamLine] : []),
+    ...ds.filter((d) => d.esc).map((d) => `Escalations ${monthLabel(d.esc.from.slice(0, 7))}: ${d.client.name} ${d.esc.n} (target ${d.esc.target}, ${d.esc.met ? "green" : "red"})${d.esc.open ? ", " + d.esc.open + " open" : ""}`),
     `AR now ${dMoney(ar)}, over 90 ${pct}% (target ${target}%), collected ${dMoney(coll)}, entries ${work}`, "", "Needs your attention:",
     ...(attention.length ? attention.slice(0, 10).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "", "Client by client:",
     ...ds.map((d) => `- ${d.client.name}: ${HEALTH_LOOK[d.health][0]}, AR ${dMoney(d.ar.now)}, over 90 ${d.ar.over90_pct}%, collected ${dMoney(d.collected.amount)}, entries ${d.worked.n}`), "",
@@ -1626,7 +1696,9 @@ async function spanMail(env, span, wk) {
     d.tls = on.filter((u) => !isSME(u)).map((u) => u.name).sort();
     let sc = null; try { sc = await OPS["sla.scorecard"]({ env, user: DIGEST_SYSTEM, payload: { client_id: d.client.id, kind: "month", today: istISO(wk.to) } }); } catch (e) { sc = null; }
     d.card = sc && sc.state === "ok" && sc.score != null ? sc : null;
+    d.esc = await escSummary(env, d.client.id, wk.last.slice(0, 8) + "01", wk.last, wk.to);
   }
+  const wfm = await clientWfm(env, ds.map((d) => d.client.id)); ds.forEach((d) => { d.wfm = wfm.get(d.client.id) || null; });
   return spanEmail(span, wk, ds, env.APP_URL || "", { manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null });
 }
 /* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
@@ -4757,6 +4829,17 @@ const OPS = {
       score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts, scored: sc.scored, kpi_pct: sc.kpi_pct, sla_pct: sc.sla_pct,
       scopes: sc.scopes.map((x) => ({ key: x.key, name: x.name, short: x.short, ok: x.ok, warn: x.warn, miss: x.miss, scored: x.scored, pct: x.pct, band: x.band, items: x.items.map((i) => ({ name: i.name, shown: i.shown, status: i.status })) })),
       items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at };
+  },
+  /* Beside the scorecard: the client's people from Shastra WFM and its escalations in the period (SLA threshold 0). */
+  "sla.extras": async ({ env, user, payload }) => {
+    const clientId = str(payload.client_id, 60);
+    if (user.role !== "supervisor") throw denied("The SLA scorecard is for team leads and above.");
+    if (!inScope(user, clientId)) throw outOfScope();
+    const today = isoDate(payload.today) || istISO(Date.now());
+    const from = isoDate(payload.from) || today.slice(0, 8) + "01", to = isoDate(payload.to) || today;
+    const w = (await clientWfm(env, [clientId])).get(clientId) || null;
+    const feed = await getSetting(env, "wfm_projects", null);
+    return { wfm: w, wfm_ok: !!(feed && feed.ok), esc: await escSummary(env, clientId, from, to), month: monthLabel(from.slice(0, 7)) };
   },
   /* The Claims tab's CSV in the Production Conso layout: one row per claim with its last entry (blank work columns when
      nobody has worked it yet). Same filters as the list. */

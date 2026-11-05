@@ -529,6 +529,20 @@ and EV is green at 0 and red at 1 or more in the period. For it, each month's es
 rows only, since Drishti counts every row of the file, by department). Picking a client on the tracker shows this
 month's SLA line: the count against the target of 0, by department.
 
+### Resources from Shastra WFM (SLA scorecard and Monday digest)
+
+Each client's people come from Purview Shastra's **Workforce Management**, worked out the way its Explore page does:
+**Billable** (what the manager set for the project in WFM), **Assigned FTE** (working agents split evenly across their
+projects, a fresher counting half), **Utilization** (Assigned ÷ Billable), the **team on the project** (everyone,
+TLs, SMEs and QA included) and agents **in training / OJT**. Clients are matched to Shastra projects by their roster
+project names. The **SLA scorecard** shows them with the client's **Escalations** for the period (target 0); the
+**Monday digest** adds **Total team** to its header, each client's resources beside its TL and SME names, and the
+month's escalations so far (counts only, no descriptions).
+
+To switch it on, run `dev/shastra-wfm-feed.sql` once in Shastra's Supabase (SQL Editor). It adds one read-only
+function, `brahmastra_wfm`, that answers with the same `SHASTRA_FEED_KEY` as the roster (no new key) and sends project
+names and counts only. Brahmastra reads it with the hourly roster sync; until it is run, the numbers do not show.
+
 **Client requests.** Need assistance from client lands in the client's AR team lead's **Needs attention →
 Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
 comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department

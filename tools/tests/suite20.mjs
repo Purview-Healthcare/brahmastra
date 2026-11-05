@@ -45,13 +45,17 @@ const graph = async (url, init) => {
   return J({ error: "fake graph: no route " + m + " " + path }, 404);
 };
 const fetchMock = async (url, init) => {
+  if (url.includes("brahmastra_wfm")) return WFM_ON ? J({ ok: true, today: "2026-11-05", projects: [
+    { name: "Sunrise Eye Care", billable: 8, assigned_fte: 6.5, agents: 7, training: 1, team_fte: 9.5, people: 10 },
+    { name: "Lakeview Dental Group", billable: null, assigned_fte: 3, agents: 3, training: 0, team_fte: 4, people: 4 }, { name: "Not ours", billable: 50, assigned_fte: 40, agents: 41, training: 0, team_fte: 44, people: 45 }] })
+    : J({ code: "PGRST202", message: "Could not find the function public.brahmastra_wfm" }, 404);
   if (url.includes("brahmastra_roster")) return J({ ok: true, rows: feed });
   if (url.includes("login.microsoftonline.com")) return J({ access_token: "t" });
   if (url.includes("graph.microsoft.com")) return graph(url, init);
   if (url.includes("mail-hook.test")) { mails.push(JSON.parse(init.body)); return new Response("ok"); }
   return new Response("nope", { status: 500 });
 };
-const mails = [];
+const mails = []; let WFM_ON = true;
 const rig = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48), MS_TENANT_ID: "t", MS_CLIENT_ID: "c", MS_CLIENT_SECRET: "s", EMAIL_PROVIDER: "webhook", EMAIL_WEBHOOK_URL: "https://mail-hook.test/send", EMAIL_API_KEY: "x".repeat(40) }, fetchMock });
 const { as, tryOp, sha } = rig; const T = (fn) => tryOp(fn);
 const DB = rig.backend.env.DB; const sql = (q, ...a) => DB.prepare(q).bind(...a).run();
@@ -167,6 +171,25 @@ L = await TI("escalations.list", { client_id: sun.id, status: "all", today: "202
 ok("a month with none is green", L.sla.n === 0 && L.sla.met, L.sla);
 
 ok("the responding-person list includes the admin and the team leads", (await A("escalations.list", {})).people.some((u) => u.id === adminIdE) && L.people.some((u) => u.name === "Tina Lead"));
+S("Shastra WFM: Billable and Assigned per client, on the SLA scorecard and the digest");
+let X = await TI("sla.extras", { client_id: sun.id, from: "2026-11-01", to: "2026-11-30", today: "2026-11-05" });
+ok("the client's WFM numbers: Billable 8, Assigned 6.5 FTE, 7 agents, 1 in training, 10 people", X.wfm && X.wfm.billable === 8 && X.wfm.assigned_fte === 6.5 && X.wfm.agents === 7 && X.wfm.training === 1 && X.wfm.people === 10 && X.wfm.projects.join() === "Sunrise Eye Care", X.wfm);
+ok("and its escalations in the period against the target of 0", X.esc.target === 0 && X.esc.n === 1 && !X.esc.met && X.esc.by_dept.length === 1 && X.esc.rows.length === 1 && X.month === "Nov 2026", X.esc);
+X = await TI("sla.extras", { client_id: sun.id, from: "2026-12-01", to: "2026-12-31" });
+ok("a period without escalations is green", X.esc.n === 0 && X.esc.met, X.esc);
+r = await T(() => TI("sla.extras", { client_id: lake.id })); ok("not for another team's client", !r.ok && r.status === 403, r);
+r = await T(() => AR("sla.extras", { client_id: sun.id })); ok("not for billers", !r.ok && r.status === 403, r);
+const Lx = await A("sla.extras", { client_id: lake.id });
+ok("a project without Billable in WFM shows Billable blank, the rest still counted", Lx.wfm && Lx.wfm.billable === null && Lx.wfm.assigned_fte === 3, Lx.wfm);
+const spans = (await SA("digest.spans", {})).spans; const sp = spans.find((x) => x.clients.some((c) => c.id === sun.id));
+const mail = await SA("digest.preview", { span: sp.key });
+ok("the digest header has Total team from Shastra WFM", /Total team/.test(mail.html) && /Billable 8/.test(mail.html) && /Assigned 6.5 FTE/.test(mail.html) && /Total team: /.test(mail.text), mail.text.slice(0, 600));
+ok("the digest has the escalations against the target of 0", /Escalations · /.test(mail.html) && /target 0/.test(mail.html), "");
+ok("and no escalation descriptions (no claim details in email)", !/rejected twice/.test(mail.html) && !/CLM1/.test(mail.html));
+WFM_ON = false; await A("roster.syncShastra");
+X = await TI("sla.extras", { client_id: sun.id });
+ok("if Shastra's WFM feed is not set up, the last numbers stay and the roster still syncs", X.wfm && X.wfm.billable === 8 && !X.wfm_ok, X);
+
 const pass = results.filter((x) => x.pass).length, fail = results.length - pass;
 console.log(`\n==== suite20: ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);
