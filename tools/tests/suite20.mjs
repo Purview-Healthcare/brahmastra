@@ -25,6 +25,14 @@ const graph = async (url, init) => {
   const m = (init && init.method) || "GET"; const u = new URL(url); const path = decodeURIComponent(u.pathname.replace(/^\/v1\.0/, ""));
   if (OD.fail && m !== "GET") return J({ error: { message: "Access denied" } }, 403);
   let r;
+  // nested paths under the owner's root (the Brahmastra Reports / <lead> / <client> / SLA & KPI files)
+  const walk = (parts, make) => { let cur = OWNER_ROOT; for (const nm of parts) { let it = child(cur, nm); if (!it) { if (!make) return null; it = mk(nm, cur, "folder"); } cur = it.id; } return cur; };
+  if ((r = path.match(/^\/users\/[^/]+\/drive\/root:\/(.+\/.+?):(\/content)?$/))) {
+    const parts = r[1].split("/"), nm = parts.pop();
+    if (m === "PUT" && r[2]) { const dir = walk(parts, true); if (child(dir, nm)) return J({}, 409); return J(out(mk(nm, dir, "file")), 201); }
+    if (m === "GET" && !r[2]) { const dir = walk(parts, false); const it = dir && child(dir, nm); return it ? J(out(it)) : J({}, 404); }
+  }
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/s1\/range\(address='A(\d+):[A-Z]+\d+'\)\/clear$/))) { const rows = OD.rows.get(r[1]); rows.length = Math.min(rows.length, Number(r[2]) - 1); return J({}); }
   if (m === "POST" && (r = path.match(/^\/users\/[^/]+\/drive\/root\/children$/))) { const b = JSON.parse(init.body); if (child(OWNER_ROOT, b.name)) return J({}, 409); return J(out(mk(b.name, OWNER_ROOT, "folder")), 201); }
   if (m === "GET" && (r = path.match(/^\/users\/[^/]+\/drive\/root:\/(.+)$/))) { const it = child(OWNER_ROOT, r[1]); return it ? J(out(it)) : J({}, 404); }
   if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/children$/))) { const b = JSON.parse(init.body); if (child(r[1], b.name)) return J({}, 409); return J(out(mk(b.name, r[1], "folder")), 201); }
@@ -117,6 +125,7 @@ r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, status: "resolved
 ok("the SME resolves it with the RCA", r.ok, r);
 L = await TI("escalations.list", { client_id: sun.id, status: "resolved" });
 ok("resolved, with hours to resolve", L.rows.length === 1 && L.rows[0].hours >= 29 && L.stats.resolved_month >= 0, L.rows);
+await sleep(800);
 S("The client's OneDrive file");
 const f = folder(sun.name), file = f.f && child(f.f.id, "Escalation Tracker - " + sun.name + ".xlsx");
 ok("one workbook in the client's folder: Escalation Tracker - <Client>.xlsx", !!file, [...OD.items.values()].map((x) => pathOf(x.id)));
@@ -131,6 +140,24 @@ r = await T(() => TI("escalations.list", { client_id: lake.id }));
 ok("a lead cannot list another team's client", !r.ok && r.status === 403, r);
 const all2 = await TI("escalations.list", { status: "all" });
 ok("All clients for a lead shows only their clients", all2.rows.every((x) => x.client_id === sun.id), all2.rows.map((x) => x.client_name));
+
+S("SLA: each month's file in the SLA & KPI folder, threshold 0");
+const slaDir = () => { const root = child("root", "Brahmastra Reports"); const ld = root && child(root.id, "Tina Lead"); const cf = ld && child(ld.id, sun.name); return cf && child(cf.id, "SLA & KPI"); };
+const nov = slaDir() && child(slaDir().id, "Escalation Tracker - " + sun.name + " - Nov 2026.xlsx");
+ok("Brahmastra Reports › <team lead> › <client> › SLA & KPI › Escalation Tracker - <client> - Nov 2026.xlsx", !!nov, [...OD.items.values()].map((x) => pathOf(x.id)));
+let nr = nov ? OD.rows.get(nov.id) : [];
+ok("it holds November's escalations only (what Drishti counts), Department column for its per-scope count", nr.length === 3 && nr[0][1] === "Department" && nr.slice(1).map((x) => x[1]).sort().join() === "Payment Posting,Submission", nr.map((x) => x.slice(0, 4)));
+const sr2 = (await TI("escalations.list", { client_id: sun.id, status: "all" })).rows.find((x) => x.sr === 2);
+r = await T(() => TI("escalations.save", { ...sr2, id: sr2.id, day: "2026-10-30" }));
+ok("moving SR2 to October", r.ok, r); await sleep(800);
+nr = OD.rows.get(nov.id);
+const oct = child(slaDir().id, "Escalation Tracker - " + sun.name + " - Oct 2026.xlsx");
+ok("November's file drops it, October's file gets it", nr.length === 2 && nr[1][0] === "SR1" && oct && OD.rows.get(oct.id).length === 2 && OD.rows.get(oct.id)[1][0] === "SR2", [nr.map((x) => x[0]), oct && OD.rows.get(oct.id).map((x) => x[0])]);
+L = await TI("escalations.list", { client_id: sun.id, status: "all", today: "2026-11-05" });
+ok("the screen shows the SLA: 1 this month against a target of 0, red", L.sla && L.sla.target === 0 && L.sla.n === 1 && !L.sla.met && L.sla.month === "Nov 2026", L.sla);
+ok("and where the SLA copy went", L.sla_file && L.sla_file.ok && L.sla_file.files.some((f) => /SLA & KPI › Escalation Tracker/.test(f)), L.sla_file);
+L = await TI("escalations.list", { client_id: sun.id, status: "all", today: "2026-12-05" });
+ok("a month with none is green", L.sla.n === 0 && L.sla.met, L.sla);
 
 const pass = results.filter((x) => x.pass).length, fail = results.length - pass;
 console.log(`\n==== suite20: ${pass} passed, ${fail} failed ====`);

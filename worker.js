@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.71.0";
+const VERSION = "2.72.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -495,11 +495,53 @@ async function escalationFile(env, tok, clientId) {
   await setSetting(env, key, loc);
   return loc;
 }
-async function syncEscalations(env, clientId) {
+/* The SLA copy: for Drishti's Escalations KPI (threshold 0: none in the month is green, one or more is red), each month's
+   escalations also go to the client's SLA & KPI folder under each of its team leads, as
+   Brahmastra Reports / <Team lead> / <Client> / SLA & KPI / Escalation Tracker - <Client> - Nov 2026.xlsx.
+   Drishti counts every row of the file it is given, by department, so this file holds that month's escalations only. */
+const ESC_SLA_TARGET = 0;
+const monthLabel = (ym) => MONTHS_LONG[Number(ym.slice(5, 7)) - 1] + " " + ym.slice(0, 4);
+async function escalationSlaFiles(env, tok, clientId, months) {
+  const c = await one(env, "SELECT id, name FROM clients WHERE id = ?", clientId); if (!c) return [];
+  const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT), saved = [];
+  const leads = await clientTeamLeads(env, c.id, null);
+  for (const ym of months) {
+    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? ORDER BY sr", c.id, ym)).map(escRow);
+    const name = odName("Escalation Tracker - " + c.name + " - " + monthLabel(ym)) + ".xlsx";
+    for (const lead of leads) {
+      const path = [REPORTS_ROOT, odName(lead), odName(c.name), "SLA & KPI", name];
+      const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
+      let it = null;
+      try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference"); }
+      catch (e) {
+        if (!/\(404/.test(String(e.message))) throw e;
+        const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
+          headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(ESC_TEMPLATE_B64) });
+        if (r.ok) it = await r.json();
+        else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference");
+        else throw new ApiError(502, "OneDrive did not create " + name + " (" + r.status + ").");
+      }
+      const base = `/drives/${encodeURIComponent(it.parentReference.driveId)}/items/${encodeURIComponent(it.id)}/workbook`;
+      const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
+      const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
+      const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(ESC_HEADER.length);
+      // an escalation moved to another month leaves this file: clear the old rows before writing the month afresh
+      await graphCall(tok, "POST", ws + `/range(address='A2:${last}5000')/clear`, { applyTo: "Contents" });
+      await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [ESC_HEADER, ...rows] });
+      saved.push(path.join(" › "));
+    }
+  }
+  return saved;
+}
+async function syncEscalations(env, clientId, months) {
   if (env.DEMO || !env.MS_CLIENT_SECRET || String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
   const now = Date.now();
   try {
     const tok = await graphAppToken(env);
+    try {
+      const files = await escalationSlaFiles(env, tok, clientId, [...new Set((months || []).filter(Boolean))]);
+      await recordWorkbookStatus(env, clientId + ":escsla", { ok: true, at: now, files });
+    } catch (e) { await recordWorkbookStatus(env, clientId + ":escsla", { ok: false, at: now, error: String(e && e.message || e).slice(0, 300) }); }
     const loc = await escalationFile(env, tok, clientId);
     const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? ORDER BY sr", clientId)).map(escRow);
     const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
@@ -5306,9 +5348,16 @@ const OPS = {
       logged_month: out.filter((e) => e.day.slice(0, 7) === month).length, resolved_month: done.length,
       avg_hours: done.length ? Math.round(done.reduce((t, e) => t + e.hours, 0) / done.length) : null };
     const file = cid ? await getSetting(env, "workbook_status:" + cid + ":esc", null) : null;
+    const slaFile = cid ? await getSetting(env, "workbook_status:" + cid + ":escsla", null) : null;
+    let sla = null;
+    if (cid) {
+      const m = await all(env, "SELECT dept, COUNT(*) AS n FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? GROUP BY dept", cid, month);
+      const n = m.reduce((t, x) => t + x.n, 0);
+      sla = { month: monthLabel(month), target: ESC_SLA_TARGET, n, met: n <= ESC_SLA_TARGET, by_dept: m.map((x) => ({ dept: x.dept, n: x.n })) };
+    }
     const people = (await all(env, "SELECT id, name, designation, source FROM users WHERE active = 1 AND role = 'supervisor' ORDER BY name"))
       .map((u) => ({ id: u.id, name: u.name, tag: isSME(u) ? "SME" : /manager|vice|director|head/i.test(u.designation || "") ? (u.designation || "") : "TL" }));
-    return { rows: shown, stats, file, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, severities: ESC_SEVERITY, hows: ESC_HOW, can_reason: isTL };
+    return { rows: shown, stats, file, sla_file: slaFile, sla, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, severities: ESC_SEVERITY, hows: ESC_HOW, can_reason: isTL };
   },
   "escalations.save": async ({ env, user, payload, ctx }) => {
     const id = str(payload.id, 60), now = Date.now();
@@ -5348,7 +5397,7 @@ const OPS = {
         vals.description, vals.status, vals.rca, vals.resolved_at, now, user.id, user.name || "");
     }
     await audit(env, user, ex ? "escalation.edit" : "escalation.add", c.id, `SR${sr} ${dept}: ${ESC_STATUS[status]}`);
-    const p = syncEscalations(env, c.id); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
+    const p = syncEscalations(env, c.id, [day.slice(0, 7), ex ? ex.day.slice(0, 7) : ""]); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
     return { ok: true, sr };
   },
   /* Still open after 24 hours: a team lead (or above) says why and when it will close. */
@@ -5363,7 +5412,7 @@ const OPS = {
     if (!on || on < today) throw bad("Pick the expected close date, today or later.");
     await run(env, "UPDATE escalations SET delay_reason = ?, expected_on = ?, delay_by_name = ?, delay_at = ?, updated_at = ?, updated_by_name = ? WHERE id = ?", reason, on, user.name || "", Date.now(), Date.now(), user.name || "", e.id);
     await audit(env, user, "escalation.reason", e.client_id, `SR${e.sr}: expected ${on}`);
-    const p = syncEscalations(env, e.client_id); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
+    const p = syncEscalations(env, e.client_id, [e.day.slice(0, 7)]); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
     return { ok: true };
   },
   "escalations.count": async ({ env, user }) => {

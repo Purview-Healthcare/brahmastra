@@ -521,6 +521,12 @@ SR No, Department, Description, Date: the ones Drishti counts for the Escalation
 server like the Production files; until then entries are kept in Brahmastra and the whole register goes to the file
 with the first change after it is set.
 
+**SLA (threshold 0).** Escalations count on the SLA tab: Drishti's Escalations KPI for AR, Submission, Payment Posting
+and EV is green at 0 and red at 1 or more in the period. For it, each month's escalations also go to the client's
+`Brahmastra Reports › <Team lead> › <Client> › SLA & KPI › Escalation Tracker - <Client> - Nov 2026.xlsx` (that month's
+rows only, since Drishti counts every row of the file, by department). Picking a client on the tracker shows this
+month's SLA line: the count against the target of 0, by department.
+
 **Client requests.** Need assistance from client lands in the client's AR team lead's **Needs attention →
 Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
 comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department
