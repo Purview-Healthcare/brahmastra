@@ -148,6 +148,11 @@ r = await T(async () => SN("handoffs.close", { id: snList.rows[0].id, outcome: "
 r = await T(async () => SN("handoffs.close", { id: snList.rows[0].id, outcome: "complete", proof: { date: "2026-11-01", ref: "CHK-1001", amount: 120.5 } })); ok("Snail completes the posting", r.ok, r);
 r = await T(async () => MK("handoffs.close", { id: snList.rows[0].id, outcome: "complete", proof: { date: "2026-11-01", ref: "x" } })); ok("Mark cannot close a posting hand-off", !r.ok, r);
 r = await T(async () => MK("handoffs.close", { id: mkList.rows[0].id, outcome: "assistance", reason: "Missing information", note: "Need the corrected NPI from the client" })); ok("old outcome 'assistance' still lands as Need assistance from AR", r.ok, r);
+{ const fd = await TI("attention.fromDesks", {}); const row = fd.rows.find((x) => x.claim_id === c5.id);
+  ok("the AR team lead sees it in Needs attention: Sent back by Posting / Submission, with the reason", row && row.dept === "submission" && row.reason === "Missing information" && /NPI/.test(row.note), fd.rows.length);
+  ok("and it counts on the Needs attention badge", (await TI("attention.count", {})).from_desks >= 1);
+  await AR("queue.complete", { id: c5.id, saag: { status: "In Process", sub_status: "Claim in process", action: "Follow up", bucket: "Payer", effective: "Claim in process" }, note: { source: "Web", findings: "Asked the client for the corrected NPI" } });
+  ok("once the biller saves an entry on the claim it leaves the list", !(await TI("attention.fromDesks", {})).rows.some((x) => x.claim_id === c5.id)); }
 const pc = await PA("claims.list", { page_size: 500 }); ok("posting lead (backup on Sunrise) sees Sunrise's claims, the posting claim included, and no other client's", pc.rows.length > 1 && pc.rows.some((x) => x.id === c4.id) && pc.rows.every((x) => x.client_id === sunrise.id), [pc.rows.length, [...new Set(pc.rows.map((x) => x.client_id))]]);
 const dash = await PA("handoffs.dashboard", { from_ms: 0, to_ms: Date.now() + 1e7 }); ok("posting dashboard: 1 received, 1 posted, amount", dash.totals.received === 1 && dash.totals.done === 1, dash.totals);
 const dashM = await MK("handoffs.dashboard", { from_ms: 0, to_ms: Date.now() + 1e7 }); ok("submission dashboard for Mark", dashM.dept === "submission" && dashM.totals.received === 1, dashM.totals);

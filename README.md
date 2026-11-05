@@ -499,6 +499,11 @@ and to the dates the claims were **sent to the desk** (All time, Today, This wee
 date is the day the AR biller saved the entry that sent the claim, so the same filter answers "what AR sent on
 Monday" and "what reached us on Monday". The counts at the top follow the filters.
 
+**Sent back to AR.** Need assistance from AR also lands in the client's AR team leads' (and managers') **Needs attention →
+Sent back by Posting / Submission**: when, who sent it, the department, the reason and comment, the biller, and how many
+times the claim has come back. It counts on the Needs attention badge, turns red after a working day, and leaves the
+list once a biller saves an entry on the claim.
+
 **Client requests.** Need assistance from client lands in the client's AR team lead's **Needs attention →
 Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
 comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department

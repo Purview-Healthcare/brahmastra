@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.69.0";
+const VERSION = "2.70.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -5168,6 +5168,18 @@ const OPS = {
     const out = rows.map((r) => ({ ...r, dept_label: DEPT_LABEL[r.dept] || r.dept, late: !r.client_sent_at && now > addWorkingHours(r.asked_at || now, 24), chase: !!r.chase_at && now >= r.chase_at }));
     return { rows: out, to_send: out.filter((r) => !r.client_sent_at).length, late: out.filter((r) => r.late).length, hows: CLIENT_SENT_HOW };
   },
+  /* Sent back to AR: claims Posting, Submission or Rejections returned with "Need assistance from AR" in the last 30 days that
+     nobody on AR has worked since. They show for the AR team leads (and up) of the client until a biller saves an entry. */
+  "attention.fromDesks": async ({ env, user }) => {
+    const rows = await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.reason, h.note, h.done_at, h.done_by_name, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state,
+        cl.name AS client_name, l.name AS location_name, u.name AS biller_name,
+        (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN users u ON u.id = c.assigned_to
+      WHERE h.status IN ('assistance','back') AND h.done_at > ? AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)${scopeSql(user, "h.client_id")}
+      ORDER BY h.done_at ASC LIMIT 500`, Date.now() - 30 * 86400000, ...scopeArgs(user));
+    const now = Date.now();
+    return { rows: rows.map((r) => ({ ...r, dept_label: DEPT_LABEL[r.dept] || r.dept, late: now > addWorkingHours(r.done_at, 24) })) };
+  },
   "attention.clientSent": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", str(payload.id, 60));
     if (!h || h.status !== "client") throw bad("This request is no longer waiting on the client.");
@@ -5188,7 +5200,8 @@ const OPS = {
     const cr = await one(env, `SELECT COUNT(*) AS n FROM handoffs WHERE status = 'client' AND client_sent_at IS NULL${scopeSql(user, "client_id")}`, ...scopeArgs(user));
     const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND escalated_at < ? THEN 1 ELSE 0 END) AS overdue FROM claims WHERE escalated = 1 AND state IN ${WORKABLE}${scopeSql(user, "client_id")}`, Date.now() - ESCALATION_TAT_MS, ...scopeArgs(user));
     const mine = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state IN ('assigned','in_progress')", user.id);
-    return { n: ((r && r.n) || 0) + ((cr && cr.n) || 0), escalations: (r && r.n) || 0, client_to_send: (cr && cr.n) || 0, overdue: (r && r.overdue) || 0, my_desk: (mine && mine.n) || 0 };
+    const fd = await one(env, `SELECT COUNT(*) AS n FROM handoffs h WHERE h.status IN ('assistance','back') AND h.done_at > ? AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)${scopeSql(user, "h.client_id")}`, Date.now() - 30 * 86400000, ...scopeArgs(user));
+    return { n: ((r && r.n) || 0) + ((cr && cr.n) || 0) + ((fd && fd.n) || 0), escalations: (r && r.n) || 0, client_to_send: (cr && cr.n) || 0, from_desks: (fd && fd.n) || 0, overdue: (r && r.overdue) || 0, my_desk: (mine && mine.n) || 0 };
   },
   /* Answer an escalation: the reply goes into the claim history and the flag comes off. Optionally the claim goes back on the biller's list today. */
   "attention.answer": async ({ env, user, payload }) => {
