@@ -265,8 +265,7 @@ into **high priority** (the High tier) and other.
 - **Manage › Note templates**: text for RCA / findings, for every client or one, written by team leads and up.
   Billers pick one from **Insert a template** above the RCA box.
 - On **Work this claim**, a biller sees the three SAAG combinations the team used most in the last 90 days for
-  that payer (or the client when the payer is new); one click fills status, sub-status, action, bucket and the
-  note action.
+  that payer (or the client when the payer is new); one click fills status, sub-status, action and bucket.
 
 #### Dashboard: Team status, Inventory status, Client 360 report
 
@@ -843,17 +842,18 @@ A work entry has two parts:
    the biller can change.
 2. **Note**, in the team's fixed format, each field its own box: DOS
    (MM/DD/YYYY), CLM#, DENIAL, SOURCE and REF (a call needs its reference),
-   PRE CALL CHECK (what was verified before acting), RCA / FINDINGS, and
-   ACTION from the fixed list (corrected & resubmitted, appeal filed, pending
-   with client, pending with patient, pending with payer, follow up, closed).
+   PRE CALL CHECK (what was verified before acting) and RCA / FINDINGS. There is no separate
+   note ACTION: the action is the one picked in the SAAG entry above it. (Entries written before
+   this change keep the ACTION they were saved with.)
 
 The note is stored as **one cell**, for example:
 
 ```
-DOS: 08/09/2026 | CLM#: 7711130 | DENIAL: TFL - Timely filing | SOURCE: Call, REF: 88120345 | PRE CALL CHECK: Eligibility active on DOS; Claim status with payer | RCA/FINDINGS: ... | ACTION: pending with client | SAAG: Claim Denied > TFL Exceeded/No POTFL > Need to Appeal | BUCKET: Client | EFFECTIVE: Pending-Client Assistance | FOLLOW-UP: 11/10/2026
+DOS: 08/09/2026 | CLM#: 7711130 | DENIAL: TFL - Timely filing | SOURCE: Call, REF: 88120345 | PRE CALL CHECK: Eligibility active on DOS; Claim status with payer | RCA/FINDINGS: ... | SAAG: Claim Denied > TFL Exceeded/No POTFL > Need to Appeal | BUCKET: Client | EFFECTIVE: Pending-Client Assistance | FOLLOW-UP: 11/10/2026
 ```
 
-A closing entry closes the claim. Any other entry sets a follow-up date (14
+A closing entry closes the claim: the SAAG entry's bucket is Closed or its Effective Matrix value is
+Processing-Closed or Payment-Cash In Bank. Any other entry sets a follow-up date (14
 days for Client Assistance, 7 for Purview internal review, 30 for the
 collectible buckets, or the client's default) and the claim comes back into the
 allocation pool when the date arrives.

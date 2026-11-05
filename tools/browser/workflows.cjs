@@ -116,10 +116,10 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const note = p.locator(".group:has-text(\"Note · saved\")").first();
     await pick(note.locator(".field:has-text(\"Source\")").first(), "Portal");
     await p.locator("textarea").first().fill("Payer portal shows the claim not on file; policy active on DOS, resubmitting.");
-    const act = note.locator(".field:has-text(\"Action\")").last();
-    await pick(act, "corrected & resubmitted");
+    ok("the Note area has no ACTION field: the SAAG entry carries the action", !/\baction\b/i.test(await note.innerText()), (await note.innerText()).slice(0, 300));
     const preview = await p.locator("text=NOTE PREVIEW").locator("xpath=..").innerText().catch(() => "");
-    ok("the note preview builds the one-cell note", /SAAG: Claim Not On File > Policy Active > Need to Resubmit/.test(await p.innerText(".main")), preview.slice(0, 200));
+    ok("the note preview builds the one-cell note, with no ACTION part", /SAAG: Claim Not On File > Policy Active > Need to Resubmit/.test(await p.innerText(".main")) && !/ACTION:/.test(preview), preview.slice(0, 200));
+    ok("and nothing is still needed once the SAAG entry and the RCA are filled", !/Still needed/.test(await p.innerText(".main")), (await p.innerText(".main")).match(/Still needed[^.]*\./));
     await p.locator('button.btn:text-is("Save")').first().click(); await t(2500);
     const done = await rpc("history.mine", { from_ms: Date.now() - 600000, to_ms: Date.now() + 60000 });
     ok("the entry saves", JSON.stringify(done).includes("Policy Active"), Object.keys(done));

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.65.0";
+const VERSION = "2.66.0";
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
@@ -672,7 +672,6 @@ async function drTickMonthEnd(env, summaries) {
    the Effective Matrix the workbook maps it to) plus a bucket, and a note in
    the team's fixed format. The note is stored as ONE cell (comment) in that
    format, with the individual fields kept in fields_json for the screens. */
-const NOTE_ACTIONS = ["corrected & resubmitted", "appeal filed", "pending with client", "pending with patient", "pending with payer", "follow up", "closed"];
 const NOTE_SOURCES = ["Call", "Portal", "IVR", "EOB/ERA", "Email", "Clearinghouse", "Client", "Other"];
 const BUCKETS4 = ["Payer", "Client", "Closed", "Purview"];
 const CLOSED_EFFECTIVE = /^(processing-closed|payment-cash in bank)$/i;
@@ -683,11 +682,10 @@ function cleanNoteFields(f, claim) {
   f = f || {};
   const t = (v, n = 400) => str(v, n).replace(/\s*\|\s*/g, " / ").replace(/\s+/g, " ").trim();
   const pre = Array.isArray(f.precheck) ? f.precheck.map((x) => t(x, 80)).filter(Boolean).slice(0, 12) : [];
-  const action = String(f.action || "").toLowerCase().trim();
   return {
     dos: mmdd(isoDate(f.dos) || claim.dos) || t(f.dos, 20), clm: t(f.clm || claim.claim_no, 80), denial: t(f.denial, 200),
     source: NOTE_SOURCES.includes(f.source) ? f.source : t(f.source, 40), ref: t(f.ref, 80),
-    precheck: pre, precheck_text: t(f.precheck_text, 300), findings: t(f.findings, 2000), action: NOTE_ACTIONS.includes(action) ? action : t(f.action, 120),
+    precheck: pre, precheck_text: t(f.precheck_text, 300), findings: t(f.findings, 2000),
     tfl: limitDays(f.tfl), afl: limitDays(f.afl), denial_date: isoDate(f.denial_date) || "",
     call_start: hhmm(f.call_start), call_end: hhmm(f.call_end),
   };
@@ -719,7 +717,7 @@ function composeNote(fields, saag, followUp) {
     `DOS: ${fields.dos || "-"}`, `CLM#: ${fields.clm || "-"}`, `DENIAL: ${fields.denial || "-"}`,
     `SOURCE: ${fields.source || "-"}${fields.ref ? ", REF: " + fields.ref : (fields.source === "Call" ? ", REF: none" : "")}`,
     `PRE CALL CHECK: ${[...(fields.precheck || []), fields.precheck_text].filter(Boolean).join("; ") || "-"}`,
-    `RCA/FINDINGS: ${fields.findings || "-"}`, `ACTION: ${fields.action || "-"}`, ...limitLine(fields),
+    `RCA/FINDINGS: ${fields.findings || "-"}`, ...limitLine(fields),
     ...(saag ? [`SAAG: ${saag.status} > ${saag.sub_status} > ${saag.action}`, `BUCKET: ${saag.bucket}`, `EFFECTIVE: ${saag.effective || "-"}`] : []),
   ];
   if (followUp) parts.push(`FOLLOW-UP: ${mmdd(followUp)}`);
@@ -732,7 +730,6 @@ function validateWork(payload) {
   if (!BUCKETS4.includes(saag.bucket)) throw bad("Pick a bucket: Payer, Client, Closed or Purview.");
   const f = payload.note || {};
   if (!commentOk(f.findings)) throw bad("Write what you found (RCA / findings), a few words at least.");
-  if (!String(f.action || "").trim()) throw bad("Pick the note ACTION from the list, or type it under Other.");
   if (f.source === "Call" && !String(f.ref || "").trim()) throw bad("A call needs its reference number (REF).");
   if (f.source === "Call" && (!hhmm(f.call_start) || !hhmm(f.call_end))) throw bad("Enter the call's start and end time.");
   return saag;
@@ -741,14 +738,13 @@ function validateWork(payload) {
    a file attached to the claim since its last work entry. Keep in step with ATTACH_RULE in index.html. */
 const ATTACH_SUBS = /^(EOB Available|Claim Applied Towards Offset\(EOB Available\)|POTF available)$/i;
 const ATTACH_ACTIONS = /^(Need to Post\/Posting Correction|Need to Appeal|Need to Appeal Mail|Appeal Sent|Paper Appeal|PLSAPPEAL|Recon\/Appeal In Process)$/i;
-function attachNeeded(saag, fields) {
+function attachNeeded(saag) {
   if (ATTACH_SUBS.test(saag.sub_status)) return saag.sub_status;
   if (ATTACH_ACTIONS.test(saag.action)) return saag.action;
-  if (fields && fields.action === "appeal filed") return "appeal filed";
   return "";
 }
-async function requireAttachment(env, claimId, saag, fields, since) {
-  const why = attachNeeded(saag, fields);
+async function requireAttachment(env, claimId, saag, since) {
+  const why = attachNeeded(saag);
   if (!why) return;
   const a = await one(env, "SELECT id FROM attachments WHERE claim_id = ? AND created_at > ? LIMIT 1", claimId, since || 0);
   if (!a) throw bad(`"${why}" needs the document attached (EOB, appeal or reconsideration letter). Attach it under RCA / findings, then save.`);
@@ -757,7 +753,7 @@ async function requireAttachment(env, claimId, saag, fields, since) {
 const claimEvent = (env, claimId, user, kind, text, data) =>
   env.DB.prepare("INSERT INTO claim_events (id, claim_id, at, user_id, user_name, kind, text, data_json) VALUES (?,?,?,?,?,?,?,?)")
     .bind(uuid(), claimId, Date.now(), user ? user.id : null, user ? user.name || "" : "", kind, str(text, 500), JSON.stringify(data || {}));
-const isClosedWork = (saag, fields) => saag.bucket === "Closed" || CLOSED_EFFECTIVE.test(saag.effective) || fields.action === "closed";
+const isClosedWork = (saag) => saag.bucket === "Closed" || CLOSED_EFFECTIVE.test(saag.effective);
 const followUpDays = (effective, clientDays) => EFFECTIVE_DAYS[effective] || clientDays || 30;
 const noteFields = (n) => { let f = {}; try { f = JSON.parse(n.fields_json || "{}"); } catch {} return f; };
 
@@ -4227,9 +4223,9 @@ const OPS = {
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
     const lastWork = await one(env, "SELECT MAX(created_at) AS at FROM notes WHERE claim_id = ? AND kind = 'work'", c.id);
-    await requireAttachment(env, c.id, saag, fields, lastWork && lastWork.at);
+    await requireAttachment(env, c.id, saag, lastWork && lastWork.at);
     const today = isoDate(payload.today) || isoToday();
-    const closed = isClosedWork(saag, fields);
+    const closed = isClosedWork(saag);
     // A follow-up date in the past would make the claim "overdue" the moment it is saved; the earliest is today.
     const wanted = isoDate(payload.follow_up_on);
     const followUp = closed ? "" : ((wanted && wanted >= today ? wanted : "") || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
@@ -4253,11 +4249,11 @@ const OPS = {
       const text = t.id === c.id ? comment : composeNote(f, saag, followUp);
       stmts.push(env.DB.prepare(`INSERT INTO notes (id, claim_id, user_id, user_name, kind, status_code, action_code, comment, follow_up_on, created_at, status, sub_status, action, bucket, effective, note_action, fields_json, call_min)
           VALUES (?,?,?,?,'work',?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .bind(uuid(), t.id, user.id, user.name, saag.status, saag.action, text, followUp, now, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, f.action, JSON.stringify(f), t.id === c.id ? callMinOf(f) : null));
+        .bind(uuid(), t.id, user.id, user.name, saag.status, saag.action, text, followUp, now, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, "", JSON.stringify(f), t.id === c.id ? callMinOf(f) : null));
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, started_at = NULL, completed_at = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?,
           last_note = ?, last_worked_by = ?, last_worked_on = ?, follow_up_on = ?, touches = touches + 1, worked_before = 1, escalated = ?, skipped_at = NULL, updated_at = ?,
           escalated_at = CASE WHEN ? = 1 AND (escalated = 0 OR escalated_at IS NULL) THEN ? WHEN ? = 1 THEN escalated_at ELSE NULL END, escalated_by = CASE WHEN ? = 1 THEN ? ELSE NULL END WHERE id = ?`)
-        .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, f.action, text.slice(0, 600), user.id, today, followUp, escalate, now, escalate, now, escalate, escalate, user.id, t.id));
+        .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", text.slice(0, 600), user.id, today, followUp, escalate, now, escalate, now, escalate, escalate, user.id, t.id));
     }
     const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
     if (lim) stmts.push(lim);
@@ -4341,23 +4337,23 @@ const OPS = {
     if (!c) throw bad("Claim not found.");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
-    if (!attachNeeded({ sub_status: n.sub_status, action: n.action }, { action: n.note_action })) {
+    if (!attachNeeded({ sub_status: n.sub_status, action: n.action })) {
       const prev = await one(env, "SELECT MAX(created_at) AS at FROM notes WHERE claim_id = ? AND kind = 'work' AND created_at < ?", c.id, n.created_at);
-      await requireAttachment(env, c.id, saag, fields, prev && prev.at);
+      await requireAttachment(env, c.id, saag, prev && prev.at);
     }
     const today = isoDate(payload.today) || isoToday();
-    const closed = isClosedWork(saag, fields);
+    const closed = isClosedWork(saag);
     const wantedFu = isoDate(payload.follow_up_on);
     const followUp = closed ? "" : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
     const comment = composeNote(fields, saag, followUp);
     const now = Date.now();
     const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, call_min = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
-      .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, fields.action, JSON.stringify(fields), callMinOf(fields), now, user.id, n.id)];
+      .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, "", JSON.stringify(fields), callMinOf(fields), now, user.id, n.id)];
     const latest = await one(env, "SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id);
     if (latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned" && c.state !== IN_PROCESS) {
       const newState = closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?, last_note = ?, follow_up_on = ?, updated_at = ? WHERE id = ?`)
-        .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, fields.action, comment.slice(0, 600), followUp, now, c.id));
+        .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", comment.slice(0, 600), followUp, now, c.id));
     }
     stmts.push(claimEvent(env, c.id, user, "edited", "", { note_id: n.id }));
     const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
@@ -4404,7 +4400,7 @@ const OPS = {
     }
     const now = Date.now(), id = uuid();
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at, note_action, fields_json, call_min) VALUES (?,?,?,?,'note',?,?,?,?,?)").bind(id, c.id, user.id, user.name, comment, now, fields ? fields.action : "", JSON.stringify(fields || {}), callMinOf(fields)),
+      env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at, note_action, fields_json, call_min) VALUES (?,?,?,?,'note',?,?,?,?,?)").bind(id, c.id, user.id, user.name, comment, now, "", JSON.stringify(fields || {}), callMinOf(fields)),
       env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
       ...[fields && saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note"), denialDateStmt(env, c.id, fields)].filter(Boolean),
     ]);

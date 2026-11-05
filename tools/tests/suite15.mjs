@@ -108,6 +108,8 @@ const mon = "2026-11-02", tue = "2026-11-03", wed = "2026-11-04";
 await sql("INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,?,?,?,?)", U("Cara Agent").id, tue, "out", "Sick", "Tina Lead", Date.now());
 const monMs = Date.parse(mon + "T10:00:00Z");
 await sql("UPDATE notes SET created_at = ? WHERE rowid IN (SELECT rowid FROM notes WHERE user_id = ? AND kind = 'work' LIMIT 2)", monMs, U("Arun Agent").id);
+// his third entry was written when the suite ran: pin it to the Wednesday so the week reads the same on any day
+await sql("UPDATE notes SET created_at = ? WHERE user_id = ? AND kind = 'work' AND created_at != ?", Date.parse(wed + "T10:00:00Z"), U("Arun Agent").id, monMs);
 r = await VP("team.range", { from: mon, to: wed, today: wed, tz_offset_min: 0 });
 const aw = r.rows.find((x) => x.name === "Arun Agent"), cw = r.rows.find((x) => x.name === "Cara Agent");
 ok("three weekdays", r.workdays === 3, r.workdays);

@@ -71,8 +71,18 @@ r = await T(async () => AR("queue.complete", { id: c1.id, ...work({ findings: "s
 ok("RCA / findings under 8 characters is refused", !r.ok, r);
 r = await T(async () => AR("queue.complete", { id: c1.id, saag: work().saag, note: { ...work().note, source: "Call", ref: "" } }));
 ok("a call needs its reference", !r.ok && /ref/i.test(r.e), r);
-r = await T(async () => AR("queue.complete", { id: c1.id, saag: work().saag, note: { ...work().note, action: "" } }));
-ok("ACTION is required", !r.ok, r);
+// The note has no ACTION of its own: the SAAG entry says what was done (older screens still send one; it is ignored)
+const noAction = (extra = {}) => ({ saag: work().saag, note: (({ action, ...n }) => ({ ...n, ...extra }))(work().note) });
+r = await T(async () => AR("queue.complete", { id: pool[3].id, ...noAction() }));
+ok("an entry without a note ACTION saves", r.ok, r);
+const savedNote = (await AR("claims.timeline", { id: pool[3].id })).items.find((x) => x.kind === "work");
+ok("the saved note has no ACTION part and no stored action", savedNote && !/ACTION:/.test(savedNote.comment) && !("action" in (savedNote.fields || {})), savedNote && savedNote.comment);
+r = await T(async () => AR("queue.complete", { id: pool[4].id, saag: work().saag, note: { ...work().note, action: "closed" } }));
+ok("an older screen sending action 'closed' does not close the claim: the SAAG entry decides", r.ok && (await TI("claims.get", { id: pool[4].id })).claim.state !== "closed", r);
+r = await T(async () => AR("queue.complete", { id: pool[5].id, saag: work().saag, note: { ...work().note, action: "appeal filed" } }));
+ok("nor does an older 'appeal filed' ask for an attachment: only the SAAG choices do", r.ok, r);
+r = await T(async () => AR("queue.complete", { id: pool[6].id, saag: { ...work().saag, action: "Need to Appeal", sub_status: "Denied for medical necessity", status: "Claim Denied", effective: "Pending-Collectible Insurance" }, note: (({ action, ...n }) => n)(work().note) }));
+ok("an appeal SAAG action still needs the document", !r.ok && /document|attach/i.test(r.e || ""), r);
 r = await T(async () => AR("queue.complete", { id: c1.id, ...work(), escalate: true }));
 ok("a complete entry saves, with a follow-up date", r.ok && r.r.follow_up_on > today, r);
 ok("Effective Matrix 'Pending-Collectible Insurance' sets 30 days", r.ok && (Date.parse(r.r.follow_up_on) - Date.parse(today)) / 86400000 === 30, r.r && r.r.follow_up_on);

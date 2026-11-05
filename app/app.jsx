@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.75.0";
+const APP_VERSION = "2.76.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -49,7 +49,6 @@ const saagActions = (status, sub) => (SAAG_INDEX.actsByKey.get(status + "\u0001"
 const BUCKETS4 = ["Payer", "Client", "Closed", "Purview"];
 const EFFECTIVE_BUCKET = { "Pending-Collectible Insurance": "Payer", "Pending-Client Assistance": "Client", "Pending-Collectible Patient": "Client", "Pending-Purview internal review": "Purview", "Processing-Closed": "Closed", "Payment-Cash In Bank": "Closed" };
 const EFFECTIVE_DAYS = { "Pending-Collectible Insurance": 30, "Pending-Client Assistance": 14, "Pending-Collectible Patient": 30, "Pending-Purview internal review": 7 };
-const NOTE_ACTIONS = ["corrected & resubmitted", "appeal filed", "pending with client", "pending with patient", "pending with payer", "follow up", "closed"];
 const NOTE_SOURCES = ["Call", "Portal", "IVR", "EOB/ERA", "Email", "Clearinghouse", "Client", "Other"];
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const PRECHECKS = ["Eligibility active on DOS", "Claim status with payer", "Timely filing limit", "Appeal filing limit", "Auth / referral on file", "Prior notes read", "EOB / ERA reviewed", "Patient demographics / member ID", "Payer ID / address", "Coding (CPT, DX, modifiers)"];
@@ -58,8 +57,8 @@ const ATTACH_RULE = {
   subs: /^(EOB Available|Claim Applied Towards Offset\(EOB Available\)|POTF available)$/i,
   actions: /^(Need to Post\/Posting Correction|Need to Appeal|Need to Appeal Mail|Appeal Sent|Paper Appeal|PLSAPPEAL|Recon\/Appeal In Process)$/i,
 };
-const attachNeeded = (saag, noteAction) => (ATTACH_RULE.subs.test((saag && saag.sub_status) || "") ? saag.sub_status : ATTACH_RULE.actions.test((saag && saag.action) || "") ? saag.action : noteAction === "appeal filed" ? "appeal filed" : "");
-const isClosedSaag = (saag, noteAction) => !!(saag && saag.bucket === "Closed") || /^(processing-closed|payment-cash in bank)$/i.test((saag && saag.effective) || "") || noteAction === "closed";
+const attachNeeded = (saag) => (ATTACH_RULE.subs.test((saag && saag.sub_status) || "") ? saag.sub_status : ATTACH_RULE.actions.test((saag && saag.action) || "") ? saag.action : "");
+const isClosedSaag = (saag) => !!(saag && saag.bucket === "Closed") || /^(processing-closed|payment-cash in bank)$/i.test((saag && saag.effective) || "");
 const mmdd = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}` : (iso || ""));
 /* TFL (timely filing limit, days from DOS) and AFL (appeal filing limit, days from the denial / EOB date). Same rule as limitDays in worker.js. */
 const limDays = (v) => { const m = /^\s*(\d{1,4})\s*(d|days?)?\s*$/i.exec(String(v == null ? "" : v)); const n = m ? Number(m[1]) : 0; return n > 0 && n <= 3650 ? n : null; };
@@ -74,7 +73,7 @@ function composeNote(fields, saag, followUp) {
   const parts = [
     `DOS: ${t(fields.dos) || "-"}`, `CLM#: ${t(fields.clm) || "-"}`, `DENIAL: ${t(fields.denial) || "-"}`,
     `SOURCE: ${t(fields.source) || "-"}${t(fields.ref) ? ", REF: " + t(fields.ref) : (fields.source === "Call" ? ", REF: none" : "")}`,
-    `PRE CALL CHECK: ${pre || "-"}`, `RCA/FINDINGS: ${t(fields.findings) || "-"}`, `ACTION: ${t(fields.action) || "-"}`,
+    `PRE CALL CHECK: ${pre || "-"}`, `RCA/FINDINGS: ${t(fields.findings) || "-"}`,
     ...(/^\d{4}-\d{2}-\d{2}$/.test(fields.denial_date || "") ? [`DENIAL DATE: ${mmdd(fields.denial_date)}`] : []),
     ...(limDays(fields.tfl) ? [`TFL: ${limDays(fields.tfl)} days`] : []), ...(limDays(fields.afl) ? [`AFL: ${limDays(fields.afl)} days`] : []),
     ...(saag ? [`SAAG: ${t(saag.status) || "-"} > ${t(saag.sub_status) || "-"} > ${t(saag.action) || "-"}`, `BUCKET: ${t(saag.bucket) || "-"}`, `EFFECTIVE: ${t(saag.effective) || "-"}`] : []),
@@ -82,25 +81,13 @@ function composeNote(fields, saag, followUp) {
   if (followUp) parts.push(`FOLLOW-UP: ${mmdd(followUp)}`);
   return parts.join(" | ");
 }
-function suggestNoteAction(action, eff) {
-  const a = String(action || "").toLowerCase();
-  if (/appeal sent|paper appeal|recon\/appeal|plsappeal/.test(a)) return "appeal filed";
-  if (/correction, resubmission|reprocess|drpbilling/.test(a)) return "corrected & resubmitted";
-  if (/billed patient|contact patient|approval to bill patient|ptresp/.test(a)) return "pending with patient";
-  if (/closed|voided|adjustment \/ write-off|sent to wq/.test(a)) return "closed";
-  if (eff === "Pending-Client Assistance") return "pending with client";
-  if (eff === "Pending-Collectible Insurance") return "pending with payer";
-  if (eff === "Pending-Collectible Patient") return "pending with patient";
-  if (/closed|cash in bank/i.test(eff || "")) return "closed";
-  return "follow up";
-}
 /* Row colour on the biller's list: green when the SAAG entry closed the claim, yellow when it was worked with any other status, white when not worked yet. */
 function workTone(c) {
   if (c.state === "closed") return "tr-green";
   if (!c.last_status_code) return "";
   const worked = c.completed_at && (!c.assigned_at || c.completed_at >= c.assigned_at);
   if (!worked) return "";
-  return isClosedSaag({ bucket: c.last_bucket, effective: c.last_effective }, c.last_note_action) ? "tr-green" : "tr-yellow";
+  return isClosedSaag({ bucket: c.last_bucket, effective: c.last_effective }) ? "tr-green" : "tr-yellow";
 }
 
 /* ---------- Purview Gurukul denial library (lib/denial-library.js): next-step suggestions ---------- */
@@ -3161,7 +3148,7 @@ const CLAIM_COLS = [
   { key: "balance", label: "Balance" }, { key: "billed", label: "Billed" }, { key: "age_days", label: "Age (days)" }, { key: "bucket", label: "Bucket" }, { key: "tier", label: "Tier" }, { key: "status_class", label: "Status class", get: (r) => STATUS_LABEL[r.status_class] || r.status_class },
   { key: "file_status", label: "File status" }, { key: "file_sub_status", label: "File sub status" }, { key: "inventory_kind", label: "Inventory" }, { key: "worked_before", label: "Worked before", get: (r) => (r.worked_before ? "Yes" : "No") }, { key: "last_worked_on", label: "Last worked on" }, { key: "follow_up_on", label: "Follow-up on" },
   { key: "priority", label: "Priority" }, { key: "priority_reason", label: "Priority reason" }, { key: "state", label: "State" }, { key: "assigned_name", label: "Assigned to" },
-  { key: "last_status_code", label: "SAAG status" }, { key: "last_sub_status", label: "SAAG sub-status" }, { key: "last_action_code", label: "SAAG action" }, { key: "last_bucket", label: "Bucket" }, { key: "last_effective", label: "Effective matrix" }, { key: "last_note_action", label: "Note action" },
+  { key: "last_status_code", label: "SAAG status" }, { key: "last_sub_status", label: "SAAG sub-status" }, { key: "last_action_code", label: "SAAG action" }, { key: "last_bucket", label: "Bucket" }, { key: "last_effective", label: "Effective matrix" },
   { key: "last_note", label: "Last note (one cell)" }, { key: "location_name", label: "Location" },
 ];
 /* One small button; the rules live in a dialog so they do not crowd the screen. */
@@ -3659,7 +3646,7 @@ function ClaimInfo({ c, siblings }) {
 }
 /* A note in the standard format without a SAAG entry (the SAAG entry is done from Work this claim). */
 function NoteForm({ c, files, onChanged }) {
-  const blank = () => ({ dos: c.dos || "", clm: c.claim_no || "", denial: c.file_sub_status || "", source: "", ref: "", precheck: [], precheck_text: "", findings: "", action: "", ...limitsInit(c) });
+  const blank = () => ({ dos: c.dos || "", clm: c.claim_no || "", denial: c.file_sub_status || "", source: "", ref: "", precheck: [], precheck_text: "", findings: "", ...limitsInit(c) });
   const [note, setNote] = useState(blank);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -3708,7 +3695,7 @@ function NoteFieldList({ f }) {
   if (!f) return null;
   return <dl className="nf"><dt>DOS</dt><dd>{f.dos || "–"}</dd><dt>CLM#</dt><dd className="mono">{f.clm || "–"}</dd><dt>Denial</dt><dd>{f.denial || "–"}</dd>
     <dt>Source</dt><dd>{f.source || "–"}{f.ref ? " · REF " + f.ref : ""}</dd><dt>Pre call check</dt><dd>{[...(f.precheck || []), f.precheck_text].filter(Boolean).join("; ") || "–"}</dd>
-    <dt>RCA / findings</dt><dd style={{ whiteSpace: "pre-wrap" }}>{f.findings || "–"}</dd><dt>Action</dt><dd><b>{f.action || "–"}</b></dd></dl>;
+    <dt>RCA / findings</dt><dd style={{ whiteSpace: "pre-wrap" }}>{f.findings || "–"}</dd>{f.action ? <><dt>Action</dt><dd><b>{f.action}</b></dd></> : null}</dl>;
 }
 function HistEvent({ it, onEdit, onFile }) {
   const D = (bg, ic) => <div className="dot" style={{ background: bg }}>{ic}</div>;
@@ -4245,13 +4232,12 @@ function NoteFieldsRow({ note, setN }) {
   const mins = callMins(note.call_start, note.call_end);
   return (
     <>
-    <div className="g6">
+    <div className="grid g5">
       <Field label="DOS" hint="from the claim"><input className="input" value={mmdd(note.dos) || note.dos} readOnly /></Field>
       <Field label="CLM#"><input className="input mono" value={note.clm} onChange={(e) => setN("clm")(e.target.value)} /></Field>
       <Field label="Denial" hint="denial reason"><input className="input" list="saag-subs" value={note.denial} onChange={(e) => setN("denial")(e.target.value)} /></Field>
       <Field label="Source"><ComboOther value={note.source} list={NOTE_SOURCES} onChange={setN("source")} placeholder="Where from?" /></Field>
       <Field label={note.source === "Call" ? "REF · call ref (required)" : "REF"}><input className="input mono" value={note.ref} onChange={(e) => setN("ref")(e.target.value)} placeholder={note.source === "Call" ? "call reference #" : "reference # if any"} /></Field>
-      <Field label="ACTION"><ComboOther value={note.action} list={NOTE_ACTIONS} onChange={setN("action")} placeholder="Pick…" /></Field>
     </div>
     {note.source === "Call" && <div className="row mt8" style={{ gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
       <Field label="Call start time (required)"><input className="input" type="time" style={{ width: 140 }} value={note.call_start || ""} onChange={(e) => setN("call_start")(e.target.value)} /></Field>
@@ -4295,20 +4281,20 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
   const today = todayISO();
   const init = initial || {};
   const [saag, setSaag] = useState(() => ({ status: "", sub_status: "", action: "", effective: "", bucket: "", ...(init.saag || {}) }));
-  const [note, setNote] = useState(() => ({ dos: claim.dos || "", clm: claim.claim_no || "", denial: claim.file_sub_status || "", source: "", ref: "", precheck: [], precheck_text: "", findings: "", action: "", ...limitsInit(claim), ...(init.note || {}) }));
+  const [note, setNote] = useState(() => ({ dos: claim.dos || "", clm: claim.claim_no || "", denial: claim.file_sub_status || "", source: "", ref: "", precheck: [], precheck_text: "", findings: "", ...limitsInit(claim), ...(init.note || {}) }));
   const [followUp, setFollowUp] = useState(init.follow_up_on || "");
   const [escalate, setEscalate] = useState(!!init.escalate);
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
   const subs = saagSubs(saag.status);
   const acts = saagActions(saag.status, saag.sub_status);
-  const closed = isClosedSaag(saag, note.action);
+  const closed = isClosedSaag(saag);
   const autoFollow = saag.effective ? addDaysISO(today, EFFECTIVE_DAYS[saag.effective] || claim.client_follow_up_days || 30) : "";
   const fu = closed ? "" : (followUp || autoFollow);
   useEffect(() => { if (onChange) onChange({ saag, note }); }, [saag.sub_status, saag.action]);
   const pickStatus = (v) => setSaag({ status: v, sub_status: "", action: "", effective: "", bucket: "" });
   const pickSub = (v) => { setSaag((s) => ({ ...s, sub_status: v, action: "", effective: "", bucket: "" })); setNote((n) => ({ ...n, denial: (!n.denial || SAAG.subStatuses.includes(n.denial)) ? v : n.denial })); };
-  const pickAction = (v) => { const a = acts.find((x) => x.action === v); const eff = a ? a.effective : ""; setSaag((s) => ({ ...s, action: v, effective: eff, bucket: EFFECTIVE_BUCKET[eff] || s.bucket || "" })); setNote((n) => ({ ...n, action: n.action || suggestNoteAction(v, eff) })); };
+  const pickAction = (v) => { const a = acts.find((x) => x.action === v); const eff = a ? a.effective : ""; setSaag((s) => ({ ...s, action: v, effective: eff, bucket: EFFECTIVE_BUCKET[eff] || s.bucket || "" })); };
   const togglePre = (p) => setNote((n) => ({ ...n, precheck: n.precheck.includes(p) ? n.precheck.filter((x) => x !== p) : [...n.precheck, p] }));
   // what the team picked most for this payer, and the team's note templates
   const sug = useRpc("saag.suggest", { client_id: claim.client_id, payer: claim.payer }, [claim.id], !!claim.client_id);
@@ -4319,18 +4305,17 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
     const a = saagActions(x.status, x.sub_status).find((y) => y.action === x.action);
     const eff = a ? a.effective : "";
     setSaag({ status: x.status, sub_status: x.sub_status, action: x.action, effective: eff, bucket: EFFECTIVE_BUCKET[eff] || x.bucket || "" });
-    setNote((n) => ({ ...n, denial: (!n.denial || SAAG.subStatuses.includes(n.denial)) ? x.sub_status : n.denial, action: n.action || suggestNoteAction(x.action, eff) }));
+    setNote((n) => ({ ...n, denial: (!n.denial || SAAG.subStatuses.includes(n.denial)) ? x.sub_status : n.denial }));
   };
   const insertTpl = (id) => { const tt = ((tpl.data && tpl.data.rows) || []).find((x) => x.id === id); if (tt) setNote((n) => ({ ...n, findings: (n.findings ? n.findings.replace(/\s+$/, "") + " " : "") + tt.text })); };
   const missing = [];
   if (!saag.status || !saag.sub_status || !saag.action) missing.push("SAAG status, sub-status and action");
   if (!saag.bucket) missing.push("bucket");
   if (String(note.findings || "").trim().length < 8) missing.push("RCA / findings");
-  if (!note.action) missing.push("ACTION");
   if (note.source === "Call" && !String(note.ref || "").trim()) missing.push("call REF");
   if (note.source === "Call" && (!note.call_start || !note.call_end)) missing.push("call start and end time");
   if ((String(note.tfl || "").trim() && !limDays(note.tfl)) || (String(note.afl || "").trim() && !limDays(note.afl))) missing.push("TFL / AFL as a number of days");
-  const needFile = attachNeeded(saag, note.action);
+  const needFile = attachNeeded(saag);
   if (needFile && newFiles === 0) missing.push(`an attachment (EOB / appeal document) for "${needFile}"`);
   const ready = !missing.length;
   const noteMissing = missing.filter((m) => m === "RCA / findings" || m === "call REF");
@@ -4515,7 +4500,7 @@ function NotesList({ notes, me, claim, onChanged }) {
                     <dt>DOS</dt><dd>{f.dos || "–"}</dd><dt>CLM#</dt><dd className="mono">{f.clm || "–"}</dd><dt>Denial</dt><dd>{f.denial || "–"}</dd>
                     <dt>Source</dt><dd>{f.source || "–"}{f.ref ? <span className="mono"> · REF {f.ref}</span> : null}</dd>
                     <dt>Pre call check</dt><dd>{[...(f.precheck || []), f.precheck_text].filter(Boolean).join("; ") || "–"}</dd>
-                    <dt>RCA / findings</dt><dd style={{ whiteSpace: "pre-wrap" }}>{f.findings || "–"}</dd><dt>Action</dt><dd className="b">{f.action || "–"}</dd>
+                    <dt>RCA / findings</dt><dd style={{ whiteSpace: "pre-wrap" }}>{f.findings || "–"}</dd>{f.action ? <><dt>Action</dt><dd className="b">{f.action}</dd></> : null}
                   </dl>
                 ) : <div className="small mt8" style={{ whiteSpace: "pre-wrap" }}>{n.comment}</div>}
                 <details className="mt8"><summary className="tiny muted" style={{ cursor: "pointer" }}>one-cell note as stored</summary><div className="cell mt8">{n.comment}</div></details>
@@ -5530,7 +5515,7 @@ const REPORT_COLS = [
   { key: "file_status", label: "File status" }, { key: "file_sub_status", label: "File sub status" }, { key: "kind", label: "Entry" },
   { key: "status", label: "SAAG status", get: (r) => r.status || r.status_code }, { key: "sub_status", label: "SAAG sub-status" }, { key: "action", label: "SAAG action", get: (r) => r.action || r.action_code }, { key: "work_bucket", label: "Bucket" }, { key: "effective", label: "Effective matrix" },
   { key: "f_dos", label: "Note DOS", get: (r) => r.f.dos }, { key: "f_clm", label: "Note CLM#", get: (r) => r.f.clm }, { key: "f_denial", label: "Denial", get: (r) => r.f.denial }, { key: "f_source", label: "Source", get: (r) => r.f.source }, { key: "f_ref", label: "REF", get: (r) => r.f.ref },
-  { key: "f_pre", label: "Pre call check", get: (r) => [...(r.f.precheck || []), r.f.precheck_text].filter(Boolean).join("; ") }, { key: "f_findings", label: "RCA / findings", get: (r) => r.f.findings }, { key: "note_action", label: "Note action" },
+  { key: "f_pre", label: "Pre call check", get: (r) => [...(r.f.precheck || []), r.f.precheck_text].filter(Boolean).join("; ") }, { key: "f_findings", label: "RCA / findings", get: (r) => r.f.findings },
   { key: "follow_up_on", label: "Follow-up" }, { key: "comment", label: "Note (one cell)" }, { key: "edited_at", label: "Edited", get: (r) => (r.edited_at ? new Date(r.edited_at).toLocaleString() : "") }, { key: "state", label: "Claim state now" },
 ];
 const reportRow = (r) => { let f = {}; try { f = JSON.parse(r.fields_json || "{}"); } catch (e) {} return { ...r, f: f || {} }; };
