@@ -499,7 +499,25 @@ and to the dates the claims were **sent to the desk** (All time, Today, This wee
 date is the day the AR biller saved the entry that sent the claim, so the same filter answers "what AR sent on
 Monday" and "what reached us on Monday". The counts at the top follow the filters.
 
-**Sent back to AR.** Need assistance from AR also lands in the client's AR team leads' (and managers') **Needs attention →
+**Each client's TAT.** The person setting up the client sets the Payment posting TAT and the Submission TAT in
+working hours (Saturday and Sunday not counted; 24 to start). Rejections and the recheck after a resubmission use the
+Submission TAT. Only AR has a daily target; Payment posting, Submission and Rejections work to the TAT.
+
+**Desk choices.** Completed, In process (comment optional), Pending (with a comment), Need assistance from AR, Need
+assistance from client, and Other (with a reason and a comment). In process, Pending and Other keep the claim open
+on the desk; the TAT keeps running.
+
+**Recheck by the biller.** After Submission or Rejections resubmits a claim, the biller who worked it sees it on My
+day under **Resubmitted · recheck** with the time left on the TAT, and can mark it **Accepted** or **Rejected again**,
+as can the recheck person, the Submission and Rejections people and the client's AR team leads. Rejected again goes
+straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT.
+
+**Supervisor review in Needs attention.** Each escalation (and each claim a department sent back) has **Review**:
+four notes (why it came, what was reviewed, the findings, the next action) go into the claim history, and the claim
+goes to the biller who sent it, another biller (first on their list, with a notice), or back to the department that
+sent it (with the client's TAT).
+
+**Sent back to AR.** Need assistance from AR goes straight to the biller, first on their list with a notice, and also lands in the client's AR team leads' (and managers') **Needs attention →
 Sent back by Posting / Submission**: when, who sent it, the department, the reason and comment, the biller, and how many
 times the claim has come back. It counts on the Needs attention badge, turns red after a working day, and leaves the
 list once a biller saves an entry on the claim.

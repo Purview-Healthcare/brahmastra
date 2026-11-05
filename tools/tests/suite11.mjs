@@ -114,7 +114,7 @@ const full = { scope: ["ar", "posting", "submission", "rejection"], targets: { a
 r = await T(async () => A("clients.save", { name: "Dr. Montella Eye Care", code: "MON", follow_up_days: 30, locations: ["Main", "Westgate"], workbook_link: "", profile: full }));
 ok("with everything, it is created", r.ok, r);
 const mon = (await A("clients.list")).clients.find((x) => x.name === "Dr. Montella Eye Care");
-ok("with its locations, scope, targets and people", mon && mon.locations.length === 2 && mon.scope_of_work.join() === "ar,posting,submission,rejection" && !mon.targets.posting && mon.targets.submission === 50 && mon.posting_lead === U("Snail Post").id && mon.submission_check_person === U("Mark Sub").id, mon);
+ok("with its locations, scope, the AR target only (Posting, Submission and Rejections work to a TAT, 24 working hours when not given) and people", mon && mon.locations.length === 2 && mon.scope_of_work.join() === "ar,posting,submission,rejection" && !mon.targets.posting && !mon.targets.submission && !mon.targets.rejection && mon.targets.ar === 45 && mon.posting_tat_hours === 24 && mon.submission_tat_hours === 24 && mon.posting_lead === U("Snail Post").id && mon.submission_check_person === U("Mark Sub").id, mon);
 ok("and nothing missing", mon && !mon.profile_gaps.length, mon && mon.profile_gaps);
 ok("Snail and Mark see it in their login straight away", (await has(SN, mon)) && (await has(MK, mon)) && (await has(TI, mon)));
 ok("its history starts with how it was set up", /created with locations Main, Westgate/.test((await hist(A, mon)).slice(-1)[0].detail), (await hist(A, mon)).slice(-1)[0]);

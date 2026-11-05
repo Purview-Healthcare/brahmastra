@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.86.0";
+const APP_VERSION = "2.87.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -1560,10 +1560,10 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
         <div className="tat-bar" onClick={() => setView("attention")}>⚠ {attention.overdue} escalated claim{attention.overdue > 1 ? "s have" : " has"} waited more than 24 hours for a team lead. Open Needs attention to answer {attention.overdue > 1 ? "them" : "it"}.</div>
       )}
       {handoffs && handoffs.overdue > 0 && view !== "handoffs" && (
-        <div className="tat-bar" onClick={() => setView("handoffs")}>⚠ {handoffs.overdue} posting / submission hand-off{handoffs.overdue > 1 ? "s are" : " is"} past the 24-hour TAT. Open Posting &amp; submission to complete {handoffs.overdue > 1 ? "them" : "it"} or ask for assistance.</div>
+        <div className="tat-bar" onClick={() => setView("handoffs")}>⚠ {handoffs.overdue} posting / submission hand-off{handoffs.overdue > 1 ? "s are" : " is"} past the TAT. Open Posting &amp; submission to complete {handoffs.overdue > 1 ? "them" : "it"} or ask for assistance.</div>
       )}
       {handoffs && !handoffs.overdue && handoffs.due_soon > 0 && view !== "handoffs" && (
-        <div className="tat-bar soon" onClick={() => setView("handoffs")}>⏱ {handoffs.due_soon} posting / submission hand-off{handoffs.due_soon > 1 ? "s have" : " has"} under 4 hours left on the 24-hour TAT. Open {(DESK[deskOf(me, handoffs)] || { tab: "Posting & submission" }).tab} to finish {handoffs.due_soon > 1 ? "them" : "it"} on time.</div>
+        <div className="tat-bar soon" onClick={() => setView("handoffs")}>⏱ {handoffs.due_soon} posting / submission hand-off{handoffs.due_soon > 1 ? "s have" : " has"} under 4 hours left on the TAT. Open {(DESK[deskOf(me, handoffs)] || { tab: "Posting & submission" }).tab} to finish {handoffs.due_soon > 1 ? "them" : "it"} on time.</div>
       )}
       {me.role === "supervisor" && notify && <MissingAlertPopup alerts={notify.alerts} onChanged={onRefreshNotify} />}
       <div className="main">{notify && (notify.alloc_new || []).length > 0 && view !== "settings" && <AllocBanner items={notify.alloc_new} onGo={onGo} onSeen={onRefreshNotify} />}{children}</div>
@@ -2072,7 +2072,7 @@ const SERVICES_UI = [["ar", "AR follow-up", "Calling payers and working denials:
 const SERVICE_UI_NAME = Object.fromEntries(SERVICES_UI.map(([k, l]) => [k, l]));
 const profileFrom = (c) => {
   const pick = (m, l, b) => (c && c[m] === "person" ? { lead: c[l] || "", backup: (b && c[b]) || "" } : { lead: "", backup: "" });
-  return { scope: (c && c.scope_of_work) || [], targets: (c && c.targets) || {},
+  return { scope: (c && c.scope_of_work) || [], targets: (c && c.targets) || {}, tat: { posting: (c && c.posting_tat_hours) || 24, submission: (c && c.submission_tat_hours) || 24 },
     resp: { ar: pick("ar_mode", "ar_lead", "ar_backup"), posting: pick("posting_mode", "posting_lead", "posting_backup"), submission: pick("submission_mode", "submission_lead", "submission_backup"),
       rejection: pick("rejection_mode", "rejection_lead", "rejection_backup"), subcheck: { mode: (c && c.submission_check_mode) || "", lead: (c && c.submission_check_person) || "" } } };
 };
@@ -2082,12 +2082,15 @@ function profileMissing(f, locCount) {
   if (!f.scope.length) m.push("scope of work");
   if (!locCount) m.push("a location");
   for (const s of f.scope) {
-    if (s !== "posting" && !(Number(f.targets[s]) > 0)) m.push(SERVICE_UI_NAME[s] + " target");
+    if (s === "ar" && !(Number(f.targets[s]) > 0)) m.push(SERVICE_UI_NAME[s] + " target");
     if (!f.resp[s].lead) m.push(SERVICE_UI_NAME[s] + " responsible person");
   }
+  for (const k of tatScopes(f.scope)) { const v = Number(f.tat[k]); if (!(v >= 1 && v <= 240)) m.push(SERVICE_UI_NAME[k] + " TAT"); }
   if (f.scope.includes("submission") && !(f.resp.subcheck.mode === "biller" || (f.resp.subcheck.mode === "person" && f.resp.subcheck.lead))) m.push("who rechecks submissions after 48 hours");
   return m;
 }
+// Payment posting and Submission have a TAT (Rejections resubmit to the Submission TAT); only AR has a daily target.
+const tatScopes = (scope) => ["posting", "submission"].filter((k) => scope.includes(k) || (k === "submission" && scope.includes("rejection")));
 const Step = ({ n, title, sub, children }) => <div className="group"><div className="gt row" style={{ gap: 8 }}><span className="stepn">{n}</span>{title}</div>{sub && <div className="tiny muted" style={{ margin: "-4px 0 8px" }}>{sub}</div>}{children}</div>;
 function ClientProfileForm({ ctx, client, onClose, onSaved }) {
   const isNew = !client;
@@ -2109,7 +2112,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
     setBusy(true); setErr(null);
     try {
       await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active,
-        locations: isNew ? f.locations : undefined, profile: { scope: f.scope, targets: f.targets, resp: f.resp } });
+        locations: isNew ? f.locations : undefined, profile: { scope: f.scope, targets: f.targets, tat: f.tat, resp: f.resp } });
       toast(isNew ? f.name.trim() + " created. Everyone set as responsible sees it now." : "Client profile saved.");
       onSaved();
     } catch (e) { setErr(e.message); }
@@ -2136,8 +2139,11 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
             <div className="pill-list mt8">{f.locations.map((l) => <span key={l} className="chip on">{l} <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => set({ locations: f.locations.filter((x) => x !== l) })}>×</button></span>)}{!f.locations.length && <span className="tiny muted">None yet.</span>}</div></>
             : <div className="pill-list">{(client.locations || []).filter((l) => l.active).map((l) => <span key={l.id} className="chip on">{l.name}</span>)}{!locCount && <span className="tiny red-ink">No active location: add one on the client card first.</span>}</div>}
         </Step>
-        <Step n="4" title="Targets" sub="Claims a day for each part of the scope, for the whole team on this client.">
-          {f.scope.filter((k) => k !== "posting").length ? <div className="grid g4">{f.scope.filter((k) => k !== "posting").map((k) => <Field key={k} label={SERVICE_UI_NAME[k]}><input className="input" type="number" min={1} max={5000} value={f.targets[k] || ""} placeholder="claims a day" onChange={(e) => set({ targets: { ...f.targets, [k]: e.target.value } })} /></Field>)}</div> : <div className="tiny muted">Pick the scope of work first.</div>}
+        <Step n="4" title="Target and TAT" sub="AR has a daily target. Payment posting and Submission work to a TAT instead: the working hours they have to finish each claim sent to them (Saturday and Sunday not counted).">
+          {f.scope.length ? <div className="grid g4">
+            {f.scope.includes("ar") && <Field label="AR follow-up target" hint="Claims a day, whole team"><input className="input" type="number" min={1} max={5000} value={f.targets.ar || ""} onChange={(e) => set({ targets: { ...f.targets, ar: e.target.value } })} placeholder="claims a day" /></Field>}
+            {tatScopes(f.scope).map((k) => <Field key={k} label={SERVICE_UI_NAME[k] + " TAT"} hint={k === "submission" && !f.scope.includes("submission") ? "Working hours · Rejections use it" : "Working hours"}><input className="input" type="number" min={1} max={240} value={f.tat[k] || ""} onChange={(e) => set({ tat: { ...f.tat, [k]: e.target.value } })} placeholder="24" /></Field>)}
+          </div> : <div className="tiny muted">Pick the scope of work first.</div>}
         </Step>
         <Step n="5" title="OneDrive folders" sub="Made by Brahmastra, nothing to link.">
           <div className="small">In the Purviewautomate OneDrive, <b>Brahmastra Clients › {f.name.trim() || "client"}</b> with <b>Inventory</b> (drop the client's inventory files here; Upload inventory opens it) and <b>Production</b> with a folder per scope (AR, Payment posting, Submission, Rejections), each with a new file every month (e.g. <span className="mono">AR Production - {f.name.trim() || "client"} - Nov 2026.xlsx</span>), one row per entry or desk action. Everyone at Purview can open them with the link on the client card.</div>
@@ -3442,7 +3448,7 @@ function AttentionView(props) {
   return (
     <div className="stack">
       <div className="row between" style={{ alignItems: "flex-end" }}>
-        <div><h1>Needs attention</h1><div className="sub">{tab === "esc" ? "Claims your billers escalated to a team lead, on your projects, oldest first." : tab === "desks" ? "Claims Payment posting, Submission or Rejections sent back to AR with Need assistance from AR, not worked by AR since. They leave this list once a biller saves an entry on the claim." : "Claims Posting, Submission or Rejections need the client for. Sending them to the client is the team lead's job; mark each one Sent."}</div></div>
+        <div><h1>Needs attention</h1><div className="sub">{tab === "esc" ? "Claims your billers escalated to a team lead, on your projects, oldest first." : tab === "desks" ? "Claims Payment posting, Submission or Rejections sent back to AR with Need assistance from AR. They are already first on the biller's list with a notice; review one to give it to another biller or return it to the department. They leave this list once a biller saves an entry on the claim." : "Claims Posting, Submission or Rejections need the client for. Sending them to the client is the team lead's job; mark each one Sent."}</div></div>
         <div className="seg2">{[["esc", "Escalations", c.escalations], ["desks", "Sent back by Posting / Submission", c.from_desks], ["client", "Client requests", c.client_to_send]].map(([k, l, n]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}{n ? <span className="badge amber" style={{ marginLeft: 6 }}>{n}</span> : null}</button>)}</div>
       </div>
       {tab === "esc" ? <EscalationsView {...props} /> : tab === "desks" ? <FromDesksView {...props} /> : <ClientRequestsView {...props} onChanged={() => { counts.reload(); props.refreshAttention && props.refreshAttention(); }} />}
@@ -3668,9 +3674,10 @@ function DigestDashboard({ params, go }) {
 }
 /* Sent back by Posting / Submission / Rejections with "Need assistance from AR": the AR team lead sees what came back, why, and
    whether the biller has picked it up. A row leaves once AR saves a work entry on the claim. */
-function FromDesksView({ ctx, me }) {
+function FromDesksView({ ctx, me, refreshAttention }) {
   const q = useRpc("attention.fromDesks", {}, []);
   const [open, setOpen] = useState(null);
+  const [review, setReview] = useState(null);
   const rows = q.data ? q.data.rows : [];
   return (
     <>
@@ -3687,11 +3694,12 @@ function FromDesksView({ ctx, me }) {
               <td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td>
               <td className="small" style={{ maxWidth: 320 }}><b>{r.reason || "–"}</b>{r.note ? <div className="tiny muted" title={r.note}>“{r.note.length > 140 ? r.note.slice(0, 140) + "…" : r.note}”</div> : null}</td>
               <td className="small">{r.biller_name || <span className="muted">not on a desk</span>}</td>
-              <td className="r"><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button></td>
+              <td className="r" style={{ whiteSpace: "nowrap" }}>{r.reviewed && <span className="badge green" title={"Reviewed by " + r.reviewed_by_name}>Reviewed</span>} <button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.dept_label + " sent it back: " + (r.reason || "need assistance from AR"), review_context: r.note })}>Review</button></td>
             </tr>))}
             {q.data && !rows.length && <tr><td colSpan={8}><Empty>Nothing sent back by Posting, Submission or Rejections is waiting on AR.</Empty></td></tr>}</tbody></table></div>
       </div>
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => { setOpen(null); q.reload(); }} onChanged={() => q.reload()} />}
+      {review && <ReviewModal row={review} people={q.data ? q.data.people : []} onClose={() => setReview(null)} onDone={() => { setReview(null); q.reload(); refreshAttention && refreshAttention(); }} />}
     </>
   );
 }
@@ -3715,7 +3723,7 @@ function ClientRequestsView({ ctx, me, onChanged }) {
       {q.data && q.data.late > 0 && <div className="alert err"><b>{q.data.late} not sent within a working day.</b> Send these to the client first.</div>}
       <div className="row between">
         <div className="seg2">{[["to_send", "To send", all.filter((r) => !r.client_sent_at).length], ["sent", "Sent, waiting for the client", all.filter((r) => r.client_sent_at).length]].map(([k, l, n]) => <button key={k} className={show === k ? "on" : ""} onClick={() => setShow(k)}>{l} {n}</button>)}</div>
-        <div className="small muted">The 24-hour TAT keeps running; the department chases the client 3 working days after it is sent.</div>
+        <div className="small muted">The TAT keeps running; the department chases the client 3 working days after it is sent.</div>
       </div>
       <div className="card tight">
         <ErrorBox error={q.error} />
@@ -3748,10 +3756,54 @@ function ClientRequestsView({ ctx, me, onChanged }) {
     </>
   );
 }
+/* Supervisor review of a Needs attention claim: why it came, what was reviewed, the findings and the next action, then where
+   it goes: the biller who sent it, another biller, or back to the department. */
+function ReviewModal({ row, people, onClose, onDone }) {
+  const [f, setF] = useState(() => ({ why: row.review_why || "", reviewed: "", findings: "", next: "", route: row.sent_by_id ? "biller" : "other", user_id: "", dept: row.last_dept || (row.depts && row.depts[0] ? row.depts[0].id : "") }));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const words = (t) => t.trim().length >= 8;
+  const ok = f.why.trim().length >= 3 && words(f.reviewed) && words(f.findings) && words(f.next) && (f.route === "biller" ? !!row.sent_by_id : f.route === "other" ? !!f.user_id : !!f.dept);
+  const go = async () => {
+    setBusy(true); setErr(null);
+    try { const r = await rpc("attention.review", { id: row.claim_id || row.id, why: f.why, reviewed: f.reviewed, findings: f.findings, next: f.next, route: f.route, sent_by: row.sent_by_id, user_id: f.user_id, dept: f.dept, today: todayISO() });
+      toast(f.route === "dept" ? "Reviewed and returned to " + r.to + " with your notes." : "Reviewed and given to " + r.to + ": first on their list, with a notice."); onDone(); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const depts = row.depts || [];
+  return (
+    <Modal title={"Review · " + (row.claim_no || row.patient || "claim")} sub={[row.client_name, row.patient, row.payer].filter(Boolean).join(" · ")} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !ok} onClick={go}>{busy ? "Saving…" : "Save review and send"}</button></>}>
+      <div className="stack">
+        {row.review_context && <div className="cell small">{row.review_context}</div>}
+        <div className="grid g2">
+          <Field label="1. Why it came to you"><textarea className="textarea" style={{ minHeight: 56 }} value={f.why} onChange={(e) => set("why", e.target.value)} placeholder="e.g. Escalated by the biller: payer says the claim was never received" /></Field>
+          <Field label="2. What you reviewed"><textarea className="textarea" style={{ minHeight: 56 }} value={f.reviewed} onChange={(e) => set("reviewed", e.target.value)} placeholder="e.g. Claim history, the payer portal and the clearinghouse report" autoFocus /></Field>
+          <Field label="3. Findings"><textarea className="textarea" style={{ minHeight: 56 }} value={f.findings} onChange={(e) => set("findings", e.target.value)} placeholder="e.g. Submitted to the wrong payer ID" /></Field>
+          <Field label="4. Next action"><textarea className="textarea" style={{ minHeight: 56 }} value={f.next} onChange={(e) => set("next", e.target.value)} placeholder="e.g. Correct the payer ID and resubmit today" /></Field>
+        </div>
+        <Field label="Send it to">
+          <div className="stack" style={{ gap: 8 }}>
+            <label className="check"><input type="radio" name="rv" checked={f.route === "biller"} disabled={!row.sent_by_id} onChange={() => set("route", "biller")} /> {row.sent_by_id ? <>The biller who sent it: <b>{row.sent_by_name || "the biller"}</b></> : "The biller who sent it (nobody on record)"}</label>
+            <label className="check"><input type="radio" name="rv" checked={f.route === "other"} onChange={() => set("route", "other")} /> Another biller</label>
+            {f.route === "other" && <div style={{ marginLeft: 24, maxWidth: 320 }}><Combo value={f.user_id} onChange={(v) => set("user_id", v || "")} placeholder="Pick the biller…" options={(people || []).filter((p) => p.id !== row.sent_by_id).map((p) => ({ id: p.id, label: p.name }))} /></div>}
+            <label className="check"><input type="radio" name="rv" checked={f.route === "dept"} disabled={!depts.length} onChange={() => set("route", "dept")} /> Back to the department{row.last_dept ? " that sent it" : ""}{!depts.length ? " (none set on this client)" : ""}</label>
+            {f.route === "dept" && <div className="seg2" style={{ marginLeft: 24 }}>{depts.map((d) => <button key={d.id} type="button" className={f.dept === d.id ? "on" : ""} onClick={() => set("dept", d.id)}>{d.label}{row.last_dept === d.id ? " (sent it)" : ""}</button>)}</div>}
+          </div>
+        </Field>
+        <div className="tiny muted">{f.route === "dept" ? "It goes back on the department's desk with the client's TAT, and your notes are in the claim history." : "It goes to the top of the biller's list with a notice; your four notes are in the claim history for them to read."}</div>
+        <ErrorBox error={err} />
+      </div>
+    </Modal>
+  );
+}
 function EscalationsView({ ctx, me, refreshAttention }) {
   const q = useRpc("attention.list", {}, []);
   const [open, setOpen] = useState(null);
   const [answer, setAnswer] = useState(null);
+  const [review, setReview] = useState(null);
   const [busy, setBusy] = useState(false);
   const rows = q.data ? q.data.rows : [];
   const send = async () => {
@@ -3762,7 +3814,7 @@ function EscalationsView({ ctx, me, refreshAttention }) {
   };
   return (
     <>
-      <div><div className="sub">Answer within {q.data ? q.data.tat_hours : 24} hours; after that they turn red and a reminder stays at the top of every screen until they are answered.</div></div>
+      <div><div className="sub">Review within {q.data ? q.data.tat_hours : 24} hours: write why it came, what you reviewed, your findings and the next action, then give it to the biller who sent it, another biller, or back to the department; after that they turn red and a reminder stays at the top of every screen until they are answered.</div></div>
       {q.data && q.data.overdue > 0 && <div className="alert err"><b>{q.data.overdue} past the 24-hour TAT.</b> Answer these first.</div>}
       <div className="card tight">
         <ErrorBox error={q.error} />
@@ -3774,11 +3826,12 @@ function EscalationsView({ ctx, me, refreshAttention }) {
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td className="small">{r.escalated_by_name || r.assigned_name || "–"}</td>
               <td className="small" style={{ maxWidth: 340 }}>{r.last_status_code ? <b>{r.last_status_code}{r.last_sub_status ? " › " + r.last_sub_status : ""}</b> : null}<div className="tiny" style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{r.last_note}</div></td>
-              <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.id)}>Open claim</button> <button className="btn sm primary" onClick={() => setAnswer({ row: r, text: "", back: true })}>Answer</button></td>
+              <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: "Escalated by " + (r.sent_by_name || "the biller") + (r.last_status_code ? " (" + r.last_status_code + (r.last_sub_status ? " › " + r.last_sub_status : "") + ")" : ""), review_context: r.last_note })}>Review</button></td>
             </tr>))}
             {q.data && !rows.length && <tr><td colSpan={9}><Empty>Nothing escalated. Billers flag a claim for their team lead from the work form.</Empty></td></tr>}</tbody></table></div>
       </div>
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
+      {review && <ReviewModal row={review} people={q.data ? q.data.people : []} onClose={() => setReview(null)} onDone={() => { setReview(null); q.reload(); refreshAttention && refreshAttention(); }} />}
       {answer && (
         <Modal title={"Answer the escalation · " + (answer.row.claim_no || answer.row.patient)} sub={"Your answer goes into the claim history for " + (answer.row.escalated_by_name || answer.row.assigned_name || "the biller") + " and the flag comes off."} onClose={() => setAnswer(null)} narrow
           footer={<><button className="btn" onClick={() => setAnswer(null)} disabled={busy}>Cancel</button><button className="btn primary" onClick={send} disabled={busy || answer.text.trim().length < 8}>{busy ? "Saving…" : "Send answer"}</button></>}>
@@ -3975,7 +4028,7 @@ function HistEvent({ it, onEdit, onFile }) {
       body = <><div className="x">{[d.status, d.sub_status].filter(Boolean).join(" › ")}{d.action ? (d.status ? " › " : "") + d.action : ""}{d.comments ? <div style={{ marginTop: 4 }}>{d.comments}</div> : null}</div>
         <div className="m">{[it.text ? "from " + it.text : "", d.move_to ? "move to " + d.move_to : "", d.follow_up ? "follow-up " + fmtDate(d.follow_up) : "", d.balance != null ? "balance " + fmtMoney(d.balance, 2) : ""].filter(Boolean).join(" · ")}</div></>; break; }
     case "refreshed": dot = D("#EEF1F0", "⟳"); title = "Refreshed from inventory"; body = <><div className="m">{[it.text, it.who ? "by " + it.who : ""].filter(Boolean).join(" · ")}</div>{it.data && it.data.file_status ? <div className="x">File said: {it.data.file_status}{it.data.balance != null ? " · balance " + fmtMoney(it.data.balance, 2) : ""}</div> : null}<Changes changes={it.changes} /></>; break;
-    case "handoff_sent": dot = D("#EEE7FB", "➜"); title = "Sent to " + (it.text || "the department") + who; body = it.data && it.data.due_at ? <div className="m">due {fmtWhen(it.data.due_at)} (24 working hours)</div> : null; break;
+    case "handoff_sent": dot = D("#EEE7FB", "➜"); title = "Sent to " + (it.text || "the department") + who; body = it.data && it.data.due_at ? <div className="m">due {fmtWhen(it.data.due_at)} (the client's TAT)</div> : null; break;
     case "handoff_none": dot = D("#EEF1F0", "ⓘ"); title = (it.text || "Hand-off") + ": " + ({ client: "done by the client", biller: "done by the biller", unset: "nobody set for this client" }[it.data && it.data.mode] || "not sent"); break;
     case "handoff_assigned": dot = D("#EEE7FB", "👤"); title = (DEPT_NAME[it.data && it.data.dept] || "Hand-off") + " assigned to " + (it.text || "someone") + who; break;
     case "handoff_done": { const pr = (it.data && it.data.proof) || {}; const posting = it.data && it.data.dept === "posting";
@@ -3985,8 +4038,12 @@ function HistEvent({ it, onEdit, onFile }) {
     case "handoff_back": dot = D("#FFF3D6", "↩"); title = (it.text || "The department") + " needs assistance from AR" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">on the biller's list today{it.data && it.data.within_tat === false ? " · after the 24h TAT" : ""}{it.data && it.data.returns ? " · returned " + it.data.returns + "×" : ""}{it.data && it.data.bounced ? " · escalated to the team lead" : ""}</div></>; break;
     case "handoff_client_sent": dot = D("#E4EEFA", "✉"); title = "Sent to the client for " + (it.text || "the department") + who; body = <><div className="x"><b>{it.data && it.data.how}</b>{it.data && it.data.reason ? " · " + it.data.reason : ""}{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">chased in 3 working days if the client has not answered</div></>; break;
     case "handoff_pending": dot = D("#EEF1F4", "…"); title = (it.text || "The department") + " · pending" + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
+    case "handoff_inprocess": dot = D("#E6F0FB", "…"); title = (it.text || "The department") + " · in process" + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
+    case "handoff_other": dot = D("#FDF0D7", "?"); title = (it.text || "The department") + " · other: " + ((it.data && it.data.reason) || "") + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
+    case "review_to_biller": case "review_to_dept": dot = D("#E3F4EF", "✓"); title = "Supervisor review · " + (it.kind === "review_to_dept" ? "returned to " : "given to ") + (it.text || "") + who;
+      body = it.data ? <div className="x"><div><b>Why it came:</b> {it.data.why}</div><div><b>Reviewed:</b> {it.data.reviewed}</div><div><b>Findings:</b> {it.data.findings}</div><div><b>Next action:</b> {it.data.next}</div></div> : null; break;
     case "handoff_client": dot = D("#FFF3D6", "⏸"); title = (it.text || "Department") + " needs assistance from client" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">waiting on the client · the 24h clock keeps running</div></>; break;
-    case "handoff_resume": dot = D("#E0F7F4", "▶"); title = "Client answered · back with " + (it.text || "the department") + who; body = <>{it.data && it.data.note ? <div className="x">{it.data.note}</div> : null}{it.data && it.data.due_at ? <div className="m">new due {fmtWhen(it.data.due_at)} (24 working hours)</div> : null}</>; break;
+    case "handoff_resume": dot = D("#E0F7F4", "▶"); title = "Client answered · back with " + (it.text || "the department") + who; body = <>{it.data && it.data.note ? <div className="x">{it.data.note}</div> : null}{it.data && it.data.due_at ? <div className="m">new due {fmtWhen(it.data.due_at)} (the client's TAT)</div> : null}</>; break;
     case "handoff_assist": dot = D("#FDEAEA", "⚑"); title = (it.text || "Department") + " needs assistance" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">back on the biller's list · in the team lead's Needs attention</div></>; break;
     default: dot = D("#EEF1F0", "•"); title = it.kind + who; body = it.text ? <div className="x">{it.text}</div> : null;
   }
@@ -4110,7 +4167,7 @@ function HandoffCard({ handoffs, role, onChanged, compact }) {
     <div className="card tight" style={{ borderLeft: "4px solid " + (h.status === "complete" ? "#12B886" : h.status === "assistance" || h.overdue ? "#A32D2D" : "#7C5CD6") }}>
       <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
         <div className="small"><span className="cv-sec" style={{ display: "inline-flex", margin: 0 }}>{DEPT_NAME[h.dept]}</span>{" "}
-          {h.status === "client" ? <><span className="badge amber">Waiting on client</span> <span className="muted">{h.reason} · asked {fmtWhen(h.paused_at)} · {h.due_at < Date.now() ? "past the 24h TAT" : "due " + fmtWhen(h.due_at)}</span></>
+          {h.status === "client" ? <><span className="badge amber">Waiting on client</span> <span className="muted">{h.reason} · asked {fmtWhen(h.paused_at)} · {h.due_at < Date.now() ? "past the TAT" : "due " + fmtWhen(h.due_at)}</span></>
             : h.status === "back" ? <><span className="badge amber">Needs assistance from AR</span> <span className="muted">{h.reason} · by {h.done_by_name} · {fmtWhen(h.done_at)}</span></>
             : open ? <><span className={"badge " + (h.overdue ? "red" : "purple")}>{h.status === "assigned" ? "assigned to " + (h.assigned_name || "") : "waiting for " + (h.lead_name || "the lead")}</span> <span className={h.overdue ? "b" : "muted"} style={h.overdue ? { color: "var(--red-ink)" } : undefined}>{fmtDue(h)}</span></>
             : h.status === "rejected" ? <><span className="badge red">Rejected</span> <span className="muted">{h.reason} · by {h.done_by_name} · {fmtWhen(h.done_at)}</span></>
@@ -4177,7 +4234,7 @@ function TatTag({ h }) {
     <div>
       {h.chase ? <div><span className="badge red" style={{ marginBottom: 4 }}>Chase the client</span></div> : h.status === "client" ? <div><span className="badge amber" style={{ marginBottom: 4 }}>Waiting on client</span></div> : null}
       {h.due_soon && <div><span className="badge amber" style={{ marginBottom: 4 }}>⚠ under 4 hours left</span></div>}
-      <span className={"badge " + tone}>{left < 0 ? "Past the 24h TAT by " + durText(left) : (h.dept === "subcheck" ? "Recheck now · " : "24h TAT · ") + durText(left) + " left"}</span>
+      <span className={"badge " + tone}>{left < 0 ? "Past the TAT by " + durText(left) : (h.dept === "subcheck" ? "Recheck now · " : "TAT · ") + durText(left) + " left"}</span>
       <div className="tatline"><i style={{ width: (left < 0 ? 100 : used) + "%", background: "var(--" + (tone === "teal" ? "teal" : tone === "amber" ? "amber" : "red") + ")" }} /></div>
       <div className="tiny muted">{h.status === "client" ? "asked the client " + fmtWhen(h.paused_at) : "sent " + fmtWhen(h.created_at)} · due {fmtWhen(h.due_at)}</div>
     </div>
@@ -4188,9 +4245,9 @@ function HandoffActions({ h, canClose, onOpen, onAct }) {
   const [more, setMore] = useState(false);
   useEffect(() => { if (!more) return; const close = () => setMore(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [more]);
   const main = !canClose ? null : h.status === "client" ? ["resume", "▶ Client answered", "primary"] : h.dept === "subcheck" ? ["complete", "✓ Completed · accepted", "primary"] : ["complete", "✓ Completed", "primary"];
-  const rest = !canClose ? [] : h.status === "client" ? [["complete", "✓ Completed"], ["pending", "Pending (add a comment)"], ["back", "Need assistance from AR"]]
-    : h.dept === "subcheck" ? [["rejected", "✗ Rejected"], ["pending", "Pending (add a comment)"], ["back", "Need assistance from AR"]]
-    : [["pending", "Pending (add a comment)"], ["back", "Need assistance from AR"], ["client", "Need assistance from client"]];
+  const rest = !canClose ? [] : h.status === "client" ? [["complete", "✓ Completed"], ["inprocess", "In process"], ["pending", "Pending (add a comment)"], ["back", "Need assistance from AR"], ["other", "Other (with a reason)"]]
+    : h.dept === "subcheck" ? [["rejected", "✗ Rejected"], ["inprocess", "In process"], ["pending", "Pending (add a comment)"], ["back", "Need assistance from AR"], ["other", "Other (with a reason)"]]
+    : [["inprocess", "In process"], ["pending", "Pending (add a comment)"], ["back", "Need assistance from AR"], ["client", "Need assistance from client"], ["other", "Other (with a reason)"]];
   return (
     <div className="ho-acts">
       {onOpen && <button className="btn sm" onClick={onOpen}>Open claim</button>}
@@ -4211,9 +4268,9 @@ function HandoffCloseModal({ act, onClose, onDone }) {
   const [err, setErr] = useState(null);
   const [files, setFiles] = useState([]);
   const posting = h.dept === "posting", check = h.dept === "subcheck";
-  const ok = outcome === "complete" ? p.date && (check || p.ref.trim()) && (h.dept !== "rejection" || p.code) : outcome === "resume" ? true : outcome === "pending" ? note.trim().length >= 8 : reason && note.trim().length >= 8;
+  const ok = outcome === "complete" ? p.date && (check || p.ref.trim()) && (h.dept !== "rejection" || p.code) : outcome === "resume" || outcome === "inprocess" ? true : outcome === "pending" ? note.trim().length >= 8 : outcome === "other" ? reason.trim().length >= 3 && note.trim().length >= 8 : reason && note.trim().length >= 8;
   const done = { complete: check ? "Completed: accepted by the payer, final check done." : posting ? "Completed: payment posted." : "Completed: submitted, back to the biller with a 15-day follow-up; recheck in 48 working hours.", rejected: "Rejected: sent to the Rejections person (or the Submission team) to correct and resubmit.",
-    assistance: "Sent to AR for assistance.", back: "Sent to AR for assistance: on the biller's list today with your comment.", client: "Sent to the team lead to ask the client.", resume: "Back in your open list, same due time.", pending: "Pending: comment saved." };
+    assistance: "Sent to AR for assistance.", back: "Sent to AR for assistance: on the biller's list today with your comment.", client: "Sent to the team lead to ask the client.", resume: "Back in your open list, same due time.", pending: "Pending: comment saved.", inprocess: "In process: saved.", other: "Other: saved with your reason." };
   const go = async () => {
     setBusy(true); setErr(null);
     try {
@@ -4224,20 +4281,23 @@ function HandoffCloseModal({ act, onClose, onDone }) {
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
-  if (outcome === "back" || outcome === "client" || outcome === "resume" || outcome === "pending") {
+  if (outcome === "back" || outcome === "client" || outcome === "resume" || outcome === "pending" || outcome === "inprocess" || outcome === "other") {
     const reasons = outcome === "back" ? AR_REASONS_UI[h.dept] || AR_REASONS_UI.submission : CLIENT_REASONS_UI[posting ? "posting" : "submission"];
-    const title = { back: "Need assistance from AR", client: "Need assistance from client", resume: "Client answered", pending: "Pending" }[outcome];
+    const title = { back: "Need assistance from AR", client: "Need assistance from client", resume: "Client answered", pending: "Pending", inprocess: "In process", other: "Other" }[outcome];
     const help = { back: "The claim goes back on the biller's list today with your reason and comment. If it comes back to AR a third time, their team lead is told too.",
-      pending: "It stays on your list with this comment, so anyone can see where it stands. The 24-hour TAT keeps running.",
-      client: "The claim stays with " + DEPT_NAME[h.dept] + " (In process for AR) and shows under Waiting on client. The 24-hour clock keeps running: chase the client so it is finished on time.",
+      pending: "It stays on your list with this comment, so anyone can see where it stands. The TAT keeps running.",
+      inprocess: "You are working on it now. It stays on your list marked In process; the TAT keeps running.",
+      other: "Anything that is not one of the other choices. It stays on your list with your reason and comment; the TAT keeps running.",
+      client: "The claim stays with " + DEPT_NAME[h.dept] + " (In process for AR) and shows under Waiting on client. The TAT keeps running: chase the client so it is finished on time.",
       resume: "The claim goes back to your open list with the same due time." }[outcome];
     return (
       <Modal title={title + " · " + DEPT_NAME[h.dept]} sub={[h.claim_no || "No claim #", h.patient, h.payer].filter(Boolean).join(" · ")} onClose={onClose} narrow
         footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !ok} onClick={go}>{busy ? "Saving…" : title}</button></>}>
         <div className="stack">
-          {outcome !== "resume" && outcome !== "pending" && <Field label={outcome === "back" ? "What is needed from AR" : "What is needed from the client"}><Combo value={reason} onChange={setReason} placeholder="Pick…" options={reasons.map((x) => ({ id: x, label: x }))} /></Field>}
-          <Field label={outcome === "resume" ? "Comment (optional)" : "Comment"} hint={outcome === "resume" ? "" : "At least a few words"}><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} autoFocus
-            placeholder={outcome === "back" ? "What AR should do or fix before sending it again." : outcome === "client" ? "What is needed from the client, so the team lead can send it." : outcome === "pending" ? "Where it stands, e.g. posted 2 of 3 lines, waiting for the batch to close." : "What the client sent or said."} /></Field>
+          {outcome === "other" && <Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Waiting for the clearinghouse to come back up" autoFocus /></Field>}
+          {outcome !== "resume" && outcome !== "pending" && outcome !== "inprocess" && outcome !== "other" && <Field label={outcome === "back" ? "What is needed from AR" : "What is needed from the client"}><Combo value={reason} onChange={setReason} placeholder="Pick…" options={reasons.map((x) => ({ id: x, label: x }))} /></Field>}
+          <Field label={outcome === "resume" || outcome === "inprocess" ? "Comment (optional)" : "Comment"} hint={outcome === "resume" || outcome === "inprocess" ? "" : "At least a few words"}><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} autoFocus={outcome !== "other"}
+            placeholder={outcome === "back" ? "What AR should do or fix before sending it again." : outcome === "client" ? "What is needed from the client, so the team lead can send it." : outcome === "pending" || outcome === "other" ? "Where it stands, e.g. posted 2 of 3 lines, waiting for the batch to close." : outcome === "inprocess" ? "Optional: what you are doing now." : "What the client sent or said."} /></Field>
           <div className="tiny muted">{help}</div>
           <ErrorBox error={err} />
         </div>
@@ -4254,7 +4314,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
         </div> : <Field label="Rejection code (what was wrong)"><Combo value={reason} onChange={setReason} placeholder="Pick the code…" options={REJECT_REASONS_UI.map((x) => ({ id: x, label: x }))} /></Field>}
         <Field label={outcome === "complete" ? "Note (optional)" : "What was rejected"}><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder={outcome === "complete" ? "" : "Rejection message, what must be corrected before resubmitting."} /></Field>
         {outcome === "complete" && <ProofFiles files={files} setFiles={setFiles} why={PROOF_WHY.subcheck} />}
-        <div className="tiny muted">{outcome === "complete" ? "The claim shows Submission accepted; the biller still follows up on payment after 15 days." : "The claim goes straight back to the Submission team's queue to correct and resubmit (24 working hours)."}</div>
+        <div className="tiny muted">{outcome === "complete" ? "The claim shows Submission accepted; the biller still follows up on payment after 15 days." : "The claim goes straight back to the Submission team's queue to correct and resubmit, within the client's TAT."}</div>
         <ErrorBox error={err} />
       </div>
     </Modal>
@@ -4313,13 +4373,13 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs }) {
   const met = st.done_n ? Math.round((st.met || 0) / st.done_n * 100) : null;
   return (
     <div className="stack">
-      {desk ? <div><h1>{DESK_TEXT[desk][0]}</h1><div className="sub">{DESK_TEXT[desk][1]} {q.data ? q.data.tat_hours : 24} working hours each.</div></div> : <div><h1>Payment posting & submission</h1><div className="sub">Claims sent by billers through their SAAG action (Need to Post / Posting Correction → Payment Posting; resubmission and paper claims → Submission). {q.data ? q.data.tat_hours : 24} working hours to complete each one or ask for assistance; Saturday and Sunday do not count.</div></div>}
+      {desk ? <div><h1>{DESK_TEXT[desk][0]}</h1><div className="sub">{DESK_TEXT[desk][1]} Each client's TAT (working hours) is set on its profile.</div></div> : <div><h1>Payment posting & submission</h1><div className="sub">Claims sent by billers through their SAAG action (Need to Post / Posting Correction → Payment Posting; resubmission and paper claims → Submission). Each client's TAT (working hours, set on its profile) to complete each one or ask for assistance; Saturday and Sunday do not count.</div></div>}
       <div className="grid g5">
-        <Kpi label="Open" value={fmtInt(st.open_n || 0)} sub={st.rejection_n ? st.rejection_n + " rejection" + (st.rejection_n === 1 ? "" : "s") + " first" : "24 working hours each"} tone="accent" />
+        <Kpi label="Open" value={fmtInt(st.open_n || 0)} sub={st.rejection_n ? st.rejection_n + " rejection" + (st.rejection_n === 1 ? "" : "s") + " first" : "within each client's TAT"} tone="accent" />
         <Kpi label="Past TAT" value={fmtInt(st.overdue || 0)} tone={st.overdue ? "bad" : ""} sub="answer these first" />
         <Kpi label="Done · 30 days" value={fmtInt(st.done_n || 0)} tone="good" />
         <Kpi label="Within TAT" value={met == null ? "–" : met + "%"} sub="of those done in 30 days" />
-        <Kpi label="Waiting on client" value={fmtInt(st.client_n || 0)} sub="24h clock still running" tone={st.client_n ? "warn" : ""} />
+        <Kpi label="Waiting on client" value={fmtInt(st.client_n || 0)} sub="TAT clock still running" tone={st.client_n ? "warn" : ""} />
       </div>
       <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
         {!desk || desk === "both" ? <div className="row" style={{ gap: 5 }}>{[["", "Both"], ["posting", "Payment posting"], ["submission", "Submission"]].map(([k, l]) => <button key={k} className={"chip " + (dept === k ? "on" : "")} onClick={() => setDept(k)}>{l}</button>)}</div>
@@ -4334,20 +4394,20 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs }) {
       </div>
       {(st.recheck_now_n > 0 || st.due_soon_n > 0 || st.chase_n > 0) && <div className="row" style={{ gap: 8 }}>
         {st.recheck_now_n > 0 && <div className="alert info row between" style={{ flex: 1 }}><span><b>{st.recheck_now_n} recheck{st.recheck_now_n === 1 ? "" : "s"} due now:</b> was the submission accepted or rejected?</span><button className="btn sm" onClick={() => { setDept("subcheck"); setView("open"); }}>Show rechecks</button></div>}
-        {st.due_soon_n > 0 && <div className="alert warn" style={{ flex: 1 }}><b>{st.due_soon_n} under 4 hours left</b> on the 24-hour TAT: they are at the top of Open.</div>}
+        {st.due_soon_n > 0 && <div className="alert warn" style={{ flex: 1 }}><b>{st.due_soon_n} under 4 hours left</b> on the TAT: they are at the top of Open.</div>}
         {st.chase_n > 0 && <div className="alert warn row between" style={{ flex: 1 }}><span><b>{st.chase_n} to chase:</b> the client has not answered in 3 working days.</span><button className="btn sm" onClick={() => setView("open")}>Show</button></div>}
       </div>}
       <div className="card tight">
         <ErrorBox error={q.error} />
         {q.loading && !q.data && <Spinner />}
-        <div className="table-wrap"><table className="t"><thead><tr>{sort.Th("due_at", view === "open" || view === "mine" ? "24-hour TAT" : view === "client" ? "Waiting since" : "Done")}{sort.Th("dept", "Department")}{sort.Th("claim_no", "Claim #")}{sort.Th("patient", "Patient")}{sort.Th("client_name", "Client")}{sort.Th("payer", "Payer")}{sort.Th("balance", "Balance", "r")}{sort.Th("created_by_name", "Sent by")}{sort.Th("assigned_name", "Assigned to")}<th></th></tr></thead>
+        <div className="table-wrap"><table className="t"><thead><tr>{sort.Th("due_at", view === "open" || view === "mine" ? "TAT" : view === "client" ? "Waiting since" : "Done")}{sort.Th("dept", "Department")}{sort.Th("claim_no", "Claim #")}{sort.Th("patient", "Patient")}{sort.Th("client_name", "Client")}{sort.Th("payer", "Payer")}{sort.Th("balance", "Balance", "r")}{sort.Th("created_by_name", "Sent by")}{sort.Th("assigned_name", "Assigned to")}<th></th></tr></thead>
           <tbody>{shown.map((h) => { const isOpen = ["pending", "assigned", "client"].includes(h.status); return (
             <tr key={h.id} className={h.overdue ? "tat-missed" : ""}>
               <td style={{ minWidth: 190 }}>{isOpen ? <TatTag h={h} /> : <><span className={"badge " + (h.status === "complete" ? "green" : h.status === "back" ? "amber" : "red")}>{h.status === "complete" ? (h.dept === "posting" ? "completed · posted" : h.dept === "subcheck" ? "completed · accepted" : "completed · submitted") : h.status === "rejected" ? "rejected" : "assistance from AR"}</span><div className="tiny muted">{fmtWhen(h.done_at)}{h.done_at && h.due_at ? (h.done_at <= h.due_at ? " · within TAT" : " · after TAT") : ""}</div></>}</td>
               <td><span className={"badge " + (h.dept === "posting" ? "purple" : h.dept === "subcheck" ? "teal" : h.dept === "rejection" ? "red" : "blue")}>{DEPT_NAME[h.dept]}</span>{h.dept === "rejection" && isOpen ? <div className="tiny b" style={{ color: "var(--red-ink)" }}>first priority</div> : h.dept === "submission" && /^Rejected/.test(h.saag_action) ? <div className="tiny" style={{ color: "var(--red-ink)" }}>resubmit</div> : null}
                 {h.returns > 0 && <div><span className={"badge " + (h.returns >= 3 ? "red" : "amber")} style={{ marginTop: 3 }} title="Times this claim came back to AR from Posting, Submission or Rejections">Returned {h.returns}×</span></div>}
                 {h.status === "client" && <div className="tiny" style={{ marginTop: 3, maxWidth: 230 }}>{h.client_sent_at ? <span className="muted">Sent to client by {h.client_sent_by_name} · {fmtWhen(h.client_sent_at)} · {h.client_sent_how}</span> : <span style={{ color: "var(--amber-ink)" }}>Not sent to the client yet (AR team lead)</span>}</div>}
-                {h.pending_at && isOpen && h.status !== "client" ? <div style={{ marginTop: 3 }}><span className="badge gray">Pending</span> <span className="tiny muted">{h.pending_by_name} · {fmtWhen(h.pending_at)}</span></div> : null}
+                {h.pending_at && isOpen && h.status !== "client" ? <div style={{ marginTop: 3 }}><span className={"badge " + (h.desk_state === "in_process" ? "blue" : h.desk_state === "other" ? "amber" : "gray")}>{h.desk_state === "in_process" ? "In process" : h.desk_state === "other" ? "Other" + (h.reason ? ": " + h.reason : "") : "Pending"}</span> <span className="tiny muted">{h.pending_by_name} · {fmtWhen(h.pending_at)}</span></div> : null}
                 {h.note && (isOpen || h.status === "back" || h.status === "assistance") ? <div className="tiny muted" style={{ maxWidth: 220, marginTop: 3 }} title={h.note}>“{h.note.length > 90 ? h.note.slice(0, 90) + "…" : h.note}”</div> : null}</td>
               <td className="mono small">{h.claim_no || "–"}</td><td>{h.patient}</td><td className="small">{h.client_name}{h.location_name ? " · " + h.location_name : ""}</td><td className="small">{h.payer}</td><td className="num">{fmtMoney(h.balance)}</td>
               <td className="small">{h.created_by_name}<div className="tiny muted">{h.saag_action}</div></td>
@@ -5112,8 +5172,8 @@ function RaciEditModal({ row, people, vp, onClose, onSaved }) {
   );
 }
 const MISSED_KINDS = { ar: ["AR", "Allocated before today and still not worked by the biller."],
-  posting: ["Posting", "Past the 24-hour TAT: still open, or finished late in the last 30 days."],
-  submission: ["Submission", "Past the 24-hour TAT (submission, recheck and rejections): still open, or finished late in the last 30 days."] };
+  posting: ["Posting", "Past the TAT: still open, or finished late in the last 30 days."],
+  submission: ["Submission", "Past the TAT (submission, recheck and rejections): still open, or finished late in the last 30 days."] };
 function MissedModal({ row, kind, onClose }) {
   const q = useRpc("raci.missed", { client_id: row.client_id, kind }, [row.client_id, kind]);
   const rows = (q.data && q.data.rows) || [];
@@ -5147,7 +5207,7 @@ function RaciView({ me, go }) {
       <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>{RACI_COLS.map(([k, l, h]) => <span key={k} className="badge gray" title={h}><b>{l[0]}</b> · {l}</span>)}</div>
       {!q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No active clients in your span yet.</Empty></div> : (
         <div className="card tight"><div className="table-wrap"><table className="t">
-          <thead><tr><th>Client</th><th>R · Responsible</th><th>A · Accountable</th><th>C · Consulted</th><th>I · Informed</th><th title="AR: allocated before today, still not worked. Posting / Submission: past the 24-hour TAT, open or finished late (30 days).">Missed tasks</th><th>Updated</th><th /></tr></thead>
+          <thead><tr><th>Client</th><th>R · Responsible</th><th>A · Accountable</th><th>C · Consulted</th><th>I · Informed</th><th title="AR: allocated before today, still not worked. Posting / Submission: past the TAT, open or finished late (30 days).">Missed tasks</th><th>Updated</th><th /></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.client_id}>
               <td className="b" style={{ whiteSpace: "nowrap" }}>{go ? <button type="button" className="btn link" style={{ padding: 0, fontWeight: 700 }} title="Open Client 360" onClick={() => go("client", { client_id: r.client_id })}>{r.client}</button> : r.client}</td>
@@ -7634,6 +7694,36 @@ function ReportsView({ ctx, from, to, embedded }) {
 /* ====================================================================
    PART 4 — the team member's queue, work form, history, and the app
    ==================================================================== */
+/* My day: claims this biller worked that were resubmitted (by Submission or Rejections) and wait on the recheck: accepted by
+   the payer, or rejected again? The biller can mark it, with the TAT left; rejected again goes back to the department. */
+function MyRechecks({ ctx, me }) {
+  const q = useRpc("handoffs.myRechecks", {}, []);
+  const [act, setAct] = useState(null);
+  const [open, setOpen] = useState(null);
+  const rows = q.data ? q.data.rows : [];
+  if (!rows.length) return null;
+  const left = (ms) => { const h = Math.round(Math.abs(ms) / 3600000); return h >= 24 ? Math.round(h / 24) + "d" : h + "h"; };
+  return (
+    <div className="card tight">
+      <div className="row between" style={{ padding: "12px 14px 0" }}>
+        <div><h3 style={{ margin: 0 }}>Resubmitted · recheck <span className="badge teal" style={{ marginLeft: 6 }}>{rows.length}</span></h3>
+          <div className="sub">Claims you worked that were resubmitted. Check the payer: mark <b>Accepted</b>, or <b>Rejected again</b> (it goes straight back to the department to fix and resubmit).</div></div>
+        {rows.some((r) => r.overdue) && <span className="badge red">{rows.filter((r) => r.overdue).length} past the TAT</span>}
+      </div>
+      <div className="table-wrap" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>TAT</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Payer</th><th className="r">Balance</th><th>Resubmitted</th><th></th></tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={r.id} className={r.overdue ? "tat-missed" : ""}>
+            <td style={{ whiteSpace: "nowrap" }}>{!r.open ? <span className="badge gray" title="The payer usually shows the result after 48 working hours">opens {fmtWhen(r.available_at)}</span>
+              : r.overdue ? <span className="badge red">{left(r.left_ms)} past TAT</span> : <span className={"badge " + (r.due_soon ? "amber" : "teal")}>{left(r.left_ms)} left</span>}<div className="tiny muted">due {fmtWhen(r.due_at)}</div></td>
+            <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
+            <td className="small"><span className={"badge " + (r.from_dept === "rejection" ? "red" : "blue")}>{r.from_label}</span><div className="tiny muted">{r.created_by_name} · {fmtWhen(r.created_at)}</div>{r.check_name && r.assigned_to !== me.id ? <div className="tiny muted">recheck with {r.check_name} too</div> : null}</td>
+            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setAct({ h: r, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h: r, outcome: "rejected" })}>✗ Rejected again</button></td>
+          </tr>))}</tbody></table></div>
+      {act && <HandoffCloseModal act={act} onClose={() => setAct(null)} onDone={() => { setAct(null); q.reload(); }} />}
+      {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => { setOpen(null); q.reload(); }} onChanged={() => q.reload()} />}
+    </div>
+  );
+}
 function QueueView({ ctx, me }) {
   const today = todayISO();
   const [from, to] = dayBounds(today);
@@ -7702,6 +7792,7 @@ function QueueView({ ctx, me }) {
         </div>
       )}
       {emptyMsg && <div className="card"><Empty>{emptyMsg}</Empty></div>}
+      <MyRechecks ctx={ctx} me={me} />
       {patientOf && <PatientModal id={patientOf} ctx={ctx} me={me} onClose={() => setPatientOf(null)} onOpenClaim={(r) => { if (r.mine && ["assigned", "in_progress", "completed"].includes(r.state)) { setPatientOf(null); open(r.id); } }} />}
       {bundle && <WorkPanel key={bundle.claim.id} bundle={bundle} ctx={ctx} me={me} onPatient={() => setPatientOf(bundle.claim.id)} onDone={(mode) => { if (mode === null) return refreshBundle(); setBundle(null); refreshAll(); if (mode) next(); }} />}
       <div className="card tight stack">

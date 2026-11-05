@@ -276,7 +276,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("scorecard › on an Inventory status row opens that client's scorecard on the SLA tab", /#\/sla/.test(p.url()) && /on/.test(await p.locator('.ws-tabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".psla-dial").count()) === 1, { url: p.url() });
   });
 
-  S("Needs attention: answer an escalation");
+  S("Needs attention: review an escalation");
   await step("escalation", async () => {
     await as("arun");
     const q = await rpc("queue.next", {}); const c = q.claim;
@@ -284,11 +284,16 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await as("tina");
     await open("#/attention"); await t(1500);
     ok("the escalation is listed", (await p.innerText(".main")).includes(c.claim_no));
-    await p.locator(`.main tr:has-text("${c.claim_no}") button:has-text("Answer"), .main button:has-text("Answer")`).first().click(); await t(800);
-    await p.locator(".overlay textarea").first().fill("Call the payer again and ask for the reprocessing reference.");
-    await p.locator(".overlay button.btn.primary").first().click(); await t(2000);
+    await p.locator(`.main tr:has-text("${c.claim_no}") button:has-text("Review")`).first().click(); await t(800);
+    const ta = p.locator(".overlay textarea");
+    ok("the review has four notes, the first filled in with why it came", (await ta.count()) === 4 && /Escalated by/.test(await ta.nth(0).inputValue()), await ta.count());
+    await ta.nth(1).fill("The claim history and the payer portal.");
+    await ta.nth(2).fill("The payer needs the reprocessing reference.");
+    await ta.nth(3).fill("Call the payer again and ask for the reprocessing reference.");
+    ok("it goes to the biller who sent it by default", await p.locator('.overlay input[type="radio"]').first().isChecked());
+    await p.locator('.overlay button:has-text("Save review and send")').click(); await t(2000);
     const still = (await rpc("attention.list", {})).rows.some((x) => x.id === c.id);
-    ok("answering clears it", !still);
+    ok("reviewing clears it", !still);
   });
 
   S("Posting desk");
@@ -350,6 +355,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await m.locator('label.scope-opt:has-text("AR follow-up")').click(); await m.locator('label.scope-opt:has-text("Payment posting")').click();
     await m.locator('input[placeholder^="Location name"]').fill("Main Office"); await m.locator('button:has-text("Add")').first().click();
     const tg = m.locator('input[placeholder="claims a day"]'); ok("no target box for Payment posting (AR only)", (await tg.count()) === 1, await tg.count()); await tg.nth(0).fill("45");
+    const tat = m.locator('input[placeholder="24"]'); ok("a TAT box for Payment posting, in working hours, starting at 24", (await tat.count()) === 1 && (await tat.inputValue()) === "24", await tat.count());
     const row = (l) => m.locator('.row:has(> b:text-is("' + l + '"))');
     await pick(row("AR follow-up"), "Tina Lead"); await pick(row("Payment posting"), "Snail Post");
     await m.locator('button:has-text("Create client")').click(); await t(2500);
