@@ -405,6 +405,12 @@ SMEs, posting / submission leads, the VP and admins (view-only shares are left o
 manager's span, a manager their own, and the VP all three. Active clients that are in no manager's span go in one
 more email, "Clients without a manager", to the VP and admins.
 
+It opens with a header (**Manager name**, **Designation**, **Period**: the week, and the clients) and an **SLA report
+card**: each client's last finished month in Drishti, worst at the bottom, with the average score and how many are
+green, amber and red; per client the score and band, KPIs and SLAs on target, the change against the month before,
+its **team leads and SMEs**, a dot per scope and what pulls it down (value against standard; five lines for a red
+client, three otherwise), and a button to the SLA scorecards. Clients Drishti has no month for are named below it.
+
 It covers last week (Monday to Sunday): how many clients are at risk, on watch and on track; span totals for AR
 (against a week before), over 90 (against the 15% target), collected and entries; what needs attention, client by
 client (the Client 360 health rules, month-end steps past due, missed tasks) with one piece of good news; a row

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.68.0";
+const VERSION = "2.69.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1374,7 +1374,41 @@ async function digestData(env, clientId, wk) {
 const dMoney = (n) => (n == null ? "–" : "$" + Math.round(Number(n)).toLocaleString("en-US"));
 const dDay = (iso) => { const [, m, d] = iso.split("-").map(Number); return MONTHS[m - 1].slice(0, 3) + " " + d; };
 const HEALTH_LOOK = { good: ["On track", "#0E8C74", "#E3F4EF"], watch: ["Watch", "#9A6A12", "#FBF0DC"], risk: ["At risk", "#A32D2D", "#FBE5E5"] };
-function spanEmail(span, wk, ds, appUrl) {
+/* The SLA report card at the top of the digest: each client's last finished month in Drishti (green 90% and above, amber 80 to 89,
+   red under 80), worst first, with its team leads and SMEs, the scopes and what pulls it down. Clients Drishti has no month for
+   are named at the end. */
+const BAND_LOOK = { ok: ["Green", "#127A4D", "#E3F5EC", "#1A9E6A"], warn: ["Amber", "#935300", "#FDF0D7", "#E8A13C"], miss: ["Red", "#BA2340", "#FDE7EB", "#C94F4F"] };
+function slaCardHtml(ds, appUrl) {
+  const scored = ds.filter((d) => d.card).sort((a, b) => b.card.score - a.card.score), none = ds.filter((d) => !d.card);
+  if (!scored.length) return "";
+  const n = (b) => scored.filter((d) => d.card.band === b).length, avg = Math.round(scored.reduce((t, d) => t + d.card.score, 0) / scored.length);
+  const box = (v, label, color) => `<td style="padding:8px 10px;border:1px solid #DFE4EA;border-radius:8px;width:25%"><div style="font-size:19px;font-weight:700;color:${color}">${v}</div><div style="font-size:11.5px;color:#627079">${label}</div></td>`;
+  const pill = (st) => `<span style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:${BAND_LOOK[st][2]};color:${BAND_LOOK[st][1]}">${BAND_LOOK[st][0]}</span>`;
+  const card = (d) => {
+    const c = d.card, L = BAND_LOOK[c.band], k = c.items.filter((i) => i.kind === "KPI"), t = c.items.filter((i) => i.kind === "SLA");
+    const okN = (xs) => xs.filter((i) => i.status === "ok").length, drags = c.drags.slice(0, c.band === "miss" ? 5 : 3);
+    const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : ""].filter(Boolean).join(" · ");
+    return `<div style="border:1px solid #DFE4EA;border-left:6px solid ${L[3]};border-radius:10px;padding:12px 14px;margin:10px 0">
+<table style="border-collapse:collapse"><tr><td style="width:58px;height:58px;border-radius:50%;background:${L[2]};color:${L[1]};text-align:center;font-weight:800;font-size:16px">${c.score}%</td>
+<td style="padding-left:12px"><div style="font-size:15.5px;font-weight:700">${htmlEsc(d.client.name)} ${pill(c.band)}</div>
+<div style="font-size:12.5px;color:#627079">${htmlEsc(c.period.label)} · ${okN(k)} of ${k.length} KPIs on target${t.length ? ` · ${okN(t)} of ${t.length} SLAs met` : ""}${c.delta != null ? ` · <b style="color:${c.delta >= 0 ? "#127A4D" : "#BA2340"}">${c.delta >= 0 ? "▲" : "▼"} ${Math.abs(c.delta)} pts</b> vs ${htmlEsc(c.prev ? c.prev.label : "the month before")}` : ""}</div>
+${ppl ? `<div style="font-size:12.5px;margin-top:2px">${htmlEsc(ppl)}</div>` : ""}</td></tr></table>
+<div style="margin-top:8px">${c.scopes.filter((x) => x.scored).map((x) => `<span style="display:inline-block;font-size:11.5px;border:1px solid #DFE4EA;border-radius:999px;padding:2px 9px;margin:0 5px 4px 0"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${BAND_LOOK[x.band || "miss"][3]};margin-right:5px"></span>${htmlEsc(x.short)} ${x.pct}%</span>`).join("")}</div>
+${drags.length ? `<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px"><tr><th style="text-align:left;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">PULLING IT DOWN${c.band === "miss" ? " (WORST FIRST)" : ""}</th><th style="text-align:right;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">VALUE</th><th style="text-align:right;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">STANDARD</th><th style="border-bottom:1px solid #DFE4EA"></th></tr>
+${drags.map((i) => `<tr><td style="padding:5px 6px;border-bottom:1px solid #F0F2F5">${htmlEsc(i.scope)} · ${htmlEsc(i.name)}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${htmlEsc(String(i.shown))}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${htmlEsc(String(i.target || ""))}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${pill(i.status)}</td></tr>`).join("")}</table>`
+      + (c.drags.length > drags.length ? `<div style="font-size:12px;color:#627079;margin-top:6px">+ ${c.drags.length - drags.length} more in red or amber · open the scorecard for every KPI and its formula</div>` : "")
+      : `<div style="font-size:12.5px;color:#127A4D;margin-top:6px">Every KPI on target.</div>`}
+${c.band === "ok" && c.strengths.length ? `<div style="font-size:12.5px;color:#127A4D;margin-top:6px">Strength: ${htmlEsc(c.strengths.slice(0, 2).map((i) => i.name + " " + i.shown).join(", "))}.</div>` : ""}
+</div>`;
+  };
+  return `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:20px 0 4px">SLA report card</div>
+<div style="font-size:12.5px;color:#627079;margin-bottom:8px">The last finished month in Drishti: the share of each client's KPIs and SLAs on target (green 90% and above, amber 80 to 89%, red under 80%), against the month before.</div>
+<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>${box(avg + "%", "average SLA score, " + scored.length + " client" + (scored.length === 1 ? "" : "s"), "#0F1B24")}${box(n("ok"), "green", "#127A4D")}${box(n("warn"), "amber", "#935300")}${box(n("miss"), n("miss") ? "red · needs a plan this week" : "red", "#BA2340")}</tr></table>
+${scored.map(card).join("")}
+${none.length ? `<div style="font-size:12px;color:#627079">No finished month in Drishti yet for ${htmlEsc(none.map((d) => d.client.name).join(", "))}.</div>` : ""}
+${appUrl ? `<p style="margin:10px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/sla")}" style="background:#0E8C74;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;font-weight:700;font-size:13px">Open the SLA scorecards in Brahmastra</a></p>` : ""}`;
+}
+function spanEmail(span, wk, ds, appUrl, extra = {}) {
   const sum = (f) => ds.reduce((t, d) => t + (f(d) || 0), 0);
   const ar = sum((d) => d.ar.now), o90 = sum((d) => d.ar.over90), pct = ar ? Math.round(o90 / ar * 1000) / 10 : 0;
   const withAgo = ds.filter((d) => d.ar.week_ago != null), agoNow = withAgo.reduce((t, d) => t + d.ar.now, 0), ago = withAgo.reduce((t, d) => t + d.ar.week_ago, 0);
@@ -1410,8 +1444,10 @@ function spanEmail(span, wk, ds, appUrl) {
   const L = ["left", "left"];
   const html = `<div style="font:14px/1.5 Segoe UI,Arial,sans-serif;color:#0F1B24;max-width:720px">
 <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0E8C74;font-weight:700">Brahmastra · Monday digest</div>
-<h2 style="margin:4px 0 2px;font-size:22px">${htmlEsc(span.title)}</h2>
-<div style="color:#627079;font-size:13px">Week of ${weekTxt} · ${ds.length} client${ds.length === 1 ? "" : "s"}: ${htmlEsc(ds.map((d) => d.client.name).join(", "))}</div>
+<h2 style="margin:4px 0 6px;font-size:22px">Weekly client digest</h2>
+<table style="border-collapse:collapse;font-size:13.5px;margin:0 0 4px">${[["Manager name", extra.manager ? extra.manager.name : "No manager (VP and admins)"], ["Designation", extra.manager ? extra.manager.designation : "–"],
+  ["Period", "Week of " + weekTxt], ["Clients", ds.length + ": " + ds.map((d) => d.client.name).join(", ")]].map(([k, v]) => `<tr><td style="padding:2px 18px 2px 0;color:#627079">${k}</td><td style="padding:2px 0"><b>${htmlEsc(v)}</b></td></tr>`).join("")}</table>
+${slaCardHtml(ds, appUrl)}
 <div style="margin:12px 0">${["risk", "watch", "good"].filter((k) => count[k]).map((k) => `<span style="display:inline-block;margin:0 6px 4px 0;padding:4px 10px;border-radius:999px;background:${HEALTH_LOOK[k][2]};color:${HEALTH_LOOK[k][1]};font-weight:700;font-size:13px">${count[k]} ${HEALTH_LOOK[k][0].toLowerCase()}</span>`).join("")}</div>
 <table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>
 ${kpi("AR now", dMoney(ar), withAgo.length ? `<span style="color:${agoNow <= ago ? "#0E8C74" : "#A32D2D"}">${agoNow === ago ? "same as" : (agoNow < ago ? "down " : "up ") + dMoney(Math.abs(agoNow - ago)) + " vs"} a week before</span>` : "no reading a week ago")}
@@ -1428,7 +1464,8 @@ ${th(["Client", "Health", "AR", "Over 90", "Collected", "Entries", "SLA", "Month
 ${ds.map((d) => td([`<b>${htmlEsc(d.client.name)}</b>${d.escalations.late ? `<div style="font-size:11px;color:#A32D2D">${d.escalations.late} escalation${d.escalations.late > 1 ? "s" : ""} over 24 h</div>` : ""}${d.waiting.n ? `<div style="font-size:11px;color:#627079">${d.waiting.n} waiting on the client</div>` : ""}`,
   `<span style="color:${HEALTH_LOOK[d.health][1]};font-weight:700">${HEALTH_LOOK[d.health][0]}</span>`, dMoney(d.ar.now) + arDelta(d),
   `<span style="color:${d.ar.over90_pct > d.ar.target ? "#A32D2D" : "#0F1B24"}">${d.ar.over90_pct}%</span>`, dMoney(d.collected.amount), `${d.worked.n}<div style="font-size:11px;color:#627079">was ${d.worked.prev}</div>`,
-  d.sla ? `${d.sla.score}%<div style="font-size:11px;color:#627079">${MONTHS[Number(d.sla.month.slice(5)) - 1].slice(0, 3)}</div>` : `<span style="color:#627079">not scored</span>`,
+  d.card ? `<span style="color:${BAND_LOOK[d.card.band][1]};font-weight:700">${d.card.score}%</span><div style="font-size:11px;color:#627079">${htmlEsc(d.card.period.label.slice(0, 3))}</div>`
+    : d.sla ? `${d.sla.score}%<div style="font-size:11px;color:#627079">${MONTHS[Number(d.sla.month.slice(5)) - 1].slice(0, 3)}</div>` : `<span style="color:#627079">not scored</span>`,
   `${d.monthend.done}/${d.monthend.total}`], L)).join("")}
 </table>
 ${teamRows.length ? sec("The team last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${th(["Person", "Clients", "Entries", "Skipped"], L)}${teamRows.map((p) => td([htmlEsc(p.name), `<span style="color:#627079">${htmlEsc(p.clients.join(", "))}</span>`, String(p.work), String(p.skips)], L)).join("")}</table>` : ""}
@@ -1436,7 +1473,9 @@ ${denRows.length ? sec("Denials and rejections worked last week") + `<table styl
 ${appUrl ? `<p style="margin:20px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/client")}" style="background:#14B8A6;color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:600">Open Client 360</a></p>` : ""}
 <p style="margin-top:18px;font-size:12px;color:#627079">You get this because you are a supervisor on ${span.manager ? htmlEsc(span.title.replace(/'s clients$/, "")) + "'s clients" : "clients without a manager"} in Brahmastra. Turn it off in Brahmastra, Settings, Email. No patient details are included.</p>
 </div>`;
-  const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`, ["risk", "watch", "good"].filter((k) => count[k]).map((k) => count[k] + " " + HEALTH_LOOK[k][0].toLowerCase()).join(", "), "",
+  const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`,
+    `Manager name: ${extra.manager ? extra.manager.name : "No manager"} · Designation: ${extra.manager ? extra.manager.designation : "-"} · Period: week of ${weekTxt}`,
+    ...ds.filter((d) => d.card).map((d) => `SLA ${d.card.period.label}: ${d.client.name} ${d.card.score}% (${{ ok: "green", warn: "amber", miss: "red" }[d.card.band]})${d.card.delta != null ? ", " + (d.card.delta >= 0 ? "+" : "") + d.card.delta + " pts" : ""}`), ["risk", "watch", "good"].filter((k) => count[k]).map((k) => count[k] + " " + HEALTH_LOOK[k][0].toLowerCase()).join(", "), "",
     `AR now ${dMoney(ar)}, over 90 ${pct}% (target ${target}%), collected ${dMoney(coll)}, entries ${work}`, "", "Needs your attention:",
     ...(attention.length ? attention.slice(0, 10).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "", "Client by client:",
     ...ds.map((d) => `- ${d.client.name}: ${HEALTH_LOOK[d.health][0]}, AR ${dMoney(d.ar.now)}, over 90 ${d.ar.over90_pct}%, collected ${dMoney(d.collected.amount)}, entries ${d.worked.n}`), "",
@@ -1446,7 +1485,18 @@ ${appUrl ? `<p style="margin:20px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/,
 }
 async function spanMail(env, span, wk) {
   const ds = []; for (const c of span.clients) ds.push(await digestData(env, c.id, wk));
-  return spanEmail(span, wk, ds, env.APP_URL || "");
+  // the header: the manager, their designation; each client's team leads and SMEs; each client's SLA report card from Drishti
+  const mgr = span.manager ? await one(env, "SELECT name, designation, position FROM users WHERE id = ?", span.manager.id) : null;
+  const people = await digestPeople(env);
+  const isMgr = (u) => u.is_admin || u.access_all || u.roster_kind === "manager";
+  for (const d of ds) {
+    const on = people.filter((u) => !isMgr(u) && u.role === "supervisor" && canEditClient(u, d.client.id));
+    d.smes = on.filter((u) => isSME(u)).map((u) => u.name).sort();
+    d.tls = on.filter((u) => !isSME(u)).map((u) => u.name).sort();
+    let sc = null; try { sc = await OPS["sla.scorecard"]({ env, user: DIGEST_SYSTEM, payload: { client_id: d.client.id, kind: "month", today: istISO(wk.to) } }); } catch (e) { sc = null; }
+    d.card = sc && sc.state === "ok" && sc.score != null ? sc : null;
+  }
+  return spanEmail(span, wk, ds, env.APP_URL || "", { manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null });
 }
 /* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
 async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, by = "Monday job" } = {}) {

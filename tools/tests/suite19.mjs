@@ -142,6 +142,17 @@ r = await TI("attention.count"); ok("a team lead with no claims on their desk: M
 await TI("alloc.reassign", { ids: [claims[2].id], user_id: U("Tina Lead").id });
 r = await TI("attention.count"); ok("with a claim allocated to them: 1 (the My desk entry shows)", r.my_desk === 1, r.my_desk);
 
+S("Monday digest: the header and the SLA report card");
+{ await fresh();
+  const sp = (await VP("digest.spans", {})).spans; const s = sp.find((x) => x.clients.some((c) => c.id === sunrise.id));
+  const m = await VP("digest.preview", { span: s.key });
+  ok("the header names the manager, the designation and the period", /Manager name/.test(m.html) && /Designation/.test(m.html) && /Week of /.test(m.html) && /Manager name: .* · Designation: .* · Period: week of/.test(m.text), m.text.split("\n").slice(0, 3));
+  ok("the SLA report card has a card per scored client with its score and band", /SLA report card/.test(m.html) && m.html.includes("Sunrise Eye Care") && /average SLA score/.test(m.html), m.html.length);
+  ok("each card names the client's team lead", m.html.includes("TL Tina Lead") || m.html.includes("TLs ") , m.html.match(/TLs? [^<]*/));
+  ok("what pulls it down, with value and standard", /PULLING IT DOWN/.test(m.html) && /STANDARD/.test(m.html));
+  ok("the text version carries the SLA lines too", /SLA October 2026: Sunrise Eye Care \d+%/.test(m.text), m.text);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
