@@ -71,7 +71,10 @@ const folder = (clientName) => { const root = child("root", "Brahmastra Clients"
 const runJob = async (at) => { const real = Date.now; if (at) Date.now = () => at; try { const ps = []; await rig.worker.default.scheduled({ cron: "17 * * * *" }, { ...rig.backend.env, ...rig.liveEnv, DB: rig.backend.env.DB }, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { Date.now = real; } };
 
 
-const base = { day: "2026-11-04", dept: "Submission", severity: "High", raised_src: "Client", raised_who: "Office manager", how: "Email", claim_no: "CLM1", description: "Claims rejected twice for the same modifier" };
+const base = { day: "2026-11-04", dept: "Submission", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Rejections again", description: "Claims rejected twice for the same modifier" };
+const close = { status: "resolved", is_error: "Y", rca: "Modifier 25 missing in the charge template", corrective: "Modifier 25 added to the charge template", preventive: "Template checked every Monday", close_on: "2026-11-05" };
+base.owner_id = U("Tina Lead").id;
+const adminIdE = (await A("auth.me")).user.id;
 S("Who can use it");
 let r = await T(() => AR("escalations.list", {}));
 ok("a biller cannot open the tracker", !r.ok && r.status === 403, r);
@@ -87,13 +90,17 @@ r = await T(() => A("escalations.save", { ...base, client_id: lake.id }));
 ok("SR numbers count per client: Lakeview starts at SR1", r.ok && r.r.sr === 1, r);
 S("Checks");
 r = await T(() => TI("escalations.save", { ...base, dept: "Nope", client_id: sun.id })); ok("department must be one of the list", !r.ok && /department/i.test(r.e), r);
-r = await T(() => TI("escalations.save", { ...base, description: "x", client_id: sun.id })); ok("description is needed", !r.ok && /escalated/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, description: "x", client_id: sun.id })); ok("description is needed", !r.ok && /description/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, reported_to: "", client_id: sun.id })); ok("reported to Purview is needed", !r.ok && /reported/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, owner_id: "", client_id: sun.id })); ok("the responding person is needed", !r.ok && /responding/i.test(r.e), r);
 r = await T(() => TI("escalations.save", { ...base, day: "", client_id: sun.id })); ok("date is needed", !r.ok && /date/i.test(r.e), r);
 let L = await TI("escalations.list", { client_id: sun.id, status: "all" });
 ok("the list shows both, newest first, with their SR numbers", L.rows.length === 2 && L.rows.map((x) => x.sr).sort().join() === "1,2", L.rows.map((x) => x.sr));
 const sr1 = L.rows.find((x) => x.sr === 1);
-r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, status: "resolved", rca: "" }));
-ok("resolving needs the RCA", !r.ok && /root cause/i.test(r.e), r);
+r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close, rca: "" }));
+ok("closing needs the root cause", !r.ok && /root cause/i.test(r.e), r);
+for (const [k, w] of [["is_error", /Y or N/], ["corrective", /corrective/], ["preventive", /preventive/], ["close_on", /close date/]]) { r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close, [k]: "" })); ok("closing needs " + k, !r.ok && w.test(r.e), r); }
+r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close, close_on: "2026-11-01" })); ok("the close date cannot be before the received date", !r.ok && /between/.test(r.e), r);
 S("Open past 24 hours");
 await sql("UPDATE escalations SET created_at = ? WHERE client_id = ?", Date.now() - 30 * 3600000, sun.id);
 L = await TI("escalations.list", { client_id: sun.id, status: "open" });
@@ -121,18 +128,18 @@ ok("only the other one still needs a reason", L.rows.length === 1 && L.rows[0].s
 await sql("UPDATE escalations SET expected_on = '2026-01-01' WHERE id = ?", sr1.id);
 L = await TI("escalations.list", { client_id: sun.id, status: "open" });
 ok("past the expected date it turns red again and the lead can give a new date", L.rows.find((x) => x.sr === 1).past_expected && L.rows.find((x) => x.sr === 1).can_reason, L.rows);
-r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, status: "resolved", rca: "Modifier 25 added to the charge template" }));
-ok("the SME resolves it with the RCA", r.ok, r);
+r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close }));
+ok("the SME closes it with error Y/N, root cause, corrective and preventive action and the close date", r.ok, r);
 L = await TI("escalations.list", { client_id: sun.id, status: "resolved" });
-ok("resolved, with hours to resolve", L.rows.length === 1 && L.rows[0].hours >= 29 && L.stats.resolved_month >= 0, L.rows);
+ok("closed, with the close date and hours", L.rows.length === 1 && L.rows[0].close_on === "2026-11-05" && L.rows[0].status_label === "Closed" && L.rows[0].hours >= 29, L.rows);
 await sleep(800);
 S("The client's OneDrive file");
 const f = folder(sun.name), file = f.f && child(f.f.id, "Escalation Tracker - " + sun.name + ".xlsx");
 ok("one workbook in the client's folder: Escalation Tracker - <Client>.xlsx", !!file, [...OD.items.values()].map((x) => pathOf(x.id)));
 const rows = file ? OD.rows.get(file.id) : [];
-ok("header first: SR No, Department, Description, Date (what Drishti counts)", rows[0] && rows[0].slice(0, 4).join() === "SR No,Department,Description,Date", rows[0]);
+ok("header is the supervisors' format", rows[0] && rows[0].slice(0, 16).join("|") === "SR No|Department|Client Name|Received (mm/dd/yy)|Raised by|Reported to Purview|Responding person Purview|Email Subject|Error description|Error (Y/N)|Comment|Root Cause|Corrective Action|Preventive Action|Status (Open/Closed)|Close date (mm/dd/yy)", rows[0]);
 ok("one row per escalation, the same row updated, not added again", rows.length === 3 && rows[1][0] === "SR1" && rows[2][0] === "SR2", rows.map((x) => x[0]));
-ok("SR1's row shows Resolved, the RCA and the reason given", rows[1][9] === "Resolved" && /Modifier 25/.test(rows[1][14]) && /charge template/.test(rows[1][15]), rows[1]);
+ok("SR1's row: received and close dates as Excel dates, Y, root cause, corrective, preventive, Closed", rows[1][2] === sun.name && rows[1][3] === 46330 && rows[1][9] === "Y" && /missing/.test(rows[1][11]) && /added/.test(rows[1][12]) && /Monday/.test(rows[1][13]) && rows[1][14] === "Closed" && rows[1][15] === 46331 && /charge template/.test(rows[1][17]), rows[1]);
 L = await TI("escalations.list", { client_id: sun.id, status: "all" });
 ok("the screen shows where it was saved, with a link", L.file && L.file.ok && /Escalation Tracker/.test(L.file.file) && /share\//.test(L.file.link), L.file);
 const lf = folder(lake.name); ok("Lakeview has its own file", lf.f && child(lf.f.id, "Escalation Tracker - " + lake.name + ".xlsx"));
@@ -159,6 +166,7 @@ ok("and where the SLA copy went", L.sla_file && L.sla_file.ok && L.sla_file.file
 L = await TI("escalations.list", { client_id: sun.id, status: "all", today: "2026-12-05" });
 ok("a month with none is green", L.sla.n === 0 && L.sla.met, L.sla);
 
+ok("the responding-person list includes the admin and the team leads", (await A("escalations.list", {})).people.some((u) => u.id === adminIdE) && L.people.some((u) => u.name === "Tina Lead"));
 const pass = results.filter((x) => x.pass).length, fail = results.length - pass;
 console.log(`\n==== suite20: ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);

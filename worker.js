@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.72.0";
+const VERSION = "2.73.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -171,6 +171,10 @@ const EXTRA_COLUMNS = {
     // Date of the denial / EOB, from the biller's note: the appeal filing limit (AFL) counts from it.
     ["denial_date", "TEXT NOT NULL DEFAULT ''"],
     ["patient_dob", "TEXT NOT NULL DEFAULT ''"], ["member_id", "TEXT NOT NULL DEFAULT ''"], ["patient_phone", "TEXT NOT NULL DEFAULT ''"]],
+  // The supervisors' escalation format: who it was reported to at Purview, the email subject, whether it was a Purview error,
+  // a comment, corrective and preventive action (with the root cause in rca) and the close date.
+  escalations: [["reported_to", "TEXT NOT NULL DEFAULT ''"], ["email_subject", "TEXT NOT NULL DEFAULT ''"], ["is_error", "TEXT NOT NULL DEFAULT ''"], ["comment", "TEXT NOT NULL DEFAULT ''"],
+    ["corrective", "TEXT NOT NULL DEFAULT ''"], ["preventive", "TEXT NOT NULL DEFAULT ''"], ["close_on", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
     ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -462,17 +466,20 @@ async function recordWorkbookStatus(env, targetId, status) {
    One workbook per client, in its own folder: Brahmastra Clients / <Client> / Escalation Tracker - <Client>.xlsx.
    Every change rewrites the sheet from Brahmastra's register, so an edit or a resolution shows on the same row.
    The first four columns (SR No, Department, Description, Date) are the ones Drishti counts for the Escalations KPI. */
-const ESC_HEADER = ["SR No", "Department", "Description", "Date", "Severity", "Raised by", "How", "Claim #", "Owner", "Status", "Logged by", "Logged at", "Resolved on",
-  "Hours to resolve", "RCA / action", "Reason still open (after 24 h)", "Expected close date", "Reason given by"];
-const ESC_TEMPLATE_B64 = "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";
+const ESC_HEADER = ["SR No", "Department", "Client Name", "Received (mm/dd/yy)", "Raised by", "Reported to Purview", "Responding person Purview", "Email Subject",
+  "Error description", "Error (Y/N)", "Comment", "Root Cause", "Corrective Action", "Preventive Action", "Status (Open/Closed)", "Close date (mm/dd/yy)",
+  "Hours to close", "Reason still open (after 24 h)", "Expected close date", "Reason given by", "Logged by"];
+const ESC_DATE_COLS = new Set([3, 15, 18]);
+const ESC_TEMPLATE_B64 = "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";
 const ESC_DEPTS = ["Account Receivable", "Submission", "Payment Posting", "Benefit Verification", "PCC", "Credentialing", "Other"];
-const ESC_SEVERITY = ["High", "Medium", "Low"];
-const ESC_HOW = ["Email", "Call", "Meeting", "Chat", "Other"];
-const ESC_STATUS = { open: "Open", progress: "In progress", resolved: "Resolved" };
+const ESC_STATUS = { open: "Open", progress: "Open", resolved: "Closed" };
 const ESC_TAT_MS = 24 * 3600000;
 const escHours = (e) => (e.resolved_at ? Math.max(0, Math.round((e.resolved_at - e.created_at) / 360000) / 10) : null);
-const escRow = (e) => ["SR" + e.sr, e.dept, e.description, e.day, e.severity, (e.raised_src || "") + (e.raised_who ? " · " + e.raised_who : ""), e.how, e.claim_no, e.owner_name,
-  ESC_STATUS[e.status] || e.status, e.created_by_name, istISO(e.created_at), e.resolved_at ? istISO(e.resolved_at) : "", escHours(e) == null ? "" : escHours(e), e.rca, e.delay_reason, e.expected_on, e.delay_by_name];
+const escRow = (e, client) => ["SR" + e.sr, e.dept, client || e.client_name || "", excelSerial(e.day), e.raised_who, e.reported_to, e.owner_name, e.email_subject,
+  e.description, e.is_error, e.comment, e.rca, e.corrective, e.preventive, ESC_STATUS[e.status] || e.status, excelSerial(e.close_on),
+  escHours(e) == null ? "" : escHours(e), e.delay_reason, excelSerial(e.expected_on), e.delay_by_name, e.created_by_name];
+// the dates show as mm/dd/yy in Excel
+const escFormats = (n) => [ESC_HEADER.map(() => "General"), ...Array.from({ length: n }, () => ESC_HEADER.map((h, i) => (ESC_DATE_COLS.has(i) ? "mm/dd/yy" : "General")))];
 async function escalationFile(env, tok, clientId) {
   const c = await ensureClientFolders(env, clientId, tok);
   const key = "escfile:" + clientId;
@@ -506,7 +513,7 @@ async function escalationSlaFiles(env, tok, clientId, months) {
   const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT), saved = [];
   const leads = await clientTeamLeads(env, c.id, null);
   for (const ym of months) {
-    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? ORDER BY sr", c.id, ym)).map(escRow);
+    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? ORDER BY sr", c.id, ym)).map((e) => escRow(e, c.name));
     const name = odName("Escalation Tracker - " + c.name + " - " + monthLabel(ym)) + ".xlsx";
     for (const lead of leads) {
       const path = [REPORTS_ROOT, odName(lead), odName(c.name), "SLA & KPI", name];
@@ -527,7 +534,7 @@ async function escalationSlaFiles(env, tok, clientId, months) {
       const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(ESC_HEADER.length);
       // an escalation moved to another month leaves this file: clear the old rows before writing the month afresh
       await graphCall(tok, "POST", ws + `/range(address='A2:${last}5000')/clear`, { applyTo: "Contents" });
-      await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [ESC_HEADER, ...rows] });
+      await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [ESC_HEADER, ...rows], numberFormat: escFormats(rows.length) });
       saved.push(path.join(" › "));
     }
   }
@@ -543,12 +550,13 @@ async function syncEscalations(env, clientId, months) {
       await recordWorkbookStatus(env, clientId + ":escsla", { ok: true, at: now, files });
     } catch (e) { await recordWorkbookStatus(env, clientId + ":escsla", { ok: false, at: now, error: String(e && e.message || e).slice(0, 300) }); }
     const loc = await escalationFile(env, tok, clientId);
-    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? ORDER BY sr", clientId)).map(escRow);
+    const cn = await one(env, "SELECT name FROM clients WHERE id = ?", clientId);
+    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? ORDER BY sr", clientId)).map((e) => escRow(e, cn && cn.name));
     const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
     const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
     const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
     const all2 = [ESC_HEADER, ...rows];
-    await graphCall(tok, "PATCH", base + "/worksheets/" + encodeURIComponent(sheet.id) + `/range(address='A1:${colLetter(ESC_HEADER.length)}${all2.length}')`, { values: all2 });
+    await graphCall(tok, "PATCH", base + "/worksheets/" + encodeURIComponent(sheet.id) + `/range(address='A1:${colLetter(ESC_HEADER.length)}${all2.length}')`, { values: all2, numberFormat: escFormats(rows.length) });
     await recordWorkbookStatus(env, clientId + ":esc", { ok: true, at: now, file: loc.path, link: loc.link || "", rows: rows.length });
   } catch (e) {
     const msg = String(e && e.message || e).slice(0, 300);
@@ -5345,7 +5353,7 @@ const OPS = {
     const shown = st === "open" ? out.filter((e) => e.status !== "resolved") : st === "resolved" ? out.filter((e) => e.status === "resolved") : st === "reason" ? out.filter((e) => e.needs_reason) : out;
     const done = out.filter((e) => e.resolved_at && istISO(e.resolved_at).slice(0, 7) === month);
     const stats = { open: out.filter((e) => e.status !== "resolved").length, needs_reason: out.filter((e) => e.needs_reason).length, past_expected: out.filter((e) => e.past_expected).length,
-      logged_month: out.filter((e) => e.day.slice(0, 7) === month).length, resolved_month: done.length,
+      logged_month: out.filter((e) => e.day.slice(0, 7) === month).length, resolved_month: done.length, closed_month: done.length,
       avg_hours: done.length ? Math.round(done.reduce((t, e) => t + e.hours, 0) / done.length) : null };
     const file = cid ? await getSetting(env, "workbook_status:" + cid + ":esc", null) : null;
     const slaFile = cid ? await getSetting(env, "workbook_status:" + cid + ":escsla", null) : null;
@@ -5355,9 +5363,9 @@ const OPS = {
       const n = m.reduce((t, x) => t + x.n, 0);
       sla = { month: monthLabel(month), target: ESC_SLA_TARGET, n, met: n <= ESC_SLA_TARGET, by_dept: m.map((x) => ({ dept: x.dept, n: x.n })) };
     }
-    const people = (await all(env, "SELECT id, name, designation, source FROM users WHERE active = 1 AND role = 'supervisor' ORDER BY name"))
+    const people = (await all(env, "SELECT id, name, designation, source FROM users WHERE active = 1 AND role IN ('supervisor','admin') ORDER BY name"))
       .map((u) => ({ id: u.id, name: u.name, tag: isSME(u) ? "SME" : /manager|vice|director|head/i.test(u.designation || "") ? (u.designation || "") : "TL" }));
-    return { rows: shown, stats, file, sla_file: slaFile, sla, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, severities: ESC_SEVERITY, hows: ESC_HOW, can_reason: isTL };
+    return { rows: shown, stats, file, sla_file: slaFile, sla, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, can_reason: isTL };
   },
   "escalations.save": async ({ env, user, payload, ctx }) => {
     const id = str(payload.id, 60), now = Date.now();
@@ -5367,34 +5375,41 @@ const OPS = {
     const c = clientId ? await one(env, "SELECT id, name FROM clients WHERE id = ?", clientId) : null;
     if (!c) throw bad("Pick the client.");
     editableOr(user, c.id);
-    const day = isoDate(payload.day);
-    if (!day) throw bad("Pick the date of the escalation.");
-    if (day > istISO(now + 86400000)) throw bad("The date cannot be in the future.");
+    const day = isoDate(payload.day), today = istISO(now);
+    if (!day) throw bad("Pick the received date.");
+    if (day > today) throw bad("The received date cannot be in the future.");
     const dept = ESC_DEPTS.includes(payload.dept) ? payload.dept : ""; if (!dept) throw bad("Pick the department.");
-    const severity = ESC_SEVERITY.includes(payload.severity) ? payload.severity : "Medium";
-    const src = payload.raised_src === "Purview" ? "Purview" : "Client";
-    const how = ESC_HOW.includes(payload.how) ? payload.how : "";
+    const raisedBy = str(payload.raised_who, 120).trim(); if (!raisedBy) throw bad("Who raised it? Name or role at the client.");
+    const reportedTo = str(payload.reported_to, 120).trim(); if (!reportedTo) throw bad("Who was it reported to at Purview?");
     const description = str(payload.description, 2000).trim();
-    if (description.length < 8) throw bad("Write what was escalated, a sentence at least.");
-    const status = ESC_STATUS[payload.status] ? payload.status : "open";
-    const rca = str(payload.rca, 2000).trim();
-    if (status === "resolved" && rca.length < 8) throw bad("To close it, write the root cause and what was done.");
+    if (description.length < 8) throw bad("Write the error description, a sentence at least.");
+    const status = payload.status === "resolved" || payload.status === "closed" ? "resolved" : "open";
+    const isError = ["Y", "N"].includes(payload.is_error) ? payload.is_error : "";
+    const rca = str(payload.rca, 2000).trim(), corrective = str(payload.corrective, 2000).trim(), preventive = str(payload.preventive, 2000).trim();
+    const closeOn = status === "resolved" ? isoDate(payload.close_on) : "";
+    if (status === "resolved") {
+      if (!isError) throw bad("To close it, say whether it was an error: Y or N.");
+      if (rca.length < 8) throw bad("To close it, write the root cause.");
+      if (corrective.length < 8) throw bad("To close it, write the corrective action.");
+      if (preventive.length < 8) throw bad("To close it, write the preventive action.");
+      if (!closeOn) throw bad("To close it, pick the close date.");
+      if (closeOn < day || closeOn > today) throw bad("The close date must be between the received date and today.");
+    }
     let owner = null;
-    if (payload.owner_id) { owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60)); if (!owner) throw bad("Pick the owner from the list."); }
-    const vals = { day, dept, severity, raised_src: src, raised_who: str(payload.raised_who, 80).trim(), how, claim_no: str(payload.claim_no, 60).trim(), owner_id: owner ? owner.id : null,
-      owner_name: owner ? owner.name : "", description, status, rca, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null };
+    if (payload.owner_id) owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60));
+    if (!owner) throw bad("Pick the responding person at Purview.");
+    const vals = { day, dept, raised_who: raisedBy, reported_to: reportedTo, email_subject: str(payload.email_subject, 300).trim(), owner_id: owner.id, owner_name: owner.name, description,
+      is_error: isError, comment: str(payload.comment, 2000).trim(), status, rca, corrective, preventive, close_on: closeOn, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null };
+    const cols = Object.keys(vals);
     let sr;
     if (ex) {
       sr = ex.sr;
-      await run(env, `UPDATE escalations SET day = ?, dept = ?, severity = ?, raised_src = ?, raised_who = ?, how = ?, claim_no = ?, owner_id = ?, owner_name = ?, description = ?, status = ?, rca = ?,
-        resolved_at = ?, updated_at = ?, updated_by_name = ? WHERE id = ?`, vals.day, vals.dept, vals.severity, vals.raised_src, vals.raised_who, vals.how, vals.claim_no, vals.owner_id, vals.owner_name,
-        vals.description, vals.status, vals.rca, vals.resolved_at, now, user.name || "", ex.id);
+      await run(env, `UPDATE escalations SET ${cols.map((k) => k + " = ?").join(", ")}, updated_at = ?, updated_by_name = ? WHERE id = ?`, ...cols.map((k) => vals[k]), now, user.name || "", ex.id);
     } else {
       const m = await one(env, "SELECT MAX(sr) AS m FROM escalations WHERE client_id = ?", c.id);
       sr = ((m && m.m) || 0) + 1;
-      await run(env, `INSERT INTO escalations (id, client_id, sr, day, dept, severity, raised_src, raised_who, how, claim_no, owner_id, owner_name, description, status, rca, resolved_at, created_at, created_by, created_by_name)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, uuid(), c.id, sr, vals.day, vals.dept, vals.severity, vals.raised_src, vals.raised_who, vals.how, vals.claim_no, vals.owner_id, vals.owner_name,
-        vals.description, vals.status, vals.rca, vals.resolved_at, now, user.id, user.name || "");
+      await run(env, `INSERT INTO escalations (id, client_id, sr, ${cols.join(", ")}, created_at, created_by, created_by_name) VALUES (?,?,?,${cols.map(() => "?").join(",")},?,?,?)`,
+        uuid(), c.id, sr, ...cols.map((k) => vals[k]), now, user.id, user.name || "");
     }
     await audit(env, user, ex ? "escalation.edit" : "escalation.add", c.id, `SR${sr} ${dept}: ${ESC_STATUS[status]}`);
     const p = syncEscalations(env, c.id, [day.slice(0, 7), ex ? ex.day.slice(0, 7) : ""]); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
@@ -5406,7 +5421,7 @@ const OPS = {
     if (!e) throw bad("That escalation is no longer there.");
     editableOr(user, e.client_id);
     if (isSME(user)) throw denied("The reason and expected date are given by the team lead. Ask your team lead.");
-    if (e.status === "resolved") throw bad("This escalation is already resolved.");
+    if (e.status === "resolved") throw bad("This escalation is already closed.");
     const reason = str(payload.reason, 1000).trim(), on = isoDate(payload.expected_on), today = istISO(Date.now());
     if (reason.length < 8) throw bad("Write why it is still open, a sentence at least.");
     if (!on || on < today) throw bad("Pick the expected close date, today or later.");
