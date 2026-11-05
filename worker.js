@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.70.0";
+const VERSION = "2.71.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -140,6 +140,14 @@ const SCHEMA = [
      auto INTEGER NOT NULL DEFAULT 0, score REAL, note TEXT NOT NULL DEFAULT '', PRIMARY KEY (client_id, month, step))`,
   `CREATE TABLE IF NOT EXISTS raci (client_id TEXT PRIMARY KEY, r_json TEXT NOT NULL DEFAULT '[]', a_json TEXT NOT NULL DEFAULT '[]', c_json TEXT NOT NULL DEFAULT '[]',
      i_json TEXT NOT NULL DEFAULT '[]', updated_at INTEGER, updated_by TEXT, updated_by_name TEXT NOT NULL DEFAULT '')`,
+  /* Escalation tracker: client escalations logged by SMEs and above, one register per client (SR1, SR2...), copied to the
+     client's OneDrive file "Escalation Tracker - <Client>.xlsx" on every change. */
+  `CREATE TABLE IF NOT EXISTS escalations (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, sr INTEGER NOT NULL, day TEXT NOT NULL, dept TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'Medium',
+     raised_src TEXT NOT NULL DEFAULT 'Client', raised_who TEXT NOT NULL DEFAULT '', how TEXT NOT NULL DEFAULT '', claim_no TEXT NOT NULL DEFAULT '', owner_id TEXT, owner_name TEXT NOT NULL DEFAULT '',
+     description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', rca TEXT NOT NULL DEFAULT '', resolved_at INTEGER,
+     delay_reason TEXT NOT NULL DEFAULT '', expected_on TEXT NOT NULL DEFAULT '', delay_by_name TEXT NOT NULL DEFAULT '', delay_at INTEGER, reason_asked_at INTEGER,
+     created_at INTEGER NOT NULL, created_by TEXT, created_by_name TEXT NOT NULL DEFAULT '', updated_at INTEGER, updated_by_name TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_escalations ON escalations (client_id, sr)`,
 ];
 
 /* Columns added after the first release. ensureReady() adds any that an
@@ -449,6 +457,79 @@ async function folderTrouble(env, clientId, error) {
 }
 async function recordWorkbookStatus(env, targetId, status) {
   await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", "workbook_status:" + targetId, JSON.stringify(status), Date.now());
+}
+/* ---- the escalation tracker's OneDrive file ----
+   One workbook per client, in its own folder: Brahmastra Clients / <Client> / Escalation Tracker - <Client>.xlsx.
+   Every change rewrites the sheet from Brahmastra's register, so an edit or a resolution shows on the same row.
+   The first four columns (SR No, Department, Description, Date) are the ones Drishti counts for the Escalations KPI. */
+const ESC_HEADER = ["SR No", "Department", "Description", "Date", "Severity", "Raised by", "How", "Claim #", "Owner", "Status", "Logged by", "Logged at", "Resolved on",
+  "Hours to resolve", "RCA / action", "Reason still open (after 24 h)", "Expected close date", "Reason given by"];
+const ESC_TEMPLATE_B64 = "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";
+const ESC_DEPTS = ["Account Receivable", "Submission", "Payment Posting", "Benefit Verification", "PCC", "Credentialing", "Other"];
+const ESC_SEVERITY = ["High", "Medium", "Low"];
+const ESC_HOW = ["Email", "Call", "Meeting", "Chat", "Other"];
+const ESC_STATUS = { open: "Open", progress: "In progress", resolved: "Resolved" };
+const ESC_TAT_MS = 24 * 3600000;
+const escHours = (e) => (e.resolved_at ? Math.max(0, Math.round((e.resolved_at - e.created_at) / 360000) / 10) : null);
+const escRow = (e) => ["SR" + e.sr, e.dept, e.description, e.day, e.severity, (e.raised_src || "") + (e.raised_who ? " · " + e.raised_who : ""), e.how, e.claim_no, e.owner_name,
+  ESC_STATUS[e.status] || e.status, e.created_by_name, istISO(e.created_at), e.resolved_at ? istISO(e.resolved_at) : "", escHours(e) == null ? "" : escHours(e), e.rca, e.delay_reason, e.expected_on, e.delay_by_name];
+async function escalationFile(env, tok, clientId) {
+  const c = await ensureClientFolders(env, clientId, tok);
+  const key = "escfile:" + clientId;
+  const cached = await getSetting(env, key, null);
+  if (cached && cached.driveId && cached.folderId === c.od_folder_id) return cached;
+  const name = odName("Escalation Tracker - " + c.name) + ".xlsx";
+  const at = `/drives/${encodeURIComponent(c.od_drive_id)}/items/${encodeURIComponent(c.od_folder_id)}:/${encodeURIComponent(name)}:`;
+  let it = null;
+  try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference,webUrl"); }
+  catch (e) {
+    if (!/\(404/.test(String(e.message))) throw e;
+    const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
+      headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(ESC_TEMPLATE_B64) });
+    if (r.ok) it = await r.json();
+    else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference,webUrl");
+    else throw new ApiError(502, "OneDrive did not create " + name + " (" + r.status + ").");
+  }
+  const loc = { driveId: it.parentReference.driveId, itemId: it.id, folderId: c.od_folder_id, name: it.name, path: [CLIENT_ROOT, odName(c.name), it.name].join(" › "),
+    link: await odShareLink(tok, it.parentReference.driveId, it.id, it.webUrl) };
+  await setSetting(env, key, loc);
+  return loc;
+}
+async function syncEscalations(env, clientId) {
+  if (env.DEMO || !env.MS_CLIENT_SECRET || String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
+  const now = Date.now();
+  try {
+    const tok = await graphAppToken(env);
+    const loc = await escalationFile(env, tok, clientId);
+    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? ORDER BY sr", clientId)).map(escRow);
+    const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
+    const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
+    const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
+    const all2 = [ESC_HEADER, ...rows];
+    await graphCall(tok, "PATCH", base + "/worksheets/" + encodeURIComponent(sheet.id) + `/range(address='A1:${colLetter(ESC_HEADER.length)}${all2.length}')`, { values: all2 });
+    await recordWorkbookStatus(env, clientId + ":esc", { ok: true, at: now, file: loc.path, link: loc.link || "", rows: rows.length });
+  } catch (e) {
+    const msg = String(e && e.message || e).slice(0, 300);
+    await recordWorkbookStatus(env, clientId + ":esc", { ok: false, at: now, error: msg });
+    try { await folderTrouble(env, clientId, msg); } catch (x) {}
+  }
+}
+/* Open escalations past 24 hours with no reason yet: the client's team leads hear about it once, in the bell and by email. */
+async function escalationReminders(env) {
+  const now = Date.now();
+  const rows = await all(env, `SELECT e.id, e.client_id, e.sr, e.dept, cl.name AS client_name FROM escalations e JOIN clients cl ON cl.id = e.client_id
+    WHERE e.status != 'resolved' AND e.delay_reason = '' AND e.reason_asked_at IS NULL AND e.created_at < ? LIMIT 50`, now - ESC_TAT_MS);
+  for (const e of rows) {
+    await run(env, "UPDATE escalations SET reason_asked_at = ? WHERE id = ?", now, e.id);
+    const names = await clientTeamLeads(env, e.client_id, null);
+    const people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND name IN (${names.map(() => "?").join(",") || "NULL"})`, ...names);
+    const text = `Escalation SR${e.sr} (${e.dept}) at ${e.client_name} is still open after 24 hours. Give the reason and the expected close date in the Escalation tracker.`;
+    for (const u of people) {
+      await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), u.id, now, text, "escalations", e.client_id);
+      if (env.EMAIL_PROVIDER && u.email && !u.email_missing) { try { await sendEmail(env, { to: u.email, subject: `Escalation SR${e.sr} open over 24 hours: ${e.client_name}`, text, html: `<p style="font:14px Segoe UI,Arial,sans-serif">${htmlEsc(text)}</p>` }); } catch (x) {} }
+    }
+  }
+  return rows.length;
 }
 /* Fire-and-forget after a save: find the workbook (location first, then client) and append the entry. */
 async function syncEntryToWorkbook(env, claimId, by, extra) {
@@ -2130,9 +2211,9 @@ const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "aut
 /* Read-only claim lists a biller may open for the clients they are responsible for (posting, submission...). */
 const DESK_READ_OPS = /^claims\.(list|stats)$/;
 const respOnly = (user) => { if (user.role === "supervisor") return null; const ids = [...(user.resp_clients || [])]; if (!ids.length) throw denied("Supervisor access is needed for this."); return ids; };
-const SUPERVISOR_OPS = /^(coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(escalations\.|coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
-const EDIT_OPS = /^(client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
+const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
 const OPS = {
@@ -3036,6 +3117,9 @@ const OPS = {
     if (user.role === "supervisor") {
       const at = await OPS["attention.count"]({ env, user });
       add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "escalated claim waits", "escalated claims wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over 24 hours` : ""), "attention");
+      const ec = await OPS["escalations.count"]({ env, user });
+      add("esc_reason", "red", ec.needs_reason, plural(ec.needs_reason, "escalation is", "escalations are") + " open over 24 hours: give the reason and expected close date", "escalations", { status: "reason" });
+      add("esc_expected", "amber", ec.past_expected, plural(ec.past_expected, "escalation is", "escalations are") + " past the expected close date", "escalations", { status: "open" });
       add("client_requests", "amber", at.client_to_send, plural(at.client_to_send, "client request", "client requests") + " to send to the client", "attention");
       const missed = await missedByClient(env, payload);
       let m = 0; for (const [cid, v] of missed) if (leadFor(user, cid)) m += v.ar + v.posting + v.submission;
@@ -5196,6 +5280,98 @@ const OPS = {
     ]);
     return { ok: true };
   },
+  /* ---- Escalation tracker (under Work): SMEs and above log and edit; team leads and up give the reason when one is open past 24 hours ---- */
+  "escalations.list": async ({ env, user, payload }) => {
+    const where = [], args = [];
+    const cid = str(payload.client_id, 60);
+    if (cid) { if (!inScope(user, cid)) throw outOfScope(); where.push("e.client_id = ?"); args.push(cid); }
+    if (ESC_DEPTS.includes(payload.dept)) { where.push("e.dept = ?"); args.push(payload.dept); }
+    const from = isoDate(payload.from), to = isoDate(payload.to);
+    if (from) { where.push("e.day >= ?"); args.push(from); }
+    if (to) { where.push("e.day <= ?"); args.push(to); }
+    const rows = await all(env, `SELECT e.*, cl.name AS client_name FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
+      WHERE 1 = 1${where.map((w) => " AND " + w).join("")}${scopeSql(user, "e.client_id")} ORDER BY e.day DESC, e.created_at DESC LIMIT 1000`, ...args, ...scopeArgs(user));
+    const now = Date.now(), today = isoDate(payload.today) || istISO(now), month = today.slice(0, 7);
+    const isTL = !isSME(user);
+    const out = rows.map((e) => {
+      const open = e.status !== "resolved", past = open && now - e.created_at > ESC_TAT_MS;
+      return { ...e, status_label: ESC_STATUS[e.status] || e.status, hours: escHours(e), open_hours: open ? Math.floor((now - e.created_at) / 3600000) : null, past_24: past,
+        needs_reason: past && !e.delay_reason, past_expected: open && !!e.expected_on && e.expected_on < today,
+        can_edit: canEditClient(user, e.client_id), can_reason: isTL && canEditClient(user, e.client_id) && past };
+    });
+    const st = String(payload.status || "");
+    const shown = st === "open" ? out.filter((e) => e.status !== "resolved") : st === "resolved" ? out.filter((e) => e.status === "resolved") : st === "reason" ? out.filter((e) => e.needs_reason) : out;
+    const done = out.filter((e) => e.resolved_at && istISO(e.resolved_at).slice(0, 7) === month);
+    const stats = { open: out.filter((e) => e.status !== "resolved").length, needs_reason: out.filter((e) => e.needs_reason).length, past_expected: out.filter((e) => e.past_expected).length,
+      logged_month: out.filter((e) => e.day.slice(0, 7) === month).length, resolved_month: done.length,
+      avg_hours: done.length ? Math.round(done.reduce((t, e) => t + e.hours, 0) / done.length) : null };
+    const file = cid ? await getSetting(env, "workbook_status:" + cid + ":esc", null) : null;
+    const people = (await all(env, "SELECT id, name, designation, source FROM users WHERE active = 1 AND role = 'supervisor' ORDER BY name"))
+      .map((u) => ({ id: u.id, name: u.name, tag: isSME(u) ? "SME" : /manager|vice|director|head/i.test(u.designation || "") ? (u.designation || "") : "TL" }));
+    return { rows: shown, stats, file, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, severities: ESC_SEVERITY, hows: ESC_HOW, can_reason: isTL };
+  },
+  "escalations.save": async ({ env, user, payload, ctx }) => {
+    const id = str(payload.id, 60), now = Date.now();
+    const ex = id ? await one(env, "SELECT * FROM escalations WHERE id = ?", id) : null;
+    if (id && !ex) throw bad("That escalation is no longer there.");
+    const clientId = ex ? ex.client_id : str(payload.client_id, 60);
+    const c = clientId ? await one(env, "SELECT id, name FROM clients WHERE id = ?", clientId) : null;
+    if (!c) throw bad("Pick the client.");
+    editableOr(user, c.id);
+    const day = isoDate(payload.day);
+    if (!day) throw bad("Pick the date of the escalation.");
+    if (day > istISO(now + 86400000)) throw bad("The date cannot be in the future.");
+    const dept = ESC_DEPTS.includes(payload.dept) ? payload.dept : ""; if (!dept) throw bad("Pick the department.");
+    const severity = ESC_SEVERITY.includes(payload.severity) ? payload.severity : "Medium";
+    const src = payload.raised_src === "Purview" ? "Purview" : "Client";
+    const how = ESC_HOW.includes(payload.how) ? payload.how : "";
+    const description = str(payload.description, 2000).trim();
+    if (description.length < 8) throw bad("Write what was escalated, a sentence at least.");
+    const status = ESC_STATUS[payload.status] ? payload.status : "open";
+    const rca = str(payload.rca, 2000).trim();
+    if (status === "resolved" && rca.length < 8) throw bad("To close it, write the root cause and what was done.");
+    let owner = null;
+    if (payload.owner_id) { owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60)); if (!owner) throw bad("Pick the owner from the list."); }
+    const vals = { day, dept, severity, raised_src: src, raised_who: str(payload.raised_who, 80).trim(), how, claim_no: str(payload.claim_no, 60).trim(), owner_id: owner ? owner.id : null,
+      owner_name: owner ? owner.name : "", description, status, rca, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null };
+    let sr;
+    if (ex) {
+      sr = ex.sr;
+      await run(env, `UPDATE escalations SET day = ?, dept = ?, severity = ?, raised_src = ?, raised_who = ?, how = ?, claim_no = ?, owner_id = ?, owner_name = ?, description = ?, status = ?, rca = ?,
+        resolved_at = ?, updated_at = ?, updated_by_name = ? WHERE id = ?`, vals.day, vals.dept, vals.severity, vals.raised_src, vals.raised_who, vals.how, vals.claim_no, vals.owner_id, vals.owner_name,
+        vals.description, vals.status, vals.rca, vals.resolved_at, now, user.name || "", ex.id);
+    } else {
+      const m = await one(env, "SELECT MAX(sr) AS m FROM escalations WHERE client_id = ?", c.id);
+      sr = ((m && m.m) || 0) + 1;
+      await run(env, `INSERT INTO escalations (id, client_id, sr, day, dept, severity, raised_src, raised_who, how, claim_no, owner_id, owner_name, description, status, rca, resolved_at, created_at, created_by, created_by_name)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, uuid(), c.id, sr, vals.day, vals.dept, vals.severity, vals.raised_src, vals.raised_who, vals.how, vals.claim_no, vals.owner_id, vals.owner_name,
+        vals.description, vals.status, vals.rca, vals.resolved_at, now, user.id, user.name || "");
+    }
+    await audit(env, user, ex ? "escalation.edit" : "escalation.add", c.id, `SR${sr} ${dept}: ${ESC_STATUS[status]}`);
+    const p = syncEscalations(env, c.id); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
+    return { ok: true, sr };
+  },
+  /* Still open after 24 hours: a team lead (or above) says why and when it will close. */
+  "escalations.reason": async ({ env, user, payload, ctx }) => {
+    const e = await one(env, "SELECT * FROM escalations WHERE id = ?", str(payload.id, 60));
+    if (!e) throw bad("That escalation is no longer there.");
+    editableOr(user, e.client_id);
+    if (isSME(user)) throw denied("The reason and expected date are given by the team lead. Ask your team lead.");
+    if (e.status === "resolved") throw bad("This escalation is already resolved.");
+    const reason = str(payload.reason, 1000).trim(), on = isoDate(payload.expected_on), today = istISO(Date.now());
+    if (reason.length < 8) throw bad("Write why it is still open, a sentence at least.");
+    if (!on || on < today) throw bad("Pick the expected close date, today or later.");
+    await run(env, "UPDATE escalations SET delay_reason = ?, expected_on = ?, delay_by_name = ?, delay_at = ?, updated_at = ?, updated_by_name = ? WHERE id = ?", reason, on, user.name || "", Date.now(), Date.now(), user.name || "", e.id);
+    await audit(env, user, "escalation.reason", e.client_id, `SR${e.sr}: expected ${on}`);
+    const p = syncEscalations(env, e.client_id); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
+    return { ok: true };
+  },
+  "escalations.count": async ({ env, user }) => {
+    const rows = await all(env, `SELECT client_id, created_at, delay_reason, expected_on FROM escalations WHERE status != 'resolved'${scopeSql(user, "client_id")}`, ...scopeArgs(user));
+    const now = Date.now(), today = istISO(now);
+    const reason = isSME(user) ? 0 : rows.filter((e) => now - e.created_at > ESC_TAT_MS && !e.delay_reason && leadFor(user, e.client_id)).length;
+    return { open: rows.length, needs_reason: reason, past_expected: rows.filter((e) => e.expected_on && e.expected_on < today).length };
+  },
   "attention.count": async ({ env, user }) => {
     const cr = await one(env, `SELECT COUNT(*) AS n FROM handoffs WHERE status = 'client' AND client_sent_at IS NULL${scopeSql(user, "client_id")}`, ...scopeArgs(user));
     const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND escalated_at < ? THEN 1 ELSE 0 END) AS overdue FROM claims WHERE escalated = 1 AND state IN ${WORKABLE}${scopeSql(user, "client_id")}`, Date.now() - ESCALATION_TAT_MS, ...scopeArgs(user));
@@ -5374,6 +5550,7 @@ export default {
       if (env.MS_CLIENT_SECRET && String(env.REPORTS_AUTO || "on").toLowerCase() !== "off") {
         try { const tok = await graphAppToken(env); for (const r of await all(env, "SELECT id FROM clients WHERE active = 1 AND (od_production_id IS NULL OR od_production_id = '' OR od_prod_json NOT LIKE '%rejection%') ORDER BY name LIMIT 8")) { try { await ensureClientFolders(env, r.id, tok); } catch (e) { console.log("Folders: " + (e && e.message)); } } } catch (e) { console.log("Folders: " + (e && e.message)); }
       }
+      try { await escalationReminders(env); } catch (e) { console.log("Escalation reminders: " + (e && e.message)); }
       if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
       // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
       if (env.EMAIL_PROVIDER && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {

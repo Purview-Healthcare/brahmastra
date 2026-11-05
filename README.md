@@ -504,6 +504,23 @@ Sent back by Posting / Submission**: when, who sent it, the department, the reas
 times the claim has come back. It counts on the Needs attention badge, turns red after a working day, and leaves the
 list once a biller saves an entry on the claim.
 
+### Escalation tracker (Work → Escalation tracker)
+
+Client escalations, one register per client. **SMEs and above** log and update them (billers cannot open it): client,
+date, department (Account Receivable, Submission, Payment Posting, Benefit Verification, PCC, Credentialing, Other),
+severity, raised by (client or Purview, and who), how, claim # (optional), owner and description. The SR No is given by
+itself per client (SR1, SR2...). Resolving needs the RCA / action, and the hours to resolve are counted.
+
+**Open over 24 hours** (from when it was logged): the row turns red with *reason needed*, the bell asks the team lead,
+and the hourly job sends the client's team leads one notice and email. The **team lead** (not the SME) gives the reason
+and the expected close date; if that date passes with the escalation still open, it turns red again for a new date.
+
+**OneDrive:** one workbook per client, `Brahmastra Clients › <Client> › Escalation Tracker - <Client>.xlsx`, rewritten
+from the register on every change (so an update or a resolution changes the same row). The first four columns are
+SR No, Department, Description, Date: the ones Drishti counts for the Escalations KPI. Needs `MS_CLIENT_SECRET` on the
+server like the Production files; until then entries are kept in Brahmastra and the whole register goes to the file
+with the first change after it is set.
+
 **Client requests.** Need assistance from client lands in the client's AR team lead's **Needs attention →
 Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
 comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department
