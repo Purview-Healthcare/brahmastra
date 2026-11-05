@@ -5575,9 +5575,12 @@ const OPS = {
     const route = ["biller", "other", "dept"].includes(payload.route) ? payload.route : "";
     if (!route) throw bad("Pick where it goes: the biller who sent it, another biller, or back to the department.");
     const now = Date.now(), today = isoDate(payload.today) || isoToday(), cno = c.claim_no || c.account_no || "a claim";
-    const text = `Supervisor review by ${user.name}. Why it came: ${why}. Reviewed: ${reviewed}. Findings: ${findings}. Next action: ${next}.`;
-    const stmts = [env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now),
-      env.DB.prepare("UPDATE claims SET escalated = 0, escalation_answered_at = ?, escalation_answered_by = ?, reviewed_at = ?, reviewed_by_name = ?, updated_at = ? WHERE id = ?").bind(now, user.id, now, user.name, now, c.id)];
+    // The review goes on the claim's timeline only (who escalated it and when, who reviewed it, the four notes, where it went):
+    // the claim's notes, work entries and details stay exactly as they were.
+    const from = c.escalated ? await one(env, "SELECT name FROM users WHERE id = ?", c.escalated_by) : null;
+    const sentBack = c.escalated ? null : await one(env, "SELECT dept, done_by_name, done_at, reason FROM handoffs WHERE claim_id = ? AND status IN ('back','assistance') ORDER BY done_at DESC LIMIT 1", c.id);
+    const origin = c.escalated ? { by: from ? from.name : "", at: c.escalated_at, how: "escalated" } : sentBack ? { by: sentBack.done_by_name, at: sentBack.done_at, how: "sent back by " + DEPT_LABEL[sentBack.dept], reason: sentBack.reason } : {};
+    const stmts = [env.DB.prepare("UPDATE claims SET escalated = 0, escalation_answered_at = ?, escalation_answered_by = ?, reviewed_at = ?, reviewed_by_name = ?, updated_at = ? WHERE id = ?").bind(now, user.id, now, user.name, now, c.id)];
     let to = "";
     if (route === "dept") {
       const dept = ["posting", "submission", "rejection"].includes(payload.dept) ? payload.dept : "";
@@ -5590,7 +5593,7 @@ const OPS = {
         .bind(uuid(), c.id, c.client_id, dept, now, user.id, user.name, "Returned after supervisor review", due, cl[dept + "_lead"], cl[dept + "_backup"] || null, next, c.assigned_to || c.last_worked_by || null));
       stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '', first_up = 0 WHERE id = ?").bind("with_" + dept, IN_PROCESS, "With " + DEPT_LABEL[dept], c.id));
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), cl[dept + "_lead"], now, `${user.name} reviewed claim ${cno} and returned it to ${DEPT_LABEL[dept]}: ${next}`.slice(0, 300), "handoffs", c.client_id));
-      stmts.push(claimEvent(env, c.id, user, "review_to_dept", DEPT_LABEL[dept], { dept, why, reviewed, findings, next, due_at: due }));
+      stmts.push(claimEvent(env, c.id, user, "review_to_dept", DEPT_LABEL[dept], { dept, why, reviewed, findings, next, due_at: due, origin }));
       to = DEPT_LABEL[dept];
     } else {
       const target = route === "biller" ? str(payload.sent_by || c.escalated_by || c.assigned_to || c.last_worked_by || "", 60) : str(payload.user_id, 60);
@@ -5599,7 +5602,7 @@ const OPS = {
       stmts.push(env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = CASE WHEN assigned_to = ? THEN assigned_at ELSE ? END,
           state = CASE WHEN state IN ('open','assigned','in_progress','completed') THEN 'assigned' ELSE state END, follow_up_on = ?, skipped_at = NULL, first_up = 1 WHERE id = ?`).bind(b.id, b.id, now, today, c.id));
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), b.id, now, `${user.name} reviewed claim ${cno} and gave it to you, first on your list. Next action: ${next}`.slice(0, 300), "queue", c.client_id));
-      stmts.push(claimEvent(env, c.id, user, "review_to_biller", b.name, { why, reviewed, findings, next }));
+      stmts.push(claimEvent(env, c.id, user, "review_to_biller", b.name, { why, reviewed, findings, next, origin }));
       to = b.name;
     }
     await env.DB.batch(stmts);

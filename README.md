@@ -513,7 +513,7 @@ as can the recheck person, the Submission and Rejections people and the client's
 straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT.
 
 **Supervisor review in Needs attention.** Each escalation (and each claim a department sent back) has **Review**:
-four notes (why it came, what was reviewed, the findings, the next action) go into the claim history, and the claim
+four notes (why it came, what was reviewed, the findings, the next action) go on the claim's timeline only (who escalated it and when, who reviewed it, where it went; the claim's notes and work stay as they were), and the claim
 goes to the biller who sent it, another biller (first on their list, with a notice), or back to the department that
 sent it (with the client's TAT).
 
