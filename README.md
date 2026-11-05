@@ -535,8 +535,8 @@ Each client's people come from Purview Shastra's **Workforce Management**, worke
 **Billable** (what the manager set for the project in WFM), **Assigned FTE** (working agents split evenly across their
 projects, a fresher counting half), **Utilization** (Assigned ÷ Billable), the **team on the project** (everyone,
 TLs, SMEs and QA included) and agents **in training / OJT**. Clients are matched to Shastra projects by their roster
-project names. The **SLA scorecard** shows them with the client's **Escalations** for the period (target 0); the
-**Monday digest** adds **Total team** to its header, each client's resources beside its TL and SME names, and the
+project names. The **SLA scorecard** shows **Billable FTE** and **Assign FTE** with the client's **Escalations** for the period (target 0); the
+**Monday digest** adds **Total team** to its header (Billable FTE and Assign FTE), each client's Billable FTE and Assign FTE beside its TL and SME names, and the
 month's escalations so far (counts only, no descriptions).
 
 To switch it on, run `dev/shastra-wfm-feed.sql` once in Shastra's Supabase (SQL Editor). It adds one read-only

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.74.0";
+const VERSION = "2.75.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1581,7 +1581,7 @@ function slaCardHtml(ds, appUrl) {
     const c = d.card, L = BAND_LOOK[c.band], k = c.items.filter((i) => i.kind === "KPI"), t = c.items.filter((i) => i.kind === "SLA");
     const okN = (xs) => xs.filter((i) => i.status === "ok").length, drags = c.drags.slice(0, c.band === "miss" ? 5 : 3);
     const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : "",
-      d.wfm ? `Resources: ${d.wfm.people} people · Billable ${fteTxt(d.wfm.billable)} · Assigned ${fteTxt(d.wfm.assigned_fte)} FTE` : ""].filter(Boolean).join(" · ");
+      d.wfm ? `Billable FTE: ${fteTxt(d.wfm.billable)} · Assign FTE: ${fteTxt(d.wfm.assigned_fte)}` : ""].filter(Boolean).join(" · ");
     return `<div style="border:1px solid #DFE4EA;border-left:6px solid ${L[3]};border-radius:10px;padding:12px 14px;margin:10px 0">
 <table style="border-collapse:collapse"><tr><td style="width:58px;height:58px;border-radius:50%;background:${L[2]};color:${L[1]};text-align:center;font-weight:800;font-size:16px">${c.score}%</td>
 <td style="padding-left:12px"><div style="font-size:15.5px;font-weight:700">${htmlEsc(d.client.name)} ${pill(c.band)}</div>
@@ -1633,7 +1633,7 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
   const weekTxt = `${dDay(wk.first)} to ${dDay(wk.last)}`;
   // the people on these clients' projects in Shastra WFM: everyone (split across their projects), Billable and Assigned FTE
   const wf = ds.filter((d) => d.wfm), wsum = (f) => wf.reduce((t, d) => t + (d.wfm[f] || 0), 0);
-  const teamLine = wf.length ? `${Math.round(wsum("team_fte"))} people · Billable ${wf.some((d) => d.wfm.billable != null) ? fteTxt(wsum("billable")) : "–"} · Assigned ${fteTxt(wsum("assigned_fte"))} FTE (Shastra WFM)` : "";
+  const teamLine = wf.length ? `Billable FTE: ${wf.some((d) => d.wfm.billable != null) ? fteTxt(wsum("billable")) : "–"} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}` : "";
   const sec = (title) => `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:20px 0 6px">${title}</div>`;
   const kpi = (label, value, sub) => `<td style="padding:10px 12px;border:1px solid #DFE4EA;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700">${label}</div><div style="font-size:20px;font-weight:700;margin:2px 0">${value}</div><div style="font-size:12px;color:#3B4A55">${sub}</div></td>`;
   const th = (cells, align) => `<tr>${cells.map((c, i) => `<th style="padding:6px 8px 6px 0;text-align:${(align && align[i]) || "right"};font-size:11px;color:#627079;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #DFE4EA;white-space:nowrap">${c}</th>`).join("")}</tr>`;
@@ -1646,7 +1646,7 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
 <h2 style="margin:4px 0 6px;font-size:22px">Weekly client digest</h2>
 <table style="border-collapse:collapse;font-size:13.5px;margin:0 0 4px">${[["Manager name", extra.manager ? extra.manager.name : "No manager (VP and admins)"], ["Designation", extra.manager ? extra.manager.designation : "–"],
   ["Period", "Week of " + weekTxt], ["Clients", ds.length + ": " + ds.map((d) => d.client.name).join(", ")], ...(teamLine ? [["Total team", teamLine]] : [])].map(([k, v]) => `<tr><td style="padding:2px 18px 2px 0;color:#627079">${k}</td><td style="padding:2px 0"><b>${htmlEsc(v)}</b></td></tr>`).join("")}</table>
-${slaCardHtml(ds, appUrl) || (ds.some((d) => d.esc) ? sec("Escalations") + escBoxesHtml(ds) + ds.map((d) => `<div style="margin-top:6px"><b>${htmlEsc(d.client.name)}</b>${d.wfm ? ` <span style="font-size:12px;color:#627079">· ${d.wfm.people} people · Billable ${fteTxt(d.wfm.billable)} · Assigned ${fteTxt(d.wfm.assigned_fte)} FTE</span>` : ""}${escLineHtml(d)}</div>`).join("") : "")}
+${slaCardHtml(ds, appUrl) || (ds.some((d) => d.esc) ? sec("Escalations") + escBoxesHtml(ds) + ds.map((d) => `<div style="margin-top:6px"><b>${htmlEsc(d.client.name)}</b>${d.wfm ? ` <span style="font-size:12px;color:#627079">· Billable FTE: ${fteTxt(d.wfm.billable)} · Assign FTE: ${fteTxt(d.wfm.assigned_fte)}</span>` : ""}${escLineHtml(d)}</div>`).join("") : "")}
 <div style="margin:12px 0">${["risk", "watch", "good"].filter((k) => count[k]).map((k) => `<span style="display:inline-block;margin:0 6px 4px 0;padding:4px 10px;border-radius:999px;background:${HEALTH_LOOK[k][2]};color:${HEALTH_LOOK[k][1]};font-weight:700;font-size:13px">${count[k]} ${HEALTH_LOOK[k][0].toLowerCase()}</span>`).join("")}</div>
 <table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>
 ${kpi("AR now", dMoney(ar), withAgo.length ? `<span style="color:${agoNow <= ago ? "#0E8C74" : "#A32D2D"}">${agoNow === ago ? "same as" : (agoNow < ago ? "down " : "up ") + dMoney(Math.abs(agoNow - ago)) + " vs"} a week before</span>` : "no reading a week ago")}

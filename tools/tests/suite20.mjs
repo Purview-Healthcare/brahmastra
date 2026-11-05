@@ -183,7 +183,7 @@ const Lx = await A("sla.extras", { client_id: lake.id });
 ok("a project without Billable in WFM shows Billable blank, the rest still counted", Lx.wfm && Lx.wfm.billable === null && Lx.wfm.assigned_fte === 3, Lx.wfm);
 const spans = (await SA("digest.spans", {})).spans; const sp = spans.find((x) => x.clients.some((c) => c.id === sun.id));
 const mail = await SA("digest.preview", { span: sp.key });
-ok("the digest header has Total team from Shastra WFM", /Total team/.test(mail.html) && /Billable 8/.test(mail.html) && /Assigned 6.5 FTE/.test(mail.html) && /Total team: /.test(mail.text), mail.text.slice(0, 600));
+ok("the digest header has Total team from Shastra WFM", /Total team/.test(mail.html) && /Billable FTE: 8/.test(mail.html) && /Assign FTE: 6.5/.test(mail.html) && /Total team: /.test(mail.text), mail.text.slice(0, 600));
 ok("the digest has the escalations against the target of 0", /Escalations · /.test(mail.html) && /target 0/.test(mail.html), "");
 ok("and no escalation descriptions (no claim details in email)", !/rejected twice/.test(mail.html) && !/CLM1/.test(mail.html));
 WFM_ON = false; await A("roster.syncShastra");
