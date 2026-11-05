@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.67.0";
+const VERSION = "2.68.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -4719,7 +4719,13 @@ const OPS = {
     const desk = user.is_admin ? null : userDesk(user);
     const dept = ["posting", "submission", "subcheck", "rejection"].includes(payload.dept) ? payload.dept : desk && desk !== "both" ? desk : "";
     // The Submission chip also shows the follow-up checks after submitting and the rejections.
-    const base = vis + (dept === "submission" ? " AND h.dept IN ('submission','subcheck','rejection')" : dept ? " AND h.dept = ?" : ""), bargs = [...vargs, ...(dept && dept !== "submission" ? [dept] : [])];
+    let base = vis + (dept === "submission" ? " AND h.dept IN ('submission','subcheck','rejection')" : dept ? " AND h.dept = ?" : ""); const bargs = [...vargs, ...(dept && dept !== "submission" ? [dept] : [])];
+    // One client, and the dates a claim was sent to the desk (the day the AR biller saved the entry that sent it)
+    const cid = str(payload.client_id, 60);
+    if (cid) { base += " AND h.client_id = ?"; bargs.push(cid); }
+    const sFrom = num(payload.from_ms, 0), sTo = num(payload.to_ms, 0);
+    if (sFrom) { base += " AND h.created_at >= ?"; bargs.push(sFrom); }
+    if (sTo) { base += " AND h.created_at <= ?"; bargs.push(sTo); }
     const now = Date.now(), month = now - 30 * 86400000;
     const view = str(payload.view, 20) || "open";
     // open: on the clock · mine: given to me · client: waiting on the client (the clock keeps running) · done: completed or rejected · assist: returned to AR

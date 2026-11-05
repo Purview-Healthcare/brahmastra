@@ -223,6 +223,15 @@ await AR("attachments.add", { claim_id: pc.id, name: "eob.pdf", type: "applicati
 await AR("queue.complete", { id: pc.id, saag: { status: "Claim Paid", sub_status: "EOB Available", action: "Need to Post/Posting Correction", bucket: "Purview", effective: "Payment-Cash In Bank" }, note: { source: "Portal", findings: "Paid per EOB, posting needed", action: "follow up" } });
 const hl = (await PA("handoffs.list", {})).rows.find((h) => h.claim_id === pc.id);
 ok("the posting lead has the hand-off", !!hl, (await PA("handoffs.list", {})).rows.length);
+{ // a client and the dates it was sent to the desk narrow the list (and its counts)
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const inSun = await PA("handoffs.list", { client_id: sun.id }), other = await T(async () => PA("handoffs.list", { client_id: "no-such-client" }));
+  ok("filter by client: the client's hand-offs only", inSun.rows.some((h) => h.id === hl.id) && inSun.rows.every((h) => h.client_id === sun.id), inSun.rows.length);
+  ok("a client outside the person's span is refused", !other.ok, other);
+  const d0 = Date.parse(day(hl.created_at) + "T00:00:00Z"), dEnd = d0 + 86400000 - 1;
+  ok("filter by the day it was sent: it is there", (await PA("handoffs.list", { from_ms: d0, to_ms: dEnd })).rows.some((h) => h.id === hl.id));
+  ok("and not on another day", !(await PA("handoffs.list", { from_ms: d0 - 3 * 86400000, to_ms: d0 - 2 * 86400000 })).rows.some((h) => h.id === hl.id));
+}
 r = await T(async () => PA("handoffs.assign", { id: hl.id, user_id: U("Snail Post").id }));
 ok("the lead assigns it to a team member", r.ok, r);
 ok("it shows on that person's desk as assigned", (await SN("handoffs.list", {})).rows.some((h) => h.id === hl.id && h.status === "assigned"), (await SN("handoffs.list", {})).rows.map((h) => h.status));

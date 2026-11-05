@@ -488,6 +488,11 @@ sends it back to the biller with a 15-day follow-up and always opens a **recheck
 working hours later** (to the follow-up person on the client, or whoever submitted):
 **Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
 
+**Filters.** Every lead and team member on Payment posting and Submission can narrow the list to one **client**
+and to the dates the claims were **sent to the desk** (All time, Today, This week, This month, Custom). The sent
+date is the day the AR biller saved the entry that sent the claim, so the same filter answers "what AR sent on
+Monday" and "what reached us on Monday". The counts at the top follow the filters.
+
 **Client requests.** Need assistance from client lands in the client's AR team lead's **Needs attention →
 Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
 comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department
