@@ -25,8 +25,9 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.66.0";
-const SESSION_MS = 12 * 60 * 60 * 1000;
+const VERSION = "2.67.0";
+// A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
+const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
 const DEFAULT_BOOTSTRAP_PASSWORD = "brahmastra-setup";
@@ -1257,7 +1258,7 @@ async function userFromToken(env, token) {
   if (!row) return null;
   const now = Date.now();
   if (row.s_exp < now || !row.active) { await run(env, "DELETE FROM sessions WHERE token = ?", token); return null; }
-  if (row.s_exp - now < SESSION_MS / 2) await run(env, "UPDATE sessions SET expires_at = ? WHERE token = ?", now + SESSION_MS, token);
+  if (row.s_exp - now < SESSION_KEEP_MS) await run(env, "UPDATE sessions SET expires_at = ? WHERE token = ?", now + SESSION_MS, token);
   return publicUser({ ...row, via: row.s_via || "password" });
 }
 /* Allowed email domains. Entries can be exact (purview-healthcare.com), a suffix (*.purview-healthcare.com)

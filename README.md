@@ -391,9 +391,9 @@ keeps it, or the client's own workbook), and the **responsible person** for each
   and hand-offs sent back to them in the last 3 days. Feedback readers: new feedback. It refreshes every 2 minutes
   and on every page change; the number counts what is new since you last opened it.
 - **Phones**: every page fits a phone screen; the menu sits under the logo and wide tables scroll sideways.
-- **Signing out when idle**: after 5 minutes without a key, click, scroll or touch in any Brahmastra tab (working
-  inside the embedded Sasha's Third Eye or SLA page counts), a 1-minute warning shows (at 4 minutes), then the
-  person is signed out to keep patient data safe. Time spent in another program or browser tab (a payer portal,
+- **Signing out when idle**: after 24 hours without a key, click, scroll or touch in any Brahmastra tab (working
+  inside the embedded Sasha's Third Eye or SLA page counts), a 1-minute warning shows, then the person is signed
+  out to keep patient data safe. Time spent in another program or browser tab (a payer portal,
   a phone call) does not count as activity in Brahmastra.
 
 #### Monday digest email
@@ -560,7 +560,7 @@ Worker's `ALLOWED_DOMAINS` variable can tighten it). Passwords are hashed in
 the browser and hashed again on the server with a per-user salt and the
 `PEPPER` secret. Codes are six digits, hashed on the server, valid for ten
 minutes, five attempts, at most one per 45 seconds and ten per hour per
-email. Sessions last 12 hours and extend while in use.
+email. Sessions last at least 24 hours after the last use and extend while in use.
 
 **Email delivery** (needed for codes in production). Set these on the Worker:
 
