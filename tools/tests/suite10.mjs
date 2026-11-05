@@ -78,16 +78,21 @@ ok("someone who turned it off in Settings shows as off", span(await SA("digest.s
 
 S("What it says");
 r = await T(async () => TI("digest.preview", { span: jo.key }));
-ok("a preview with a subject, HTML and text", r.ok && r.r.subject && r.r.html.length > 1500 && r.r.text.length > 100, r);
+ok("a preview with a subject, HTML and text", r.ok && r.r.subject && r.r.html.length > 1200 && r.r.text.length > 100, r);
 const pv = r.r;
 ok("subject names the span and the week", pv.subject.startsWith("Joseph Manager's clients · week of "), pv.subject);
-ok("totals, what needs attention, client by client and the team", ["AR now", "Over 90 days", "Collected", "Entries", "Needs your attention", "Client by client", "The team last week"].every((k) => pv.html.includes(k)), pv.html.slice(0, 200));
+ok("short email: header, four numbers, client by client, what needs attention", ["Manager name", "Period", "avg SLA score", "escalations", "over 90", "CLIENT BY CLIENT", "NEEDS YOUR ATTENTION"].every((k) => pv.html.includes(k)), pv.html.slice(0, 200));
+ok("no long sections in the email body (team, denials): those are on the dashboard", !/The team last week/.test(pv.html) && !/Denials/.test(pv.html));
 ok("every client of the span has its row, and no other client", pv.html.includes("<b>" + sun.name + "</b>") && !pv.html.includes(lake.name) && !pv.html.includes(orchid.name));
-ok("last week's entries are counted", /Entries<\/div><div[^>]*>6</.test(pv.html) && pv.html.includes("Arun Agent"), pv.html.match(/Entries<\/div><div[^>]*>[^<]*/));
+const dash = await TI("digest.dashboard", { span: jo.key });
+ok("the full digest dashboard: last week's entries counted, one card per client of the span", dash.rollup.work === 6 && dash.clients.length === 1 && dash.clients[0].name === sun.name && dash.weeks.length === 9, { work: dash.rollup.work, n: dash.clients.length });
+r = await T(() => AR("digest.dashboard", {})); ok("billers cannot open the digest dashboard", !r.ok && r.status === 403, r);
+r = await T(() => TI("digest.dashboard", { span: jo.key, week: dash.weeks[3].week })); ok("an earlier week opens too", r.ok && r.r.week.week === dash.weeks[3].week, r);
 const claims = (await SA("claims.list", { page_size: 2000 })).rows;
 const leakIn = (txt) => claims.filter((c) => (c.patient && txt.includes(c.patient)) || (c.claim_no && txt.includes(">" + c.claim_no + "<")) || (c.account_no && c.account_no.length > 4 && txt.includes(c.account_no)));
 ok("no patient names, claim or account numbers anywhere in it", !leakIn(pv.html).length && !leakIn(pv.text).length, leakIn(pv.html).slice(0, 3).map((c) => c.claim_no));
-ok("links to Client 360 when the app address is set", pv.html.includes("https://brahmastra.example.test/#/client"));
+ok("the button opens the full digest dashboard for this span and week", pv.html.includes("https://brahmastra.example.test/#/digest?span=" + encodeURIComponent(jo.key) + "&amp;week=") && /Open the full digest/.test(pv.html) && /Open the full digest: https/.test(pv.text));
+ok("the email is plain tables that hold up in Outlook and on a phone (no flex or grid, at most 600 px wide)", !/display:\s*(flex|grid)/.test(pv.html) && /max-width:600px/.test(pv.html));
 ok("says why you get it and how to stop it", /You get this because you are a supervisor on Joseph Manager's clients/.test(pv.html) && /Settings, Email/.test(pv.html));
 ok("no em dashes", !/—/.test(pv.html + pv.subject + pv.text));
 

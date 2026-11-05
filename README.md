@@ -529,6 +529,18 @@ and EV is green at 0 and red at 1 or more in the period. For it, each month's es
 rows only, since Drishti counts every row of the file, by department). Picking a client on the tracker shows this
 month's SLA line: the count against the target of 0, by department.
 
+### Monday digest: a short email and a landscape dashboard
+
+The email is short, in plain tables that hold up in Outlook and on a phone (at most 600 px wide): the header (manager,
+designation, period, clients, Total team with Billable FTE and Assign FTE), four numbers (average SLA score, the month's
+escalations against the target of 0, AR, over 90), one row per client worst first (TL and SMEs, SLA score and change,
+escalations, Billable / Assign FTE, over 90), what needs attention and a button, **Open the full digest in Brahmastra**.
+
+The button opens the **digest dashboard** (`#/digest?span=...&week=...`, also from SLA › Monday digest › Open the
+dashboard): landscape, one card per client with its SLA score and band, **Billable FTE** and **Assign FTE**, AR, over 90,
+collected, each area's score, the escalation line and what pulls it down, and what needs attention. Pick another span or
+one of the 8 weeks before, and download it as a one-page landscape PDF. Supervisors see only the spans they are on.
+
 ### Resources from Shastra WFM (SLA scorecard and Monday digest)
 
 Each client's people come from Purview Shastra's **Workforce Management**, worked out the way its Explore page does:

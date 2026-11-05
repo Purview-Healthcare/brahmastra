@@ -147,10 +147,13 @@ S("Monday digest: the header and the SLA report card");
   const sp = (await VP("digest.spans", {})).spans; const s = sp.find((x) => x.clients.some((c) => c.id === sunrise.id));
   const m = await VP("digest.preview", { span: s.key });
   ok("the header names the manager, the designation and the period", /Manager name/.test(m.html) && /Designation/.test(m.html) && /Week of /.test(m.html) && /Manager name: .* · Designation: .* · Period: week of/.test(m.text), m.text.split("\n").slice(0, 3));
-  ok("the SLA report card has a card per scored client with its score and band", /SLA report card/.test(m.html) && m.html.includes("Sunrise Eye Care") && /average SLA score/.test(m.html), m.html.length);
-  ok("each card names the client's team lead", m.html.includes("TL Tina Lead") || m.html.includes("TLs ") , m.html.match(/TLs? [^<]*/));
-  ok("what pulls it down, with value and standard", /PULLING IT DOWN/.test(m.html) && /STANDARD/.test(m.html));
-  ok("the text version carries the SLA lines too", /SLA October 2026: Sunrise Eye Care \d+%/.test(m.text), m.text);
+  ok("the client row has its SLA score from Drishti", /CLIENT BY CLIENT/.test(m.html) && m.html.includes("Sunrise Eye Care") && /avg SLA score/.test(m.html) && /Sunrise Eye Care<\/b>/.test(m.html), m.html.length);
+  ok("each client row names the client's team lead", m.html.includes("TL Tina Lead") || m.html.includes("TLs "), m.html.match(/TLs? [^<]*/));
+  ok("the text version carries the SLA per client", /- Sunrise Eye Care: SLA \d+% \((green|amber|red)\)/.test(m.text), m.text);
+  const dsh = await VP("digest.dashboard", { span: s.key });
+  const cd = dsh.clients.find((c) => c.name === "Sunrise Eye Care");
+  ok("the dashboard card has the score, band, KPIs on target and what pulls it down with value and standard", cd && cd.card && cd.card.score != null && cd.card.kpi_n > 0 && Array.isArray(cd.card.drags) && cd.card.drags.every((x) => "shown" in x && "target" in x), cd && cd.card);
+  ok("and the team lead's name", cd && cd.tls.includes("Tina Lead"), cd && cd.tls);
 }
 
 const fails = results.filter((x) => !x.pass);

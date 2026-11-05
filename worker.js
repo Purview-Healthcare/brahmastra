@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.75.0";
+const VERSION = "2.76.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1557,63 +1557,22 @@ const HEALTH_LOOK = { good: ["On track", "#0E8C74", "#E3F4EF"], watch: ["Watch",
 /* The SLA report card at the top of the digest: each client's last finished month in Drishti (green 90% and above, amber 80 to 89,
    red under 80), worst first, with its team leads and SMEs, the scopes and what pulls it down. Clients Drishti has no month for
    are named at the end. */
-const BAND_LOOK = { ok: ["Green", "#127A4D", "#E3F5EC", "#1A9E6A"], warn: ["Amber", "#935300", "#FDF0D7", "#E8A13C"], miss: ["Red", "#BA2340", "#FDE7EB", "#C94F4F"] };
-/* One client's escalations this month on the SLA: green at 0, red at 1 or more (no patient or claim details). */
-function escLineHtml(d) {
-  const e = d.esc; if (!e) return "";
-  const red = !e.met, pill = `<span style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:${red ? "#FDE7EB" : "#E3F5EC"};color:${red ? "#BA2340" : "#127A4D"}">${red ? "Red" : "Green"}</span>`;
-  const bits = red ? [e.by_dept.map((x) => x.dept + " " + x.n).join(", "), e.open ? `<b>${e.open} open</b>` : "all closed", e.over24 ? `${e.over24} over 24 h${e.over24_reason ? ` (${e.over24_reason} with a reason)` : ", no reason yet"}` : "", e.errors ? `our error: ${e.errors}` : ""].filter(Boolean) : [];
-  return `<div style="font-size:12.5px;margin-top:8px;padding:7px 10px;border-radius:8px;background:${red ? "#FDE7EB" : "#E3F5EC"}">Escalations · ${htmlEsc(monthLabel(e.from.slice(0, 7)))}: <b>${e.n}</b> (target ${e.target}) ${pill}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
-}
-function escBoxesHtml(ds) {
-  const es = ds.filter((d) => d.esc); if (!es.length) return "";
-  const t = (f) => es.reduce((x, d) => x + (d.esc[f] || 0), 0), month = monthLabel(es[0].esc.from.slice(0, 7));
-  const box = (v, label, color) => `<td style="padding:8px 10px;border:1px solid #DFE4EA;border-radius:8px;width:25%"><div style="font-size:19px;font-weight:700;color:${color}">${v}</div><div style="font-size:11.5px;color:#627079">${label}</div></td>`;
-  return `<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:8px -6px 0"><tr>${box(t("n"), `escalations · ${htmlEsc(month)} so far (target ${ESC_SLA_TARGET})`, t("n") ? "#BA2340" : "#127A4D")}${box(t("open"), "still open", t("open") ? "#BA2340" : "#0F1B24")}${box(t("over24"), `open over 24 h${t("over24") ? ", " + t("over24_reason") + " with a reason" : ""}`, t("over24") ? "#935300" : "#0F1B24")}${box(t("errors"), "our error (Y)", "#0F1B24")}</tr></table>`;
-}
-function slaCardHtml(ds, appUrl) {
-  const scored = ds.filter((d) => d.card).sort((a, b) => b.card.score - a.card.score), none = ds.filter((d) => !d.card);
-  if (!scored.length) return "";
-  const n = (b) => scored.filter((d) => d.card.band === b).length, avg = Math.round(scored.reduce((t, d) => t + d.card.score, 0) / scored.length);
-  const box = (v, label, color) => `<td style="padding:8px 10px;border:1px solid #DFE4EA;border-radius:8px;width:25%"><div style="font-size:19px;font-weight:700;color:${color}">${v}</div><div style="font-size:11.5px;color:#627079">${label}</div></td>`;
-  const pill = (st) => `<span style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:${BAND_LOOK[st][2]};color:${BAND_LOOK[st][1]}">${BAND_LOOK[st][0]}</span>`;
-  const card = (d) => {
-    const c = d.card, L = BAND_LOOK[c.band], k = c.items.filter((i) => i.kind === "KPI"), t = c.items.filter((i) => i.kind === "SLA");
-    const okN = (xs) => xs.filter((i) => i.status === "ok").length, drags = c.drags.slice(0, c.band === "miss" ? 5 : 3);
-    const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : "",
-      d.wfm ? `Billable FTE: ${fteTxt(d.wfm.billable)} · Assign FTE: ${fteTxt(d.wfm.assigned_fte)}` : ""].filter(Boolean).join(" · ");
-    return `<div style="border:1px solid #DFE4EA;border-left:6px solid ${L[3]};border-radius:10px;padding:12px 14px;margin:10px 0">
-<table style="border-collapse:collapse"><tr><td style="width:58px;height:58px;border-radius:50%;background:${L[2]};color:${L[1]};text-align:center;font-weight:800;font-size:16px">${c.score}%</td>
-<td style="padding-left:12px"><div style="font-size:15.5px;font-weight:700">${htmlEsc(d.client.name)} ${pill(c.band)}</div>
-<div style="font-size:12.5px;color:#627079">${htmlEsc(c.period.label)} · ${okN(k)} of ${k.length} KPIs on target${t.length ? ` · ${okN(t)} of ${t.length} SLAs met` : ""}${c.delta != null ? ` · <b style="color:${c.delta >= 0 ? "#127A4D" : "#BA2340"}">${c.delta >= 0 ? "▲" : "▼"} ${Math.abs(c.delta)} pts</b> vs ${htmlEsc(c.prev ? c.prev.label : "the month before")}` : ""}</div>
-${ppl ? `<div style="font-size:12.5px;margin-top:2px">${htmlEsc(ppl)}</div>` : ""}</td></tr></table>
-<div style="margin-top:8px">${c.scopes.filter((x) => x.scored).map((x) => `<span style="display:inline-block;font-size:11.5px;border:1px solid #DFE4EA;border-radius:999px;padding:2px 9px;margin:0 5px 4px 0"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${BAND_LOOK[x.band || "miss"][3]};margin-right:5px"></span>${htmlEsc(x.short)} ${x.pct}%</span>`).join("")}</div>
-${escLineHtml(d)}
-${drags.length ? `<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px"><tr><th style="text-align:left;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">PULLING IT DOWN${c.band === "miss" ? " (WORST FIRST)" : ""}</th><th style="text-align:right;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">VALUE</th><th style="text-align:right;font-size:10.5px;color:#627079;padding:4px 6px;border-bottom:1px solid #DFE4EA">STANDARD</th><th style="border-bottom:1px solid #DFE4EA"></th></tr>
-${drags.map((i) => `<tr><td style="padding:5px 6px;border-bottom:1px solid #F0F2F5">${htmlEsc(i.scope)} · ${htmlEsc(i.name)}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${htmlEsc(String(i.shown))}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${htmlEsc(String(i.target || ""))}</td><td style="padding:5px 6px;text-align:right;border-bottom:1px solid #F0F2F5">${pill(i.status)}</td></tr>`).join("")}</table>`
-      + (c.drags.length > drags.length ? `<div style="font-size:12px;color:#627079;margin-top:6px">+ ${c.drags.length - drags.length} more in red or amber · open the scorecard for every KPI and its formula</div>` : "")
-      : `<div style="font-size:12.5px;color:#127A4D;margin-top:6px">Every KPI on target.</div>`}
-${c.band === "ok" && c.strengths.length ? `<div style="font-size:12.5px;color:#127A4D;margin-top:6px">Strength: ${htmlEsc(c.strengths.slice(0, 2).map((i) => i.name + " " + i.shown).join(", "))}.</div>` : ""}
-</div>`;
-  };
-  return `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:20px 0 4px">SLA report card</div>
-<div style="font-size:12.5px;color:#627079;margin-bottom:8px">The last finished month in Drishti: the share of each client's KPIs and SLAs on target (green 90% and above, amber 80 to 89%, red under 80%), against the month before.</div>
-<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>${box(avg + "%", "average SLA score, " + scored.length + " client" + (scored.length === 1 ? "" : "s"), "#0F1B24")}${box(n("ok"), "green", "#127A4D")}${box(n("warn"), "amber", "#935300")}${box(n("miss"), n("miss") ? "red · needs a plan this week" : "red", "#BA2340")}</tr></table>
-${escBoxesHtml(ds)}
-${scored.map(card).join("")}
-${none.length ? `<div style="font-size:12px;color:#627079">No finished month in Drishti yet for ${htmlEsc(none.map((d) => d.client.name).join(", "))}.</div>` : ""}
-${appUrl ? `<p style="margin:10px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/sla")}" style="background:#0E8C74;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;font-weight:700;font-size:13px">Open the SLA scorecards in Brahmastra</a></p>` : ""}`;
-}
-function spanEmail(span, wk, ds, appUrl, extra = {}) {
+/* What the email and the digest dashboard both show: the span's totals, what needs attention and the good news. */
+function digestRollup(ds) {
   const sum = (f) => ds.reduce((t, d) => t + (f(d) || 0), 0);
   const ar = sum((d) => d.ar.now), o90 = sum((d) => d.ar.over90), pct = ar ? Math.round(o90 / ar * 1000) / 10 : 0;
   const withAgo = ds.filter((d) => d.ar.week_ago != null), agoNow = withAgo.reduce((t, d) => t + d.ar.now, 0), ago = withAgo.reduce((t, d) => t + d.ar.week_ago, 0);
-  const coll = sum((d) => d.collected.amount), collPrev = sum((d) => d.collected.prev), work = sum((d) => d.worked.n), workPrev = sum((d) => d.worked.prev);
   const count = { risk: 0, watch: 0, good: 0 }; ds.forEach((d) => { count[d.health] = (count[d.health] || 0) + 1; });
-  const target = ds.length ? ds[0].ar.target : OVER90_TARGET;
+  const scored = ds.filter((d) => d.card), bands = { ok: 0, warn: 0, miss: 0 }; scored.forEach((d) => { bands[d.card.band] = (bands[d.card.band] || 0) + 1; });
+  const es = ds.filter((d) => d.esc), et = (f) => es.reduce((t, d) => t + (d.esc[f] || 0), 0);
   const attention = [];
   for (const d of ds) {
-    d.reasons.forEach((r) => attention.push([r.tone, d.client.name, r.text]));
+    // the SLA line names the two worst KPIs, so one line says it all
+    const worst = d.card && d.card.band !== "ok" && d.card.drags.length ? "worst: " + d.card.drags.slice(0, 2).map((i) => `${i.name} ${i.shown}${i.target ? " (" + i.target + ")" : ""}`).join(", ") : "";
+    let slaSaid = false;
+    d.reasons.forEach((r) => { const isSla = /\bSLA\b/.test(r.text) && worst && !slaSaid; if (isSla) slaSaid = true; attention.push([r.tone, d.client.name, isSla ? r.text + "; " + worst : r.text]); });
+    if (worst && !slaSaid && d.card.band === "miss") attention.push(["red", d.client.name, `SLA ${d.card.score}% (red); ` + worst]);
+    if (d.esc && d.esc.over24) attention.push([d.esc.over24 > d.esc.over24_reason ? "red" : "amber", d.client.name, `${d.esc.over24} escalation${d.esc.over24 > 1 ? "s" : ""} open over 24 h` + (d.esc.over24_reason ? ` (${d.esc.over24_reason} with a reason)` : ", no reason yet")]);
     if (d.monthend.late.length) attention.push(["amber", d.client.name, `month-end for ${monthName(d.monthend.month)} past due: ${d.monthend.late.join(", ")}`]);
     const m = d.missed.ar + d.missed.posting + d.missed.submission;
     if (m && !d.reasons.some((r) => /missed/.test(r.text))) attention.push(["amber", d.client.name, `${m} missed task${m > 1 ? "s" : ""}`]);
@@ -1622,69 +1581,69 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
   const good = [];
   for (const d of ds) {
     if (d.ar.week_ago != null && d.ar.now < d.ar.week_ago - 1) good.push([d.ar.week_ago - d.ar.now, `${d.client.name}: AR down ${dMoney(d.ar.week_ago - d.ar.now)}`]);
-    if (d.collected.amount > d.collected.prev && d.collected.amount > 0) good.push([d.collected.amount, `${d.client.name}: ${dMoney(d.collected.amount)} collected, more than the week before`]);
+    if (d.collected.amount > d.collected.prev && d.collected.amount > 0) good.push([d.collected.amount, `${d.client.name} collected ${dMoney(d.collected.amount)}, more than the week before`]);
   }
-  if (work > workPrev && work > 0) good.push([work, `${work} entries across the span, up from ${workPrev}`]);
   good.sort((a, b) => b[0] - a[0]);
-  const team = new Map(); ds.forEach((d) => d.team.forEach((p) => { const k = p.name || "–"; const t = team.get(k) || { name: k, work: 0, skips: 0, clients: [] }; t.work += p.work || 0; t.skips += p.skips || 0; if (p.work) t.clients.push(d.client.name); team.set(k, t); }));
-  const teamRows = [...team.values()].sort((a, b) => b.work - a.work).slice(0, 12);
-  const den = new Map(); ds.forEach((d) => d.denials.forEach((r) => { const t = den.get(r.reason) || { reason: r.reason, n: 0, bal: 0 }; t.n += r.n; t.bal += r.bal; den.set(r.reason, t); }));
-  const denRows = [...den.values()].sort((a, b) => b.bal - a.bal).slice(0, 5);
+  return { ar, o90, pct, target: ds.length ? ds[0].ar.target : OVER90_TARGET, ar_ago: withAgo.length ? agoNow - ago : null, coll: sum((d) => d.collected.amount), coll_prev: sum((d) => d.collected.prev),
+    work: sum((d) => d.worked.n), work_prev: sum((d) => d.worked.prev), count, bands, sla_avg: scored.length ? Math.round(scored.reduce((t, d) => t + d.card.score, 0) / scored.length) : null,
+    sla_month: scored.length ? scored[0].card.period.label : "", esc: es.length ? { n: et("n"), open: et("open"), over24: et("over24"), over24_reason: et("over24_reason"), errors: et("errors"), month: monthLabel(es[0].esc.from.slice(0, 7)) } : null,
+    attention, good: good.map((g) => g[1]) };
+}
+// worst first: red SLA, then amber, green, then clients Drishti has not scored, by health
+const digestOrder = (ds) => [...ds].sort((a, b) => (a.card ? a.card.score : 999) - (b.card ? b.card.score : 999) || ({ risk: 0, watch: 1, good: 2 }[a.health] - { risk: 0, watch: 1, good: 2 }[b.health]));
+const BAND_LOOK = { ok: ["Green", "#127A4D", "#E3F5EC", "#1A9E6A"], warn: ["Amber", "#935300", "#FDF0D7", "#E8A13C"], miss: ["Red", "#BA2340", "#FDE7EB", "#C94F4F"] };
+const dShort = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + (Math.round(n / 1e4) / 100) + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : dMoney(n));
+/* The Monday email: short, in plain tables that hold up in Outlook and on a phone, with a button to the full digest dashboard
+   in Brahmastra (landscape, every detail). Clients, staff and figures only: no patient names, claim or account numbers. */
+function spanEmail(span, wk, ds, appUrl, extra = {}) {
+  const R = digestRollup(ds), order = digestOrder(ds);
   const weekTxt = `${dDay(wk.first)} to ${dDay(wk.last)}`;
-  // the people on these clients' projects in Shastra WFM: everyone (split across their projects), Billable and Assigned FTE
+  const link = appUrl ? appUrl.replace(/\/+$/, "") + "/#/digest?span=" + encodeURIComponent(span.key || "") + "&week=" + wk.week : "";
   const wf = ds.filter((d) => d.wfm), wsum = (f) => wf.reduce((t, d) => t + (d.wfm[f] || 0), 0);
-  const teamLine = wf.length ? `Billable FTE: ${wf.some((d) => d.wfm.billable != null) ? fteTxt(wsum("billable")) : "–"} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}` : "";
-  const sec = (title) => `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700;margin:20px 0 6px">${title}</div>`;
-  const kpi = (label, value, sub) => `<td style="padding:10px 12px;border:1px solid #DFE4EA;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#627079;font-weight:700">${label}</div><div style="font-size:20px;font-weight:700;margin:2px 0">${value}</div><div style="font-size:12px;color:#3B4A55">${sub}</div></td>`;
-  const th = (cells, align) => `<tr>${cells.map((c, i) => `<th style="padding:6px 8px 6px 0;text-align:${(align && align[i]) || "right"};font-size:11px;color:#627079;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #DFE4EA;white-space:nowrap">${c}</th>`).join("")}</tr>`;
-  const td = (cells, align) => `<tr>${cells.map((c, i) => `<td style="padding:6px 8px 6px 0;text-align:${(align && align[i]) || "right"};border-bottom:1px solid #EEF1F4;vertical-align:top">${c}</td>`).join("")}</tr>`;
-  const arDelta = (d) => d.ar.week_ago == null ? "" : `<div style="font-size:11px;color:${d.ar.now <= d.ar.week_ago ? "#0E8C74" : "#A32D2D"}">${d.ar.now === d.ar.week_ago ? "same" : (d.ar.now < d.ar.week_ago ? "down " : "up ") + dMoney(Math.abs(d.ar.now - d.ar.week_ago))}</div>`;
-  const dot = (tone) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${tone === "red" ? "#C94F4F" : "#E8A13C"};margin-right:8px"></span>`;
-  const L = ["left", "left"];
-  const html = `<div style="font:14px/1.5 Segoe UI,Arial,sans-serif;color:#0F1B24;max-width:720px">
-<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0E8C74;font-weight:700">Brahmastra · Monday digest</div>
-<h2 style="margin:4px 0 6px;font-size:22px">Weekly client digest</h2>
-<table style="border-collapse:collapse;font-size:13.5px;margin:0 0 4px">${[["Manager name", extra.manager ? extra.manager.name : "No manager (VP and admins)"], ["Designation", extra.manager ? extra.manager.designation : "–"],
-  ["Period", "Week of " + weekTxt], ["Clients", ds.length + ": " + ds.map((d) => d.client.name).join(", ")], ...(teamLine ? [["Total team", teamLine]] : [])].map(([k, v]) => `<tr><td style="padding:2px 18px 2px 0;color:#627079">${k}</td><td style="padding:2px 0"><b>${htmlEsc(v)}</b></td></tr>`).join("")}</table>
-${slaCardHtml(ds, appUrl) || (ds.some((d) => d.esc) ? sec("Escalations") + escBoxesHtml(ds) + ds.map((d) => `<div style="margin-top:6px"><b>${htmlEsc(d.client.name)}</b>${d.wfm ? ` <span style="font-size:12px;color:#627079">· Billable FTE: ${fteTxt(d.wfm.billable)} · Assign FTE: ${fteTxt(d.wfm.assigned_fte)}</span>` : ""}${escLineHtml(d)}</div>`).join("") : "")}
-<div style="margin:12px 0">${["risk", "watch", "good"].filter((k) => count[k]).map((k) => `<span style="display:inline-block;margin:0 6px 4px 0;padding:4px 10px;border-radius:999px;background:${HEALTH_LOOK[k][2]};color:${HEALTH_LOOK[k][1]};font-weight:700;font-size:13px">${count[k]} ${HEALTH_LOOK[k][0].toLowerCase()}</span>`).join("")}</div>
-<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px"><tr>
-${kpi("AR now", dMoney(ar), withAgo.length ? `<span style="color:${agoNow <= ago ? "#0E8C74" : "#A32D2D"}">${agoNow === ago ? "same as" : (agoNow < ago ? "down " : "up ") + dMoney(Math.abs(agoNow - ago)) + " vs"} a week before</span>` : "no reading a week ago")}
-${kpi("Over 90 days", pct + "%", `${dMoney(o90)} · target ${target}%`)}
-${kpi("Collected", dMoney(coll), `week before ${dMoney(collPrev)}`)}
-${kpi("Entries", String(work), `week before ${workPrev}`)}
-</tr></table>
-${sec("Needs your attention")}
-${attention.length ? attention.slice(0, 10).map(([t, c, x]) => `<div style="margin:4px 0">${dot(t)}<b>${htmlEsc(c)}</b>: ${htmlEsc(x)}</div>`).join("") + (attention.length > 10 ? `<div style="color:#627079;font-size:12px">and ${attention.length - 10} more on Client 360</div>` : "") : `<div style="color:#627079">Nothing needs you.</div>`}
-${good.length ? `<div style="margin:8px 0 0;color:#0E8C74">Good news: ${htmlEsc(good.slice(0, 2).map((g) => g[1]).join("; "))}.</div>` : ""}
-${sec("Client by client")}
-<table style="border-collapse:collapse;font-size:13px;width:100%">
-${th(["Client", "Health", "AR", "Over 90", "Collected", "Entries", "SLA", "Month-end"], L)}
-${ds.map((d) => td([`<b>${htmlEsc(d.client.name)}</b>${d.escalations.late ? `<div style="font-size:11px;color:#A32D2D">${d.escalations.late} escalation${d.escalations.late > 1 ? "s" : ""} over 24 h</div>` : ""}${d.waiting.n ? `<div style="font-size:11px;color:#627079">${d.waiting.n} waiting on the client</div>` : ""}`,
-  `<span style="color:${HEALTH_LOOK[d.health][1]};font-weight:700">${HEALTH_LOOK[d.health][0]}</span>`, dMoney(d.ar.now) + arDelta(d),
-  `<span style="color:${d.ar.over90_pct > d.ar.target ? "#A32D2D" : "#0F1B24"}">${d.ar.over90_pct}%</span>`, dMoney(d.collected.amount), `${d.worked.n}<div style="font-size:11px;color:#627079">was ${d.worked.prev}</div>`,
-  d.card ? `<span style="color:${BAND_LOOK[d.card.band][1]};font-weight:700">${d.card.score}%</span><div style="font-size:11px;color:#627079">${htmlEsc(d.card.period.label.slice(0, 3))}</div>`
-    : d.sla ? `${d.sla.score}%<div style="font-size:11px;color:#627079">${MONTHS[Number(d.sla.month.slice(5)) - 1].slice(0, 3)}</div>` : `<span style="color:#627079">not scored</span>`,
-  `${d.monthend.done}/${d.monthend.total}`], L)).join("")}
-</table>
-${teamRows.length ? sec("The team last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${th(["Person", "Clients", "Entries", "Skipped"], L)}${teamRows.map((p) => td([htmlEsc(p.name), `<span style="color:#627079">${htmlEsc(p.clients.join(", "))}</span>`, String(p.work), String(p.skips)], L)).join("")}</table>` : ""}
-${denRows.length ? sec("Denials and rejections worked last week") + `<table style="border-collapse:collapse;font-size:13px;width:100%">${th(["Reason", "Claims", "Balance"], L)}${denRows.map((r) => td([htmlEsc(r.reason), String(r.n), dMoney(r.bal)], L)).join("")}</table>` : ""}
-${appUrl ? `<p style="margin:20px 0 0"><a href="${htmlEsc(appUrl.replace(/\/+$/, "") + "/#/client")}" style="background:#14B8A6;color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:600">Open Client 360</a></p>` : ""}
-<p style="margin-top:18px;font-size:12px;color:#627079">You get this because you are a supervisor on ${span.manager ? htmlEsc(span.title.replace(/'s clients$/, "")) + "'s clients" : "clients without a manager"} in Brahmastra. Turn it off in Brahmastra, Settings, Email. No patient details are included.</p>
-</div>`;
+  const teamLine = wf.length ? `Billable FTE: <b>${wf.some((d) => d.wfm.billable != null) ? fteTxt(wsum("billable")) : "–"}</b> · Assign FTE: <b>${fteTxt(wsum("assigned_fte"))}</b>` : "";
+  const bandTxt = R.sla_avg != null ? [R.bands.ok && R.bands.ok + " green", R.bands.warn && R.bands.warn + " amber", R.bands.miss && R.bands.miss + " red"].filter(Boolean).join(" · ") : ["risk", "watch", "good"].filter((k) => R.count[k]).map((k) => R.count[k] + " " + HEALTH_LOOK[k][0].toLowerCase()).join(" · ");
+  const hrow = (k, v) => `<tr><td style="padding:1px 14px 1px 0;color:#C9D6E2">${k}</td><td style="color:#FFFFFF">${v}</td></tr>`;
+  const box = (v, label, color) => `<td width="25%" style="border:1px solid #DFE4EA;padding:8px 10px;vertical-align:top"><div style="font-size:20px;font-weight:bold;color:${color || "#0F1B24"}">${v}</div><div style="color:#627079;font-size:11px">${label}</div></td>`;
+  const tag = (txt, look) => `<span style="background:${look[2]};color:${look[1]};font-weight:bold;padding:2px 7px;white-space:nowrap">${txt}</span>`;
+  const cell = (x, align, extraStyle) => `<td align="${align || "left"}" style="padding:8px 4px;border-bottom:1px solid #EEF1F4;vertical-align:middle${extraStyle || ""}">${x}</td>`;
+  const row = (d) => {
+    const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : ""].filter(Boolean).join(" · ");
+    const sla = d.card ? tag(`${d.card.score}%${d.card.delta != null ? (d.card.delta >= 0 ? " ▲" : " ▼") + Math.abs(d.card.delta) : ""}`, BAND_LOOK[d.card.band]) : `<span style="color:#627079">not scored</span>`;
+    const esc = d.esc ? tag(d.esc.n ? `${d.esc.n} · ${d.esc.open ? d.esc.open + " open" : "closed"}` : "0", BAND_LOOK[d.esc.n ? "miss" : "ok"]) : "–";
+    return `<tr>${cell(`<b>${htmlEsc(d.client.name)}</b>${ppl ? `<div style="color:#627079;font-size:11px">${htmlEsc(ppl)}</div>` : ""}`)}${cell(sla, "center")}${cell(esc, "center")}${cell(d.wfm ? `${fteTxt(d.wfm.billable)} / ${fteTxt(d.wfm.assigned_fte)}` : "–", "center")}${cell(d.ar.over90_pct + "%", "right", d.ar.over90_pct > d.ar.target ? ";color:#BA2340" : "")}</tr>`;
+  };
+  const hcell = (x, align) => `<td align="${align || "left"}" style="padding:6px 4px;border-bottom:2px solid #DFE4EA;color:#627079;font-size:11px"><b>${x}</b></td>`;
+  const sec = (t) => `<tr><td style="padding:14px 22px 4px"><div style="font-size:11px;letter-spacing:1px;color:#627079;font-weight:bold">${t}</div></td></tr>`;
+  const html = `<table role="presentation" width="100%" align="center" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#FFFFFF;border:1px solid #DFE4EA;font-family:Segoe UI,Arial,sans-serif;color:#0F1B24">
+<tr><td style="background:#0B2740;padding:16px 22px;color:#FFFFFF">
+<div style="font-size:11px;letter-spacing:1px;color:#9FD9C9;font-weight:bold">BRAHMASTRA · MONDAY DIGEST</div>
+<div style="font-size:19px;font-weight:bold;margin:4px 0 8px;color:#FFFFFF">${htmlEsc(span.title)} · week of ${weekTxt}</div>
+<table role="presentation" cellpadding="0" cellspacing="0" style="font-size:13px">${hrow("Manager name", extra.manager ? `<b>${htmlEsc(extra.manager.name)}</b>` : "No manager (VP and admins)")}${hrow("Designation", extra.manager ? htmlEsc(extra.manager.designation) : "–")}${hrow("Period", "Week of " + weekTxt)}${hrow("Clients", `<b>${ds.length}</b>${bandTxt ? " · " + bandTxt : ""}`)}${teamLine ? hrow("Total team", teamLine) : ""}</table></td></tr>
+<tr><td style="padding:16px 22px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr>
+${box(R.sla_avg == null ? "–" : R.sla_avg + "%", "avg SLA score" + (R.sla_month ? " · " + htmlEsc(R.sla_month.slice(0, 3)) : ""))}${box(R.esc ? R.esc.n : "–", `escalations ${R.esc ? htmlEsc(R.esc.month.slice(0, 3)) + " " : ""}· target ${ESC_SLA_TARGET}`, R.esc && R.esc.n ? "#BA2340" : "#127A4D")}${box(dShort(R.ar), "AR" + (R.ar_ago != null ? (R.ar_ago <= 0 ? " · down " : " · up ") + dShort(Math.abs(R.ar_ago)) : ""))}${box(R.pct + "%", "over 90 · target " + R.target + "%", R.pct > R.target ? "#BA2340" : "#0F1B24")}
+</tr></table></td></tr>
+${sec("CLIENT BY CLIENT")}
+<tr><td style="padding:0 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12.5px;border-collapse:collapse">
+<tr>${hcell("Client")}${hcell("SLA", "center")}${hcell("Escalations", "center")}${hcell("Billable / Assign FTE", "center")}${hcell("Over 90", "right")}</tr>
+${order.map(row).join("")}</table></td></tr>
+${sec("NEEDS YOUR ATTENTION")}
+<tr><td style="padding:0 22px;font-size:13px;line-height:1.6">${R.attention.length ? R.attention.slice(0, 5).map(([t, c, x]) => `<div><span style="color:${t === "red" ? "#C94F4F" : "#E8A13C"}">●</span> <b>${htmlEsc(c)}</b>: ${htmlEsc(x)}</div>`).join("") + (R.attention.length > 5 ? `<div style="color:#627079;font-size:12px">and ${R.attention.length - 5} more on the dashboard</div>` : "") : `<div style="color:#627079">Nothing needs you this week.</div>`}
+${R.good.length ? `<div style="color:#127A4D;margin-top:4px">Good news: ${htmlEsc(R.good.slice(0, 2).join("; "))}.</div>` : ""}</td></tr>
+${link ? `<tr><td style="padding:16px 22px 4px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#0E8C74;padding:9px 16px"><a href="${htmlEsc(link)}" style="color:#FFFFFF;text-decoration:none;font-weight:bold;font-size:13px">Open the full digest in Brahmastra →</a></td></tr></table>
+<div style="font-size:11.5px;color:#627079;margin-top:6px">Every client's scorecard, Billable and Assign FTE, what pulls it down and the escalations, on one landscape page. Download it as a PDF from there.</div></td></tr>` : ""}
+<tr><td style="padding:14px 22px 16px;font-size:11.5px;color:#627079">You get this because you are a supervisor on ${span.manager ? htmlEsc(span.title.replace(/'s clients$/, "")) + "'s clients" : "clients without a manager"} in Brahmastra. Turn it off in Brahmastra, Settings, Email. Clients, staff and figures only: no patient names, claim or account numbers.</td></tr>
+</table>`;
   const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`,
     `Manager name: ${extra.manager ? extra.manager.name : "No manager"} · Designation: ${extra.manager ? extra.manager.designation : "-"} · Period: week of ${weekTxt}`,
-    ...ds.filter((d) => d.card).map((d) => `SLA ${d.card.period.label}: ${d.client.name} ${d.card.score}% (${{ ok: "green", warn: "amber", miss: "red" }[d.card.band]})${d.card.delta != null ? ", " + (d.card.delta >= 0 ? "+" : "") + d.card.delta + " pts" : ""}`), ["risk", "watch", "good"].filter((k) => count[k]).map((k) => count[k] + " " + HEALTH_LOOK[k][0].toLowerCase()).join(", "), "",
-    ...(teamLine ? ["Total team: " + teamLine] : []),
-    ...ds.filter((d) => d.esc).map((d) => `Escalations ${monthLabel(d.esc.from.slice(0, 7))}: ${d.client.name} ${d.esc.n} (target ${d.esc.target}, ${d.esc.met ? "green" : "red"})${d.esc.open ? ", " + d.esc.open + " open" : ""}`),
-    `AR now ${dMoney(ar)}, over 90 ${pct}% (target ${target}%), collected ${dMoney(coll)}, entries ${work}`, "", "Needs your attention:",
-    ...(attention.length ? attention.slice(0, 10).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "", "Client by client:",
-    ...ds.map((d) => `- ${d.client.name}: ${HEALTH_LOOK[d.health][0]}, AR ${dMoney(d.ar.now)}, over 90 ${d.ar.over90_pct}%, collected ${dMoney(d.collected.amount)}, entries ${d.worked.n}`), "",
-    "Turn this off in Brahmastra, Settings, Email."].join("\n");
-  const subject = `${span.title} · week of ${dDay(wk.first)}: ${count.risk ? count.risk + " at risk, " : ""}AR ${dMoney(ar)}${attention.length ? ", " + attention.length + " to look at" : ""}`;
+    ...(wf.length ? [`Total team: Billable FTE: ${fteTxt(wsum("billable"))} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}`] : []),
+    `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} (target ${ESC_SLA_TARGET})` : ""), "", "Client by client:",
+    ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "not scored"}` + (d.esc ? `, escalations ${d.esc.n}` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
+    "", "Needs your attention:", ...(R.attention.length ? R.attention.slice(0, 5).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "",
+    ...(link ? ["Open the full digest: " + link, ""] : []), "Turn this off in Brahmastra, Settings, Email."].join("\n");
+  const subject = `${span.title} · week of ${dDay(wk.first)}: ${R.count.risk ? R.count.risk + " at risk, " : ""}AR ${dMoney(R.ar)}${R.attention.length ? ", " + R.attention.length + " to look at" : ""}`;
   return { subject, html, text };
 }
-async function spanMail(env, span, wk) {
+async function spanData(env, span, wk) {
   const ds = []; for (const c of span.clients) ds.push(await digestData(env, c.id, wk));
   // the header: the manager, their designation; each client's team leads and SMEs; each client's SLA report card from Drishti
   const mgr = span.manager ? await one(env, "SELECT name, designation, position FROM users WHERE id = ?", span.manager.id) : null;
@@ -1699,7 +1658,11 @@ async function spanMail(env, span, wk) {
     d.esc = await escSummary(env, d.client.id, wk.last.slice(0, 8) + "01", wk.last, wk.to);
   }
   const wfm = await clientWfm(env, ds.map((d) => d.client.id)); ds.forEach((d) => { d.wfm = wfm.get(d.client.id) || null; });
-  return spanEmail(span, wk, ds, env.APP_URL || "", { manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null });
+  return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null };
+}
+async function spanMail(env, span, wk) {
+  const { ds, manager } = await spanData(env, span, wk);
+  return spanEmail(span, wk, ds, env.APP_URL || "", { manager });
 }
 /* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
 async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, by = "Monday job" } = {}) {
@@ -3302,6 +3265,25 @@ const OPS = {
     const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
     if (!s || !spanVisible(user, s)) throw denied("That digest is not one of yours.");
     return spanMail(env, s, digestWeek(Date.now()));
+  },
+  /* The full digest as a landscape dashboard (the email's "Open the full digest" button): every client's card with its SLA
+     score, Billable and Assign FTE, AR, escalations and what pulls it down, for this week or one of the 8 before. */
+  "digest.dashboard": async ({ env, user, payload }) => {
+    const spans = (await digestSpans(env, await digestPeople(env))).filter((x) => spanVisible(user, x));
+    if (!spans.length) throw denied("No Monday digest includes you.");
+    const s = spans.find((x) => x.key === str(payload.span, 80)) || spans[0];
+    const now = digestWeek(Date.now()), weeks = Array.from({ length: 9 }, (_, i) => digestWeek(Date.parse(now.week + "T12:00:00Z") - i * 7 * 86400000)).map((w) => ({ week: w.week, first: w.first, last: w.last }));
+    const want = weeks.find((w) => w.week === isoDate(payload.week)) || weeks[0];
+    const wk = digestWeek(Date.parse(want.week + "T12:00:00Z"));
+    const { ds, manager } = await spanData(env, s, wk);
+    const R = digestRollup(ds);
+    const card = (c) => c ? { score: c.score, band: c.band, period: c.period.label, delta: c.delta, prev: c.prev ? c.prev.label : "", kpi_ok: c.items.filter((i) => i.kind === "KPI" && i.status === "ok").length,
+      kpi_n: c.items.filter((i) => i.kind === "KPI").length, scopes: c.scopes.filter((x) => x.scored).map((x) => ({ name: x.short || x.name, pct: x.pct, band: x.band })),
+      drags: c.drags.slice(0, 5).map((i) => ({ scope: i.scope, name: i.name, shown: i.shown, target: i.target, status: i.status })), more: Math.max(0, c.drags.length - 5),
+      strengths: c.strengths.slice(0, 2).map((i) => ({ name: i.name, shown: i.shown })) } : null;
+    return { span: { key: s.key, title: s.title }, spans: spans.map((x) => ({ key: x.key, title: x.title })), manager, week: want, weeks, rollup: R,
+      clients: digestOrder(ds).map((d) => ({ id: d.client.id, name: d.client.name, health: d.health, tls: d.tls, smes: d.smes, wfm: d.wfm ? { billable: d.wfm.billable, assigned_fte: d.wfm.assigned_fte } : null,
+        ar: d.ar, collected: d.collected, worked: d.worked, esc: d.esc ? { ...d.esc, rows: undefined } : null, card: card(d.card), monthend: d.monthend })) };
   },
   "digest.sendMe": async ({ env, user, payload }) => {
     const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
