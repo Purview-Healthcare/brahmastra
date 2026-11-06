@@ -7575,7 +7575,14 @@ function kpiGap(it) {
   const pct = r.fmt === "percent", g = r.dir === "lower" ? v - r.good : r.dir === "higher" ? r.good - v : 0;
   if (!(g > 0)) return null;
   const rel = g / (Math.abs(r.good) || 1);
-  return { rel, txt: pct ? Math.round(g * 1000) / 10 + " pts " + (r.dir === "lower" ? "over" : "under") : Math.round(g * 10) / 10 + (r.fmt === "days" ? " days" : "") + " " + (r.dir === "lower" ? "over" : "under") };
+  return { rel, txt: pct ? Math.round(g * 1000) / 10 + (Math.round(g * 1000) / 10 === 1 ? " pt " : " pts ") + (r.dir === "lower" ? "over" : "under") : Math.round(g * 10) / 10 + (r.fmt === "days" ? " days" : "") + " " + (r.dir === "lower" ? "over" : "under") };
+}
+/* How far inside its target an on-target KPI is ("6.3 pts better"), for Doing well */
+function kpiInside(it) {
+  const r = it.rule, v = Number(it.value); if (!r || !isFinite(v) || !["higher", "lower"].includes(r.dir)) return null;
+  const pct = r.fmt === "percent", g = r.dir === "lower" ? r.good - v : v - r.good;
+  if (!(g >= 0)) return null;
+  return { rel: g / (Math.abs(r.good) || 1), txt: (pct ? Math.round(g * 1000) / 10 + " pts" : Math.round(g * 10) / 10 + (r.fmt === "days" ? " days" : "")) + " better" };
 }
 const Ring = ({ pct, band, size = 30, w = 4 }) => (
   <span className="sc-ring" style={{ width: size, height: size, background: `conic-gradient(${band ? KPI_COL[band] : "#C9D1D9"} 0 ${Math.max(2, pct || 0)}%, var(--soft) ${Math.max(2, pct || 0)}% 100%)` }}><i style={{ inset: w }} /></span>
@@ -7602,7 +7609,12 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
   const monthOf = (p) => (p && p.kind === "month" && p.from ? p.from.slice(0, 7) : "");
   const f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
   const ok = d && d.state === "ok";
-  const fix = ok ? d.items.filter((i) => i.status === "miss").map((i) => ({ i, g: kpiGap(i) })).filter((z) => z.g).sort((a, b) => b.g.rel - a.g.rel).slice(0, 3) : [];
+  // Fix first: the 3 furthest from standard (missed first, then close). With nothing missed or close: Doing well, the 3
+  // KPIs furthest inside their target, which carry the score.
+  const gapped = ok ? d.items.filter((i) => i.status === "miss" || i.status === "warn").map((i) => ({ i, g: kpiGap(i) })).filter((z) => z.g)
+    .sort((a, b) => (a.i.status === "miss" ? 0 : 1) - (b.i.status === "miss" ? 0 : 1) || b.g.rel - a.g.rel).slice(0, 3) : [];
+  const good = ok && (d.band === "ok" || !gapped.length) ? d.items.filter((i) => i.status === "ok").map((i) => ({ i, g: kpiInside(i) })).sort((a, b) => (b.g ? b.g.rel : -1) - (a.g ? a.g.rel : -1)).slice(0, 3) : [];
+  const fixGood = ok && (d.band === "ok" || !gapped.length), fix = fixGood ? good : gapped;
   const notScored = ok ? d.scopes.reduce((t, sc) => t + (sc.missing || []).length, 0) : 0;
   const tr = ok ? d.trend : [];
   const sx = (k) => (tr.length > 1 ? 14 + (k * 272) / (tr.length - 1) : 150), sy = (p) => 18 + (1 - (p == null ? 0 : p) / 100) * 46;
@@ -7641,9 +7653,9 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
                   <text x={sx(k)} y="78" textAnchor="middle" fontSize="10" fill="currentColor" className={k === tr.length - 1 ? "" : "muted"} fontWeight={k === tr.length - 1 ? 700 : 400}>{String(p.label).slice(0, 3)}</text></g>)}</svg>
                 : <div className="small muted" style={{ marginTop: 8 }}>The trend shows from the second period on.</div>}</div>
           </div>
-          {fix.length > 0 && <div className="card sc-fix glow">
-            <div><div className="sc-lbl red-ink">Fix first</div><div className="tiny muted">furthest from standard</div></div>
-            {fix.map(({ i, g }) => { const dl = kpiDelta(i); return <button type="button" key={i.scope_key + i.key} className="sc-fx" onClick={() => setOpen(i)}><b className="red-ink">{i.shown}</b><span><span className="b">{i.name}</span><span className="tiny muted">{i.scope} · {i.target} · {g.txt}{dl ? <> · <span className={dl.good === true ? "teal-ink" : dl.good === false ? "red-ink" : ""}>{dl.txt}</span></> : null}</span></span></button>; })}
+          {fix.length > 0 && <div className={"card sc-fix glow" + (fixGood ? " good" : "")}>
+            <div>{fixGood ? <><div className="sc-lbl teal-ink">Doing well</div><div className="tiny muted">top 3 carrying the score</div></> : <><div className="sc-lbl red-ink">Fix first</div><div className="tiny muted">furthest from standard</div></>}</div>
+            {fix.map(({ i, g }) => { const dl = kpiDelta(i); return <button type="button" key={i.scope_key + i.key} className="sc-fx" onClick={() => setOpen(i)}><b className={KPI_INK[i.status]}>{i.shown}</b><span><span className="b">{i.name}</span><span className="tiny muted">{i.scope} · {i.target || "standard"}{g ? " · " + g.txt : ""}{dl ? <> · <span className={dl.good === true ? "teal-ink" : dl.good === false ? "red-ink" : ""}>{dl.txt}</span></> : null}</span></span></button>; })}
           </div>}
           <div className="sc-grid">{d.scopes.map((sc) => {
             const items = d.items.filter((i) => i.scope_key === sc.key);
