@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.77.0";
+const VERSION = "2.78.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -778,11 +778,15 @@ function drScore(client, period, prev) {
       const cell = px[sc.key] && px[sc.key].crit && px[sc.key].crit[crit.key]; if (!cell) continue;
       const rule = drRule(client, sc.key, crit), st0 = drCritStatus(crit, cell, rule), st = st0 === "great" ? "ok" : st0;
       const it = { scope: sc.short, scope_key: sc.key, key: crit.key, name: crit.name, kind: "KPI", value: cell.value, shown: drDisplay(crit, cell), target: drTarget(crit, rule), status: st, great: st0 === "great",
+        rule: rule && ["higher", "lower", "range"].includes(rule.dir) ? { dir: rule.dir, good: rule.good, fair: rule.fair, min: rule.min, max: rule.max, fmt: rule.fmt || drFmt(crit) } : null, type: crit.type,
         reason: String(cell.reason || "").slice(0, 300), source: drSource(sc, crit, cell), formula: drFormula(sc, crit), std: crit.std || "" };
       items.push(it); s.items.push(it);
       if (st === "ok" || st === "warn" || st === "miss") { s[st]++; kpi[st]++; }
     }
     if (sc.kind === "tasks") for (const row of (px[sc.key] && px[sc.key].tasks) || []) task(sc, row, sS, s);
+    // what this scope could score but has nothing for yet, and the report that would fill it
+    s.missing = (sc.criteria || []).filter((crit) => crit.type !== "text" && !(px[sc.key] && px[sc.key].crit && px[sc.key].crit[crit.key]))
+      .map((crit) => { const b = DR_DEF.book[sc.key + "." + crit.key] || {}; return { key: crit.key, name: crit.name, from: b.from || DR_TYPED, typed: !!b.manual }; });
     s.scored = s.ok + s.warn + s.miss; s.pct = s.scored ? Math.round(s.ok / s.scored * 100) : null; s.band = drBand(s.pct);
     scopes.push(s);
   }
@@ -4825,6 +4829,14 @@ const OPS = {
     if (!cur) return { state: "no_period", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner }, periods: [] };
     const same = done.filter((p) => p.kind === cur.kind), prev = same.find((p) => p !== cur && p.range.to < cur.range.from) || null;
     const sc = drScore(d, cur, prev);
+    // each KPI's last month and its last 6 periods, for the change arrow and the KPI's own trend
+    const hist = same.filter((p) => p.range.to <= cur.range.to).slice(0, 6).reverse().map((p) => ({ p, s: p === cur ? sc : drScore(d, p, null) }));
+    const prevItems = prev ? new Map(drScore(d, prev, null).items.map((i) => [i.scope_key + "." + i.key, i])) : new Map();
+    for (const it of sc.items) {
+      const k = it.scope_key + "." + it.key, pv = prevItems.get(k);
+      it.prev = pv ? { value: pv.value, shown: pv.shown, status: pv.status } : null;
+      it.history = hist.map(({ p, s }) => { const x = s.items.find((i) => i.scope_key + "." + i.key === k); return { label: p.label, to: p.range.to, value: x ? x.value : null, shown: x ? x.shown : "", status: x ? x.status : null }; });
+    }
     const trend = same.filter((p) => p.range.to <= cur.range.to).slice(0, 6).reverse().map((p) => ({ id: p.id, label: p.label, to: p.range.to, pct: drScore(d, p, null).pct }));
     const sources = []; for (const it of sc.items) { const k = it.source; const x = sources.find((y) => y.from === k); if (x) x.metrics.push(it.name); else sources.push({ from: k, metrics: [it.name] }); }
     const sums = drSummary(ov, [client], today); if (sums.size) await drTickMonthEnd(env, sums);
@@ -4833,7 +4845,7 @@ const OPS = {
       period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to, created_at: cur.createdAt, created_by: cur.createdBy, reports: cur.reports },
       prev: prev ? { id: prev.id, label: prev.label, from: prev.range.from, to: prev.range.to, pct: drScore(d, prev, null).pct } : null,
       score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts, scored: sc.scored, kpi_pct: sc.kpi_pct, sla_pct: sc.sla_pct,
-      scopes: sc.scopes.map((x) => ({ key: x.key, name: x.name, short: x.short, ok: x.ok, warn: x.warn, miss: x.miss, scored: x.scored, pct: x.pct, band: x.band, items: x.items.map((i) => ({ name: i.name, shown: i.shown, status: i.status })) })),
+      scopes: sc.scopes.map((x) => ({ key: x.key, name: x.name, short: x.short, ok: x.ok, warn: x.warn, miss: x.miss, scored: x.scored, pct: x.pct, band: x.band, missing: x.missing || [], items: x.items.map((i) => ({ name: i.name, shown: i.shown, status: i.status })) })),
       items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at };
   },
   /* Beside the scorecard: the client's people from Shastra WFM and its escalations in the period (SLA threshold 0). */

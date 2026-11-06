@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.87.0";
+const APP_VERSION = "2.88.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -7546,91 +7546,156 @@ function SlaView(props) {
 const PSLA_KIND = [["latest", "Latest"], ["month", "Monthly"], ["week", "Weekly"]];
 const SLA_COLS = [{ key: "scope", label: "Scope" }, { key: "name", label: "KPI" }, { key: "shown", label: "Value" }, { key: "target", label: "Standard" }, { key: "formula", label: "Formula" },
   { key: "status", label: "Status", get: (x) => (x.status === "ok" ? "Green" : x.status === "warn" ? "Amber" : x.status === "miss" ? "Red" : "Info") }, { key: "source", label: "From" }, { key: "reason", label: "Comment" }, { key: "std", label: "Drishti's standard" }];
+/* Where a KPI's value sits on its bar, and the green target zone: lower is better, higher is better, or a range. */
+function kpiBar(it) {
+  const r = it.rule, v = Number(it.value);
+  if (!r || !isFinite(v)) return null;
+  const pct = r.fmt === "percent";
+  let lo = 0, hi, z0, z1;
+  if (r.dir === "lower") { hi = Math.max(v, (r.fair || r.good) * 1.5, r.good * 2, pct ? 0.05 : 1) * 1.1; z0 = 0; z1 = r.good; }
+  else if (r.dir === "higher") { hi = pct ? 1 : Math.max(v, r.good) * 1.25; z0 = r.good; z1 = hi; }
+  else { hi = Math.max(v, r.max) * 1.4; z0 = r.min; z1 = r.max; }
+  const at = (x) => Math.max(0, Math.min(100, ((x - lo) / (hi - lo || 1)) * 100));
+  return { pos: at(v), z0: at(z0), z1: at(z1) };
+}
+const KPI_COL = { ok: "var(--sc-g)", warn: "var(--sc-a)", miss: "var(--sc-r)" };
+const KPI_INK = { ok: "teal-ink", warn: "amber-ink", miss: "red-ink" };
+/* ▲▼ against last month: green when it moved the right way */
+function kpiDelta(it) {
+  if (!it.prev || it.prev.value == null || it.value == null || !it.rule) return null;
+  const a = Number(it.value), b = Number(it.prev.value); if (!isFinite(a) || !isFinite(b)) return null;
+  if (Math.abs(a - b) < 1e-9) return { txt: "=", good: null };
+  const pct = it.rule.fmt === "percent", diff = pct ? Math.round(Math.abs(a - b) * 1000) / 10 : Math.round(Math.abs(a - b) * 10) / 10;
+  const better = it.rule.dir === "higher" ? a > b : it.rule.dir === "lower" ? a < b : null;
+  return { txt: (a > b ? "▲" : "▼") + diff, good: better };
+}
+/* How far a missed KPI is from its standard, for "Fix first" */
+function kpiGap(it) {
+  const r = it.rule, v = Number(it.value); if (!r || !isFinite(v)) return null;
+  const pct = r.fmt === "percent", g = r.dir === "lower" ? v - r.good : r.dir === "higher" ? r.good - v : 0;
+  if (!(g > 0)) return null;
+  const rel = g / (Math.abs(r.good) || 1);
+  return { rel, txt: pct ? Math.round(g * 1000) / 10 + " pts " + (r.dir === "lower" ? "over" : "under") : Math.round(g * 10) / 10 + (r.fmt === "days" ? " days" : "") + " " + (r.dir === "lower" ? "over" : "under") };
+}
+const Ring = ({ pct, band, size = 30, w = 4 }) => (
+  <span className="sc-ring" style={{ width: size, height: size, background: `conic-gradient(${band ? KPI_COL[band] : "#C9D1D9"} 0 ${Math.max(2, pct || 0)}%, var(--soft) ${Math.max(2, pct || 0)}% 100%)` }}><i style={{ inset: w }} /></span>
+);
 function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
   const [kind, setKind] = useState("month");
   const [to, setTo] = useState("");
-  useEffect(() => { setTo(""); }, [clientId, kind]);
+  const [open, setOpen] = useState(null);
+  const [showNs, setShowNs] = useState({});
+  useEffect(() => { setTo(""); setShowNs({}); }, [clientId, kind]);
   const only = onlyClient(ctx);
   useEffect(() => { if (!clientId && only) setClientId(only); }, [only]);
   const q = useRpc("sla.scorecard", { client_id: clientId, kind, to: to || undefined, today: todayISO() }, [clientId, kind, to], !!clientId);
   const d = q.data && q.data.client && q.data.client.id === clientId ? q.data : null;
+  const cur = d && d.period ? d.period : null;
+  const xq = useRpc("sla.extras", { client_id: clientId, from: cur ? cur.from : undefined, to: cur ? cur.to : undefined, today: todayISO() }, [clientId, cur && cur.from, cur && cur.to], !!clientId);
+  const x = xq.data;
   const client = ctx.clients.find((c) => c.id === clientId);
   const periods = d && d.periods ? d.periods.filter((p) => kind === "latest" || p.kind === kind) : [];
-  const cur = d && d.period ? d.period : null, idx = cur ? periods.findIndex((p) => p.id === cur.id) : -1;
+  const idx = cur ? periods.findIndex((p) => p.id === cur.id) : -1;
   const step = (n) => { const p = periods[idx + n]; if (p) setTo(p.to); };
-  const band = d && d.band ? DR_BAND[d.band] : null, first = client ? client.name : "";
+  const first = client ? client.name : "";
   const csv = () => downloadText(toCSV(d.items, SLA_COLS), `sla-scorecard-${first}-${cur ? cur.label : ""}.csv`.replace(/[\/:*?"<>|]+/g, " "));
-  const stWord = (x) => (x === "ok" ? "Green" : x === "warn" ? "Amber" : x === "miss" ? "Red" : "Info");
-  const stBadge = (x) => <span className={"badge " + (x === "ok" ? "green" : x === "warn" ? "amber" : x === "miss" ? "red" : "gray")}>{stWord(x)}</span>;
-  const Row = ({ it }) => <div className="psla-row">{stBadge(it.status)}<div className="m"><b>{it.name} · {it.scope}</b><span title={it.formula}>{it.reason || it.source}{it.formula ? <> · <em>{it.formula}</em></> : null}</span></div>
-    <div className="val">{it.shown || "–"}<small>{it.target ? "standard " + it.target : it.std}</small></div></div>;
   const monthOf = (p) => (p && p.kind === "month" && p.from ? p.from.slice(0, 7) : "");
-  const extras = clientId ? <SlaExtras clientId={clientId} from={d && d.state === "ok" && cur ? cur.from : ""} to={d && d.state === "ok" && cur ? cur.to : ""} label={d && d.state === "ok" && cur ? cur.label : ""} go={go} /> : null;
+  const f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
+  const ok = d && d.state === "ok";
+  const fix = ok ? d.items.filter((i) => i.status === "miss").map((i) => ({ i, g: kpiGap(i) })).filter((z) => z.g).sort((a, b) => b.g.rel - a.g.rel).slice(0, 3) : [];
+  const notScored = ok ? d.scopes.reduce((t, sc) => t + (sc.missing || []).length, 0) : 0;
+  const tr = ok ? d.trend : [];
+  const sx = (k) => (tr.length > 1 ? 14 + (k * 272) / (tr.length - 1) : 150), sy = (p) => 18 + (1 - (p == null ? 0 : p) / 100) * 46;
+  const bandWord = { ok: "GREEN", warn: "AMBER", miss: "RED" };
   return (
-    <div className="stack" style={{ gap: 14 }}>
-      <div className="card rh-bar" style={{ display: "flex", gap: 18, alignItems: "flex-end", flexWrap: "wrap" }}>
-        <div style={{ minWidth: 260 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} /></div>
-        <Field label="Period"><div className="row" style={{ gap: 8, flexWrap: "wrap" }}><div className="seg2">{PSLA_KIND.map(([k, l]) => <button key={k} type="button" className={kind === k ? "on" : ""} onClick={() => setKind(k)}>{l}</button>)}</div>
-          {cur && <span className="crx-per"><button type="button" disabled={idx < 0 || idx >= periods.length - 1} onClick={() => step(1)} title="The period before">‹</button><b>{cur.label}</b><button type="button" disabled={idx <= 0} onClick={() => step(-1)} title="The period after">›</button></span>}
-          {d && d.prev && <span className="small muted">compared with {d.prev.label}</span>}</div></Field>
+    <div className="stack sc2" style={{ gap: 12 }}>
+      <div className="card sc-bar">
+        <div style={{ minWidth: 250 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} /></div>
+        <div className="seg2">{PSLA_KIND.map(([k, l]) => <button key={k} type="button" className={kind === k ? "on" : ""} onClick={() => setKind(k)}>{l}</button>)}</div>
+        {cur && <span className="crx-per"><button type="button" disabled={idx < 0 || idx >= periods.length - 1} onClick={() => step(1)} title="The period before">‹</button><b>{cur.label}</b><button type="button" disabled={idx <= 0} onClick={() => step(-1)} title="The period after">›</button></span>}
         <span style={{ flex: 1 }} />
-        <button className="btn primary" onClick={openInputs} title="Drishti's page: upload the period's reports or type a value">Upload this period's reports →</button></div>
+        {x && <><span className="sc-chip">Billable FTE <b>{x.wfm ? f1(x.wfm.billable) : "–"}</b></span><span className="sc-chip">Assign FTE <b>{x.wfm ? f1(x.wfm.assigned_fte) : "–"}</b></span>
+          <span className="sc-chip">Escalations <b className={x.esc && x.esc.n ? "red-ink" : ""}>{x.esc ? x.esc.n : "–"}</b></span></>}
+        {ok && <button className="btn sm" onClick={csv} disabled={!d.items.length}>⬇ CSV</button>}
+        <button className="btn sm primary" onClick={openInputs} title="Drishti's page: upload the period's reports or type a value">Reports →</button>
+      </div>
       {!clientId ? <div className="card"><Empty>Pick a client to see its scorecard.</Empty></div> : q.error ? <ErrorBox error={q.error} /> : !d ? <div className="card"><Spinner label="Reading Drishti's scorecard…" /></div>
         : d.state === "off" ? <div className="alert warn">Drishti's scorecard is not connected yet: the Worker secret DRISHTI_TOKEN_SECRET is not set (README › Drishti opens signed in). Until then, use <b>Inputs (Drishti)</b>.</div>
         : d.state === "error" ? <div className="alert err">Drishti did not answer: {d.error} Brahmastra tries again in a few minutes.</div>
         : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it in <b>Inputs (Drishti)</b>.</div>
         : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports in <b>Inputs (Drishti)</b> and it shows here.</div>
         : <>
-          <div className={"c3-health psla-head " + (d.band === "ok" ? "" : d.band === "warn" ? "amber" : "red")}>
-            <div className={"psla-dial " + (d.band || "none")} style={{ "--pct": (d.score || 0) + "%" }}><div><b>{d.score == null ? "–" : d.score + "%"}</b><small>{d.band ? DR_BAND[d.band][2].toUpperCase() : "NO SCORE"}</small></div></div>
-            <div style={{ flex: 1, minWidth: 260 }}><div style={{ fontSize: 17, fontWeight: 800 }}>{first} · {cur.label} <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("client", { client_id: clientId })}>Open Client 360 ›</button></div>
-              <div className="small" style={{ marginTop: 4 }}>{fmtInt(d.scored)} scored: <b className="teal-ink">{d.counts.ok} green</b> · <b className="amber-ink">{d.counts.warn} amber</b> · <b className="red-ink">{d.counts.miss} red</b>
-                {d.kpi_pct != null ? <> &nbsp;·&nbsp; KPI {d.kpi_pct}%</> : null}{d.sla_pct != null ? <> · SLA tasks {d.sla_pct}%</> : null}
-                {d.delta != null && d.prev ? <> &nbsp;·&nbsp; <b className={d.delta >= 0 ? "teal-ink" : "red-ink"}>{d.delta >= 0 ? "▲" : "▼"} {Math.abs(d.delta)} pts</b> from {d.prev.label} ({d.prev.pct}%)</> : null}</div>
-              {d.drags.length > 0 && <ul style={{ marginTop: 8 }}>{d.drags.slice(0, 3).map((x) => <li key={x.scope_key + x.key} className={x.status === "miss" ? "red" : ""}>{x.name} {x.shown}{x.target ? ", standard " + x.target : ""}</li>)}</ul>}</div>
-            <div style={{ textAlign: "right" }}>{monthOf(cur) && d.score != null && <div className="psla-tick">✓ Month-end: SLA scored {d.score}%, ticked by itself</div>}
-              <div className="tiny muted" style={{ marginTop: 6 }}>Maintained in Drishti by {d.drishti.owner || "the team"}{cur.created_by ? " · period saved by " + cur.created_by : ""}{cur.created_at ? " · " + fmtDate(cur.created_at.slice(0, 10)) : ""}</div></div>
+          <div className={"card sc-hero glow " + (d.band || "none")}>
+            <div className="sc-big" style={{ background: `conic-gradient(${d.band ? KPI_COL[d.band] : "#C9D1D9"} 0 ${Math.max(2, d.score || 0)}%, var(--soft) ${Math.max(2, d.score || 0)}% 100%)` }}>
+              <div><b className={d.band ? KPI_INK[d.band] : ""}>{d.score == null ? "–" : d.score + "%"}</b><small className={d.band ? KPI_INK[d.band] : ""}>{d.band ? bandWord[d.band] : "NO SCORE"}</small></div></div>
+            <div style={{ minWidth: 0 }}>
+              <div className="sc-name">{first} <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("client", { client_id: clientId })}>Client 360 ›</button></div>
+              <div className="small muted" style={{ marginTop: 3 }}>{cur.label}{d.delta != null && d.prev ? <> · <b className={d.delta >= 0 ? "teal-ink" : "red-ink"}>{d.delta >= 0 ? "▲" : "▼"} {Math.abs(d.delta)} pts</b> vs {d.prev.label}</> : null}
+                {monthOf(cur) && d.score != null ? " · month-end ticked by itself" : ""} · in Drishti by {d.drishti.owner || "the team"}</div>
+              <div className="sc-stats"><span className="ok"><b>{d.counts.ok}</b>on target</span><span className="warn"><b>{d.counts.warn}</b>close</span><span className="miss"><b>{d.counts.miss}</b>missed</span><span className="none"><b>{notScored}</b>not scored</span></div>
+            </div>
+            <div className="sc-trend"><div className="sc-lbl">Score · {tr.length} {cur.kind === "week" ? "weeks" : cur.kind === "month" ? "months" : "periods"}</div>
+              {tr.length > 1 ? <svg width="300" height="80" viewBox="0 0 300 80"><rect x="0" y="6" width="300" height={sy(90) - 6} fill="var(--sc-zone)" rx="3" /><text x="296" y="15" textAnchor="end" fontSize="9" className="teal-ink" fill="currentColor">green 90%+</text>
+                <polyline fill="none" stroke="var(--slate)" strokeWidth="2" strokeLinejoin="round" points={tr.map((p, k) => sx(k) + "," + sy(p.pct)).join(" ")} />
+                {tr.map((p, k) => <g key={p.id}><circle cx={sx(k)} cy={sy(p.pct)} r={k === tr.length - 1 ? 4.5 : 2.5} fill={k === tr.length - 1 ? (d.band ? KPI_COL[d.band] : "var(--slate)") : "var(--slate)"} /><title>{p.label}: {p.pct == null ? "–" : p.pct + "%"}</title>
+                  <text x={sx(k)} y="78" textAnchor="middle" fontSize="10" fill="currentColor" className={k === tr.length - 1 ? "" : "muted"} fontWeight={k === tr.length - 1 ? 700 : 400}>{String(p.label).slice(0, 3)}</text></g>)}</svg>
+                : <div className="small muted" style={{ marginTop: 8 }}>The trend shows from the second period on.</div>}</div>
           </div>
-          {d.scopes.length > 0 && <div className="psla-scopes">{d.scopes.map((sc) => <div key={sc.key} className={"psla-sc " + (sc.band || "none")}><div className="l">{sc.name}</div><div className={"v " + (sc.band ? DR_BAND[sc.band][0] : "muted")}>{sc.pct == null ? "–" : sc.pct + "%"}</div>
-            <div className="s">{sc.scored ? `${sc.ok} of ${sc.scored} on target` : "nothing scored"}{sc.items.filter((x) => x.status === "miss" || x.status === "warn").length ? " · " + sc.items.filter((x) => x.status === "miss" || x.status === "warn").map((x) => x.name.toLowerCase()).slice(0, 2).join(", ") : ""}</div>
-            <div className="psla-dots">{sc.items.slice(0, 4).map((x) => <span key={x.name}>{drDot(x.status === "info" ? null : x.status)}{x.name} {x.shown}</span>)}</div></div>)}</div>}
-          {extras}
-          <div className="c3-g2">
-            <div className="card"><div className="cv-sec">What pulls it down</div>{d.drags.length ? d.drags.map((it) => <Row key={it.scope_key + it.key} it={it} />) : <Empty>Nothing: every KPI scored is green.</Empty>}</div>
-            <div className="card"><div className="cv-sec">Strengths</div>{d.strengths.length ? d.strengths.slice(0, 8).map((it) => <Row key={it.scope_key + it.key} it={it} />) : <Empty>Nothing green yet.</Empty>}</div>
-          </div>
-          <div className="c3-g2" style={{ gridTemplateColumns: "1fr 1.2fr" }}>
-            <div className="card"><div className="cv-sec">Score by {cur.kind === "week" ? "week" : cur.kind === "month" ? "month" : "period"}</div>
-              {d.trend.length > 1 ? <div className="psla-trend">{d.trend.map((x) => <div key={x.id} className="b"><b>{x.pct == null ? "–" : x.pct + "%"}</b><i className={x.pct == null ? "none" : x.pct >= 90 ? "ok" : x.pct >= 80 ? "warn" : "miss"} style={{ height: Math.max(6, (x.pct || 0) - 55) + "%" }} /><span>{x.label.replace(/\s+\d{4}$/, "")}</span></div>)}</div> : <Empty>One period so far; the trend fills in as more are scored.</Empty>}
-              <div className="tiny muted" style={{ marginTop: 8 }}>Green 90% and above · Amber 80 to 89% · Red under 80%. The score is the green share of everything scored.</div></div>
-            <div className="card"><div className="cv-sec">Where the figures come from</div>
-              {d.sources.map((x) => <div key={x.from} className="c3-line"><span>{x.from}</span><span className="small muted" style={{ textAlign: "right" }}>{x.metrics.join(", ")}</span></div>)}
-              {cur.reports && cur.reports.length > 0 && <div className="tiny muted" style={{ marginTop: 8 }}>Files in Drishti for this period: {cur.reports.map((x) => x.file || x.key).join(", ")}.</div>}
-              <div className="tiny muted" style={{ marginTop: 6 }}>Figures are Drishti's and are read by Brahmastra; nothing in Drishti changes. Upload the period's reports or type a value in <b>Inputs (Drishti)</b>.</div></div>
-          </div>
-          <div className="card tight"><div className="row between" style={{ padding: "12px 14px 0" }}><div className="cv-sec" style={{ margin: 0 }}>Every KPI · {cur.label}</div><button className="btn sm" onClick={csv} disabled={!d.items.length}>⬇ CSV</button></div>
-            <div className="table-wrap" style={{ marginTop: 8 }}><table className="t psla-kpis"><thead><tr><th>Scope</th><th>KPI</th><th className="num">Value</th><th>Standard</th><th>Formula</th><th>Status</th><th>From</th><th>Comment</th></tr></thead>
-              <tbody>{d.items.map((it) => <tr key={it.scope_key + it.key}><td className="small muted">{it.scope}</td><td><b>{it.name}</b></td><td className="num mono">{it.shown || "–"}</td><td className="small muted" title={it.std}>{it.target || "–"}</td><td className="small" style={{ maxWidth: 260 }}>{it.formula}</td><td>{stBadge(it.status)}</td><td className="small muted">{it.source}</td><td className="small">{it.reason}</td></tr>)}</tbody></table></div></div>
+          {fix.length > 0 && <div className="card sc-fix glow">
+            <div><div className="sc-lbl red-ink">Fix first</div><div className="tiny muted">furthest from standard</div></div>
+            {fix.map(({ i, g }) => { const dl = kpiDelta(i); return <button type="button" key={i.scope_key + i.key} className="sc-fx" onClick={() => setOpen(i)}><b className="red-ink">{i.shown}</b><span><span className="b">{i.name}</span><span className="tiny muted">{i.scope} · {i.target} · {g.txt}{dl ? <> · <span className={dl.good === true ? "teal-ink" : dl.good === false ? "red-ink" : ""}>{dl.txt}</span></> : null}</span></span></button>; })}
+          </div>}
+          <div className="sc-grid">{d.scopes.map((sc) => {
+            const items = d.items.filter((i) => i.scope_key === sc.key);
+            return (
+              <div key={sc.key} className={"card sc-card glow " + (sc.band || "")}>
+                <div className="sc-h"><span className="row" style={{ gap: 8 }}><Ring pct={sc.pct} band={sc.band} /><b>{sc.name}</b></span><span className={"badge " + (sc.band === "ok" ? "green" : sc.band === "warn" ? "amber" : sc.band ? "red" : "gray")}>{sc.ok} of {sc.scored} on target</span></div>
+                {items.map((i) => { const bar = kpiBar(i), dl = kpiDelta(i); return (
+                  <button type="button" key={i.key} className="sc-kp" onClick={() => setOpen(i)}>
+                    <span className="sc-dot" style={{ background: KPI_COL[i.status] || "#C9D1D9" }} /><span className="sc-kn">{i.name}</span><span className={"sc-kv " + (KPI_INK[i.status] || "")}>{i.shown || "–"}</span>
+                    <span className="sc-kb"><span className="sc-std">{i.target || "–"}</span>
+                      {bar ? <span className="sc-track"><i className="z" style={{ left: bar.z0 + "%", width: Math.max(0, bar.z1 - bar.z0) + "%" }} /><i className="m" style={{ left: bar.pos + "%", background: KPI_COL[i.status] }} /></span>
+                        : <span className="sc-note">{i.kind === "SLA" ? i.source : (i.reason || i.source)}</span>}
+                      <span className={"sc-dl " + (dl && dl.good === true ? "teal-ink" : dl && dl.good === false ? "red-ink" : "muted")}>{dl ? dl.txt : ""}</span></span>
+                  </button>); })}
+                {(sc.missing || []).length > 0 && !showNs[sc.key] && <button type="button" className="sc-kp ns sc-more" onClick={() => setShowNs({ ...showNs, [sc.key]: true })}><span className="sc-dot" style={{ background: "#C9D1D9" }} /><span className="sc-kn">{sc.missing.length} not scored yet</span><span className="sc-kv tiny teal-ink">show ▾</span></button>}
+                {showNs[sc.key] && (sc.missing || []).map((m) => <div key={m.key} className="sc-kp ns"><span className="sc-dot" style={{ background: "#C9D1D9" }} /><span className="sc-kn">{m.name}</span><span className="sc-kv muted">–</span>
+                  <span className="sc-kb"><span className="sc-note">Not scored · {m.typed ? "type it in Drishti" : m.from + " missing"} · <button type="button" className="btn link tiny" style={{ padding: 0 }} onClick={openInputs}>add it</button></span></span></div>)}
+                {!items.length && !(sc.missing || []).length && <div className="small muted" style={{ padding: "12px 16px" }}>Nothing scored for this scope yet.</div>}
+              </div>);
+          })}</div>
+          <div className="sc-legend"><span><i className="z" />target zone</span><span><i style={{ background: "var(--sc-g)" }} />on target</span><span><i style={{ background: "var(--sc-a)" }} />close</span><span><i style={{ background: "var(--sc-r)" }} />missed</span><span>▲▼ change from {d.prev ? d.prev.label : "the period before"}</span><span style={{ marginLeft: "auto" }}>Click any KPI for its formula, source report and comment</span></div>
         </>}
-      {d && d.state !== "ok" && extras}
+      {clientId && <SlaExtras clientId={clientId} from={ok && cur ? cur.from : ""} to={ok && cur ? cur.to : ""} label={ok && cur ? cur.label : ""} go={go} escOnly />}
+      {open && <Modal title={open.name} sub={open.scope + " · " + (cur ? cur.label : "")} onClose={() => setOpen(null)} narrow>
+        <div className="stack" style={{ gap: 10 }}>
+          <div><b className={KPI_INK[open.status] || ""} style={{ fontSize: 24 }}>{open.shown || "–"}</b> <span className="muted">· standard {open.target || "–"} · {{ ok: "on target", warn: "close", miss: "missed" }[open.status] || "info"}{(() => { const dl = kpiDelta(open); return dl ? <> · <span className={dl.good === true ? "teal-ink" : dl.good === false ? "red-ink" : ""}>{dl.txt}</span> vs {d.prev ? d.prev.label : "before"}</> : null; })()}</span></div>
+          {(open.history || []).length > 1 && (() => { const hs = open.history, vals = hs.map((h) => Number(h.value)).filter((v) => isFinite(v)), mx = Math.max(...vals, 0) || 1; return (
+            <div><div className="sc-lbl">Last {hs.length} {cur && cur.kind === "week" ? "weeks" : "months"}</div><div className="sc-hist">{hs.map((h, k) => <div key={k} title={h.label + ": " + (h.shown || "–")}><span className="tiny">{h.shown || "–"}</span><i style={{ height: isFinite(Number(h.value)) ? 6 + (Number(h.value) / mx) * 46 : 3, background: h.status ? KPI_COL[h.status] : "#C9D1D9", opacity: k === hs.length - 1 ? 1 : 0.55 }} /><span className={"tiny " + (k === hs.length - 1 ? "b" : "muted")}>{String(h.label).slice(0, 3)}</span></div>)}</div></div>); })()}
+          <div><div className="sc-lbl">Formula</div><div className="cell small">{open.formula || "–"}</div></div>
+          <div><div className="sc-lbl">From</div><div className="cell small">{open.source}</div></div>
+          {open.reason && <div><div className="sc-lbl">Comment</div><div className="cell small">{open.reason}</div></div>}
+          {open.std && <div className="tiny muted">Drishti's standard: {open.std}</div>}
+        </div>
+      </Modal>}
     </div>
   );
 }
 /* Beside the scorecard: the client's people in Shastra WFM (Billable vs Assigned) and its escalations in the period, SLA threshold 0. */
-function SlaExtras({ clientId, from, to, label, go }) {
+function SlaExtras({ clientId, from, to, label, go, escOnly }) {
   const q = useRpc("sla.extras", { client_id: clientId, from: from || undefined, to: to || undefined, today: todayISO() }, [clientId, from, to]);
   const x = q.data; if (!x) return q.error ? <ErrorBox error={q.error} /> : null;
   const w = x.wfm, e = x.esc, f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
   const util = w && w.billable ? Math.round((w.assigned_fte / w.billable) * 100) : null;
   return (
     <>
-      <div className="card"><div className="row between" style={{ alignItems: "flex-start" }}><div className="cv-sec" style={{ margin: 0 }}>Resources · Shastra WFM</div>
+      {!escOnly && <div className="card"><div className="row between" style={{ alignItems: "flex-start" }}><div className="cv-sec" style={{ margin: 0 }}>Resources · Shastra WFM</div>
         <span className="tiny muted">{w ? (w.projects.length > 1 ? "projects " : "project ") + w.projects.join(", ") + (w.today ? " · as of " + fmtMDY(w.today) : "") : ""}</span></div>
         {w ? <div className="grid g2" style={{ marginTop: 8, maxWidth: 560 }}>
           <Kpi label="Billable FTE" value={f1(w.billable)} />
           <Kpi label="Assign FTE" value={f1(w.assigned_fte)} tone={util != null && util < 100 ? "warn" : ""} />
         </div> : <div className="small muted" style={{ marginTop: 6 }}>{x.wfm_ok ? "No Shastra project is matched to this client yet: match its roster project in Clients & locations." : "Billable and Assigned come from Shastra's Workforce Management once dev/shastra-wfm-feed.sql is run in Shastra (README › Purview Shastra)."}</div>}
-      </div>
+      </div>}
       <div className="card"><div className="row between" style={{ alignItems: "flex-start" }}>
         <div><div className="cv-sec" style={{ margin: 0 }}>Escalations · {label || x.month}</div><div className="tiny muted">From the Escalation tracker, by received date. SLA threshold 0: none is green, one or more is red, for each department.</div></div>
         <button className="btn sm" onClick={() => go("escalations", { client_id: clientId })}>Open the Escalation tracker</button></div>

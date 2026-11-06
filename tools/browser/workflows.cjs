@@ -256,24 +256,27 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("Change data or dates goes back to the start", (await p.locator(".crx-setup").count()) === 1);
   });
 
-  S("SLA tab: the scorecard in Client 360's style, the Monday digest");
+  S("SLA tab: the scorecard (one line per KPI, moving border), the Monday digest");
   await step("scorecard", async () => {
     await as("tina"); await open("#/sla"); await t(3000);
     await p.locator('.ws-tabs button:has-text("SLA scorecard")').click(); await t(3500);
     const txt = await p.innerText(".main");
-    ok("the only client opens by itself: the score dial, the band and the counts", (await p.locator(".psla-dial").count()) === 1 && /green/.test(txt) && /red/.test(txt) && /October 2026/.test(txt), txt.slice(0, 300));
-    ok("the scopes, what pulls it down and the strengths", (await p.locator(".psla-sc").count()) >= 3 && /What pulls it down/i.test(txt) && /AR Aging/.test(txt) && /Strengths/i.test(txt), { n: await p.locator(".psla-sc").count() });
-    ok("every KPI with its formula", /Formula/i.test(txt) && /Balance in >90-day buckets/.test(txt) && (await p.locator(".psla-kpis tbody tr").count()) >= 10, { n: await p.locator(".psla-kpis tbody tr").count() });
-    ok("the score by month and where the figures come from", /Score by month/i.test(txt) && /AR Inventory report/.test(txt));
+    ok("the only client opens by itself: the score dial, the band and the counts", (await p.locator(".sc-big").count()) === 1 && /on target/.test(txt) && /missed/.test(txt) && /October 2026/.test(txt), txt.slice(0, 300));
+    ok("one card per scope, one line per KPI with its target zone, cards with the moving border", (await p.locator(".sc-card").count()) >= 3 && (await p.locator(".sc-kp .sc-track").count()) >= 5 && /AR Aging/.test(txt) && (await p.locator(".sc-card.glow").count()) >= 3, { n: await p.locator(".sc-card").count() });
+    await p.locator('.sc-kp:has-text("AR Aging")').first().click(); await t(700);
+    const mt = await p.innerText(".overlay");
+    ok("clicking a KPI shows its formula and the report it comes from", /Formula/i.test(mt) && /Balance in >90-day buckets/.test(mt) && /AR Inventory report/.test(mt), mt.slice(0, 200));
+    await p.locator('.overlay button:has-text("Close")').first().click(); await t(400);
+    ok("the score trend", /Score ·/i.test(txt));
     const c = await dl(() => p.locator('.main button:has-text("CSV")').first().click());
     ok("the KPI CSV carries the formula column", /Scope,KPI,Value,Standard,Formula,Status,From,Comment/.test(fs.readFileSync(c, "utf8").split("\n")[0]));
-    await p.locator('.main button:has-text("Upload this period")').click(); await t(1500);
-    ok("Upload this period's reports goes back to Drishti's own page, the scorecard tab off", !/on/.test(await p.locator('.ws-tabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".rh-frame-body:not([hidden])").count()) === 1 && !(await p.locator(".psla-dial").count()));
+    await p.locator('.main .sc-bar button:has-text("Reports")').click(); await t(1500);
+    ok("Reports goes back to Drishti's own page, the scorecard tab off", !/on/.test(await p.locator('.ws-tabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".rh-frame-body:not([hidden])").count()) === 1 && !(await p.locator(".sc-big").count()));
     await p.locator('.ws-tabs button:has-text("Monday digest")').click(); await t(2500);
     ok("Monday digest is a tab of the SLA tab", /Monday digest email/.test(await p.innerText(".main")) && (await p.locator(".rh-frame-body:not([hidden])").count()) === 0);
     await open("#/dashboard"); await t(2000); await p.locator('.dash-subtabs button:has-text("Inventory status")').click(); await t(3000);
     await p.locator('.main button:has-text("scorecard ›")').first().click(); await t(2500);
-    ok("scorecard › on an Inventory status row opens that client's scorecard on the SLA tab", /#\/sla/.test(p.url()) && /on/.test(await p.locator('.ws-tabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".psla-dial").count()) === 1, { url: p.url() });
+    ok("scorecard › on an Inventory status row opens that client's scorecard on the SLA tab", /#\/sla/.test(p.url()) && /on/.test(await p.locator('.ws-tabs button:has-text("SLA scorecard")').getAttribute("class")) && (await p.locator(".sc-big").count()) === 1, { url: p.url() });
   });
 
   S("Needs attention: review an escalation");
