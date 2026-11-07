@@ -1673,7 +1673,7 @@ function DeskDashboard({ ctx, desk, go }) {
   return (
     <div className="stack">
       <div className="row between top">
-        <div><h1>{label} dashboard</h1><div className="sub">What billers and AR team leads sent to {label}, what was {verb}, and how much within the {d ? d.tat_hours : 24}-hour TAT.</div></div>
+        <div><h1>{label} dashboard</h1><div className="sub">What billers and AR team leads sent to {label}, what was {verb}, and how much within {d && d.tat_varies ? "each client's" : "the " + (d ? d.tat_hours : 24) + "-hour"} TAT.</div></div>
         <div className="row" style={{ alignItems: "flex-end" }}><div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div><DateRange value={dr} onChange={setDr} /></div>
       </div>
       <ErrorBox error={q.error} />
@@ -5418,7 +5418,7 @@ function groupByLead(rows, grouped) {
   return [...g.values()].sort((a, b) => (a.key ? 0 : 1) - (b.key ? 0 : 1) || a.name.localeCompare(b.name));
 }
 const SH_TONE = { present: "green", late: "amber", break: "amber", out: "gray", notin: "gray", missing: "red", absent: "red", leave: "blue", offclock: "gray", none: "gray" };
-const SH_OFF_NOTE = { off: "", pending: "Shastra status shows in a moment.", not_set_up: "Shastra status shows once the live attendance feed is set up in Purview Shastra (dev/shastra-live-feed.sql).", error: "Purview Shastra did not answer just now; Shastra status will show again by itself." };
+const SH_OFF_NOTE = { off: "", pending: "Shastra status shows in a moment.", not_set_up: "Shastra status shows once the live attendance feed is set up in Purview Shastra (dev/shastra-live-feed.sql).", error: "Purview Shastra did not answer just now; Shastra status will show again by itself.", stale: "Purview Shastra has not answered for over 10 minutes, so its status is not shown; it comes back by itself." };
 const shCell = (r) => !r.shastra ? <span className="muted">–</span>
   : <><span className={"badge " + (SH_TONE[r.shastra.state] || "gray")}>{r.shastra.label}</span>{r.shastra.sub ? <div className={"tiny " + (r.shastra.state === "missing" ? "red-ink b" : "muted")}>{r.shastra.sub}</div> : null}</>;
 function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
@@ -5670,7 +5670,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
         {(me.is_admin || me.access_all) && <button className="btn" style={{ marginLeft: "auto" }} onClick={() => go("audit")}>Audit trail</button>}</div>}
       {!d ? <Spinner label="Loading…" /> : <>
         {!fixed && <><div className="grid dash-k6">
-          <Kpi tone="accent" label="Workable AR" value={fmtMoney(t.ar)} sub={<>{plural(t.clients, "client")} · {t.at_risk ? <span className="red-ink b">{t.at_risk} at risk</span> : "none at risk"}{t.ar_month_ago ? <> · {chg(t.ar, t.ar_month_ago, true) || "no change"} vs a month ago</> : null}</>} />
+          <Kpi tone="accent" label="Workable AR" value={fmtMoney(t.ar)} sub={<>{plural(t.clients, "client")} · {t.at_risk ? <span className="red-ink b">{t.at_risk} at risk</span> : "none at risk"}{t.ar_month_ago ? <> · {chg(t.ar_comparable != null ? t.ar_comparable : t.ar, t.ar_month_ago, true) || "no change"} vs a month ago</> : null}</>} />
           <Kpi label="Unassigned" value={fmtInt(t.open_n)} sub={fmtMoney(t.open_bal) + " waiting for allocation"} />
           <Kpi label="Over 90 days" value={<span className={t.over90_pct > d.target ? "red-ink" : "teal-ink"}>{t.over90_pct}%</span>} sub={"target ≤ " + d.target + "%"} />
           <Kpi label={"Collected · " + rangeText(dr).toLowerCase()} value={<span className="teal-ink">{fmtMoney(t.collected_month)}</span>} sub="from payment posting" />

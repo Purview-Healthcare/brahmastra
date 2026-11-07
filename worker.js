@@ -229,6 +229,9 @@ const ATTACH_PART_CHARS = 512 * 1024;
    graph   = Microsoft 365 via the app registration: MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET (Mail.Send application permission), MS_SENDER (mailbox to send from).
    webhook = POST {secret, to, subject, text, html} to EMAIL_WEBHOOK_URL (for a Google Apps Script web app like Gurukul's).
    In demo mode (no provider) the code is shown on screen instead. */
+/* Every call to an outside server (Shastra, Drishti, Graph, email) gives up after a while, so a slow server cannot hold up a page or the scheduled job. */
+const FETCH_TIMEOUT_MS = 20000;
+const fetchT = (url, init = {}, ms = FETCH_TIMEOUT_MS) => fetch(url, { ...init, ...(!init.signal && globalThis.AbortSignal && globalThis.AbortSignal.timeout ? { signal: globalThis.AbortSignal.timeout(ms) } : {}) });
 function splitFrom(from) { const m = String(from || "").match(/^\s*(.*?)\s*<([^>]+)>\s*$/); return m ? { name: m[1].replace(/^"|"$/g, ""), email: m[2] } : { name: "Brahmastra", email: String(from || "").trim() }; }
 async function sendEmail(env, { to, subject, text, html, attachments }) {
   const att = Array.isArray(attachments) ? attachments : [];
@@ -237,26 +240,26 @@ async function sendEmail(env, { to, subject, text, html, attachments }) {
   const from = splitFrom(env.EMAIL_FROM || "Brahmastra <no-reply@purview-healthcare.com>");
   const fail = async (r, who) => { let t = ""; try { t = (await r.text()).slice(0, 300); } catch {} throw new ApiError(502, `${who} did not accept the email (${r.status}${t ? ": " + t : ""}).`); };
   if (provider === "resend") {
-    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ from: `${from.name} <${from.email}>`, to: [to], subject, text, html, ...(att.length ? { attachments: att.map((a) => ({ filename: a.name, content: a.b64 })) } : {}) }) });
+    const r = await fetchT("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ from: `${from.name} <${from.email}>`, to: [to], subject, text, html, ...(att.length ? { attachments: att.map((a) => ({ filename: a.name, content: a.b64 })) } : {}) }) });
     if (!r.ok) await fail(r, "Resend");
   } else if (provider === "brevo") {
-    const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ sender: { name: from.name, email: from.email }, to: [{ email: to }], subject, textContent: text, htmlContent: html, ...(att.length ? { attachment: att.map((a) => ({ name: a.name, content: a.b64 })) } : {}) }) });
+    const r = await fetchT("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ sender: { name: from.name, email: from.email }, to: [{ email: to }], subject, textContent: text, htmlContent: html, ...(att.length ? { attachment: att.map((a) => ({ name: a.name, content: a.b64 })) } : {}) }) });
     if (!r.ok) await fail(r, "Brevo");
   } else if (provider === "sendgrid") {
-    const r = await fetch("https://api.sendgrid.com/v3/mail/send", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ personalizations: [{ to: [{ email: to }] }], from: { email: from.email, name: from.name }, subject, content: [{ type: "text/plain", value: text }, { type: "text/html", value: html }], ...(att.length ? { attachments: att.map((a) => ({ content: a.b64, filename: a.name, type: a.type, disposition: "attachment" })) } : {}) }) });
+    const r = await fetchT("https://api.sendgrid.com/v3/mail/send", { method: "POST", headers: { Authorization: "Bearer " + env.EMAIL_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ personalizations: [{ to: [{ email: to }] }], from: { email: from.email, name: from.name }, subject, content: [{ type: "text/plain", value: text }, { type: "text/html", value: html }], ...(att.length ? { attachments: att.map((a) => ({ content: a.b64, filename: a.name, type: a.type, disposition: "attachment" })) } : {}) }) });
     if (!r.ok) await fail(r, "SendGrid");
   } else if (provider === "graph") {
-    const tr = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID || "")}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    const tr = await fetchT(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID || "")}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: env.MS_CLIENT_ID || "", client_secret: env.MS_CLIENT_SECRET || "", scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials" }) });
     if (!tr.ok) await fail(tr, "Microsoft sign-in (token)");
     const tok = (await tr.json()).access_token;
     const sender = env.MS_SENDER || from.email;
-    const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, { method: "POST", headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
+    const r = await fetchT(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, { method: "POST", headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
       body: JSON.stringify({ message: { subject, body: { contentType: "HTML", content: html }, toRecipients: [{ emailAddress: { address: to } }],
         ...(att.length ? { attachments: att.map((a) => ({ "@odata.type": "#microsoft.graph.fileAttachment", name: a.name, contentType: a.type, contentBytes: a.b64 })) } : {}) }, saveToSentItems: false }) });
     if (!r.ok) await fail(r, "Microsoft Graph");
   } else if (provider === "webhook") {
-    const r = await fetch(env.EMAIL_WEBHOOK_URL || "", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret: env.EMAIL_API_KEY || "", to, subject, text, html, ...(att.length ? { attachments: att } : {}) }) });
+    const r = await fetchT(env.EMAIL_WEBHOOK_URL || "", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret: env.EMAIL_API_KEY || "", to, subject, text, html, ...(att.length ? { attachments: att } : {}) }) });
     if (!r.ok) await fail(r, "The email webhook");
   } else throw new ApiError(503, "Unknown EMAIL_PROVIDER '" + provider + "'. Use resend, brevo, sendgrid, graph or webhook.");
 }
@@ -275,15 +278,20 @@ const IST_MIN = 330;
 const istDate = (ms) => new Date(ms + IST_MIN * 60000);
 const istISO = (ms) => istDate(ms).toISOString().slice(0, 10);
 const mdy = (iso) => { const [y, m, d] = iso.split("-"); return `${m}/${d}/${y}`; };
-/* Week ending Saturday; the range starts on the Sunday before, clamped to the 1st when the week crosses a month. */
+/* Week ending Saturday; the range starts on the Sunday before. A week that crosses a month is split at the month end:
+   a day in the earlier month ends its range (and week) on that month's last day, a day in the later month starts on the 1st. */
 function weekOf(ms) {
   const d = istDate(ms);
-  const we = new Date(d); we.setUTCDate(we.getUTCDate() + ((6 - we.getUTCDay()) % 7));
+  const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const we = new Date(day); we.setUTCDate(we.getUTCDate() + ((6 - we.getUTCDay()) % 7));
   const start = new Date(we); start.setUTCDate(start.getUTCDate() - 6);
-  const first = new Date(Date.UTC(we.getUTCFullYear(), we.getUTCMonth(), 1));
-  const from = start < first ? first : start;
+  let from = start, to = we;
+  if (start.getUTCMonth() !== we.getUTCMonth()) {
+    if (day.getUTCMonth() === we.getUTCMonth()) from = new Date(Date.UTC(we.getUTCFullYear(), we.getUTCMonth(), 1));
+    else to = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 0));
+  }
   const iso = (x) => x.toISOString().slice(0, 10);
-  return { range: mdy(iso(from)) + " - " + mdy(iso(we)), week: "WE-" + mdy(iso(we)) };
+  return { range: mdy(iso(from)) + " - " + mdy(iso(to)), week: "WE-" + mdy(iso(to)) };
 }
 function productionRow(c, by, extra) {
   const now = (extra && extra.ended_at) || Date.now();
@@ -302,13 +310,13 @@ function productionRow(c, by, extra) {
 function workbookLinkOf(v) { if (v == null) return null; const s = str(v, 1000).trim(); if (!s) return ""; if (!/^https:\/\//i.test(s)) throw bad("Paste the whole OneDrive link, starting with https://"); return s; }
 async function graphAppToken(env) {
   if (!env.MS_TENANT_ID || !env.MS_CLIENT_ID || !env.MS_CLIENT_SECRET) throw new ApiError(503, "Microsoft 365 is not set up on the server (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET).");
-  const tr = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID)}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  const tr = await fetchT(`https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID)}/oauth2/v2.0/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: env.MS_CLIENT_ID, client_secret: env.MS_CLIENT_SECRET, scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials" }) });
   if (!tr.ok) throw new ApiError(502, "Microsoft sign-in (token) did not accept (" + tr.status + ").");
   return (await tr.json()).access_token;
 }
 async function graphCall(tok, method, path, body) {
-  const r = await fetch("https://graph.microsoft.com/v1.0" + path, { method, headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" }, body: body == null ? undefined : JSON.stringify(body) });
+  const r = await fetchT("https://graph.microsoft.com/v1.0" + path, { method, headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" }, body: body == null ? undefined : JSON.stringify(body) });
   if (!r.ok) { let t = ""; try { t = (await r.text()).slice(0, 240); } catch {} throw new ApiError(502, `Microsoft Graph ${method} ${path.split("?")[0].slice(0, 80)} failed (${r.status}${t ? ": " + t : ""})`); }
   if (r.status === 204) return null;
   return r.json();
@@ -418,7 +426,7 @@ async function clientProductionFile(env, tok, clientId, ms, scope = "ar") {
   try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference"); }
   catch (e) {
     if (!/\(404/.test(String(e.message))) throw e;
-    const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
+    const r = await fetchT("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
       headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(PROD_TEMPLATE_B64) });
     if (r.ok) it = await r.json();
     else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference");
@@ -498,7 +506,7 @@ async function escalationFile(env, tok, clientId) {
   try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference,webUrl"); }
   catch (e) {
     if (!/\(404/.test(String(e.message))) throw e;
-    const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
+    const r = await fetchT("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
       headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(ESC_TEMPLATE_B64) });
     if (r.ok) it = await r.json();
     else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference,webUrl");
@@ -529,7 +537,7 @@ async function escalationSlaFiles(env, tok, clientId, months) {
       try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference"); }
       catch (e) {
         if (!/\(404/.test(String(e.message))) throw e;
-        const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
+        const r = await fetchT("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
           headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(ESC_TEMPLATE_B64) });
         if (r.ok) it = await r.json();
         else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference");
@@ -595,7 +603,7 @@ async function escalationReminders(env) {
 async function syncWfm(env) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
   let r = null, data = null;
-  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_wfm", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch (e) {}
+  try { r = await fetchT(base + "/rest/v1/rpc/brahmastra_wfm", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch (e) {}
   if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.projects)) {
     const prev = await getSetting(env, "wfm_projects", null);
     await setSetting(env, "wfm_projects", { ...(prev || {}), ok: false, tried_at: Date.now(), error: str((data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer"), 200) });
@@ -807,7 +815,7 @@ const drPeriodSort = (a, b) => String((b.range || {}).to || "").localeCompare(St
 const drKind = (p) => p.kind === "month" || p.kind === "week" || p.kind === "day" ? p.kind : "custom";
 async function drishtiCall(env, body) {
   const api = env.DRISHTI_API || DRISHTI_API_DEFAULT;
-  let r; try { r = await fetch(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
+  let r; try { r = await fetchT(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
   catch (e) { throw new ApiError(502, "Drishti's server did not answer. Try again in a minute."); }
   let j = null; try { j = await r.json(); } catch (e) {}
   if (!j) throw new ApiError(502, "Drishti's server sent an answer Brahmastra could not read.");
@@ -830,7 +838,8 @@ async function drishtiOverview(env) {
     } catch (e) { st = { ...st, fail_at: now, error: str((e && e.message) || "Drishti did not answer", 200) }; }
     await setSetting(env, "drishti_sync", st);
   }
-  return { state: st.at ? "ok" : "error", clients: st.clients || [], at: st.at || null, error: st.error || "" };
+  // stale: Drishti has failed since the last good read; the scorecards (monthly) are still shown, from `at`.
+  return { state: st.at ? "ok" : "error", stale: !!(st.at && st.fail_at && st.fail_at > st.at), clients: st.clients || [], at: st.at || null, error: st.error || "" };
 }
 /* Brahmastra's clients matched to Drishti's by name; each with the latest month (or latest) period scored, and the one before */
 function drSummary(ov, clients, today) {
@@ -995,7 +1004,8 @@ const mailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 const str = (v, max = 4000) => (v == null ? "" : String(v)).slice(0, max);
 const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
-const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : "");
+// A real calendar date only: "2026-02-30" or "2026-13-01" would roll over in Date and give NULL in julianday().
+const isoDate = (v) => { const s = String(v || ""); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ""; const t = Date.parse(s + "T00:00:00Z"); return isFinite(t) && new Date(t).toISOString().slice(0, 10) === s ? s : ""; };
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function addDays(iso, n) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -1175,7 +1185,7 @@ async function syncShastra(env, by) {
   if (!env.SHASTRA_FEED_KEY) throw new ApiError(503, "Purview Shastra is not connected yet. Add the Worker secret SHASTRA_FEED_KEY (see the README).");
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
   let r = null, data = null;
-  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_roster", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch {}
+  try { r = await fetchT(base + "/rest/v1/rpc/brahmastra_roster", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch {}
   if (!r || !r.ok || !data || data.ok === false) {
     const why = (data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer");
     await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error: str(why, 300) });
@@ -1189,7 +1199,7 @@ async function syncShastra(env, by) {
     await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error });
     throw new ApiError(502, error);
   }
-  const res = await importRoster(env, { name: "Purview Shastra (" + by + ")" }, { rows, file_name: "Purview Shastra", today: isoToday() });
+  const res = await importRoster(env, { name: "Purview Shastra (" + by + ")" }, { rows, file_name: "Purview Shastra", today: istISO(Date.now()) });
   const removed = await removeLeftovers(env);
   const sm = res.summary, now = Date.now();
   const log = (await getSetting(env, "shastra_log", [])) || [];
@@ -1213,7 +1223,7 @@ const FLOOR_FRESH_MS = 10 * 60000, SH_BREAK_ALLOW_MIN = 60;
 async function fetchFloor(env, from, to) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
   let r = null, data = null;
-  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_floor", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY, p_from: from, p_to: to }) }); data = await r.json(); } catch {}
+  try { r = await fetchT(base + "/rest/v1/rpc/brahmastra_floor", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY, p_from: from, p_to: to }) }); data = await r.json(); } catch {}
   if (r && (r.status === 404 || (data && data.code === "PGRST202"))) return { ok: false, state: "not_set_up", error: "The floor-time feed is not set up in Purview Shastra yet (dev/shastra-floor-feed.sql)." };
   if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.rows)) return { ok: false, state: "error", error: str((data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer"), 200) };
   return { ok: true, rows: data.rows };
@@ -1277,7 +1287,7 @@ const SH_OFF = new Set(["approved_leave", "sick_leave", "maternity_leave", "lwp"
 async function fetchLive(env) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
   let r = null, data = null;
-  try { r = await fetch(base + "/rest/v1/rpc/brahmastra_live", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json().catch(() => null); } catch (e) { r = null; }
+  try { r = await fetchT(base + "/rest/v1/rpc/brahmastra_live", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json().catch(() => null); } catch (e) { r = null; }
   if (r && (r.status === 404 || (data && data.code === "PGRST202"))) return { ok: false, state: "not_set_up", error: "The live attendance feed is not set up in Purview Shastra yet (dev/shastra-live-feed.sql)." };
   if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.rows)) return { ok: false, state: "error", error: str((data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer"), 200) };
   return { ok: true, rows: data.rows, day: isoDate(data.day) || "" };
@@ -1302,7 +1312,9 @@ async function shastraLive(env) {
       if (x) byUser.set(u.id, x);
     }
   }
-  return { state: st.at ? "ok" : st.state || "pending", error: st.error || "", at: st.at || null, day: st.day || istISO(Date.now() - 5 * 3600000), byUser };
+  // Shastra failing since the last good read, for over 10 minutes: those punches are old, so they are not shown as now.
+  const stale = !!(st.at && st.fail_at && st.fail_at > st.at && now - st.at > 5 * LIVE_FRESH_MS);
+  return { state: stale ? "stale" : st.at ? "ok" : st.state || "pending", error: st.error || "", at: st.at || null, day: st.day || istISO(Date.now() - 5 * 3600000), byUser };
 }
 const hhmmIST = (ms) => new Date(ms + IST_MIN * 60000).toISOString().slice(11, 16);
 const lateText = (ms) => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60); return (h ? h + " h " : "") + String(m % 60).padStart(h ? 2 : 1, "0") + " m"; };
@@ -1714,6 +1726,10 @@ async function snapshotClients(env) {
           FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id
     ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = excluded.ar_balance, ar_claims = excluded.ar_claims, over90_balance = excluded.over90_balance,
       over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, at = excluded.at`, day, now, today);
+  // A client whose last claims closed still gets today's row (nothing open; a client with no claims yet gets none), so an older snapshot is not read as today's.
+  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at)
+    SELECT id, ?, 0, 0, 0, 0, 0, ? FROM clients WHERE active = 1 AND id IN (SELECT client_id FROM claims) AND id NOT IN (SELECT client_id FROM claims WHERE state IN ${WORKABLE})
+    ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = 0, ar_claims = 0, over90_balance = 0, over90_claims = 0, over120_balance = 0, at = excluded.at`, day, now);
   await snapshotInventory(env, day, now);
 }
 /* The client report's month against month needs the inventory as it stood at each period end: kept here as cells (location,
@@ -1741,6 +1757,8 @@ const CR_CELL_COLS = `COALESCE(c.location_id, '') AS loc, c.dos, c.age_days, c.p
 async function snapshotInventory(env, day, now) {
   const rows = await all(env, `SELECT c.client_id, ${CR_CELL_COLS} FROM claims c WHERE c.state IN ${WORKABLE}`);
   const by = new Map(); for (const r of rows) { if (!by.has(r.client_id)) by.set(r.client_id, []); by.get(r.client_id).push(r); }
+  // Active clients with nothing workable get an empty day too.
+  for (const c of await all(env, "SELECT id FROM clients WHERE active = 1 AND id IN (SELECT client_id FROM claims)")) if (!by.has(c.id)) by.set(c.id, []);
   const stmts = [...by].map(([cid, rs]) => env.DB.prepare(`INSERT INTO inv_snapshots (client_id, day, cells_json, at) VALUES (?,?,?,?)
     ON CONFLICT (client_id, day) DO UPDATE SET cells_json = excluded.cells_json, at = excluded.at`).bind(cid, day, JSON.stringify(crCells(rs, day)), now));
   stmts.push(env.DB.prepare(`DELETE FROM inv_snapshots WHERE day < ? AND strftime('%d', day, '+1 day') <> '01' AND strftime('%w', day) <> '0'`).bind(addDays(day, -45)));
@@ -1757,7 +1775,7 @@ async function snapshotIfStale(env) {
 async function missedByClient(env, payload) {
   const now = Date.now(), since = now - 30 * 86400000;
   const t = isoDate(payload && payload.today), off = Math.round(num(payload && payload.tz_offset_min, 0));
-  const dayStart = t ? Date.parse(t + "T00:00:00Z") - off * 60000 : now - (now % 86400000);
+  const dayStart = t ? Date.parse(t + "T00:00:00Z") - off * 60000 : Date.parse(istISO(now) + "T00:00:00Z") - IST_MIN * 60000;
   const out = new Map(); const get = (id) => { if (!out.has(id)) out.set(id, { ar: 0, posting: 0, submission: 0 }); return out.get(id); };
   for (const r of await all(env, `SELECT client_id, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_at IS NOT NULL AND assigned_at < ? GROUP BY client_id`, dayStart)) get(r.client_id).ar = r.n;
   for (const r of await all(env, `SELECT client_id, CASE WHEN dept = 'posting' THEN 'posting' ELSE 'submission' END AS grp, COUNT(*) AS n FROM handoffs
@@ -1825,6 +1843,10 @@ async function signInBlock(env, u) {
   const extra = (await getSetting(env, "extra_emails", [])) || [];
   return extra.map(mailClean).includes(mailClean(u.email)) ? "" : "This email is not a Purview address. Ask your admin to allow it, or to set your Purview email in Shastra.";
 }
+
+/* Sign-in by name keeps the same email allow-list as sign-in by email. Someone with no email at all (a roster placeholder) is let
+   through: a code from their team lead is how they sign in. */
+async function nameSignInOk(env, u) { if (u.email_missing) return; const block = await signInBlock(env, u); if (block) throw new ApiError(403, block); }
 
 const andList = (xs) => (xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
 const namesOf = async (env, ids) => { const u = [...new Set(ids.filter(Boolean))]; return new Map(u.length ? (await all(env, `SELECT id, name FROM users WHERE id IN (${u.map(() => "?").join(",")})`, ...u)).map((r) => [r.id, r.name]) : []); };
@@ -2338,7 +2360,11 @@ const DESK_READ_OPS = /^claims\.(list|stats)$/;
 const respOnly = (user) => { if (user.role === "supervisor") return null; const ids = [...(user.resp_clients || [])]; if (!ids.length) throw denied("Supervisor access is needed for this."); return ids; };
 const SUPERVISOR_OPS = /^(escalations\.|coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
-const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent|review)|payers\.saveLimit|reports\.saveArInventory|raci\.save)/;
+const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent|review)|payers\.saveLimit|reports\.saveArInventory|raci\.save|team\.saveToday)/;
+// settings.get / settings.save: who reads and writes which keys (see the two ops).
+const SETTINGS_OPEN = ["onedrive_folder"], SETTINGS_LEAD = ["onedrive_folder", "digest_enabled"], SETTINGS_LEAD_SAVE = ["onedrive_folder"];
+const SETTINGS_ADMIN_OWN = ["extra_emails", "roster_meta", "feedback_to"];
+const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$)/;
 const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
 const OPS = {
@@ -2455,6 +2481,7 @@ const OPS = {
     const u = await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(payload.user_id, 60));
     if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
     if (!isHash(payload.passHash)) throw bad("Set a password.");
+    await nameSignInOk(env, u);
     const { purpose } = await checkOtp(env, u.email, payload.code);
     if (purpose !== "setup" && purpose !== "login") throw bad("That code is not valid here. Ask for a new one.");
     const salt = randomHex(16);
@@ -2472,6 +2499,7 @@ const OPS = {
     if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
     if (!isHash(payload.passHash)) throw bad("Set a password.");
     if (u.pass_hash) throw bad("You already have a password. Sign in with it, or use Forgot it? to reset it.");
+    await nameSignInOk(env, u);
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
     const r = await run(env, "UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0 WHERE id = ? AND pass_hash = ''", salt, hash, u.id);
@@ -2485,6 +2513,7 @@ const OPS = {
     if (!isHash(payload.passHash)) throw bad("Enter your password.");
     if (!u.pass_hash) throw new ApiError(401, "No password set here yet. Use First time here to create one.");
     if (!(await passwordOk(env, u, payload.passHash))) throw fail();
+    await nameSignInOk(env, u);
     return openSession(env, u, "password");
   },
   "auth.logout": async ({ env, token }) => { if (token) await run(env, "DELETE FROM sessions WHERE token = ?", token); return { ok: true }; },
@@ -3203,6 +3232,9 @@ const OPS = {
     const title = str(payload.title, 80).trim(), text = str(payload.text, 1500).trim();
     if (title.length < 3 || text.length < 8) throw bad("Give the template a short title and the text, a few words at least.");
     const id = payload.id ? str(payload.id, 60) : uuid();
+    // Changing a template that is already there needs edit access to the client it belongs to now, as deleting it does.
+    const ex = payload.id ? await one(env, "SELECT client_id FROM note_templates WHERE id = ?", id) : null;
+    if (ex && ex.client_id) editableOr(user, ex.client_id);
     await run(env, `INSERT INTO note_templates (id, client_id, title, text, by_id, by_name, at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT (id) DO UPDATE SET client_id = excluded.client_id, title = excluded.title, text = excluded.text, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, cid, title, text, user.id, user.name || "", Date.now());
     return { ok: true, id };
@@ -3418,13 +3450,13 @@ const OPS = {
     if (env.SHASTRA_FEED_KEY && sync && sync.ok === false) fresh.unshift({ tone: "red", text: `Roster sync from Purview Shastra failed: ${sync.error || "no answer"}` });
     else if (env.SHASTRA_FEED_KEY && sync && sync.at && now - sync.at > 3 * 3600000) fresh.unshift({ tone: "amber", text: `Roster last synced from Purview Shastra ${Math.round((now - sync.at) / 3600000)} hours ago` });
     const sum = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
-    const totAr = sum("ar"), totAgo = rows.reduce((t, r) => t + (r.ar_month_ago || 0), 0), totO90 = rows.reduce((t, r) => t + r.ar * r.over90_pct / 100, 0);
+    const totAr = sum("ar"), withAgo = rows.filter((r) => r.ar_month_ago != null), totAgo = withAgo.reduce((t, r) => t + r.ar_month_ago, 0), arComparable = withAgo.reduce((t, r) => t + (r.ar || 0), 0), totO90 = rows.reduce((t, r) => t + r.ar * r.over90_pct / 100, 0);
     const slas = rows.filter((r) => r.sla); const drRows = rows.filter((r) => r.drishti);
-    const drishti = { state: drOv.state, error: drOv.error || "", avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
+    const drishti = { state: drOv.state, stale: !!drOv.stale, error: drOv.error || "", avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
       bands: { ok: drRows.filter((r) => r.drishti.band === "ok").length, warn: drRows.filter((r) => r.drishti.band === "warn").length, miss: drRows.filter((r) => r.drishti.band === "miss").length },
       red: drRows.reduce((t, r) => t + r.drishti.counts.miss, 0), red_names: [...new Set(drRows.flatMap((r) => r.drishti.drags.filter((d) => d.status === "miss").map((d) => d.name)))].slice(0, 4), clients_red: drRows.filter((r) => r.drishti.counts.miss > 0).length };
     
-    return { rows, freshness: fresh, drishti, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, over90_pct: totAr ? Math.round(totO90 / totAr * 1000) / 10 : 0,
+    return { rows, freshness: fresh, drishti, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, ar_comparable: arComparable, over90_pct: totAr ? Math.round(totO90 / totAr * 1000) / 10 : 0,
       sla_avg: slas.length ? Math.round(slas.reduce((t, r) => t + r.sla.score, 0) / slas.length * 10) / 10 : null, collected_month: sum("collected_month"),
       open_bal: sum("open_bal"), open_n: sum("open_n"), tfl_soon: sum("tfl_soon"), tfl_soon_n: sum("tfl_soon_n"),
       waiting_bal: rows.reduce((t, r) => t + (r.waiting ? r.waiting.bal : 0), 0), at_risk: rows.filter((r) => r.health === "risk").length, watch: rows.filter((r) => r.health === "watch").length, missed: sum("missed") },
@@ -4061,19 +4093,25 @@ const OPS = {
   },
 
   /* ---- settings ---- */
-  "settings.get": async ({ env }) => {
+  /* The admin reads every setting. A team lead reads what the page uses: the pinned folder, the digest switch and the Production
+     file status of their own clients; anyone else only the pinned folder. Sync state, sign-in lists and file ids stay on the server. */
+  "settings.get": async ({ env, user }) => {
     const rows = await all(env, "SELECT * FROM settings");
+    const sup = user && user.role === "supervisor";
+    const shown = (k) => (user && user.is_admin) || SETTINGS_OPEN.includes(k) || (sup && (SETTINGS_LEAD.includes(k) || (k.startsWith("workbook_status:") && inScope(user, k.split(":")[1]))));
     const out = {};
-    rows.forEach((r) => { try { out[r.key] = JSON.parse(r.value_json); } catch { out[r.key] = null; } });
+    rows.filter((r) => shown(r.key)).forEach((r) => { try { out[r.key] = JSON.parse(r.value_json); } catch { out[r.key] = null; } });
     return { settings: out };
   },
   "settings.save": async ({ env, user, payload }) => {
-    const s = { ...(payload.settings || {}) };
-    // Sign-in and roster settings belong to the admin (Roster screen).
-    for (const k of ["extra_emails", "roster_meta", "feedback_to"]) delete s[k];
+    const s0 = payload.settings && typeof payload.settings === "object" && !Array.isArray(payload.settings) ? payload.settings : {};
+    // A team lead saves only the pinned folder; the admin also the other plain settings. Sign-in and roster settings have their own
+    // admin screens (Roster), and what the server keeps for itself (sync state, file ids, file status, snapshot time) is never saved from here.
+    const may = (k) => !SETTINGS_SERVER.test(k) && (SETTINGS_LEAD_SAVE.includes(k) || (user.is_admin && !SETTINGS_ADMIN_OWN.includes(k)));
+    const s = Object.fromEntries(Object.entries(s0).filter(([k]) => may(k)));
     const stmts = Object.keys(s).slice(0, 50).map((k) => env.DB.prepare("INSERT INTO settings (key, value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json").bind(str(k, 60), JSON.stringify(s[k])));
     if (stmts.length) { await batchAll(env, stmts); await audit(env, user, "settings.save", null, Object.keys(s).slice(0, 12).join(", ")); }
-    return OPS["settings.get"]({ env });
+    return OPS["settings.get"]({ env, user });
   },
 
   /* ---- inventory ---- */
@@ -4381,9 +4419,11 @@ const OPS = {
   },
   /* Every claim of one patient (same account number, or same patient name) at a client, with the last entry on each: one call covers them all. */
   "claims.byPatient": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT id, client_id, account_no, patient FROM claims WHERE id = ?", payload.id);
+    const c = await one(env, "SELECT id, client_id, account_no, patient, assigned_to, last_worked_by FROM claims WHERE id = ?", str(payload.id, 60));
     if (!c) throw bad("Claim not found.");
     if (user.role === "supervisor" && !inScope(user, c.client_id)) throw outOfScope();
+    // Everyone else only from a claim they may open themselves (as claims.get).
+    if (user.role !== "supervisor" && !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const rows = await all(env, `SELECT c.id, c.claim_no, c.account_no, c.patient, c.dos, c.cpt, c.payer, c.provider, c.balance, c.age_days, c.tier, c.state, c.assigned_to, u.name AS assigned_name, c.priority, c.follow_up_on,
         c.last_status_code, c.last_sub_status, c.last_action_code, c.last_bucket, c.last_note, c.last_worked_on, c.file_status, c.file_sub_status, l.name AS location_name
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id
@@ -4501,7 +4541,7 @@ const OPS = {
   /* ---- allocation ---- */
   "alloc.apply": async ({ env, user, payload }) => {
     const { client_id, location_id, strategy } = payload;
-    const items = Array.isArray(payload.assignments) ? payload.assignments : [];
+    const items = (Array.isArray(payload.assignments) ? payload.assignments : []).filter((a) => a && typeof a === "object");
     if (!client_id) throw bad("Pick a client.");
     if (!items.length) throw bad("Nothing to assign.");
     const userIds = [...new Set(items.map((a) => str(a.user_id, 60)))];
@@ -4890,7 +4930,7 @@ const OPS = {
       ORDER BY u.name, c.priority DESC LIMIT 5000`, ...args);
     // one line per claim (two entries at the same moment would repeat it)
     const seen = new Set();
-    return { rows: rows.filter((r) => !seen.has(r.claim_id) && seen.add(r.claim_id)), today: isoToday() };
+    return { rows: rows.filter((r) => !seen.has(r.claim_id) && seen.add(r.claim_id)), today: istISO(Date.now()) };
   },
   /* ---- data for the reporting apps inside My day & reports (team leads and above) ----
      Production: one row per entry in the Production Conso layout (AR), or one row per completed posting / submission
@@ -4944,7 +4984,7 @@ const OPS = {
     if (sums.size) await drTickMonthEnd(env, sums);
     const rows = clients.map((c) => ({ client_id: c.id, client: c.name, ...(sums.get(c.id) || { period: null, matched: false }), matched: sums.has(c.id) }));
     const scored = rows.filter((x) => x.score != null);
-    return { state: ov.state, error: ov.error || "", at: ov.at, rows, totals: { avg: scored.length ? Math.round(scored.reduce((t, x) => t + x.score, 0) / scored.length) : null,
+    return { state: ov.state, stale: !!ov.stale, error: ov.error || "", at: ov.at, rows, totals: { avg: scored.length ? Math.round(scored.reduce((t, x) => t + x.score, 0) / scored.length) : null,
       bands: { ok: scored.filter((x) => x.band === "ok").length, warn: scored.filter((x) => x.band === "warn").length, miss: scored.filter((x) => x.band === "miss").length },
       red: scored.reduce((t, x) => t + x.counts.miss, 0), amber: scored.reduce((t, x) => t + x.counts.warn, 0),
       red_names: [...new Set(rows.flatMap((x) => (x.drags || []).filter((d) => d.status === "miss").map((d) => d.name)))].slice(0, 5) } };
@@ -5024,7 +5064,7 @@ const OPS = {
     if (!env.DRISHTI_TOKEN_SECRET) throw new ApiError(503, "Drishti single sign-in is not switched on yet. Until it is, sign in on the Drishti page itself.");
     const api = env.DRISHTI_API || DRISHTI_API_DEFAULT;
     const call = async (body) => {
-      let r; try { r = await fetch(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
+      let r; try { r = await fetchT(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
       catch (e) { throw new ApiError(502, "Drishti's server did not answer. Try again in a minute."); }
       let j = null; try { j = await r.json(); } catch (e) {}
       if (!j) throw new ApiError(502, "Drishti's server sent an answer Brahmastra could not read.");
@@ -5081,8 +5121,8 @@ const OPS = {
     for (const lead of await clientTeamLeads(env, c.id, null)) {
       const path = [REPORTS_ROOT, odName(lead), odName(c.name), "SLA & KPI", name];
       const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
-      const r = await fetch("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=replace", { method: "PUT",
-        headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(b64) });
+      const r = await fetchT("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=replace", { method: "PUT",
+        headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(b64) }, 60000);
       if (!r.ok) throw new ApiError(502, "OneDrive did not save " + name + " (" + r.status + ").");
       saved.push(path.slice(0, -1).join(" › "));
     }
@@ -5156,7 +5196,7 @@ const OPS = {
     const vw = view === "mine" ? " AND h.status IN ('pending','assigned') AND h.assigned_to = ?" : view === "client" ? " AND h.status = 'client'" : view === "done" ? " AND h.status IN ('complete','rejected') AND h.done_at > ?"
       : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : " AND (h.status IN ('pending','assigned') OR (h.status = 'client' AND h.chase_at <= ?))";
     const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : view === "client" ? [] : [now];
-    const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name,
+    const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name, cl.posting_tat_hours AS cl_posting_tat, cl.submission_tat_hours AS cl_submission_tat,
         (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns,
         a.name AS assigned_name, l.name AS lead_name, b.name AS backup_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations lo ON lo.id = c.location_id
@@ -5166,7 +5206,11 @@ const OPS = {
     const out = rows.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned", "client"].includes(h.status) && now > h.due_at,
       due_soon: ["pending", "assigned", "client"].includes(h.status) && now <= h.due_at && h.due_at - now <= soon && !(h.dept === "subcheck" && h.available_at && now < h.available_at),
       chase: h.status === "client" && !!h.chase_at && now >= h.chase_at,
-      can_assign: user.is_admin || h.lead_id === user.id || h.backup_id === user.id, can_close: user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id }));
+      can_assign: user.is_admin || h.lead_id === user.id || h.backup_id === user.id, can_close: user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id,
+      tat_hours: tatHours({ posting_tat_hours: h.cl_posting_tat, submission_tat_hours: h.cl_submission_tat }, h.dept), cl_posting_tat: undefined, cl_submission_tat: undefined }));
+    // The TAT shown on top: the clients' own (one number when they all agree), else each row carries its own.
+    const tats = new Set(out.map((r) => r.tat_hours));
+    if (!out.length && cid) { const cl = await one(env, "SELECT posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", cid); if (cl) tats.add(tatHours(cl, dept || "submission")); }
     const st = await one(env, `SELECT SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_n, SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue,
         SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_n, SUM(CASE WHEN h.dept = 'rejection' AND h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS rejection_n,
         SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at >= ${now} AND h.due_at - ${now} <= ${DUE_SOON_HOURS * 3600000} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ${now}) THEN 1 ELSE 0 END) AS due_soon_n,
@@ -5174,7 +5218,7 @@ const OPS = {
         SUM(CASE WHEN h.status = 'client' AND h.chase_at <= ${now} THEN 1 ELSE 0 END) AS chase_n,
         SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS done_n, SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS assist_n FROM handoffs h WHERE ${base}`, now, month, month, month, ...bargs);
-    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: HANDOFF_TAT_HOURS, due_soon_hours: DUE_SOON_HOURS, stats: st || {} };
+    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {} };
   },
   /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
   /* The Payment posting / Submission dashboard: what came in, what was done and how fast, by client, person and day. */
@@ -5237,7 +5281,11 @@ const OPS = {
       WHERE ${W.replace(/h\.dept IN \([^)]*\)/, "h.dept IN ('subcheck','rejection')")} AND ((h.dept = 'subcheck' AND h.status = 'rejected') OR (h.dept = 'rejection' AND h.status = 'complete')) AND h.done_at BETWEEN ? AND ?`,
       ...a.slice(depts.length), from, to);
     const tally = (k) => Object.entries(rejRows.reduce((m, r) => { const v = r[k] || "Not given"; m[v] = (m[v] || 0) + 1; return m; }, {})).map(([name, n]) => ({ name, n })).sort((x, y) => y.n - x.n).slice(0, 15);
-    return { dept, totals: tot || {}, by_client: byClient, by_person: byPerson, by_day: Object.keys(days).sort().map((d) => ({ day: d, ...days[d] })), tat_hours: HANDOFF_TAT_HOURS,
+    // The TAT in the heading: the clients' own (Posting or Submission TAT on the client profile), one number when they all agree.
+    const tatCl = payload.client_id ? await all(env, "SELECT posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", str(payload.client_id, 60))
+      : await all(env, `SELECT DISTINCT cl.posting_tat_hours, cl.submission_tat_hours FROM handoffs h JOIN clients cl ON cl.id = h.client_id WHERE ${W}`, ...a);
+    const tats = new Set(tatCl.flatMap((cl) => (dept === "both" ? ["posting", "submission"] : [dept]).map((d) => tatHours(cl, d))));
+    return { dept, totals: tot || {}, by_client: byClient, by_person: byPerson, by_day: Object.keys(days).sort().map((d) => ({ day: d, ...days[d] })), tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1,
       attention, due_soon_hours: DUE_SOON_HOURS, bounce_limit: BOUNCE_LIMIT, back_reasons: backReasons, back_billers: backBillers,
       rejections: { total: rejRows.length, by_code: tally("code"), by_client: tally("client_name"), by_biller: tally("biller") } };
   },
@@ -5259,7 +5307,8 @@ const OPS = {
   },
   "handoffs.assign": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
-    if (!h || !["pending", "assigned"].includes(h.status)) throw bad("This hand-off is already closed.");
+    if (!h) throw bad("That hand-off was not found.");
+    if (!["pending", "assigned"].includes(h.status)) throw bad("This hand-off is already closed.");
     if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id)) throw denied("Only the department lead or backup assigns these.");
     const to = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", payload.user_id);
     if (!to) throw bad("Pick an active team member.");
@@ -5273,7 +5322,8 @@ const OPS = {
   /* Complete (with proof) or Need assistance (with a reason): the same status then shows to the TL, the biller and the department. */
   "handoffs.close": async ({ env, user, payload, ctx }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", payload.id);
-    if (!h || !["pending", "assigned", "client"].includes(h.status)) throw bad("This hand-off is already closed.");
+    if (!h) throw bad("That hand-off was not found.");
+    if (!["pending", "assigned", "client"].includes(h.status)) throw bad("This hand-off is already closed.");
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", h.claim_id);
     const mine = user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id;
     // After a resubmission the recheck (accepted or rejected again?) can also be marked by the biller who worked the claim,
@@ -5583,7 +5633,8 @@ const OPS = {
   },
   "attention.clientSent": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM handoffs WHERE id = ?", str(payload.id, 60));
-    if (!h || h.status !== "client") throw bad("This request is no longer waiting on the client.");
+    if (!h) throw bad("That request was not found.");
+    if (h.status !== "client") throw bad("This request is no longer waiting on the client.");
     editableOr(user, h.client_id);
     const how = CLIENT_SENT_HOW.includes(payload.how) ? payload.how : "";
     if (!how) throw bad("Pick how it was sent to the client.");
@@ -5825,7 +5876,15 @@ const OPS = {
     }
     const c = await one(env, "SELECT id, roster_names_json FROM clients WHERE id = ?", clientId);
     if (!c) throw bad("Pick the client this project is.");
-    for (const o of await all(env, "SELECT id, roster_names_json FROM clients")) {
+    const others = await all(env, "SELECT id, roster_names_json FROM clients");
+    if (user.scope && !payload.create) {
+      // A team lead matches their own project to a client that is theirs to change, or to one no project is matched to yet;
+      // and moves it off a client only when they may change that client too. Taking over another lead's client is the admin's call.
+      if (!canEditClient(user, c.id) && jsonList(c.roster_names_json).some((n) => projKey(n) !== projKey(name))) throw denied("That client is already matched to another roster project. Ask your admin to change it.");
+      const from = others.find((o) => o.id !== c.id && jsonList(o.roster_names_json).some((n) => projKey(n) === projKey(name)));
+      if (from) editableOr(user, from.id);
+    }
+    for (const o of others) {
       const list = jsonList(o.roster_names_json).filter((n) => projKey(n) !== projKey(name));
       if (o.id === c.id) list.push(name);
       if (JSON.stringify(list) !== o.roster_names_json) await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify(list), o.id);
@@ -5940,7 +5999,7 @@ export default {
     ctx.waitUntil((async () => {
       try { await ensureReady(env); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) { console.log("Snapshot: " + (e && e.message)); }
       if (env.MS_CLIENT_SECRET && String(env.REPORTS_AUTO || "on").toLowerCase() !== "off") {
-        try { const tok = await graphAppToken(env); for (const r of await all(env, "SELECT id FROM clients WHERE active = 1 AND (od_production_id IS NULL OR od_production_id = '' OR od_prod_json NOT LIKE '%rejection%') ORDER BY name LIMIT 8")) { try { await ensureClientFolders(env, r.id, tok); } catch (e) { console.log("Folders: " + (e && e.message)); } } } catch (e) { console.log("Folders: " + (e && e.message)); }
+        try { const tok = await graphAppToken(env); for (const r of await all(env, "SELECT id FROM clients WHERE active = 1 AND (od_production_id IS NULL OR od_production_id = '' OR od_prod_json NOT LIKE '%rejection%') ORDER BY COALESCE(CASE WHEN json_valid(od_status_json) THEN json_extract(od_status_json, '$.at') END, 0), name LIMIT 8")) { try { await ensureClientFolders(env, r.id, tok); } catch (e) { console.log("Folders: " + (e && e.message)); } } } catch (e) { console.log("Folders: " + (e && e.message)); }
       }
       try { await escalationReminders(env); } catch (e) { console.log("Escalation reminders: " + (e && e.message)); }
       if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
@@ -5962,6 +6021,8 @@ export default {
         try { body = await request.json(); } catch { throw bad("Send a JSON body like {op, payload}."); }
         const op = String(body && body.op || "");
         const payload = (body && body.payload) || {};
+        // Ids are text (or numbers): an object or a list would reach the database and fail there.
+        for (const k of Object.keys(payload)) if ((k === "id" || k.endsWith("_id")) && payload[k] !== null && typeof payload[k] === "object") throw bad("Send " + k + " as text.");
         const auth = request.headers.get("Authorization") || "";
         const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
         // Only the ops themselves: OPS["constructor"], "__proto__", "toString" and the like are inherited from every object.
@@ -5989,7 +6050,8 @@ export default {
       // A table that vanished (database replaced or emptied) means the schema must be made again on the next request.
       if (/no such table/i.test(String(e && e.message))) READY = null;
       if (status >= 500) console.error("brahmastra-api", e);
-      return json({ error: (e && e.message) || "Server error." }, status);
+      // Our own errors say what to do; anything unexpected is not shown as is (it can carry internals).
+      return json({ error: (e instanceof ApiError && e.message) || "Server error." }, status);
     }
   },
 };
