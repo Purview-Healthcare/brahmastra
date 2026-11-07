@@ -237,7 +237,7 @@ const three = await Promise.all([esc(1), esc(2), esc(3)]);
 const srs = three.map((x) => x.ok && x.r.sr).sort();
 ok("three at once get three numbers", three.every((x) => x.ok) && new Set(srs).size === 3, three.map((x) => x.ok ? x.r.sr : x.e));
 r = await T(() => A("escalations.save", { client_id: lake.id, day: "2026-02-30", dept: "Account Receivable", raised_who: "Clinic manager", reported_to: "Team lead", description: "An impossible date here", owner_id: owner.id }));
-ok("an impossible date is refused", !r.ok && /real date/.test(r.e), r);
+ok("an impossible date is refused", !r.ok && /real date|received date/.test(r.e), r);
 
 S("Deleting a client takes everything under it");
 const hset = await row("SELECT COUNT(*) AS n FROM handoffs WHERE client_id = ?", cl.id);
