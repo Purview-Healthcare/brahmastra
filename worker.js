@@ -32,6 +32,18 @@ const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
 const DEFAULT_BOOTSTRAP_PASSWORD = "brahmastra-setup";
 const WORKABLE = "('open','assigned','in_progress','completed')";
+/* Inventory status's stages as claims.list filters (claims c): an open hand-off wins, then the state, then the follow-up date. */
+const INV_HO = (st) => `EXISTS (SELECT 1 FROM handoffs hx WHERE hx.claim_id = c.id AND hx.status IN (${st}))`;
+const INV_NO_OPEN_HO = `NOT ${INV_HO("'pending','assigned','client'")}`;
+const INV_STAGE_SQL = Object.assign(Object.create(null), {
+  waiting: `(c.state IN ${WORKABLE} OR c.state = 'in_process') AND ${INV_HO("'client'")}`,
+  desk: `(c.state IN ${WORKABLE} OR c.state = 'in_process') AND NOT ${INV_HO("'client'")} AND ${INV_HO("'pending','assigned'")}`,
+  open: `c.state = 'open' AND ${INV_NO_OPEN_HO}`,
+  list: `c.state IN ('assigned','in_progress') AND ${INV_NO_OPEN_HO}`,
+  overdue: `c.state = 'completed' AND ${INV_NO_OPEN_HO} AND COALESCE(c.follow_up_on, '') <> '' AND c.follow_up_on < ?`,
+  due: `c.state = 'completed' AND ${INV_NO_OPEN_HO} AND c.follow_up_on = ?`,
+  later: `c.state = 'completed' AND ${INV_NO_OPEN_HO} AND NOT (COALESCE(c.follow_up_on, '') <> '' AND c.follow_up_on < ?) AND COALESCE(c.follow_up_on, '') <> ?`,
+});
 
 /* ---------------------------------------------------------------- schema */
 const SCHEMA = [
@@ -579,7 +591,9 @@ async function escalationReminders(env) {
   for (const e of rows) {
     await run(env, "UPDATE escalations SET reason_asked_at = ? WHERE id = ?", now, e.id);
     const names = await clientTeamLeads(env, e.client_id, null);
-    const people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND name IN (${names.map(() => "?").join(",") || "NULL"})`, ...names);
+    let people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND name IN (${names.map(() => "?").join(",") || "NULL"})`, ...names);
+    // a client with no team lead: the admins hear about it instead, so the reminder is never asked of nobody
+    if (!people.length) people = await all(env, "SELECT id, email, email_missing FROM users WHERE active = 1 AND role = 'admin'");
     const text = `Escalation SR${e.sr} (${e.dept}) at ${e.client_name} is still open after 24 hours. Give the reason and the expected close date in the Escalation tracker.`;
     for (const u of people) {
       await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), u.id, now, text, "escalations", e.client_id);
@@ -598,7 +612,8 @@ async function syncWfm(env) {
   try { r = await fetch(base + "/rest/v1/rpc/brahmastra_wfm", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch (e) {}
   if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.projects)) {
     const prev = await getSetting(env, "wfm_projects", null);
-    await setSetting(env, "wfm_projects", { ...(prev || {}), ok: false, tried_at: Date.now(), error: str((data && (data.error || data.message)) || (r ? "HTTP " + r.status : "no answer"), 200) });
+    const why = (data && (data.error || data.message)) || (r && r.ok && data ? "the answer has no list of projects" : r ? "HTTP " + r.status : "no answer");
+    await setSetting(env, "wfm_projects", { ...(prev || {}), ok: false, tried_at: Date.now(), error: str(why, 200) });
     return null;
   }
   const n = (v) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
@@ -611,15 +626,27 @@ async function syncWfm(env) {
 async function clientWfm(env, clientIds) {
   const w = await getSetting(env, "wfm_projects", null), out = new Map();
   if (!w || !Array.isArray(w.rows) || !w.rows.length) return out;
-  const byKey = new Map(w.rows.map((x) => [projKey(x.name), x]));
+  // "P1" and "p1" are the same project: their numbers add up rather than the last one quietly winning
+  const byKey = new Map();
+  const nOf = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+  for (const x0 of w.rows) { if (!x0 || !x0.name) continue;
+    const x = { ...x0, billable: nOf(x0.billable) }; for (const f of ["assigned_fte", "agents", "training", "team_fte", "people"]) x[f] = nOf(x0[f]) || 0;
+    const k = projKey(x.name), y = byKey.get(k); if (!y) { byKey.set(k, x); continue; }
+    for (const f of ["assigned_fte", "agents", "training", "team_fte", "people"]) y[f] += x[f];
+    if (x.billable != null) y.billable = (y.billable || 0) + x.billable; }
+  // a project matched to more than one active client is shared out evenly between them, so it is not counted twice
+  const users = new Map();
+  for (const c of await all(env, "SELECT id, roster_names_json FROM clients WHERE active = 1")) for (const k of new Set(jsonList(c.roster_names_json).map(projKey))) users.set(k, (users.get(k) || 0) + 1);
   for (const id of clientIds) {
     const c = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", id);
-    const ps = [...new Set(jsonList(c && c.roster_names_json).map(projKey))].map((k) => byKey.get(k)).filter(Boolean);
-    if (!ps.length) continue;
-    const sum = (f) => Math.round(ps.reduce((t, x) => t + (x[f] || 0), 0) * 100) / 100;
-    const bills = ps.filter((x) => x.billable != null);
-    out.set(id, { projects: ps.map((x) => x.name), billable: bills.length ? sum("billable") : null, assigned_fte: sum("assigned_fte"), agents: sum("agents"), training: sum("training"),
-      team_fte: sum("team_fte"), people: sum("people"), at: w.at, today: w.today });
+    const keys = [...new Set(jsonList(c && c.roster_names_json).map(projKey))].filter((k) => byKey.has(k));
+    if (!keys.length) continue;
+    const ps = keys.map((k) => ({ x: byKey.get(k), share: 1 / Math.max(1, users.get(k) || 1) }));
+    const sum = (f) => Math.round(ps.reduce((t, { x, share }) => t + (x[f] || 0) * share, 0) * 100) / 100;
+    const bills = ps.filter(({ x }) => x.billable != null);
+    out.set(id, { projects: ps.map(({ x }) => x.name), billable: bills.length ? Math.round(bills.reduce((t, { x, share }) => t + x.billable * share, 0) * 100) / 100 : null, assigned_fte: sum("assigned_fte"), agents: sum("agents"), training: sum("training"),
+      team_fte: sum("team_fte"), people: sum("people"), at: w.at, today: w.today,
+      shared: ps.filter(({ share }) => share < 1).map(({ x, share }) => ({ name: x.name, clients: Math.round(1 / share) })) });
   }
   return out;
 }
@@ -730,6 +757,15 @@ const DR_BY = Object.fromEntries(DR_DEF.scopes.map((x) => [x.key, x]));
 const DR_FRESH_MS = 10 * 60000, DR_TYPED = "Typed in by the supervisor";
 const drNum = (v) => { if (v === "" || v == null) return null; const x = Number(String(v).replace(/[$,%\s]/g, "")); return isNaN(x) ? null : x; };
 const drIsNum = (v) => typeof v === "number" && !isNaN(v);
+/* A KPI cell with nothing in it (null, "", NaN) is "not scored yet", like a missing one. */
+const drHasVal = (crit, cell) => !!cell && !(cell.value == null || cell.value === "" || (typeof cell.value === "number" && isNaN(cell.value)));
+/* A number Drishti sent as text ("0.10", "91%", "$1,200") is read as the number, so it is scored like any other; "91%" on a
+   percent KPI is 0.91. Text that is not a number stays as typed (and is not scored). */
+const drCell = (crit, cell) => {
+  if (typeof cell.value !== "string" || ["status", "yesno", "text"].includes(crit.type)) return cell;
+  const x = drNum(cell.value); if (x == null) return cell;
+  return { ...cell, value: /%\s*$/.test(cell.value) && drFmt(crit) === "percent" ? x / 100 : x };
+};
 const drBand = (pct) => (pct == null ? null : pct >= 90 ? "ok" : pct >= 80 ? "warn" : "miss");
 const drFmt = (crit) => crit.fmt || (crit.rule && crit.rule.fmt) || (crit.type === "count" ? "count" : "percent");
 const drFmtVal = (v, fmt) => {
@@ -748,8 +784,9 @@ function drStatusFor(actual, rule) {
 }
 function drCritStatus(crit, cell, rule) {
   if (!cell) return "info";
-  if (crit.type === "status") return cell.value === "Met" ? "ok" : cell.value === "Not Met" ? "miss" : "info";
-  if (crit.type === "yesno") return cell.value === "Yes" ? "ok" : cell.value === "No" ? "miss" : "info";
+  const word = String(cell.value == null ? "" : cell.value).trim().toLowerCase();   // "Not met", "Not Met", "met", "yes" alike
+  if (crit.type === "status") return word === "met" ? "ok" : word === "not met" ? "miss" : "info";
+  if (crit.type === "yesno") return word === "yes" ? "ok" : word === "no" ? "miss" : "info";
   if (crit.type === "text") return "info";
   return drStatusFor(cell.value, rule);
 }
@@ -775,7 +812,8 @@ function drScore(client, period, prev) {
   for (const sc of active) {
     const s = { key: sc.key, name: sc.name, short: sc.short, ok: 0, warn: 0, miss: 0, items: [] }, sS = { ok: 0, warn: 0, miss: 0 };
     for (const crit of sc.criteria || []) {
-      const cell = px[sc.key] && px[sc.key].crit && px[sc.key].crit[crit.key]; if (!cell) continue;
+      const cell0 = px[sc.key] && px[sc.key].crit && px[sc.key].crit[crit.key]; if (!drHasVal(crit, cell0)) continue;
+      const cell = drCell(crit, cell0);
       const rule = drRule(client, sc.key, crit), st0 = drCritStatus(crit, cell, rule), st = st0 === "great" ? "ok" : st0;
       const it = { scope: sc.short, scope_key: sc.key, key: crit.key, name: crit.name, kind: "KPI", value: cell.value, shown: drDisplay(crit, cell), target: drTarget(crit, rule), status: st, great: st0 === "great",
         rule: rule && ["higher", "lower", "range"].includes(rule.dir) ? { dir: rule.dir, good: rule.good, fair: rule.fair, min: rule.min, max: rule.max, fmt: rule.fmt || drFmt(crit) } : null, type: crit.type,
@@ -785,7 +823,7 @@ function drScore(client, period, prev) {
     }
     if (sc.kind === "tasks") for (const row of (px[sc.key] && px[sc.key].tasks) || []) task(sc, row, sS, s);
     // what this scope could score but has nothing for yet, and the report that would fill it
-    s.missing = (sc.criteria || []).filter((crit) => crit.type !== "text" && !(px[sc.key] && px[sc.key].crit && px[sc.key].crit[crit.key]))
+    s.missing = (sc.criteria || []).filter((crit) => crit.type !== "text" && !drHasVal(crit, px[sc.key] && px[sc.key].crit && px[sc.key].crit[crit.key]))
       .map((crit) => { const b = DR_DEF.book[sc.key + "." + crit.key] || {}; return { key: crit.key, name: crit.name, from: b.from || DR_TYPED, typed: !!b.manual }; });
     s.scored = s.ok + s.warn + s.miss; s.pct = s.scored ? Math.round(s.ok / s.scored * 100) : null; s.band = drBand(s.pct);
     scopes.push(s);
@@ -803,6 +841,15 @@ function drScore(client, period, prev) {
   return { pct, band: drBand(pct), scored, counts: c, kpi_pct: kS ? Math.round(kpi.ok / kS * 100) : null, sla_pct: sS2 ? Math.round(sla.ok / sS2 * 100) : null, scopes, items, drags, strengths, delta };
 }
 const drKey = (name) => String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+/* The one rule both the Portfolio and the scorecard use to find a Brahmastra client in Drishti: by name, ignoring case, spaces and
+   punctuation. When two Drishti clients match, the one spelt exactly the same wins, else the first in Drishti's list, and the
+   others are named in ambiguous so the page can say so. */
+function drMatch(ov, name) {
+  const all2 = ov.clients.filter((c) => drKey(c.name) === drKey(name)); if (!all2.length) return { d: null, ambiguous: [] };
+  const exact = all2.filter((c) => String(c.name).trim().toLowerCase() === String(name || "").trim().toLowerCase());
+  const d = exact.length === 1 ? exact[0] : all2[0];
+  return { d, ambiguous: all2.length > 1 ? all2.map((c) => c.name) : [] };
+}
 const drPeriodSort = (a, b) => String((b.range || {}).to || "").localeCompare(String((a.range || {}).to || "")) || String((b.range || {}).from || "").localeCompare(String((a.range || {}).from || "")) || String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
 const drKind = (p) => p.kind === "month" || p.kind === "week" || p.kind === "day" ? p.kind : "custom";
 async function drishtiCall(env, body) {
@@ -823,8 +870,8 @@ async function drishtiOverview(env) {
     try {
       const since = new Date(now); since.setUTCMonth(since.getUTCMonth() - 7); since.setUTCDate(1);
       const j = await drishtiCall(env, { a: "overview", t: await drishtiToken(env, "admin", "admin"), since: since.toISOString().slice(0, 10) });
-      const clients = (j.value || []).filter((c) => !c.archived).map((c) => ({ id: c.id, name: String(c.name || ""), owner: c.ownerName || "", scopes: Array.isArray(c.scopes) ? c.scopes : [], rules: c.rules || {},
-        periods: (c.periods || []).map((p) => ({ id: p.id, kind: drKind(p), label: p.label || "", range: p.range || {}, numDays: p.numDays || null, createdAt: p.createdAt || "", createdBy: p.createdBy || "", scopes: p.scopes || {},
+      const clients = (Array.isArray(j.value) ? j.value : []).filter((c) => c && typeof c === "object" && !c.archived).map((c) => ({ id: c.id, name: String(c.name || ""), owner: c.ownerName || "", scopes: Array.isArray(c.scopes) ? c.scopes : [], rules: c.rules || {},
+        periods: (Array.isArray(c.periods) ? c.periods : []).filter((p) => p && typeof p === "object").map((p) => ({ id: p.id, kind: drKind(p), label: p.label || "", range: p.range || {}, numDays: p.numDays || null, createdAt: p.createdAt || "", createdBy: p.createdBy || "", scopes: p.scopes || {},
           reports: Object.entries(p.reports || {}).map(([k, v]) => ({ key: k, file: (v && v.fileName) || "" })) })).sort(drPeriodSort) }));
       st = { at: now, clients };
     } catch (e) { st = { ...st, fail_at: now, error: str((e && e.message) || "Drishti did not answer", 200) }; }
@@ -834,27 +881,28 @@ async function drishtiOverview(env) {
 }
 /* Brahmastra's clients matched to Drishti's by name; each with the latest month (or latest) period scored, and the one before */
 function drSummary(ov, clients, today) {
-  const byName = new Map(ov.clients.map((c) => [drKey(c.name), c]));
   const out = new Map();
   for (const c of clients) {
-    const d = byName.get(drKey(c.name)); if (!d) continue;
+    const { d, ambiguous } = drMatch(ov, c.name); if (!d) continue;
     const done = d.periods.filter((p) => !p.range.to || p.range.to <= today);
     const months = done.filter((p) => p.kind === "month"), list = months.length ? months : done;
-    const cur = list[0]; if (!cur) { out.set(c.id, { drishti_id: d.id, owner: d.owner, period: null }); continue; }
+    const cur = list[0]; if (!cur) { out.set(c.id, { drishti_id: d.id, owner: d.owner, ambiguous, period: null }); continue; }
     const prev = list.find((p) => p !== cur && p.kind === cur.kind && p.range.to < cur.range.from) || null;
     const sc = drScore(d, cur, prev);
-    out.set(c.id, { drishti_id: d.id, owner: d.owner, period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to }, score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts,
+    out.set(c.id, { drishti_id: d.id, owner: d.owner, ambiguous, period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to }, score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts,
       scopes: sc.scopes.map((x) => ({ key: x.key, short: x.short, pct: x.pct, band: x.band })), drags: sc.drags.slice(0, 4).map((x) => ({ name: x.name, scope: x.scope, shown: x.shown, status: x.status })) });
   }
   return out;
 }
-/* The month-end "SLA scored" step ticks itself from Drishti's month score when nobody has ticked it. */
+/* The month-end "SLA scored" step ticks itself from Drishti's month score when nobody has ticked it, and follows Drishti when it
+   re-scores the month; a score typed in by a person (auto = 0) is kept. */
 async function drTickMonthEnd(env, summaries) {
   const stmts = [], now = Date.now();
   for (const [cid, d] of summaries) {
     if (!d.period || d.period.kind !== "month" || d.score == null) continue;
     const month = String(d.period.from || "").slice(0, 7); if (!/^\d{4}-\d{2}$/.test(month)) continue;
-    stmts.push(env.DB.prepare(`INSERT INTO client_monthend (client_id, month, step, done_at, done_by_name, auto, score, note) VALUES (?,?,'sla',?,?,1,?,?) ON CONFLICT (client_id, month, step) DO NOTHING`).bind(cid, month, now, "Drishti", d.score, "from Drishti's scorecard"));
+    stmts.push(env.DB.prepare(`INSERT INTO client_monthend (client_id, month, step, done_at, done_by_name, auto, score, note) VALUES (?,?,'sla',?,?,1,?,?) ON CONFLICT (client_id, month, step) DO UPDATE SET score = excluded.score, done_at = excluded.done_at
+      WHERE client_monthend.auto = 1 AND (client_monthend.score IS NULL OR client_monthend.score <> excluded.score)`).bind(cid, month, now, "Drishti", d.score, "from Drishti's scorecard"));
   }
   if (stmts.length) await batchAll(env, stmts, 50);
 }
@@ -1351,8 +1399,12 @@ async function shareEqually(env, user, src, o) {
     const members = team.filter((u) => on.has(u.id)), cands = members.filter(isIn);
     members.filter((u) => !isIn(u)).forEach((u) => skipped.set(u.id, { name: u.name, why: why(u) }));
     if (!cands.length) { left += mine.length; perClient.push({ id: c.id, name: c.name, n: mine.length, left: mine.length }); continue; }
-    cands.sort((a, b) => (load.get(a.id) || 0) - (load.get(b.id) || 0) || a.name.localeCompare(b.name));
-    mine.forEach((x, i) => { const u = cands[i % cands.length]; moves.push({ claim: x.id, to: u }); given.set(u.id, { id: u.id, name: u.name, count: ((given.get(u.id) || {}).count || 0) + 1 }); });
+    // each claim to whoever has been given the fewest so far (across every client), then the lightest desk
+    const gn = (u) => (given.get(u.id) || {}).count || 0;
+    for (const x of mine) {
+      const u = cands.reduce((m, v) => (gn(v) - gn(m) || (load.get(v.id) || 0) - (load.get(m.id) || 0) || v.name.localeCompare(m.name)) < 0 ? v : m);
+      moves.push({ claim: x.id, to: u }); given.set(u.id, { id: u.id, name: u.name, count: gn(u) + 1 });
+    }
     perClient.push({ id: c.id, name: c.name, n: mine.length, left: 0 });
   }
   const res = { n: claims.length, high: claims.filter((x) => x.tier === "High").length, moved: moves.length, left, to: [...given.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
@@ -1597,7 +1649,7 @@ function digestRollup(ds) {
   good.sort((a, b) => b[0] - a[0]);
   return { ar, o90, pct, target: ds.length ? ds[0].ar.target : OVER90_TARGET, ar_ago: withAgo.length ? agoNow - ago : null, coll: sum((d) => d.collected.amount), coll_prev: sum((d) => d.collected.prev),
     work: sum((d) => d.worked.n), work_prev: sum((d) => d.worked.prev), count, bands, sla_avg: scored.length ? Math.round(scored.reduce((t, d) => t + d.card.score, 0) / scored.length) : null,
-    sla_month: scored.length ? scored[0].card.period.label : "", esc: es.length ? { n: et("n"), open: et("open"), over24: et("over24"), over24_reason: et("over24_reason"), errors: et("errors"), month: monthLabel(es[0].esc.from.slice(0, 7)) } : null,
+    sla_month: scored.length && scored.every((d) => d.card.period.label === scored[0].card.period.label) ? scored[0].card.period.label : "", esc: es.length ? { n: et("n"), open: et("open"), over24: et("over24"), over24_reason: et("over24_reason"), errors: et("errors"), month: monthLabel(es[0].esc.from.slice(0, 7)) } : null,
     attention, good: good.map((g) => g[1]) };
 }
 // worst first: red SLA, then amber, green, then clients Drishti has not scored, by health
@@ -1619,7 +1671,7 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
   const cell = (x, align, extraStyle) => `<td align="${align || "left"}" style="padding:8px 4px;border-bottom:1px solid #EEF1F4;vertical-align:middle${extraStyle || ""}">${x}</td>`;
   const row = (d) => {
     const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : ""].filter(Boolean).join(" · ");
-    const sla = d.card ? tag(`${d.card.score}%${d.card.delta != null ? (d.card.delta >= 0 ? " ▲" : " ▼") + Math.abs(d.card.delta) : ""}`, BAND_LOOK[d.card.band]) : `<span style="color:#627079">not scored</span>`;
+    const sla = d.card ? tag(`${d.card.score}%${d.card.delta ? (d.card.delta > 0 ? " ▲" : " ▼") + Math.abs(d.card.delta) : ""}`, BAND_LOOK[d.card.band]) : `<span style="color:#627079">not scored</span>`;
     const esc = d.esc ? tag(d.esc.n ? `${d.esc.n} · ${d.esc.open ? d.esc.open + " open" : "closed"}` : "0", BAND_LOOK[d.esc.n ? "miss" : "ok"]) : "–";
     return `<tr>${cell(`<b>${htmlEsc(d.client.name)}</b>${ppl ? `<div style="color:#627079;font-size:11px">${htmlEsc(ppl)}</div>` : ""}`)}${cell(sla, "center")}${cell(esc, "center")}${cell(d.wfm ? `${fteTxt(d.wfm.billable)} / ${fteTxt(d.wfm.assigned_fte)}` : "–", "center")}${cell(d.ar.over90_pct + "%", "right", d.ar.over90_pct > d.ar.target ? ";color:#BA2340" : "")}</tr>`;
   };
@@ -1665,7 +1717,8 @@ async function spanData(env, span, wk) {
     d.smes = on.filter((u) => isSME(u)).map((u) => u.name).sort();
     d.tls = on.filter((u) => !isSME(u)).map((u) => u.name).sort();
     let sc = null; try { sc = await OPS["sla.scorecard"]({ env, user: DIGEST_SYSTEM, payload: { client_id: d.client.id, kind: "month", today: istISO(wk.to) } }); } catch (e) { sc = null; }
-    d.card = sc && sc.state === "ok" && sc.score != null ? sc : null;
+    // the digest scores months only: a client with only weeks in Drishti is "not scored" here, not a week under the month
+    d.card = sc && sc.state === "ok" && sc.score != null && sc.period && sc.period.kind === "month" ? sc : null;
     d.esc = await escSummary(env, d.client.id, wk.last.slice(0, 8) + "01", wk.last, wk.to);
   }
   const wfm = await clientWfm(env, ds.map((d) => d.client.id)); ds.forEach((d) => { d.wfm = wfm.get(d.client.id) || null; });
@@ -1678,9 +1731,12 @@ async function spanMail(env, span, wk) {
 /* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
 async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, by = "Monday job" } = {}) {
   const wk = digestWeek(now);
-  const done = new Set((await all(env, "SELECT client_id FROM digest_runs WHERE week = ?", wk.week)).map((r) => r.client_id));
+  // a span is done for the week once a run sent it with no failure; a span whose sends failed is tried again on the next run
+  // (only the people it failed for), after the spans that have not been tried yet
+  const runs = new Map((await all(env, "SELECT client_id, failed FROM digest_runs WHERE week = ?", wk.week)).map((r) => [r.client_id, r.failed]));
   const people = await digestPeople(env);
-  const spans = (await digestSpans(env, people)).filter((s) => (spanKey ? s.key === spanKey : !done.has(s.key)));
+  const spans = (await digestSpans(env, people)).filter((s) => (spanKey ? s.key === spanKey : !(runs.has(s.key) && !runs.get(s.key))))
+    .sort((a, b) => (runs.has(a.key) ? 1 : 0) - (runs.has(b.key) ? 1 : 0));
   let sent = 0, failed = 0, n = 0;
   for (const s of spans.slice(0, limit)) {
     n++;
@@ -1689,10 +1745,16 @@ async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, b
     const mail = await spanMail(env, s, wk);
     let ok = 0, bad = 0;
     for (const u of to.filter((x) => !already.has(x.id))) {
+      // claim this person's send first (ok = 2, sending), so two runs at once never both send it; a claim left by a run
+      // that died is taken over after 30 minutes
+      const t0 = Date.now();
+      const claim = await run(env, `INSERT INTO digest_log (week, client_id, user_id, name, email, at, ok, error) VALUES (?,?,?,?,?,?,2,'')
+        ON CONFLICT (week, client_id, user_id) DO UPDATE SET at = excluded.at, ok = 2, error = '' WHERE digest_log.ok = 0 OR (digest_log.ok = 2 AND digest_log.at < ?)`,
+        wk.week, s.key, u.id, u.name || "", u.email, t0, t0 - 30 * 60000);
+      if (!changesOf(claim)) continue;
       let err = "";
       try { await sendEmail(env, { to: u.email, subject: mail.subject, text: mail.text, html: mail.html }); ok++; } catch (e) { err = String((e && e.message) || e).slice(0, 300); bad++; }
-      await run(env, `INSERT INTO digest_log (week, client_id, user_id, name, email, at, ok, error) VALUES (?,?,?,?,?,?,?,?)
-        ON CONFLICT (week, client_id, user_id) DO UPDATE SET at = excluded.at, ok = excluded.ok, error = excluded.error`, wk.week, s.key, u.id, u.name || "", u.email, Date.now(), err ? 0 : 1, err);
+      await run(env, "UPDATE digest_log SET at = ?, ok = ?, error = ? WHERE week = ? AND client_id = ? AND user_id = ?", Date.now(), err ? 0 : 1, err, wk.week, s.key, u.id);
     }
     await run(env, `INSERT INTO digest_runs (week, client_id, at, sent, failed, by_name) VALUES (?,?,?,?,?,?)
       ON CONFLICT (week, client_id) DO UPDATE SET at = excluded.at, sent = digest_runs.sent + excluded.sent, failed = excluded.failed, by_name = excluded.by_name`, wk.week, s.key, Date.now(), ok, bad, by);
@@ -1710,7 +1772,7 @@ async function snapshotClients(env) {
   await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at)
     SELECT client_id, ?, COALESCE(SUM(balance), 0), COUNT(*), COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0), SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END),
       COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0), ?
-    FROM (SELECT client_id, balance, CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(dos, 1, 10)) ELSE age_days END AS age
+    FROM (SELECT client_id, balance, CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END AS age
           FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id
     ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = excluded.ar_balance, ar_claims = excluded.ar_claims, over90_balance = excluded.over90_balance,
       over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, at = excluded.at`, day, now, today);
@@ -1780,6 +1842,8 @@ function healthOf({ pct, sla, tfl, escLate, waitingN, oldest, missed }) {
   return { health: !out.length ? "good" : out.some((r) => r.tone === "red") ? "risk" : "watch", reasons: out };
 }
 /* The month being closed: last month during the first 10 days of a month, else this month. */
+/* A real month (01 to 12), from 2000 up to this month: a typed "2026-13" or "2099-12" would become the client's latest SLA. */
+const okMonth = (m, todayIso) => typeof m === "string" && /^(\d{4})-(0[1-9]|1[0-2])$/.test(m) && m >= "2000-01" && m <= String(todayIso || isoToday()).slice(0, 7);
 const closingMonth = (todayIso) => { const [y, m, d] = todayIso.split("-").map(Number); if (d > 10) return `${y}-${String(m).padStart(2, "0")}`; const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y; return `${py}-${String(pm).padStart(2, "0")}`; };
 /* The n-th working day (Mon to Fri) of the month after `month` (YYYY-MM). */
 function nthWorkingDayAfter(month, n) {
@@ -2865,6 +2929,7 @@ const OPS = {
     const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
     const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
     const live = await shastraLive(env);
+    const weekdayToday = ![0, 6].includes(new Date(today + "T12:00:00Z").getUTCDay());
     const rows = people.map((u) => {
       const win = shiftWindow(u.shift, now, dayStart);
       const startOf = win ? win.start : dayStart;
@@ -2883,6 +2948,8 @@ const OPS = {
       const expected = Math.round(target * elapsed);
       const a = att.get(u.id);
       const inShift = win ? now >= win.start && now <= win.end : !!first;
+      // Saturday and Sunday: nobody is expected in (as on Team status); whoever works is counted, with no target
+      const offDay = !weekdayToday && !mine.length && !onDesk.some((c) => c.state === "in_progress");
       let status = "not_started";
       if (a && a.status === "out") status = "out";
       else if (cur && cur.started_at && now - cur.started_at < 2 * 3600000) status = "working";
@@ -2891,17 +2958,17 @@ const OPS = {
       else if (work.length) status = "working";
       return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name,
         on_desk: onDesk.length, carried: left.length, left_high: leftHigh, left_other: left.length - leftHigh, closed, worked: work.length, skips, first, last,
-        idle_min: last ? Math.floor((now - last) / 60000) : null, expected, behind: status !== "out" && work.length < expected - 3,
+        idle_min: last ? Math.floor((now - last) / 60000) : null, expected: weekdayToday ? expected : 0, behind: weekdayToday && status !== "out" && work.length < expected - 3,
         current: cur ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
-        status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, in_shift: inShift,
+        status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, off_day: offDay, in_shift: inShift,
         untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null };
     });
     const rank = { idle: 0, not_started: 1, working: 2, done: 3, out: 4 };
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
     const present = rows.filter((r) => r.status !== "out");
     const add = (k) => rows.reduce((t, r) => t + r[k], 0);
-    return { rows, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
-      capacity: present.reduce((t, r) => t + r.capacity, 0), carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
+    return { rows, weekend: !weekdayToday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
+      capacity: weekdayToday ? present.reduce((t, r) => t + r.capacity, 0) : 0, in_weekend: weekdayToday ? null : present.filter((r) => !r.off_day).length, carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
       behind: rows.filter((r) => r.behind).length, working: rows.filter((r) => r.status === "working").length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
   },
   /* A date range on the Dashboard: each biller's entries, claims closed and call time for those days, against their daily
@@ -3322,10 +3389,13 @@ const OPS = {
      score, Billable and Assign FTE, AR, escalations and what pulls it down, for this week or one of the 8 before. */
   "digest.dashboard": async ({ env, user, payload }) => {
     const spans = (await digestSpans(env, await digestPeople(env))).filter((x) => spanVisible(user, x));
-    if (!spans.length) throw denied("No Monday digest includes you.");
-    const s = spans.find((x) => x.key === str(payload.span, 80)) || spans[0];
+    if (!spans.length) return { empty: true, spans: [], weeks: [], clients: [], notices: [] };
+    const askSpan = str(payload.span, 80), askWeek = str(payload.week, 20), notices = [];
+    const s = spans.find((x) => x.key === askSpan) || spans[0];
+    if (askSpan && s.key !== askSpan) notices.push(`The digest in the link is not one you can see, or it no longer exists. This is ${s.title}.`);
     const now = digestWeek(Date.now()), weeks = Array.from({ length: 9 }, (_, i) => digestWeek(Date.parse(now.week + "T12:00:00Z") - i * 7 * 86400000)).map((w) => ({ week: w.week, first: w.first, last: w.last }));
     const want = weeks.find((w) => w.week === isoDate(payload.week)) || weeks[0];
+    if (askWeek && want.week !== askWeek) notices.push(`The week in the link (${askWeek}) is not one of the last 9 Mondays. This is the week of ${dDay(want.first)}.`);
     const wk = digestWeek(Date.parse(want.week + "T12:00:00Z"));
     const { ds, manager } = await spanData(env, s, wk);
     const R = digestRollup(ds);
@@ -3333,7 +3403,7 @@ const OPS = {
       kpi_n: c.items.filter((i) => i.kind === "KPI").length, scopes: c.scopes.filter((x) => x.scored).map((x) => ({ name: x.short || x.name, pct: x.pct, band: x.band })),
       drags: c.drags.slice(0, 5).map((i) => ({ scope: i.scope, name: i.name, shown: i.shown, target: i.target, status: i.status })), more: Math.max(0, c.drags.length - 5),
       strengths: c.strengths.slice(0, 2).map((i) => ({ name: i.name, shown: i.shown })) } : null;
-    return { span: { key: s.key, title: s.title }, spans: spans.map((x) => ({ key: x.key, title: x.title })), manager, week: want, weeks, rollup: R,
+    return { span: { key: s.key, title: s.title }, spans: spans.map((x) => ({ key: x.key, title: x.title })), manager, week: want, weeks, rollup: R, notices,
       clients: digestOrder(ds).map((d) => ({ id: d.client.id, name: d.client.name, health: d.health, tls: d.tls, smes: d.smes, wfm: d.wfm ? { billable: d.wfm.billable, assigned_fte: d.wfm.assigned_fte } : null,
         ar: d.ar, collected: d.collected, worked: d.worked, esc: d.esc ? { ...d.esc, rows: undefined } : null, card: card(d.card), monthend: d.monthend })) };
   },
@@ -3350,6 +3420,7 @@ const OPS = {
     if (!user.is_admin && !user.access_all) throw denied("Only an admin or the VP can send the digest by hand.");
     if (!env.EMAIL_PROVIDER) throw new ApiError(503, "Email is not set up on the server yet (EMAIL_PROVIDER).");
     const key = str(payload.span, 80);
+    if (!(await digestSpans(env, await digestPeople(env))).some((x) => x.key === key)) throw bad("There is no such digest. Reload the page: the managers or their clients may have changed.");
     const r = await sendDigests(env, { spanKey: key, limit: 1, by: user.name || "by hand" });
     if (!r.spans) throw bad("That digest has no clients now.");
     await audit(env, user, "digest.sendNow", null, `${key} week of ${r.week}: ${r.sent} sent${r.failed ? ", " + r.failed + " failed" : ""}`);
@@ -3363,8 +3434,10 @@ const OPS = {
     const clients = (await all(env, "SELECT id, name, code, team_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id) && (!lc || lc.includes(c.id)) && (!payload.client_id || c.id === payload.client_id));
     const ids = new Set(clients.map((c) => c.id));
     const mapOf = (rows, k = "client_id") => new Map(rows.filter((r) => ids.has(r[k])).map((r) => [r[k], r]));
-    const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(dos, 1, 10)) ELSE age_days END";
+    const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END";
+    // over-90 % is of the money owed: credit balances (zero or below) are left out of it
     const ar = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0) AS o90,
+        COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS balp, COALESCE(SUM(CASE WHEN age > 90 AND balance > 0 THEN balance ELSE 0 END), 0) AS o90p,
         SUM(CASE WHEN state IN ('open','assigned','in_progress') THEN 1 ELSE 0 END) AS to_work,
         SUM(CASE WHEN state = 'open' THEN 1 ELSE 0 END) AS open_n, COALESCE(SUM(CASE WHEN state = 'open' THEN balance ELSE 0 END), 0) AS open_bal
       FROM (SELECT client_id, balance, state, ${ageSql} AS age FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id`, today));
@@ -3389,7 +3462,7 @@ const OPS = {
     if (drs.size) { await drTickMonthEnd(env, drs); for (const [cid, d] of drs) if (d.period && d.period.kind === "month" && d.score != null && !sla.has(cid)) sla.set(cid, { client_id: cid, score: d.score, month: String(d.period.from).slice(0, 7) }); }
     const rows = clients.map((c) => {
       const a = ar.get(c.id) || { bal: 0, n: 0, o90: 0, to_work: 0 }, w = wait.get(c.id), e = esc.get(c.id), m = missed.get(c.id) || { ar: 0, posting: 0, submission: 0 }, t = tfl.get(c.id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 };
-      const pct = a.bal ? Math.round(a.o90 / a.bal * 1000) / 10 : 0;
+      const pct = a.balp ? Math.round(a.o90p / a.balp * 1000) / 10 : 0;
       const oldest = w && w.first ? Math.floor((now - w.first) / 86400000) : 0;
       const sl = sla.get(c.id) || null, dr = drs.get(c.id) || null;
       const missN = m.ar + m.posting + m.submission;
@@ -3397,8 +3470,8 @@ const OPS = {
       const pc = pace.get(c.id), perDay = pc && wd ? pc.n / wd : 0;
       const r = raci.get(c.id);
       return { client_id: c.id, client: c.name, code: c.code, health: hh.health, reasons: hh.reasons.map((x) => x.text), tl: r ? r.a.map((p) => p.name) : [], manager: r ? r.c.map((p) => p.name) : [],
-        ar: a.bal, claims: a.n, ar_month_ago: ago.get(c.id) ? ago.get(c.id).ar_balance : null, over90_pct: pct, sla: sl ? { score: sl.score, month: sl.month } : null,
-        drishti: dr && dr.period ? { score: dr.score, band: dr.band, delta: dr.delta, label: dr.period.label, kind: dr.period.kind, counts: dr.counts, scopes: dr.scopes, drags: dr.drags } : null,
+        ar: a.bal, ar_owed: a.balp || 0, claims: a.n, ar_month_ago: ago.get(c.id) ? ago.get(c.id).ar_balance : null, over90_pct: pct, sla: sl ? { score: sl.score, month: sl.month } : null,
+        drishti: dr && dr.period && dr.score != null ? { score: dr.score, band: dr.band, delta: dr.delta, label: dr.period.label, kind: dr.period.kind, counts: dr.counts, scopes: dr.scopes, drags: dr.drags } : null,
         missed: missN, waiting: w ? { n: w.n, bal: w.bal, oldest } : null, escalations_late: e ? e.late || 0 : 0, tfl_soon: t.soon_bal, tfl_soon_n: t.soon_n, tfl_past_n: t.past_n,
         to_work: a.to_work || 0, per_day: Math.round(perDay * 10) / 10, people: pc ? pc.people : 0, days_to_clear: perDay ? Math.ceil((a.to_work || 0) / perDay) : null,
         last_inventory: lastInv.get(c.id) ? lastInv.get(c.id).at : null, collected_month: coll.get(c.id) ? coll.get(c.id).amt : 0,
@@ -3418,13 +3491,13 @@ const OPS = {
     if (env.SHASTRA_FEED_KEY && sync && sync.ok === false) fresh.unshift({ tone: "red", text: `Roster sync from Purview Shastra failed: ${sync.error || "no answer"}` });
     else if (env.SHASTRA_FEED_KEY && sync && sync.at && now - sync.at > 3 * 3600000) fresh.unshift({ tone: "amber", text: `Roster last synced from Purview Shastra ${Math.round((now - sync.at) / 3600000)} hours ago` });
     const sum = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
-    const totAr = sum("ar"), totAgo = rows.reduce((t, r) => t + (r.ar_month_ago || 0), 0), totO90 = rows.reduce((t, r) => t + r.ar * r.over90_pct / 100, 0);
+    const totAr = sum("ar"), totAgo = rows.reduce((t, r) => t + (r.ar_month_ago || 0), 0), totO90 = rows.reduce((t, r) => t + r.ar_owed * r.over90_pct / 100, 0), totOwed = sum("ar_owed");
     const slas = rows.filter((r) => r.sla); const drRows = rows.filter((r) => r.drishti);
     const drishti = { state: drOv.state, error: drOv.error || "", avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
       bands: { ok: drRows.filter((r) => r.drishti.band === "ok").length, warn: drRows.filter((r) => r.drishti.band === "warn").length, miss: drRows.filter((r) => r.drishti.band === "miss").length },
       red: drRows.reduce((t, r) => t + r.drishti.counts.miss, 0), red_names: [...new Set(drRows.flatMap((r) => r.drishti.drags.filter((d) => d.status === "miss").map((d) => d.name)))].slice(0, 4), clients_red: drRows.filter((r) => r.drishti.counts.miss > 0).length };
     
-    return { rows, freshness: fresh, drishti, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, over90_pct: totAr ? Math.round(totO90 / totAr * 1000) / 10 : 0,
+    return { rows, freshness: fresh, drishti, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, over90_pct: totOwed ? Math.round(totO90 / totOwed * 1000) / 10 : 0,
       sla_avg: slas.length ? Math.round(slas.reduce((t, r) => t + r.sla.score, 0) / slas.length * 10) / 10 : null, collected_month: sum("collected_month"),
       open_bal: sum("open_bal"), open_n: sum("open_n"), tfl_soon: sum("tfl_soon"), tfl_soon_n: sum("tfl_soon_n"),
       waiting_bal: rows.reduce((t, r) => t + (r.waiting ? r.waiting.bal : 0), 0), at_risk: rows.filter((r) => r.health === "risk").length, watch: rows.filter((r) => r.health === "watch").length, missed: sum("missed") },
@@ -3438,7 +3511,7 @@ const OPS = {
     const pf = await OPS["portfolio.overview"]({ env, user, payload: { client_id: payload.client_id, lead_id: payload.lead_id, today } });
     const ids = pf.rows.map((r) => r.client_id);
     const inIds = ids.length ? `(${ids.map(() => "?").join(",")})` : "(NULL)";
-    const ageSql = "CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END";
+    const ageSql = "CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(c.dos, 1, 10)), c.age_days) ELSE c.age_days END";
     const d7 = istISO(Date.parse(today + "T12:00:00Z") - 7 * 86400000);
     const monthStart = Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
     // One stage per claim: an open hand-off wins (waiting on the client, or at a desk), then the claim's own state and follow-up date.
@@ -3452,12 +3525,12 @@ const OPS = {
       FROM claims c LEFT JOIN ${ho} h ON h.claim_id = c.id
       WHERE c.client_id IN ${inIds} AND (c.state IN ${WORKABLE} OR (c.state = 'in_process' AND h.claim_id IS NOT NULL)) GROUP BY 1, 2`,
       today, today, d7, now - 10 * 86400000, now, today, ...ids);
-    const ages = await all(env, `SELECT client_id, CASE WHEN age > 90 THEN 4 WHEN age > 60 THEN 3 WHEN age > 30 THEN 2 ELSE 1 END AS b, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal
+    const ages = await all(env, `SELECT client_id, CASE WHEN age > 90 THEN 4 WHEN age > 60 THEN 3 WHEN age > 30 THEN 2 ELSE 1 END AS b, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal, COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS pbal
       FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE}) GROUP BY 1, 2`, today, ...ids);
     const big = await all(env, `SELECT client_id, balance, payer FROM (SELECT c.client_id, c.balance, c.payer, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE})
       WHERE age > 90 AND balance > 0 ORDER BY balance DESC LIMIT 3000`, today, ...ids);
     const holders = await all(env, `SELECT c.client_id, c.assigned_to, u.name, COUNT(*) AS n FROM claims c LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL GROUP BY 1, 2`, ...ids, today);
+      WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL AND ${INV_NO_OPEN_HO} GROUP BY 1, 2`, ...ids, today);
     const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND updated_at >= ? GROUP BY 1`, ...ids, monthStart);
     const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.status IN ('pending','assigned') AND h.due_at < ? GROUP BY 1, 2`, ...ids, now);
     const escOpen = await all(env, `SELECT client_id, COUNT(*) AS n FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, ...ids);
@@ -3466,12 +3539,12 @@ const OPS = {
       for (let dd = Number(today.slice(8, 10)); dd <= last; dd++) { const w = new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); if (w && w !== 6) wdLeft++; } }
     const STAGES = ["open", "list", "later", "due", "overdue", "waiting", "desk"];
     const blank = () => ({ stages: Object.fromEntries(STAGES.map((k) => [k, { n: 0, bal: 0 }])), o7: 0, w10: 0, late: 0, first_open: null, next_fu: null, list_people: 0,
-      ages: [1, 2, 3, 4].map(() => ({ n: 0, bal: 0 })), big: [], holders: [], closed: { n: 0, bal: 0 }, desk_late: {}, esc_open: 0 });
+      ages: [1, 2, 3, 4].map(() => ({ n: 0, bal: 0, pbal: 0 })), big: [], holders: [], closed: { n: 0, bal: 0 }, desk_late: {}, esc_open: 0 });
     const per = new Map(ids.map((id) => [id, blank()])), tot = blank();
     const both = (cid, fn) => { const p = per.get(cid); if (p) { fn(p); fn(tot); } };
     for (const r of st) both(r.client_id, (x) => { const s = x.stages[r.stage]; s.n += r.n; s.bal += r.bal; if (r.stage === "overdue") x.o7 += r.o7 || 0; if (r.stage === "waiting") x.w10 += r.w10 || 0; if (r.stage === "desk") x.late += r.late || 0;
       if (r.first_open && (!x.first_open || r.first_open < x.first_open)) x.first_open = r.first_open; if (r.next_fu && (!x.next_fu || r.next_fu < x.next_fu)) x.next_fu = r.next_fu; if (r.stage === "list") x.list_people += r.people; });
-    for (const r of ages) both(r.client_id, (x) => { x.ages[r.b - 1].n += r.n; x.ages[r.b - 1].bal += r.bal; });
+    for (const r of ages) both(r.client_id, (x) => { x.ages[r.b - 1].n += r.n; x.ages[r.b - 1].bal += r.bal; x.ages[r.b - 1].pbal += r.pbal; });
     for (const r of big) both(r.client_id, (x) => x.big.push(r));
     for (const r of holders) both(r.client_id, (x) => { const h = x.holders.find((y) => y.id === r.assigned_to); if (h) h.n += r.n; else x.holders.push({ id: r.assigned_to, name: r.name || "someone", n: r.n }); });
     for (const r of closed) both(r.client_id, (x) => { x.closed.n += r.n; x.closed.bal += r.bal; });
@@ -3484,32 +3557,34 @@ const OPS = {
     const deptName = { posting: "Posting", submission: "Submission", subcheck: "Submission", rejection: "Rejections" };
     // What to do first, most SLA-damaging first. Each card: the number, why it matters, and the one action.
     const insights = (x, cl, cid) => {
-      const out = [], arTot = x.ages.reduce((t, a) => t + a.bal, 0), o90 = x.ages[3].bal, pct = arTot ? Math.round(o90 / arTot * 1000) / 10 : 0;
+      // the over-90 share is of the money owed: credit balances are left out of it
+      const out = [], arTot = x.ages.reduce((t, a) => t + a.pbal, 0), o90 = x.ages[3].pbal, pct = arTot ? Math.round(o90 / arTot * 1000) / 10 : 0;
       const at = (k) => x.stages[k], params = cid ? { clientId: cid } : {};
       if (pct > T) {
         const need = (o90 - T / 100 * arTot) / (1 - T / 100); let n = 0, s = 0; const pay = {};
         for (const b of x.big) { if (s >= need) break; n++; s += b.balance; pay[b.payer || "no payer"] = (pay[b.payer || "no payer"] || 0) + 1; }
         const top = Object.entries(pay).sort((a, b) => b[1] - a[1]).slice(0, 2);
-        out.push({ tone: "red", num: money(s), sub: pl(n, "claim") + " · over 90 days", short: `Resolve the ${pl(n, "biggest claim")} over 90 days (${money(s)})`, title: `Over-90 AR is ${pct}%, target ≤ ${T}%.`,
-          text: `Resolve the ${n === 1 ? "biggest claim" : n + " biggest claims"} over 90 days and it comes under ${T}%.` + (top.length ? ` Most are with ${top.map(([p, k]) => p + " (" + k + ")").join(" and ")}.` : ""),
+        const after = arTot - s > 0 ? Math.round((o90 - s) / (arTot - s) * 1000) / 10 : 0, under = s >= need;
+        if (n) out.push({ tone: "red", num: money(s), sub: pl(n, "claim") + " · over 90 days", short: `Resolve the ${pl(n, "biggest claim")} over 90 days (${money(s)})`, title: `Over-90 AR is ${pct}%, target ≤ ${T}%.`,
+          text: `Resolve the ${n === 1 ? "biggest claim" : n + " biggest claims"} over 90 days and it comes ${under ? "under " + T + "%" : "down to " + after + "%"}.` + (top.length ? ` Most are with ${top.map(([p, k]) => p + " (" + k + ")").join(" and ")}.` : ""),
           act: [{ label: "Open the list", to: "claims", params: { ...params, min_age: 91, sort: "balance", dir: "desc", state: "workable" } }] });
       }
       if (at("overdue").n) {
         const hs = x.holders.sort((a, b) => b.n - a.n).slice(0, 3);
         out.push({ tone: x.o7 ? "red" : "amber", short: pl(at("overdue").n, "overdue follow-up"), num: String(at("overdue").n), sub: "overdue follow-ups · " + money(at("overdue").bal), title: "Follow-up dates have passed and nobody has worked the claim since.",
           text: (x.o7 ? `${x.o7} are over 7 days late. ` : "") + (hs.length ? `Most are with ${hs.map((h) => h.name + " (" + h.n + ")").join(", ")}.` : "") + " Overdue follow-ups keep Days in AR and the over-90 bucket up.",
-          act: [{ label: "Open them", to: "claims", params: { ...params, overdue: true, state: "" } }] });
+          act: [{ label: "Open them", to: "claims", params: { ...params, stage: "overdue", state: "" } }] });
       }
       const tf = cl ? { n: cl.tfl_soon_n, bal: cl.tfl_soon, past: cl.tfl_past_n } : pf.rows.reduce((a, r) => ({ n: a.n + r.tfl_soon_n, bal: a.bal + r.tfl_soon, past: a.past + r.tfl_past_n }), { n: 0, bal: 0, past: 0 });
       if (tf.n) out.push({ tone: "amber", short: pl(tf.n, "claim") + " near timely filing", num: String(tf.n), sub: "claims · " + money(tf.bal) + " · timely filing", title: "Timely filing limit in the next 30 days.", text: "Lose these and the money cannot be collected. Work them before anything else on the list." + (tf.past ? ` ${tf.past} are already past the limit.` : ""),
         act: [{ label: "Open the insurance limits", to: "limits", params: {} }] });
       if (at("waiting").n) out.push({ tone: x.w10 ? "amber" : "blue", short: x.w10 ? `Chase the client: ${x.w10} waiting over 10 days` : pl(at("waiting").n, "claim") + " waiting on the client", num: String(at("waiting").n), sub: "waiting on the client · " + money(at("waiting").bal), title: x.w10 ? `${x.w10} ${x.w10 === 1 ? "has" : "have"} waited on the client more than 10 days.` : "Waiting on the client.",
-        text: "Days in AR keeps counting while they wait. Chase the client for the answers.", act: [{ label: "Open Client requests", to: "attention", params: { tab: "client" } }] });
+        text: "Days in AR keeps counting while they wait. Chase the client for the answers.", act: [{ label: "Open Client requests", to: "attention", params: cid ? { tab: "client", client_id: cid } : { tab: "client" } }] });
       if (at("open").n) { const days = x.first_open ? Math.floor((now - x.first_open) / 86400000) : 0;
         out.push({ tone: days > 2 ? "amber" : "blue", short: "Allocate " + pl(at("open").n, "unassigned claim"), num: String(at("open").n), sub: "unassigned · " + money(at("open").bal), title: days > 0 ? `Not handed out yet, the oldest for ${pl(days, "day")}.` : "Not handed out yet.",
           text: "Nobody works a claim that is not on a list. Hand them out so the team's pace covers them.", act: [{ label: "Allocate", to: "allocate", params }] }); }
       if (x.late) { const by = Object.entries(x.desk_late).map(([k, n]) => n + " at " + (deptName[k] || k)).join(", ");
-        out.push({ tone: "amber", short: pl(x.late, "claim") + " past the desk TAT", num: String(x.late), sub: "past the desk TAT", title: "At Posting or Submission past the client's TAT.", text: by + ". These count against the Posting TAT and Submission TAT on the scorecard.", act: [{ label: "Open the desks", to: "handoffs", params: {} }] }); }
+        out.push({ tone: "amber", short: pl(x.late, "claim") + " past the desk TAT", num: String(x.late), sub: "past the desk TAT", title: "At Posting or Submission past the client's TAT.", text: by + ". These count against the Posting TAT and Submission TAT on the scorecard.", act: [{ label: "Open the desks", to: "handoffs", params: cid ? { client_id: cid } : {} }] }); }
       if (x.esc_open) out.push({ tone: "red", short: "Close " + pl(x.esc_open, "open escalation"), num: String(x.esc_open), sub: "open escalations", title: "Escalations are open. The SLA threshold is 0.", text: "Close them, or give the reason and expected date on the tracker.", act: [{ label: "Open the Escalation tracker", to: "escalations", params: cid ? { client_id: cid } : {} }] });
       // what is fine, so the list is not all alarms
       if (arTot && pct <= T) out.push({ tone: "green", num: pct + "%", sub: `over 90 days · target ≤ ${T}%`, title: "Over-90 AR is within target.", text: x.ages[2].bal ? `Keep it there: ${money(x.ages[2].bal)} is 61 to 90 days old and turns 90+ within the month if not worked.` : "Keep the follow-ups on time to hold it there.", act: [] });
@@ -3521,16 +3596,16 @@ const OPS = {
     const pace = (rows) => { const tw = rows.reduce((t, r) => t + (r.to_work || 0), 0), pd = rows.reduce((t, r) => t + (r.per_day || 0), 0);
       return { to_work: tw, per_day: Math.round(pd * 10) / 10, people: rows.reduce((t, r) => t + (r.people || 0), 0), days_to_clear: pd ? Math.ceil(tw / pd) : null, wd_left: wdLeft }; };
     const shape = (x, rows, cl, cid) => {
-      const arTot = x.ages.reduce((t, a) => t + a.bal, 0), pc = pace(rows);
+      const arTot = x.ages.reduce((t, a) => t + a.bal, 0), owed = x.ages.reduce((t, a) => t + a.pbal, 0), o90p = x.ages[3].pbal, pc = pace(rows);
       return { stages: x.stages, o7: x.o7, w10: x.w10, late: x.late, oldest_open: x.first_open ? Math.floor((now - x.first_open) / 86400000) : null, next_fu: x.next_fu, list_people: x.list_people,
-        ages: x.ages, ar: arTot, over90_pct: arTot ? Math.round(x.ages[3].bal / arTot * 1000) / 10 : 0, closed: x.closed, esc_open: x.esc_open, pace: pc,
+        ages: x.ages, ar: arTot, over90_pct: owed ? Math.round(o90p / owed * 1000) / 10 : 0, closed: x.closed, esc_open: x.esc_open, pace: pc,
         checks: [
-          { key: "o90", name: "AR over 90 days", now: (arTot ? Math.round(x.ages[3].bal / arTot * 1000) / 10 : 0) + "%", target: "≤ " + T + "%", ok: !arTot || x.ages[3].bal / arTot * 100 <= T },
+          { key: "o90", name: "AR over 90 days", now: (owed ? Math.round(o90p / owed * 1000) / 10 : 0) + "%", target: "≤ " + T + "%", ok: !owed || o90p / owed * 100 <= T },
           { key: "fu", name: "Follow-ups overdue", now: String(x.stages.overdue.n), target: "0", ok: !x.stages.overdue.n, warn: x.stages.overdue.n && !x.o7 },
           { key: "tfl", name: "Timely filing in the next 30 days", now: String(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), target: "0", ok: !(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), warn: true },
           { key: "desk", name: "Desks past the client's TAT", now: String(x.late), target: "0", ok: !x.late },
           { key: "esc", name: "Escalations open", now: String(x.esc_open), target: "0", ok: !x.esc_open },
-          { key: "pace", name: "Days to clear at this pace", now: pc.days_to_clear == null ? "–" : pl(pc.days_to_clear, "day"), target: "≤ " + pl(wdLeft, "day") + " left", ok: pc.days_to_clear != null && pc.days_to_clear <= wdLeft, warn: pc.days_to_clear == null },
+          { key: "pace", name: "Days to clear at this pace", now: pc.days_to_clear == null ? "–" : pl(pc.days_to_clear, "day"), target: wdLeft ? "≤ " + pl(wdLeft, "day") + " left" : "no working days left this month", ok: pc.days_to_clear != null && pc.days_to_clear <= wdLeft, warn: pc.days_to_clear == null },
         ],
         insights: insights(x, cl, cid) };
     };
@@ -3764,8 +3839,9 @@ const OPS = {
     await snapshotIfStale(env);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const from = num(payload.from_ms, now - 30 * 86400000), to = num(payload.to_ms, now), span = Math.max(86400000, to - from);
-    const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(dos, 1, 10)) ELSE age_days END";
+    const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END";
     const ar = await one(env, `SELECT COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0) AS o90, SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END) AS o90n,
+        COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS balp, COALESCE(SUM(CASE WHEN age > 90 AND balance > 0 THEN balance ELSE 0 END), 0) AS o90p,
         COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0) AS o120 FROM (SELECT balance, ${ageSql} AS age FROM claims WHERE client_id = ? AND state IN ${WORKABLE})`, today, clientId);
     // a month ago, from the snapshots, for the change
     const monthAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(now - 30 * 86400000));
@@ -3785,7 +3861,7 @@ const OPS = {
     const esc = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND ? - escalated_at > ? THEN 1 ELSE 0 END) AS late FROM claims WHERE client_id = ? AND escalated = 1 AND state IN ${WORKABLE}`, now, ESCALATION_TAT_MS, clientId);
     const missed = (await missedByClient(env, payload)).get(clientId) || { ar: 0, posting: 0, submission: 0 };
     const worked = await one(env, "SELECT COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, from, to);
-    const month = payload.month && /^\d{4}-\d{2}$/.test(payload.month) ? payload.month : closingMonth(today);
+    const month = okMonth(payload.month, today) ? payload.month : closingMonth(today);
     const me = new Map((await all(env, "SELECT * FROM client_monthend WHERE client_id = ? AND month = ?", clientId, month)).map((r) => [r.step, r]));
     const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key); return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: r ? r.score : null, note: r ? r.note : "" }; });
     const slaRow = await one(env, "SELECT month, score, done_at FROM client_monthend WHERE client_id = ? AND step = 'sla' AND score IS NOT NULL ORDER BY month DESC LIMIT 2", clientId);
@@ -3795,7 +3871,7 @@ const OPS = {
     const team = parseTeam(c.team_json).length;
     const locs = (await all(env, "SELECT name FROM locations WHERE client_id = ? AND active = 1 ORDER BY name", clientId)).map((l) => l.name);
     // health: plain reasons, worst first
-    const pct = ar.bal ? Math.round(ar.o90 / ar.bal * 1000) / 10 : 0;
+    const pct = ar.balp ? Math.round(ar.o90p / ar.balp * 1000) / 10 : 0;
     const oldest = waiting.length ? Math.floor((now - (waiting[0].client_sent_at || waiting[0].paused_at || now)) / 86400000) : 0;
     const { health, reasons: reasonsOut } = healthOf({ pct, sla: slaRow, tfl, escLate: esc && esc.late, waitingN: waiting.length, oldest, missed: missed.ar + missed.posting + missed.submission });
     return {
@@ -3820,6 +3896,7 @@ const OPS = {
     if (!commentOk(text)) throw bad("Write what was said or decided, a few words at least.");
     const next = isoDate(payload.next_on) || "";
     if (kind === "next" && !next) throw bad("Pick the date of the next call.");
+    if (next && next < istISO(Date.now() - 86400000)) throw bad("The next call date is in the past. Pick today or a later day.");
     const id = uuid();
     await run(env, "INSERT INTO client_log (id, client_id, at, kind, text, next_on, by_id, by_name) VALUES (?,?,?,?,?,?,?,?)", id, clientId, Date.now(), kind, text, next, user.id, user.name || "");
     await audit(env, user, "client.log", clientId, kind + ": " + text.slice(0, 80));
@@ -3836,13 +3913,14 @@ const OPS = {
   "monthend.set": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
     editableOr(user, clientId);
-    const month = /^\d{4}-\d{2}$/.test(payload.month || "") ? payload.month : null;
     const step = MONTHEND_STEPS.find(([k]) => k === payload.step);
-    if (!month || !step) throw bad("Pick the month and the step.");
+    if (!step) throw bad("Pick the month and the step.");
+    const month = okMonth(payload.month, isoToday()) ? payload.month : null;
+    if (!month) throw bad("Pick a month from January to December, not later than this month.");
     if (payload.done === false) { await run(env, "DELETE FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]); return { ok: true }; }
     let score = null;
     if (step[0] === "sla") {
-      score = Number(payload.score);
+      score = payload.score == null || payload.score === "" || typeof payload.score === "boolean" ? NaN : Number(payload.score);
       if (!(score >= 0 && score <= 100)) throw bad("Type the SLA score from the scorecard, 0 to 100.");
       score = Math.round(score * 10) / 10;
     }
@@ -4258,6 +4336,7 @@ const OPS = {
 
   /* ---- claims (supervisor views) ---- */
   "claims.list": async ({ env, user, payload }) => {
+    if (payload.stage && !INV_STAGE_SQL[payload.stage]) throw bad("Unknown stage.");
     const where = [], params = [];
     const ro = respOnly(user);
     if (ro) { where.push(`c.client_id IN (${ro.map(() => "?").join(",")})`); params.push(...ro); }
@@ -4281,14 +4360,17 @@ const OPS = {
     if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
     if (payload.min_balance != null && payload.min_balance !== "") { where.push("c.balance >= ?"); params.push(num(payload.min_balance, 0)); }
     // Older than N days, by date of service (the age the over-90 target uses), else the file's age.
-    if (payload.min_age != null && payload.min_age !== "") { where.push("(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END) >= ?"); params.push(isoDate(payload.today) || isoToday(), num(payload.min_age, 0)); }
+    if (payload.min_age != null && payload.min_age !== "") { where.push("(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(c.dos, 1, 10)), c.age_days) ELSE c.age_days END) >= ?"); params.push(isoDate(payload.today) || isoToday(), num(payload.min_age, 0)); }
     if (payload.max_balance != null && payload.max_balance !== "") { where.push("c.balance <= ?"); params.push(num(payload.max_balance, 0)); }
     if (payload.saag_status) { where.push("c.last_status_code = ?"); params.push(str(payload.saag_status, 60)); }
     if (payload.saag_bucket) { where.push("c.last_bucket = ?"); params.push(str(payload.saag_bucket, 20)); }
     if (payload.worked === "yes") where.push("c.last_status_code <> ''");
     if (payload.worked === "no") where.push("c.last_status_code = ''");
     if (payload.follow_up_due) { where.push("c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on <= ?"); params.push(isoDate(payload.today) || isoToday()); }
-    if (payload.overdue) { where.push("c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ?"); params.push(isoDate(payload.today) || isoToday()); }
+    // overdue: as Inventory status counts it, so a claim waiting on the client or at a desk is not in it
+    if (payload.overdue) { where.push(`c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND ${INV_NO_OPEN_HO}`); params.push(isoDate(payload.today) || isoToday()); }
+    // stage: exactly one of Inventory status's stages, so a stage button opens the claims it counts
+    if (payload.stage && INV_STAGE_SQL[payload.stage]) { where.push(INV_STAGE_SQL[payload.stage]); const t = isoDate(payload.today) || isoToday(); params.push(...(payload.stage === "overdue" || payload.stage === "due" ? [t] : payload.stage === "later" ? [t, t] : [])); }
     if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
     const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "c.age_days", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on",
       claim_no: "c.claim_no", tier: "c.tier", status_class: "c.status_class", inventory_kind: "c.inventory_kind", provider: "c.provider", cpt: "c.cpt" };
@@ -4362,7 +4444,7 @@ const OPS = {
       one(env, `SELECT COUNT(*) AS n FROM claims ${(where.length ? w + " AND " : "WHERE ")} escalated = 1 AND state IN ${WORKABLE}`, ...params),
     ]);
     // Follow-up date passed and nobody has touched the claim since: these need a biller again.
-    const overdue = await one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} state = 'completed' AND follow_up_on <> '' AND follow_up_on < ?`, ...params, today);
+    const overdue = await one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} state = 'completed' AND follow_up_on <> '' AND follow_up_on < ? AND ${INV_NO_OPEN_HO.replace("c.id", "claims.id")}`, ...params, today);
     const [workBuckets, saagStatuses, byLocation] = await Promise.all([
       all(env, `SELECT last_bucket AS bucket, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} last_bucket <> '' GROUP BY last_bucket`, ...params),
       all(env, `SELECT last_status_code AS status, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${(where.length ? w + " AND " : "WHERE ")} last_status_code <> '' GROUP BY last_status_code ORDER BY n DESC`, ...params),
@@ -4372,7 +4454,7 @@ const OPS = {
           SUM(c.state = 'completed') AS worked_n, COALESCE(SUM(CASE WHEN c.state = 'completed' THEN c.balance END),0) AS worked_amt,
           SUM(c.state = 'closed') AS closed_n, COALESCE(SUM(CASE WHEN c.state = 'closed' THEN c.balance END),0) AS closed_amt,
           SUM(c.state = 'in_process') AS process_n, COALESCE(SUM(CASE WHEN c.state = 'in_process' THEN c.balance END),0) AS process_amt,
-          SUM(c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ?) AS overdue_n,
+          SUM(c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND ${INV_NO_OPEN_HO}) AS overdue_n,
           COUNT(*) AS n, COALESCE(SUM(CASE WHEN c.state IN ${WORKABLE} THEN c.balance END),0) AS amt
         FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id ${(where.length ? "WHERE " + where.map((x) => "c." + x).join(" AND ") : "")}
         GROUP BY c.client_id, c.location_id ORDER BY cl.name, l.name`, today, ...params),
@@ -4959,12 +5041,15 @@ const OPS = {
     const today = isoDate(payload.today) || istISO(Date.now());
     const ov = await drishtiOverview(env);
     if (ov.state !== "ok") return { state: ov.state, error: ov.error || "", client: { id: client.id, name: client.name }, drishti: null };
-    const d = ov.clients.find((c) => drKey(c.name) === drKey(client.name));
+    const { d, ambiguous } = drMatch(ov, client.name);
     if (!d) return { state: "unmatched", client: { id: client.id, name: client.name }, drishti: null, others: ov.clients.map((c) => c.name).slice(0, 50) };
     const done = d.periods.filter((p) => !p.range.to || p.range.to <= today);
     const kind = ["month", "week", "latest", "custom", "day"].includes(payload.kind) ? payload.kind : "month";
-    let list = kind === "latest" ? done : done.filter((p) => p.kind === kind); if (!list.length) list = done;
-    const want = isoDate(payload.to), cur = (want && list.find((p) => p.range.to === want)) || list[0];
+    // a kind the client has no period of: the latest period of any kind, said so (fallback), never shown as if it were that kind
+    let list = kind === "latest" ? done : done.filter((p) => p.kind === kind); const fallback = !list.length && done.length ? kind : ""; if (!list.length) list = done;
+    // step by the period's id (two periods can end on the same day); the end date still works for old links
+    const pid = str(payload.period_id, 120), want = isoDate(payload.to);
+    const cur = (pid && list.find((p) => String(p.id) === pid)) || (want && list.find((p) => p.range.to === want)) || list[0];
     if (!cur) return { state: "no_period", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner }, periods: [] };
     const same = done.filter((p) => p.kind === cur.kind), prev = same.find((p) => p !== cur && p.range.to < cur.range.from) || null;
     const sc = drScore(d, cur, prev);
@@ -4979,7 +5064,7 @@ const OPS = {
     const trend = same.filter((p) => p.range.to <= cur.range.to).slice(0, 6).reverse().map((p) => ({ id: p.id, label: p.label, to: p.range.to, pct: drScore(d, p, null).pct }));
     const sources = []; for (const it of sc.items) { const k = it.source; const x = sources.find((y) => y.from === k); if (x) x.metrics.push(it.name); else sources.push({ from: k, metrics: [it.name] }); }
     const sums = drSummary(ov, [client], today); if (sums.size) await drTickMonthEnd(env, sums);
-    return { state: "ok", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner },
+    return { state: "ok", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner }, ambiguous, fallback,
       periods: done.map((p) => ({ id: p.id, kind: p.kind, label: p.label, from: p.range.from, to: p.range.to })), kind: cur.kind,
       period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to, created_at: cur.createdAt, created_by: cur.createdBy, reports: cur.reports },
       prev: prev ? { id: prev.id, label: prev.label, from: prev.range.from, to: prev.range.to, pct: drScore(d, prev, null).pct } : null,
@@ -5532,6 +5617,7 @@ const OPS = {
   "payers.saveLimit": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
     editableOr(user, clientId);
+    if (!clientId || !(await one(env, "SELECT id FROM clients WHERE id = ?", clientId))) throw bad("Pick the client.");
     const payer = str(payload.payer, 160).trim();
     if (!payerKey(payer)) throw bad("Pick the insurance.");
     const tfl = limitDays(payload.tfl_days), afl = limitDays(payload.afl_days);
@@ -5541,6 +5627,7 @@ const OPS = {
         ON CONFLICT (client_id, payer_key) DO UPDATE SET payer = excluded.payer, tfl_days = excluded.tfl_days, afl_days = excluded.afl_days, note = excluded.note, source = excluded.source,
         updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_name = excluded.updated_by_name`,
       clientId, payerKey(payer), payer, tfl, afl, str(payload.note, 300).trim(), Date.now(), user.id, user.name);
+    await audit(env, user, "payers.limit", clientId, payer.slice(0, 80) + " · TFL " + (tfl || "–") + " · AFL " + (afl || "–"));
     return { ok: true };
   },
   "attention.list": async ({ env, user }) => {
@@ -5558,7 +5645,7 @@ const OPS = {
   /* Client requests: claims Posting / Submission / Rejections need the client for. Sending them to the client is the AR team
      lead's job; marking one Sent records how and when, and the department chases the client 3 working days later. */
   "attention.clientRequests": async ({ env, user }) => {
-    const rows = await all(env, `SELECT h.id, h.claim_id, h.dept, h.reason, h.note, h.paused_at AS asked_at, h.client_req_by_name AS asked_by, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.client_sent_note,
+    const rows = await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, h.reason, h.note, h.paused_at AS asked_at, h.client_req_by_name AS asked_by, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.client_sent_note,
         h.chase_at, h.due_at, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, cl.name AS client_name, l.name AS location_name, u.name AS biller_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN users u ON u.id = c.assigned_to
       WHERE h.status = 'client'${scopeSql(user, "h.client_id")} ORDER BY h.client_sent_at IS NOT NULL, h.paused_at LIMIT 500`, ...scopeArgs(user));
@@ -5945,7 +6032,8 @@ export default {
       try { await escalationReminders(env); } catch (e) { console.log("Escalation reminders: " + (e && e.message)); }
       if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
       // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
-      if (env.EMAIL_PROVIDER && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {
+      // only the Monday job sends it (the hourly run falls inside the same hours and could send it twice)
+      if (env.EMAIL_PROVIDER && event.cron === DIGEST_CRON && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {
         try { const r = await sendDigests(env, { limit: Math.max(1, Math.min(20, Number(env.DIGEST_BATCH) || 3)) }); if (r.spans) console.log(`Digest ${r.week}: ${r.spans} spans, ${r.sent} sent, ${r.failed} failed, ${r.left} left`); } catch (e) { console.log("Digest: " + (e && e.message)); }
       }
     })());

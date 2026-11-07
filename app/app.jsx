@@ -1752,10 +1752,10 @@ function LiveStatusView({ ctx, me, go, params }) {
       </div>
       <NeedsStrip go={go} />
       {live.data && live.data.rows.length > 0 && <div className="grid dash-k6">
-        <Kpi tone="accent" label="In today" value={(t.people - t.out) + " of " + t.people} sub={t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
+        <Kpi tone="accent" label="In today" value={(live.data.weekend ? t.in_weekend : t.people - t.out) + " of " + t.people} sub={live.data.weekend ? "weekend, nobody is expected in" : t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
         <Kpi label="Working now" value={<span className="teal-ink">{fmtInt(t.working)}</span>} sub="a claim open or entries in the last 30 minutes" />
         <Kpi label="Idle now" value={<span className={t.idle ? "red-ink" : ""}>{t.idle}</span>} sub="no entry for 30 minutes" />
-        <Kpi label="Worked today" value={fmtInt(t.worked)} sub={"of " + fmtInt(t.capacity) + " target"} />
+        <Kpi label="Worked today" value={fmtInt(t.worked)} sub={live.data.weekend ? "no target at the weekend" : "of " + fmtInt(t.capacity) + " target"} />
         <Kpi label="Closed today" value={<span className="teal-ink">{fmtInt(t.closed)}</span>} sub="worked to closed" tone="good" />
         <Kpi label="Left over" value={<span className={t.carried ? "amber-ink" : ""}>{fmtInt(t.carried)}</span>} sub={t.carried ? <><span className="red-ink b">{fmtInt(t.left_high)} high priority</span> · {fmtInt(t.carried - t.left_high)} other</> : "allocated before this shift, all worked"} />
       </div>}
@@ -2045,7 +2045,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
           <div className="grid g3">
             <div className="card"><h3>By value tier</h3><div className="sub mb">Low under $100 · Medium up to the average · High above it</div>
               <Bars rows={["High", "Medium", "Low"].map((t) => d.tiers.find((x) => x.tier === t) || { tier: t, n: 0, amt: 0 })} labelOf={(r) => r.tier} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => toggleFl("tier", r.tier)} isOn={(r) => fl.tier === r.tier} /></div>
-            <div className="card"><h3>By age</h3><div className="sub mb">Days since date of service</div>
+            <div className="card"><h3>By age</h3><div className="sub mb">Days since date of service as of the day the file was uploaded, not today</div>
               <Bars rows={BUCKET_ORDER.map((b) => d.buckets.find((x) => x.bucket === b) || { bucket: b, n: 0, amt: 0 })} labelOf={(r) => r.bucket} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => toggleFl("bucket", r.bucket)} isOn={(r) => fl.bucket === r.bucket} /></div>
             <div className="card"><h3>By status in file</h3><div className="sub mb">Rejected and denied are worked first</div>
               <Bars rows={[...d.classes].sort((a, b) => STATUS_ORDER.indexOf(a.status_class) - STATUS_ORDER.indexOf(b.status_class))} labelOf={(r) => STATUS_LABEL[r.status_class] || r.status_class} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => toggleFl("status_class", r.status_class)} isOn={(r) => fl.status_class === r.status_class} /></div>
@@ -2056,7 +2056,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
             <div className="card"><h3>SAAG statuses</h3><div className="sub mb">Last status the team entered</div>
               <Bars rows={d.saag_statuses || []} labelOf={(r) => r.status} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => toggleFl("saag_status", r.status)} isOn={(r) => fl.saag_status === r.status} /></div>
           <div className="card"><h3>Payer concentration</h3><div className="sub mb">Fewest payers holding the most balance: fewest calls for the most money</div>
-              <Bars rows={d.payers} labelOf={(r) => r.payer || "Unknown"} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => toggleFl("payer", r.payer)} isOn={(r) => fl.payer === r.payer} /></div>
+              <Bars rows={d.payers} labelOf={(r) => r.payer || "Unknown"} valueOf={(r) => r.amt} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} onClick={(r) => { if (r.payer) toggleFl("payer", r.payer); }} isOn={(r) => !!r.payer && fl.payer === r.payer} /></div>
           </div>
         </div>
       )}
@@ -3203,7 +3203,7 @@ function SaagCell({ r }) {
 function ClaimsView({ ctx, params, me, initialTab }) {
   const p = params || {};
   const [tab, setTab] = useState(initialTab === "entries" || p.tab === "entries" ? "entries" : "claims");
-  const [f, setF] = useState({ client_id: p.clientId || "", location_id: p.locationId || "", state: p.state != null ? p.state : (p.follow_up_due || p.overdue || p.assigned_to || p.escalated ? "" : "workable"), tier: p.tier || "", bucket: p.bucket || "", status_class: p.status_class || "", inventory_kind: p.inventory_kind || "", assigned_to: p.assigned_to || "", q: p.payer || "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: p.saag_status || "", saag_bucket: p.saag_bucket || "", follow_up_due: !!p.follow_up_due, overdue: !!p.overdue, escalated: !!p.escalated, min_age: p.min_age || "", sort: p.sort || "priority", dir: p.dir || "desc", page: 1, page_size: 50 });
+  const [f, setF] = useState({ client_id: p.clientId || "", location_id: p.locationId || "", state: p.state != null ? p.state : (p.follow_up_due || p.overdue || p.assigned_to || p.escalated ? "" : "workable"), tier: p.tier || "", bucket: p.bucket || "", status_class: p.status_class || "", inventory_kind: p.inventory_kind || "", assigned_to: p.assigned_to || "", q: p.payer || "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: p.saag_status || "", saag_bucket: p.saag_bucket || "", follow_up_due: !!p.follow_up_due, overdue: !!p.overdue, escalated: !!p.escalated, min_age: p.min_age || "", stage: INV_STAGES.some(([k]) => k === p.stage) ? p.stage : "", sort: p.sort || "priority", dir: p.dir || "desc", page: 1, page_size: 50 });
   const set = (k, v) => setF((x) => ({ ...x, [k]: v, page: k === "page" ? v : 1 }));
   const payload = useMemo(() => { const o = {}; for (const k in f) if (f[k] !== "" && f[k] !== false) o[k] = f[k]; return o; }, [f]);
   const q = useRpc("claims.list", payload, [JSON.stringify(payload)]);
@@ -3270,6 +3270,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
           <label className="check small"><input type="checkbox" checked={f.follow_up_due} onChange={(e) => set("follow_up_due", e.target.checked)} /> Follow-up due</label>
           <label className="check small" style={{ color: "var(--red-ink)" }}><input type="checkbox" checked={f.overdue} onChange={(e) => set("overdue", e.target.checked)} /> Overdue, no new entry</label>
           {f.min_age ? <label className="check small"><input type="checkbox" checked onChange={() => set("min_age", "")} /> Over {f.min_age - 1} days old</label> : null}
+          {f.stage ? <label className="check small"><input type="checkbox" checked onChange={() => set("stage", "")} /> {(INV_STAGES.find(([k]) => k === f.stage) || [])[1]}</label> : null}
           <label className="check small"><input type="checkbox" checked={f.escalated} onChange={(e) => set("escalated", e.target.checked)} /> Escalated</label>
           <span style={{ flex: 1 }} />
           {q.data && <span className="small muted">{fmtInt(q.data.total)} claims · {fmtMoney(q.data.amount)}</span>}
@@ -3620,6 +3621,7 @@ function DigestDashboard({ params, go }) {
   };
   if (q.error) return <ErrorBox error={q.error} />;
   if (!d) return <Spinner label="Building the digest…" />;
+  if (d.empty) return <div className="card"><h2>Monday digest</h2><Empty>No digests yet: add clients and their managers first, then each manager's clients get a Monday digest.</Empty></div>;
   const R = d.rollup, money = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString());
   const f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
   const dd = (iso) => fmtDate(iso).replace(/, \d{4}$/, "");
@@ -3637,6 +3639,7 @@ function DigestDashboard({ params, go }) {
           <button className="btn sm" onClick={pdf}>⬇ PDF (landscape)</button>
         </div>
       </div>
+      {(d.notices || []).map((n, i) => <div key={i} className="alert warn no-print">{n}</div>)}
       <div className="dd-kpis">
         <div><b>{R.sla_avg == null ? "–" : R.sla_avg + "%"}</b><span>avg SLA score{R.sla_month ? " · " + R.sla_month : ""}</span></div>
         <div className="g"><b>{R.bands.ok}</b><span>green</span></div><div className="a"><b>{R.bands.warn}</b><span>amber</span></div><div className="r"><b>{R.bands.miss}</b><span>red{R.bands.miss ? " · needs a plan" : ""}</span></div>
@@ -3650,8 +3653,8 @@ function DigestDashboard({ params, go }) {
         return (
           <div key={c.id} className={"dd-card " + b}>
             <div className="dd-hd"><div className={"dd-dial " + b}>{c.card ? c.card.score + "%" : "–"}</div>
-              <div><div className="nm">{c.name} {c.card && <span className={"badge " + DR_BAND[c.card.band][1]}>{bandWord[c.card.band]}</span>}</div>
-                <div className="mt">{c.card ? `${c.card.period} · ${c.card.kpi_ok} of ${c.card.kpi_n} KPIs on target` : "Not scored in Drishti yet"}{c.card && c.card.delta != null ? <> · <b className={c.card.delta >= 0 ? "teal-ink" : "red-ink"}>{c.card.delta >= 0 ? "▲" : "▼"} {Math.abs(c.card.delta)} pts</b></> : null}</div>
+              <div><div className="nm">{c.name} {c.card && <span className={"badge " + drBandUi(c.card.band)[1]}>{bandWord[c.card.band]}</span>}</div>
+                <div className="mt">{c.card ? `${c.card.period} · ${c.card.kpi_ok} of ${c.card.kpi_n} KPIs on target` : "Not scored in Drishti yet"}{c.card && c.card.delta != null ? <> · {c.card.delta ? <b className={c.card.delta > 0 ? "teal-ink" : "red-ink"}>{c.card.delta > 0 ? "▲" : "▼"} {Math.abs(c.card.delta)} pts</b> : <span className="muted">no change</span>}</> : null}</div>
                 {ppl && <div className="mt">{ppl}</div>}</div></div>
             <div className="dd-fte"><div><span>Billable FTE</span><b>{c.wfm ? f1(c.wfm.billable) : "–"}</b></div><div><span>Assign FTE</span><b className={c.wfm && c.wfm.billable != null && c.wfm.assigned_fte < c.wfm.billable ? "amber-ink" : ""}>{c.wfm ? f1(c.wfm.assigned_fte) : "–"}</b></div></div>
             <div className="dd-mini">
@@ -3707,13 +3710,14 @@ function FromDesksView({ ctx, me, refreshAttention }) {
   );
 }
 const SENT_HOW_UI = ["Email", "Client portal", "Call", "Fax", "Other"];
-function ClientRequestsView({ ctx, me, onChanged }) {
+function ClientRequestsView({ ctx, me, onChanged, params }) {
   const q = useRpc("attention.clientRequests", {}, []);
   const [show, setShow] = useState("to_send");
+  const [only, setOnly] = useState((params && params.client_id) || "");
   const [sent, setSent] = useState(null);
   const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
-  const all = q.data ? q.data.rows : [];
+  const all = q.data ? q.data.rows.filter((r) => !only || r.client_id === only) : [];
   const rows = all.filter((r) => (show === "to_send" ? !r.client_sent_at : r.client_sent_at));
   const save = async () => {
     setBusy(true);
@@ -3723,6 +3727,7 @@ function ClientRequestsView({ ctx, me, onChanged }) {
   };
   return (
     <>
+      {only && <div className="row" style={{ gap: 6 }}><label className="check small"><input type="checkbox" checked onChange={() => setOnly("")} /> Only {(ctx.clients.find((c) => c.id === only) || {}).name || "one client"}</label></div>}
       {q.data && q.data.late > 0 && <div className="alert err"><b>{q.data.late} not sent within a working day.</b> Send these to the client first.</div>}
       <div className="row between">
         <div className="seg2">{[["to_send", "To send", all.filter((r) => !r.client_sent_at).length], ["sent", "Sent, waiting for the client", all.filter((r) => r.client_sent_at).length]].map(([k, l, n]) => <button key={k} className={show === k ? "on" : ""} onClick={() => setShow(k)}>{l} {n}</button>)}</div>
@@ -4348,14 +4353,14 @@ const DESK_TEXT = {
   posting: ["Payment posting", "Claims billers send you to post (their SAAG action Need to Post or Posting Correction). Post each one, then mark it Complete with the check / EFT details, or ask for assistance."],
   submission: ["Submission", "Claims billers send you to submit (resubmissions, corrected and paper claims). Submit each one, then mark it Complete with the batch / claim ID, or ask for assistance."],
 };
-function HandoffsView({ ctx, me, refreshHandoffs, handoffs }) {
+function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const desk = deskOf(me, handoffs);
   const hd = (handoffs && handoffs.depts) || [];
   const mine = desk === "submission" && (hd.includes("subcheck") || hd.includes("rejection")) ? ["submission", ...hd.filter((x) => x === "subcheck" || x === "rejection")] : null;
   const [dept, setDept] = useState(desk === "posting" ? "posting" : desk === "submission" && !mine ? "submission" : "");
   const [view, setView] = useState("open");
   // which client, and when the claim was sent to the desk (the same day the AR biller worked it)
-  const [clientId, setClientId] = useState("");
+  const [clientId, setClientId] = useState((params && params.client_id) || "");
   const [dr, setDr] = useState(() => ({ ...newRange("all"), key: "all" }));
   const span = rangeSpan(dr);
   const q = useRpc("handoffs.list", { dept: dept || undefined, view, client_id: clientId || undefined, from_ms: span ? dayBounds(span[0])[0] : undefined, to_ms: span ? dayBounds(span[1])[1] : undefined },
@@ -5558,6 +5563,7 @@ const isPortfolioUser = (me) => !!me && me.role === "supervisor" && (me.is_admin
 /* Dashboard > Inventory status: what was the Portfolio, for team leads too (their own clients): every client worst first,
    with the reasons, unassigned and collected for the dates; the claims in detail; managers side by side and data freshness. */
 const DR_BAND = { ok: ["teal-ink", "green", "Green"], warn: ["amber-ink", "amber", "Amber"], miss: ["red-ink", "red", "Red"] };
+const drBandUi = (b) => DR_BAND[b] || ["muted", "gray", "Not scored"];
 const drDot = (b) => <i className={"psla-dot " + (b || "none")} />;
 /* Dashboard › Inventory status: where every workable claim stands today (one stage each), the age of the AR against the over-90
    target, the pace to clear, the SLA checks the inventory answers today, and what to do first to meet the SLA. Every client, or one. */
@@ -5597,7 +5603,7 @@ function InventoryStatusTab(props) {
           <div className="row between" style={{ marginTop: 14, flexWrap: "wrap" }}><div><span className="inv-lbl">Where the inventory stands</span> <span className="small muted">· {plural(INV_STAGES.reduce((t, [k]) => t + d.stages[k].n, 0), "workable claim")} · {fmtK(INV_STAGES.reduce((t, [k]) => t + d.stages[k].bal, 0))}</span></div>
             <span className="small muted">Closed this month: <b className="teal-ink">{plural(d.closed.n, "claim")} · {fmtK(d.closed.bal)}</b></span></div>
           <InvStrip stages={d.stages} />
-          <div className="inv-legend">{INV_STAGES.map(([k, l, c]) => <button type="button" key={k} style={{ borderColor: c }} onClick={() => k === "open" ? go("allocate", clientId ? { clientId } : {}) : k === "overdue" ? go("claims", { clientId, overdue: true, state: "" }) : k === "due" ? go("claims", { clientId, follow_up_due: true, state: "" }) : k === "waiting" ? go("attention", { tab: "client" }) : k === "desk" ? go("handoffs") : go("claims", { clientId, state: k === "list" ? "assigned" : "completed" })}>
+          <div className="inv-legend">{INV_STAGES.map(([k, l, c]) => <button type="button" key={k} style={{ borderColor: c }} onClick={() => k === "open" ? go("allocate", clientId ? { clientId } : {}) : go("claims", { clientId, stage: k, state: "" })}>
             <b>{fmtInt(d.stages[k].n)}</b><span>{l}</span><small>{fmtK(d.stages[k].bal)}{stageSub(k) ? " · " + stageSub(k) : ""}</small></button>)}</div>
         </>}
       </div>
@@ -5616,11 +5622,11 @@ function InventoryStatusTab(props) {
                 {pc.days_to_clear == null ? <span className="badge gray mt8">No work in the last 2 weeks</span> : pc.days_to_clear <= d.wd_left ? <span className="badge green mt8">On track · {plural(d.wd_left - pc.days_to_clear, "day")} spare</span> : <span className="badge red mt8">{plural(pc.days_to_clear - d.wd_left, "day")} short</span>}
                 {!clientId && (() => { const late = d.clients.filter((c) => c.days_to_clear != null && c.days_to_clear > d.wd_left); return late.length ? <div className="small muted mt8">Not on track: {late.slice(0, 3).map((c) => c.client + " (" + c.days_to_clear + " days)").join(", ")}{late.length > 3 ? " +" + (late.length - 3) : ""}</div> : null; })()}</div></div></div>
           <div className="card"><span className="inv-lbl">SLA checks · today</span> <span className="small muted">· from the inventory</span>
-            <table className="inv-ck"><thead><tr><th>Check</th><th className="r">Now</th><th>Target</th><th></th></tr></thead>
+            {!d.clients.length ? <Empty>No clients yet, so there is nothing to check.</Empty> : <table className="inv-ck"><thead><tr><th>Check</th><th className="r">Now</th><th>Target</th><th></th></tr></thead>
               <tbody>{d.checks.map((c) => <tr key={c.key}><td>{c.name}</td><td className={"r b " + (c.ok ? "teal-ink" : c.warn ? "amber-ink" : "red-ink")}>{c.now}</td><td className="muted">{c.target}</td>
-                <td>{c.ok ? <span className="badge green">met</span> : c.warn ? <span className="badge amber">watch</span> : <span className="badge red">not met</span>}</td></tr>)}</tbody></table>
+                <td>{c.ok ? <span className="badge green">met</span> : c.warn ? <span className="badge amber">watch</span> : <span className="badge red">not met</span>}</td></tr>)}</tbody></table>}
             {d.drishti && d.drishti.state === "ok" && d.drishti.avg != null && !clientId ? <div className="small muted mt8">Last scorecard in Drishti: average <b>{d.drishti.avg}%</b> · {d.drishti.bands.ok} green · {d.drishti.bands.warn} amber · {d.drishti.bands.miss} red</div>
-              : client && client.drishti ? <div className="small muted mt8">Last scorecard in Drishti: <b className={DR_BAND[client.drishti.band][0]}>{client.drishti.score}%</b> <button type="button" className="btn link tiny" style={{ padding: 0 }} onClick={() => go("sla", { tab: "scorecard", client_id: clientId })}>scorecard ›</button></div> : null}</div>
+              : client && client.drishti ? <div className="small muted mt8">Last scorecard in Drishti: <b className={drBandUi(client.drishti.band)[0]}>{client.drishti.score}%</b> <button type="button" className="btn link tiny" style={{ padding: 0 }} onClick={() => go("sla", { tab: "scorecard", client_id: clientId })}>scorecard ›</button></div> : null}</div>
         </div>
         <div className="card">
           <div className="row between" style={{ alignItems: "flex-start" }}><div><h3 style={{ margin: 0 }}>To meet the SLA this month · do these first</h3>
@@ -5637,7 +5643,7 @@ function InventoryStatusTab(props) {
               <td><InvStrip stages={c.stages} mini /></td><td className="num mono">{fmtK(c.ar)}</td><td className={"num " + (c.over90_pct > d.target ? "red-ink" : "teal-ink")}>{c.over90_pct}%</td>
               <td className={"num " + (c.overdue ? "red-ink" : "")}>{fmtInt(c.overdue)}</td><td className="num">{fmtInt(c.waiting)}</td>
               <td className={"num " + (c.days_to_clear != null && c.days_to_clear > d.wd_left ? "red-ink" : "")}>{c.days_to_clear == null ? "–" : plural(c.days_to_clear, "day")}</td>
-              <td onClick={(e) => e.stopPropagation()}>{c.drishti ? <><span className={"badge " + DR_BAND[c.drishti.band][1]}>{c.drishti.score}%</span> <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("sla", { tab: "scorecard", client_id: c.client_id })}>scorecard ›</button></> : <span className="tiny muted">–</span>}</td>
+              <td onClick={(e) => e.stopPropagation()}>{c.drishti ? <><span className={"badge " + drBandUi(c.drishti.band)[1]}>{c.drishti.score}%</span> <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("sla", { tab: "scorecard", client_id: c.client_id })}>scorecard ›</button></> : <span className="tiny muted">–</span>}</td>
               <td className="small" style={{ maxWidth: 300 }}>{c.do_first.length ? c.do_first.map((x, k) => <div key={k}>{x}</div>) : <span className="teal-ink">Nothing urgent</span>}</td></tr>)}</tbody></table></div></div>}
         {clientId && <button type="button" className="btn link sm" style={{ alignSelf: "flex-start" }} onClick={() => setClientId("")}>‹ Back to every client</button>}
       </>}
@@ -5690,8 +5696,8 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
               <td className={"num " + (r.over90_pct > d.target ? "red-ink" : "")}>{r.over90_pct}%</td>
               <td className="num mono">{fmtMoney(r.collected_month)}</td>
               <td onClick={(e) => e.stopPropagation()} style={{ minWidth: 150 }}>{r.drishti ? <>
-                  <div className={"psla-score " + DR_BAND[r.drishti.band][0]}>{r.drishti.score}%</div>
-                  <span className={"badge " + DR_BAND[r.drishti.band][1]}>{DR_BAND[r.drishti.band][2]}{r.drishti.delta != null && r.drishti.delta !== 0 ? ` · ${r.drishti.delta > 0 ? "+" : ""}${r.drishti.delta} pts` : ""}</span>
+                  <div className={"psla-score " + drBandUi(r.drishti.band)[0]}>{r.drishti.score}%</div>
+                  <span className={"badge " + drBandUi(r.drishti.band)[1]}>{drBandUi(r.drishti.band)[2]}{r.drishti.delta != null && r.drishti.delta !== 0 ? ` · ${r.drishti.delta > 0 ? "+" : ""}${r.drishti.delta} pts` : ""}</span>
                   <div className="psla-dots">{r.drishti.scopes.map((x) => <span key={x.key}>{drDot(x.band)}{x.short}</span>)}</div>
                   <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => openScorecard ? openScorecard(r.client_id) : go("sla", { tab: "scorecard", client_id: r.client_id })}>scorecard ›</button></>
                 : r.sla ? <><span className={r.sla.score < 90 ? "amber-ink b" : "b"}>{r.sla.score}%</span><div className="tiny muted">typed at month-end</div></> : <span className="tiny muted">–</span>}</td>
@@ -5711,7 +5717,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
             <div className="tiny muted mt8">Entries and skips by everyone under each manager in the roster; missed tasks, escalations and SLA for the clients in their span.</div></div>}
           <div className="card"><h3 className="c3-h">Data freshness</h3>
             {d.freshness.length ? d.freshness.slice(0, 12).map((f, i) => <div key={i} className="c3-line"><span><span className={"badge " + (f.tone === "red" ? "red" : "amber")} style={{ marginRight: 8 }}>{f.tone === "red" ? "stale" : "check"}</span>{f.text}</span>{f.client_id && <button className="btn link sm" onClick={() => go("client", { client_id: f.client_id })}>open</button>}</div>)
-              : <Empty>Everything is fresh: inventories uploaded in the last week, SLA scored, roster in sync.</Empty>}
+              : <Empty>{d.rows.length ? "Everything is fresh: inventories uploaded in the last week, SLA scored, roster in sync." : "No clients yet, so there is nothing to check."}</Empty>}
             <div className="tiny muted mt8">Numbers are only as good as the data behind them: inventory older than a week, an SLA not scored after its due day or a roster sync that failed are flagged here.</div></div>
         </div>
       </>}
@@ -5721,7 +5727,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
 const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took a share back", "raci.save": "Changed the RACI", "feedback.recipients": "Changed who gets feedback",
   "client.responsibility": "Changed posting / submission responsibility", "settings.save": "Changed settings", "client.delete": "Deleted a client", "client.save": "Edited a client",
   "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the client report", "creport.ev": "EV file for the client report", "client.logo": "Changed the client's logo",
-  "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand" };
+  "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
   const q = useRpc("audit.list", { client_id: f.client_id || undefined, action: f.action || undefined }, [f.client_id, f.action]);
@@ -5800,6 +5806,7 @@ function DigestSpans({ clientId, me }) {
 function ClientView({ ctx, me, go, params }) {
   const active = ctx.clients.filter((c) => c.active);
   const [cid, setCid] = useState(() => { const want = (params && params.client_id) || c360Last(); return active.some((c) => c.id === want) ? want : (active[0] || {}).id || ""; });
+  const [missing, setMissing] = useState(() => !!(params && params.client_id) && !active.some((c) => c.id === params.client_id));
   useEffect(() => { try { if (cid) localStorage.setItem("brahmastra:c360", cid); } catch (e) {} }, [cid]);
   const [dr, setDr] = useState(() => newRange("month"));
   const [month, setMonth] = useState("");
@@ -5823,18 +5830,19 @@ function ClientView({ ctx, me, go, params }) {
     <div className="stack c360" style={{ gap: 16 }}>
       <div className="row between" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
         <div style={{ minWidth: 0 }}>
-          <div className="row no-print" style={{ gap: 8, marginBottom: 6 }}><span style={{ minWidth: 260 }}><Combo value={cid} onChange={(v) => v && setCid(v)} clearable={false} options={active.map((c) => ({ id: c.id, label: c.name + (c.code ? " (" + c.code + ")" : "") }))} /></span></div>
+          <div className="row no-print" style={{ gap: 8, marginBottom: 6 }}><span style={{ minWidth: 260 }}><Combo value={cid} onChange={(v) => { if (v) { setCid(v); setMissing(false); } }} clearable={false} options={active.map((c) => ({ id: c.id, label: c.name + (c.code ? " (" + c.code + ")" : "") }))} /></span></div>
           <h1 style={{ margin: 0 }}>{d ? d.client.name : "Client 360"} {d && d.client.code && <span className="badge ink" style={{ fontSize: 12, verticalAlign: "middle" }}>{d.client.code}</span>}</h1>
           {d && <div className="sub">{[d.raci && d.raci.a.length ? "Team lead " + d.raci.a.map((p) => p.name).join(", ") : "", d.raci && d.raci.c.length ? "Manager " + d.raci.c.map((p) => p.name).join(", ") : "", d.client.team ? d.client.team + " billers" : "", d.client.locations.join(", ")].filter(Boolean).join(" · ")}</div>}
         </div>
         <div className="row no-print" style={{ gap: 8, flexWrap: "wrap" }}><DateRange value={dr} onChange={setDr} label="" /><button className="btn" onClick={() => window.print()} title="Print this page, or save it as a PDF for the client call">⬇ Client call pack (PDF)</button>
           <button className="btn c3-report" onClick={() => go("dashboard", { tab: "report", client_id: cid })} title="The client's report pack, on the Dashboard: its pages, charts and the PDF">Client 360 report ›</button></div>
       </div>
+      {missing && <div className="alert">The client in the link is not one of your active clients. Showing {(active.find((c) => c.id === cid) || {}).name || "another client"} instead.</div>}
       {!d ? <Spinner label="Loading…" /> : <>
         <div className={"c3-health " + hp[0]}><span className={"badge " + hp[0]}>● {hp[1]}</span>
           {d.reasons.length ? <ul>{d.reasons.map((r, i) => <li key={i} className={r.tone}>{r.text}</li>)}</ul> : <span className="small muted">Nothing needs attention: aging, timely filing, escalations and client requests are all within range.</span>}</div>
         <div className="c3-kpis">
-          <Kpi tone="accent" label="AR balance" value={fmtMoney(d.ar.balance)} sub={<>{delta(d.ar.balance, d.ar.month_ago, true) || fmtInt(d.ar.claims) + " claims"}{d.ar.month_ago != null ? " vs a month ago" : ""}</>} />
+          <Kpi tone="accent" label="AR balance" value={fmtMoney(d.ar.balance)} sub={<>{delta(d.ar.balance, d.ar.month_ago, true) || plural(d.ar.claims, "claim")}{d.ar.month_ago != null ? " vs a month ago" : ""}</>} />
           <Kpi label="Over 90 days" value={<span className={d.ar.over90_pct > d.ar.target ? "red-ink" : "teal-ink"}>{d.ar.over90_pct}%</span>} sub={"target ≤ " + d.ar.target + "% · " + fmtMoney(d.ar.over90)} />
           <Kpi label="SLA score" value={d.sla ? <span className={d.sla.score < 90 ? "amber-ink" : "teal-ink"}>{d.sla.score}%</span> : "–"} sub={d.sla ? <>{monthLabel(d.sla.month)}{d.sla.prev != null ? <> · <span className={"c3-d " + (d.sla.score >= d.sla.prev ? "up" : "dn")}>{d.sla.score >= d.sla.prev ? "▲" : "▼"} {Math.abs(Math.round((d.sla.score - d.sla.prev) * 10) / 10)}</span></> : null}</> : "tick SLA scored below"} />
           <Kpi label={"Collected · " + rangeText(dr)} value={<span className="teal-ink">{fmtMoney(d.collected.amount)}</span>} sub={<>{delta(d.collected.amount, d.collected.prev) || fmtInt(d.collected.n) + " postings"}{d.collected.prev ? " vs the period before" : ""}</>} />
@@ -5843,7 +5851,7 @@ function ClientView({ ctx, me, go, params }) {
         </div>
         <div className="c3-g2">
           <div className="card"><div className="row between"><h3 className="c3-h">AR and over-90 · by month</h3><span className="tiny muted">bars: AR balance · line: % over 90 days</span></div>
-            {d.trend.length >= 2 ? <><TrendChart trend={d.trend} /><div className="tiny muted">{(() => { const a = d.trend[0], b = d.trend[d.trend.length - 1]; return (b.ar < a.ar ? "AR is falling" : "AR is rising") + (b.pct > a.pct ? ", and what is left is getting older: the over-90 share went from " + a.pct + "% to " + b.pct + "%." : ", and the over-90 share went from " + a.pct + "% to " + b.pct + "%."); })()}</div></>
+            {d.trend.length >= 2 ? <><TrendChart trend={d.trend} /><div className="tiny muted">{(() => { const a = d.trend[0], b = d.trend[d.trend.length - 1]; return (b.ar < a.ar ? "AR is falling" : b.ar > a.ar ? "AR is rising" : "AR is flat") + (b.pct > a.pct ? ", and what is left is getting older: the over-90 share went from " + a.pct + "% to " + b.pct + "%." : ", and the over-90 share went from " + a.pct + "% to " + b.pct + "%."); })()}</div></>
               : <Empty>The trend fills in by itself: Brahmastra keeps one reading a day{d.first_snapshot ? " (first on " + fmtDate(d.first_snapshot) + ")" : ""}, and shows one point a month from the second month on.</Empty>}</div>
           <div className="card"><div className="row between"><h3 className="c3-h">Denial and rejection reasons · {rangeText(dr)}</h3><span className="tiny muted">from billers' entries</span></div>
             {d.reasons_top.length ? <Bars rows={d.reasons_top} labelOf={(r) => r.reason} valueOf={(r) => r.bal} countOf={(r) => r.n} subOf={(r) => fmtInt(r.n) + " claims"} /> : <Empty>No denied or rejected entries in these dates.</Empty>}</div>
@@ -7639,8 +7647,9 @@ const SLA_COLS = [{ key: "scope", label: "Scope" }, { key: "name", label: "KPI" 
   { key: "status", label: "Status", get: (x) => (x.status === "ok" ? "Green" : x.status === "warn" ? "Amber" : x.status === "miss" ? "Red" : "Info") }, { key: "source", label: "From" }, { key: "reason", label: "Comment" }, { key: "std", label: "Drishti's standard" }];
 /* Where a KPI's value sits on its bar, and the green target zone: lower is better, higher is better, or a range. */
 function kpiBar(it) {
-  const r = it.rule, v = Number(it.value);
-  if (!r || !isFinite(v)) return null;
+  const r = it.rule, v = it.value;
+  // only a scored number is drawn: an empty value or text Drishti did not score has no place on the bar
+  if (!r || typeof v !== "number" || !isFinite(v) || !["ok", "warn", "miss"].includes(it.status)) return null;
   const pct = r.fmt === "percent";
   let lo = 0, hi, z0, z1;
   if (r.dir === "lower") { hi = Math.max(v, (r.fair || r.good) * 1.5, r.good * 2, pct ? 0.05 : 1) * 1.1; z0 = 0; z1 = r.good; }
@@ -7653,8 +7662,8 @@ const KPI_COL = { ok: "var(--sc-g)", warn: "var(--sc-a)", miss: "var(--sc-r)" };
 const KPI_INK = { ok: "teal-ink", warn: "amber-ink", miss: "red-ink" };
 /* ▲▼ against last month: green when it moved the right way */
 function kpiDelta(it) {
-  if (!it.prev || it.prev.value == null || it.value == null || !it.rule) return null;
-  const a = Number(it.value), b = Number(it.prev.value); if (!isFinite(a) || !isFinite(b)) return null;
+  if (!it.prev || typeof it.prev.value !== "number" || typeof it.value !== "number" || !it.rule || !["ok", "warn", "miss"].includes(it.status)) return null;
+  const a = it.value, b = it.prev.value; if (!isFinite(a) || !isFinite(b)) return null;
   if (Math.abs(a - b) < 1e-9) return { txt: "=", good: null };
   const pct = it.rule.fmt === "percent", diff = pct ? Math.round(Math.abs(a - b) * 1000) / 10 : Math.round(Math.abs(a - b) * 10) / 10;
   const better = it.rule.dir === "higher" ? a > b : it.rule.dir === "lower" ? a < b : null;
@@ -7680,21 +7689,25 @@ const Ring = ({ pct, band, size = 30, w = 4 }) => (
 );
 function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
   const [kind, setKind] = useState("month");
-  const [to, setTo] = useState("");
+  const [pid, setPid] = useState("");   // the period picked with ‹ ›, by its id (two periods can end on the same day)
   const [open, setOpen] = useState(null);
   const [showNs, setShowNs] = useState({});
-  useEffect(() => { setTo(""); setShowNs({}); }, [clientId, kind]);
+  const [fellBack, setFellBack] = useState("");
+  useEffect(() => { setPid(""); setShowNs({}); }, [clientId, kind]);
+  useEffect(() => { setFellBack(""); }, [clientId]);
   const only = onlyClient(ctx);
   useEffect(() => { if (!clientId && only) setClientId(only); }, [only]);
-  const q = useRpc("sla.scorecard", { client_id: clientId, kind, to: to || undefined, today: todayISO() }, [clientId, kind, to], !!clientId);
+  const q = useRpc("sla.scorecard", { client_id: clientId, kind, period_id: pid || undefined, today: todayISO() }, [clientId, kind, pid], !!clientId);
   const d = q.data && q.data.client && q.data.client.id === clientId ? q.data : null;
+  // Monthly or Weekly asked, but the client has none of that kind: switch to what it has and say so
+  useEffect(() => { if (d && d.fallback && d.period && d.period.kind !== kind) { setFellBack(d.fallback); setKind(d.period.kind === "month" || d.period.kind === "week" ? d.period.kind : "latest"); } }, [d && d.fallback, d && d.period && d.period.id]);
   const cur = d && d.period ? d.period : null;
   const xq = useRpc("sla.extras", { client_id: clientId, from: cur ? cur.from : undefined, to: cur ? cur.to : undefined, today: todayISO() }, [clientId, cur && cur.from, cur && cur.to], !!clientId);
   const x = xq.data;
   const client = ctx.clients.find((c) => c.id === clientId);
   const periods = d && d.periods ? d.periods.filter((p) => kind === "latest" || p.kind === kind) : [];
   const idx = cur ? periods.findIndex((p) => p.id === cur.id) : -1;
-  const step = (n) => { const p = periods[idx + n]; if (p) setTo(p.to); };
+  const step = (n) => { const p = periods[idx + n]; if (p) setPid(p.id); };
   const first = client ? client.name : "";
   const csv = () => downloadText(toCSV(d.items, SLA_COLS), `sla-scorecard-${first}-${cur ? cur.label : ""}.csv`.replace(/[\/:*?"<>|]+/g, " "));
   const monthOf = (p) => (p && p.kind === "month" && p.from ? p.from.slice(0, 7) : "");
@@ -7714,10 +7727,10 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
     <div className="stack sc2" style={{ gap: 12 }}>
       <div className="card sc-bar">
         <div style={{ minWidth: 250 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} /></div>
-        <div className="seg2">{PSLA_KIND.map(([k, l]) => <button key={k} type="button" className={kind === k ? "on" : ""} onClick={() => setKind(k)}>{l}</button>)}</div>
+        <div className="seg2">{PSLA_KIND.map(([k, l]) => <button key={k} type="button" className={kind === k ? "on" : ""} onClick={() => { setFellBack(""); setKind(k); }}>{l}</button>)}</div>
         {cur && <span className="crx-per"><button type="button" disabled={idx < 0 || idx >= periods.length - 1} onClick={() => step(1)} title="The period before">‹</button><b>{cur.label}</b><button type="button" disabled={idx <= 0} onClick={() => step(-1)} title="The period after">›</button></span>}
         <span style={{ flex: 1 }} />
-        {x && <><span className="sc-chip">Billable FTE <b>{x.wfm ? f1(x.wfm.billable) : "–"}</b></span><span className="sc-chip">Assign FTE <b>{x.wfm ? f1(x.wfm.assigned_fte) : "–"}</b></span>
+        {x && <><span className="sc-chip" title={x.wfm && (x.wfm.shared || []).length ? "Shared evenly with other clients: " + x.wfm.shared.map((p) => p.name + " (" + p.clients + " clients)").join(", ") : undefined}>Billable FTE <b>{x.wfm ? f1(x.wfm.billable) : "–"}</b>{x.wfm && (x.wfm.shared || []).length ? " *" : ""}</span><span className="sc-chip">Assign FTE <b>{x.wfm ? f1(x.wfm.assigned_fte) : "–"}</b></span>
           <span className="sc-chip">Escalations <b className={x.esc && x.esc.n ? "red-ink" : ""}>{x.esc ? x.esc.n : "–"}</b></span></>}
         {ok && <button className="btn sm" onClick={csv} disabled={!d.items.length}>⬇ CSV</button>}
         <button className="btn sm primary" onClick={openInputs} title="Drishti's page: upload the period's reports or type a value">Reports →</button>
@@ -7728,12 +7741,14 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
         : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it in <b>Inputs (Drishti)</b>.</div>
         : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports in <b>Inputs (Drishti)</b> and it shows here.</div>
         : <>
+          {fellBack && <div className="alert info">Drishti has no {fellBack === "month" ? "monthly" : fellBack === "week" ? "weekly" : fellBack} scorecard for <b>{first}</b>, so its {d.period.kind === "week" ? "weeks are" : d.period.kind === "month" ? "months are" : "periods are"} shown.</div>}
+          {(d.ambiguous || []).length > 1 && <div className="alert warn">Drishti has {d.ambiguous.length} clients whose names match <b>{first}</b>: {d.ambiguous.join(", ")}. This is <b>{d.drishti.name}</b>. Rename the others in Drishti so the scores cannot mix.</div>}
           <div className={"card sc-hero glow " + (d.band || "none")}>
             <div className="sc-big" style={{ background: `conic-gradient(${d.band ? KPI_COL[d.band] : "#C9D1D9"} 0 ${Math.max(2, d.score || 0)}%, var(--soft) ${Math.max(2, d.score || 0)}% 100%)` }}>
               <div><b className={d.band ? KPI_INK[d.band] : ""}>{d.score == null ? "–" : d.score + "%"}</b><small className={d.band ? KPI_INK[d.band] : ""}>{d.band ? bandWord[d.band] : "NO SCORE"}</small></div></div>
             <div style={{ minWidth: 0 }}>
               <div className="sc-name">{first} <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("client", { client_id: clientId })}>Client 360 ›</button></div>
-              <div className="small muted" style={{ marginTop: 3 }}>{cur.label}{d.delta != null && d.prev ? <> · <b className={d.delta >= 0 ? "teal-ink" : "red-ink"}>{d.delta >= 0 ? "▲" : "▼"} {Math.abs(d.delta)} pts</b> vs {d.prev.label}</> : null}
+              <div className="small muted" style={{ marginTop: 3 }}>{cur.label}{d.delta != null && d.prev ? <> · {d.delta ? <b className={d.delta > 0 ? "teal-ink" : "red-ink"}>{d.delta > 0 ? "▲" : "▼"} {Math.abs(d.delta)} pts</b> : <span>no change</span>} vs {d.prev.label}</> : null}
                 {monthOf(cur) && d.score != null ? " · month closed" : ""} · scored in Drishti</div>
               <div className="sc-stats"><span className="ok"><b>{d.counts.ok}</b>on target</span><span className="warn"><b>{d.counts.warn}</b>close</span><span className="miss"><b>{d.counts.miss}</b>missed</span><span className="none"><b>{notScored}</b>not scored</span></div>
             </div>
@@ -7746,7 +7761,7 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
           </div>
           {fix.length > 0 && <div className={"card sc-fix glow" + (fixGood ? " good" : "")}>
             <div>{fixGood ? <><div className="sc-lbl teal-ink">Doing well</div><div className="tiny muted">top 3 carrying the score</div></> : <><div className="sc-lbl red-ink">Fix first</div><div className="tiny muted">furthest from standard</div></>}</div>
-            {fix.map(({ i, g }) => { const dl = kpiDelta(i); return <button type="button" key={i.scope_key + i.key} className="sc-fx" onClick={() => setOpen(i)}><b className={KPI_INK[i.status]}>{i.shown}</b><span><span className="b">{i.name}</span><span className="tiny muted">{i.scope} · {i.target || "standard"}{g ? " · " + g.txt : ""}{dl ? <> · <span className={dl.good === true ? "teal-ink" : dl.good === false ? "red-ink" : ""}>{dl.txt}</span></> : null}</span></span></button>; })}
+            {fix.map(({ i, g }, fx) => { const dl = kpiDelta(i); return <button type="button" key={i.scope_key + i.key + ":" + fx} className="sc-fx" onClick={() => setOpen(i)}><b className={KPI_INK[i.status]}>{i.shown}</b><span><span className="b">{i.name}</span><span className="tiny muted">{i.scope} · {i.target || "standard"}{g ? " · " + g.txt : ""}{dl ? <> · <span className={dl.good === true ? "teal-ink" : dl.good === false ? "red-ink" : ""}>{dl.txt}</span></> : null}</span></span></button>; })}
           </div>}
           <div className="sc-grid">{d.scopes.map((sc) => {
             const items = d.items.filter((i) => i.scope_key === sc.key);
@@ -7756,8 +7771,8 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
             return (
               <div key={sc.key} className={"card sc-card glow " + (cb || "")}>
                 <div className="sc-h"><span className="row" style={{ gap: 8 }}><Ring pct={sc.pct} band={cb} /><b>{sc.name}</b></span><span className={"badge " + (cb === "ok" ? "green" : cb === "warn" ? "amber" : cb ? "red" : "gray")}>{sc.ok} of {sc.scored} on target{nMiss ? " · " + nMiss + " missed" : nWarn ? " · " + nWarn + " close" : ""}</span></div>
-                {items.map((i) => { const bar = kpiBar(i), dl = kpiDelta(i); return (
-                  <button type="button" key={i.key} className="sc-kp" onClick={() => setOpen(i)}>
+                {items.map((i, ix) => { const bar = kpiBar(i), dl = kpiDelta(i); return (
+                  <button type="button" key={i.key + ":" + ix} className="sc-kp" onClick={() => setOpen(i)}>
                     <span className="sc-dot" style={{ background: KPI_COL[i.status] || "#C9D1D9" }} /><span className="sc-kn">{i.name}</span><span className={"sc-kv " + (KPI_INK[i.status] || "")}>{i.shown || "–"}</span>
                     <span className="sc-kb"><span className="sc-std">{i.target || "–"}</span>
                       {bar ? <span className="sc-track"><i className="z" style={{ left: bar.z0 + "%", width: Math.max(0, bar.z1 - bar.z0) + "%" }} /><i className="m" style={{ left: bar.pos + "%", background: KPI_COL[i.status] }} /></span>
