@@ -4822,7 +4822,9 @@ const OPS = {
     if (!data || !/^[A-Za-z0-9+/]+=*$/.test(data)) throw bad("The file could not be read. Try attaching it again.");
     const size = Math.floor(data.length * 3 / 4) - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);
     if (size > ATTACH_MAX_BYTES) throw bad("Files can be up to " + ATTACH_MAX_BYTES / 1048576 + " MB.");
-    const type = str(payload.type, 120);
+    // Stored as given only when it is a safe type to open; anything else (SVG, HTML, scripts) is kept as a plain download.
+    const type0 = str(payload.type, 120).trim().toLowerCase();
+    const type = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain|text\/csv|application\/(vnd\.[a-z0-9.+-]+|msword|zip)|message\/rfc822)$/.test(type0) ? type0 : "application/octet-stream";
     const parts = [];
     for (let i = 0; i < data.length; i += ATTACH_PART_CHARS) parts.push(data.slice(i, i + ATTACH_PART_CHARS));
     const now = Date.now(), id = uuid();
