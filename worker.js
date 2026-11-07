@@ -1158,9 +1158,26 @@ async function importRoster(env, user, payload) {
   const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") put(byName, u.name.trim().toLowerCase(), u); });
   const domains = {}; rows.forEach((r) => { if (mailOk(r.email)) { const d = r.email.split("@")[1]; domains[d] = (domains[d] || 0) + 1; } });
   const plan = [], excluded = [], warnings = [], used = new Set(), dropped = new Set();
+  // Two Shastra rows with the same email (or, with no email and no Emp ID, the same name) cannot both be applied:
+  // they are skipped with a warning until Shastra is fixed, and nobody takes over the other's account.
+  const rowMail = (row) => (mailOk(row.email) && !/\.(comcom|con)$/.test(row.email) ? row.email : placeholderEmail(row));
+  const byMail = new Map(); rows.forEach((r) => { if (rosterClassify(r).reason) return; const k = rowMail(r); byMail.set(k, [...(byMail.get(k) || []), r]); });
+  const claimed = new Map(), planMail = new Map();
+  const skipRow = (row, match, issue) => { if (match) used.add(match.id); warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues: [issue], skipped: true }); };
   for (const row of rows) {
-    const cls = rosterClassify(row);
-    const match = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
+    const match0 = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
+    // A name or placeholder match already taken by another row is not this person's account.
+    const strong = match0 && ((row.emp_id && match0.emp_id && match0.emp_id.toUpperCase() === row.emp_id.toUpperCase()) || (mailOk(row.email) && match0.email === row.email));
+    const match = match0 && claimed.has(match0.id) && !strong ? null : match0;
+    const cls = rosterClassify(row, match && match.source === "roster" && match.active && match.roster_kind && match.roster_kind !== "agent" ? match.roster_kind : "");
+    const twins = byMail.get(rowMail(row)) || [];
+    if (!cls.reason && twins.length > 1) {
+      const others = twins.filter((r) => r !== row).map((r) => r.name).join(", ");
+      skipRow(row, match, mailOk(row.email) ? "skipped: the same email as " + others + " in Shastra (" + row.email + "); fix it in Shastra" : "skipped: same name as another person with no email and no Emp ID in Shastra; add an email or Emp ID in Shastra");
+      continue;
+    }
+    if (!cls.reason && match && claimed.has(match.id)) { skipRow(row, null, "skipped: matches the same account as " + claimed.get(match.id) + "; check the Emp ID and email in Shastra"); continue; }
+    if (match && !cls.reason) claimed.set(match.id, row.name);
     if (cls.reason && match && match.source === "roster" && match.active) dropped.add(match.id);
     if (cls.reason) { excluded.push({ name: row.name, emp_id: row.emp_id, position: row.position, department: row.department, reason: cls.reason, existing: !!(match && match.source === "roster" && match.active) }); continue; }
     if (match) used.add(match.id);
@@ -1183,6 +1200,14 @@ async function importRoster(env, user, payload) {
     const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, free_email_from: freeable ? holder.id : null, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
       role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
       roster_status: row.status, exit_date: row.exit_date, doj: row.doj, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
+    // Last check: an email another row (or another account) already has is never written twice.
+    const holderNow = byEmail.get(next.email);
+    if (planMail.has(next.email) || (holderNow && (!match || holderNow.id !== match.id) && !next.free_email_from)) {
+      skipRow(row, match, "skipped: the email " + next.email + " is already used by " + (planMail.get(next.email) || (holderNow && holderNow.name) || "another account") + "; fix it in Shastra");
+      continue;
+    }
+    planMail.set(next.email, row.name);
+    if (cls.unknownPos) issues.push("position not recognised (" + row.position + "): kept their current access; check it in Shastra");
     const changes = [];
     if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "doj", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
     if (match && next.free_email_from && !changes.includes("email")) changes.push("email");
@@ -1258,7 +1283,14 @@ async function syncShastra(env, by) {
     await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error });
     throw new ApiError(502, error);
   }
-  const res = await importRoster(env, { name: "Purview Shastra (" + by + ")" }, { rows, file_name: "Purview Shastra", today: istISO(Date.now()) });
+  let res;
+  try { res = await importRoster(env, { name: "Purview Shastra (" + by + ")" }, { rows, file_name: "Purview Shastra", today: istISO(Date.now()) }); }
+  catch (e) {
+    // The Roster card shows the failure; the page gets plain words, never the database's text.
+    const error = /UNIQUE|constraint/i.test(String(e && e.message)) ? "Two people in Shastra clash (the same email or Emp ID), so the roster could not be applied. Check the warnings and fix them in Shastra." : str(e && e.message, 300);
+    await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error });
+    throw e instanceof ApiError && !/UNIQUE|constraint/i.test(e.message) ? e : new ApiError(409, error);
+  }
   const removed = await removeLeftovers(env);
   const sm = res.summary, now = Date.now();
   const log = (await getSetting(env, "shastra_log", [])) || [];
@@ -2220,9 +2252,22 @@ function rosterRow(r) {
 const NOT_IN_BRAHMASTRA = /^(eligibility verification|ev|pcc|credentialing|reporting)$/i;
 const rowDepts = (row) => [row.department, ...String(row.departments_also || "").split(/[;,]/)].map((d) => String(d || "").trim()).filter(Boolean);
 const rowWorkDepts = (row) => rowDepts(row).filter((d) => /^(ar|posting|submission)$/i.test(d));
-function rosterClassify(row) {
-  const pos = row.position.toLowerCase().trim();
-  const kind = ROSTER_KIND[pos];
+/* Position text as typed in Shastra: case, dots, dashes and extra spaces do not matter, and a "Sr." / "Senior" /
+   "Assistant" / "Deputy" / "Associate" in front of a known role counts as that role ("Sr. Team Lead" is a team lead). */
+function rosterPos(position) {
+  const p = String(position || "").toLowerCase().replace(/[^a-z]+/g, " ").replace(/\s+/g, " ").trim();
+  if (ROSTER_KIND[p]) return p;
+  const base = p.replace(/^((sr|senior|jr|junior|asst|assistant|associate|deputy|principal|acting)\s+)+/, "");
+  if (ROSTER_KIND[base]) return base;
+  if (/^(sr|senior)\s/.test(p) && ROSTER_KIND["senior " + base]) return "senior " + base;
+  return p;
+}
+function rosterClassify(row, keepKind) {
+  const pos = rosterPos(row.position);
+  let kind = ROSTER_KIND[pos];
+  // A known lead or manager whose position text changed to something not recognised keeps their access (with a warning).
+  const unknownPos = !kind && !!row.position && !!keepKind;
+  if (unknownPos) kind = keepKind;
   const projects = rosterProjects(row.project, row.also_projects);
   let reason = "";
   if (!row.name) reason = "no name";
@@ -2233,7 +2278,7 @@ function rosterClassify(row) {
   // Eligibility Verification, PCC, Credentialing and Reporting are not worked in Brahmastra: someone only there
   // (no AR, Posting or Submission in any of their departments) gets no access.
   else if (kind !== "all" && !rowWorkDepts(row).length && rowDepts(row).some((d) => NOT_IN_BRAHMASTRA.test(d))) reason = rowDepts(row).filter((d) => NOT_IN_BRAHMASTRA.test(d)).join(", ") + " only (not in Brahmastra)";
-  return { kind, projects, reason, designation: ROSTER_DESIGNATION[pos] || row.position };
+  return { kind, projects, reason, designation: ROSTER_DESIGNATION[pos] || row.position, unknownPos: unknownPos && !reason };
 }
 /* Team leads and SMEs see their own projects; managers also every project of the people below them. */
 async function recomputeScopes(env) {
@@ -2756,7 +2801,7 @@ const OPS = {
       if (payload.emp_id != null) await run(env, "UPDATE users SET emp_id = ? WHERE id = ?", str(payload.emp_id, 20).trim().toUpperCase(), ex.id);
       if (projects) await run(env, "UPDATE users SET projects_json = ? WHERE id = ?", JSON.stringify(projects), ex.id);
       if (reportsTo !== undefined) { const r = reportsTo ? await one(env, "SELECT name FROM users WHERE id = ?", reportsTo) : null; await run(env, "UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?", reportsTo, r ? r.name : "", ex.id); }
-      if (ex.id === user.id && (!active || role !== "supervisor")) throw bad("You can't deactivate or demote your own account.");
+      if (ex.id === user.id && (!active || (role !== "supervisor" && role !== "admin"))) throw bad("You can't deactivate or demote your own account.");
       if (ex.role === "supervisor" && (role !== "supervisor" || !active)) {
         const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", ex.id);
         if (!n.n) throw bad("Keep at least one active team lead.");
@@ -3780,7 +3825,7 @@ const OPS = {
   "creport.get": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
     if (!clientId) throw bad("Pick the client.");
-    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    if (user.role !== "supervisor") throw denied("The Client 360 report is for team leads and above.");
     if (!inScope(user, clientId)) throw outOfScope();
     const client = await one(env, "SELECT id, name, logo FROM clients WHERE id = ?", clientId);
     if (!client) throw bad("Unknown client.");
@@ -3877,7 +3922,7 @@ const OPS = {
      client, period and location and shared with everyone who opens that report. */
   "creport.save": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
-    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    if (user.role !== "supervisor") throw denied("The Client 360 report is for team leads and above.");
     editableOr(user, clientId);
     const periodKey = String(payload.period_key || "");
     if (!/^(month|week|custom):[0-9:-]{7,40}$/.test(periodKey)) throw bad("Unknown report period.");
@@ -3897,7 +3942,7 @@ const OPS = {
      was kept for the same client, location and dates. */
   "creport.evUpload": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
-    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    if (user.role !== "supervisor") throw denied("The Client 360 report is for team leads and above.");
     editableOr(user, clientId);
     const loc = payload.location_id ? str(payload.location_id, 60) : "";
     if (loc && !(await one(env, "SELECT id FROM locations WHERE id = ? AND client_id = ?", loc, clientId))) throw bad("Unknown location.");
@@ -3931,7 +3976,7 @@ const OPS = {
   },
   "creport.evRemove": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60), id = str(payload.id, 60);
-    if (user.role !== "supervisor") throw denied("Client reports are for team leads and above.");
+    if (user.role !== "supervisor") throw denied("The Client 360 report is for team leads and above.");
     editableOr(user, clientId);
     const b = await one(env, "SELECT id, file_name, n FROM ev_batches WHERE id = ? AND client_id = ?", id, clientId);
     if (!b) throw bad("That EV file is not kept any more.");
@@ -4168,7 +4213,7 @@ const OPS = {
       const changes = [];
       if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);
       if ((ex.code || "") !== code) changes.push(`code ${ex.code || "none"} → ${code || "none"}`);
-      if (Number(ex.follow_up_days) !== fu) changes.push(`default follow-up ${ex.follow_up_days} → ${fu} days`);
+      if (Number(ex.follow_up_days) !== fu) changes.push(`default follow-up ${ex.follow_up_days} → ${fu} day${fu === 1 ? "" : "s"}`);
       if (!!ex.active !== !!active) changes.push(active ? "made active" : "made inactive");
       if (link != null && (ex.workbook_link || "") !== link) changes.push(link ? "production file link set to " + link : "production file link removed (Brahmastra keeps it by itself)");
       await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);

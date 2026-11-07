@@ -102,7 +102,7 @@ const SAAG_TO_LIBRARY = {
   "COB Issue": "Other payer is primary", "Covered By Another payer": "Other payer is primary", "Need Primary EOB": "Primary EOB required",
   "Duplicate Claim": "Duplicate claim", "Code Inclusive/ Bundle": "Bundled / Inclusive", "Policy Inactive on DOS": "Coverage terminated",
   "Incorrect Mem ID/DOB/Demo/Eligibility": "Patient cannot be identified", "Incorrect Mem ID/DOB/Demo": "Patient cannot be identified",
-  "Deemed Experimental/Medical Necessity": "Medically not necessary", "Provider not Credential/OON": "Non-covered — provider out of network",
+  "Deemed Experimental/Medical Necessity": "Medically not necessary", "Provider not Credential/OON": "Non-covered: provider out of network",
   "Claim Paid To Patient": "Claim paid to patient", "Claim available in Clearing House": "No claim on file", "Medical Records": "Information requested from provider",
   "Information Requested From Patient": "Information requested from patient", "Applied to Ded/Copay/Coins": "Claim applied towards deductible",
   "Max Benefit Reached/Unit Issue": "Maximum benefit exhausted", "Max Benefit Reached": "Maximum benefit exhausted",
@@ -122,7 +122,7 @@ const SAAG_TO_LIBRARY = {
 function suggestFor({ subStatus, claim }) {
   const out = [], seen = new Set();
   const push = (entry, why, score) => { if (entry && !seen.has(entry.name)) { seen.add(entry.name); out.push({ entry, why, score }); } };
-  const byName = (n) => LIB.find((x) => x.name === n);
+  const byName = (n) => LIB.find((x) => x.name === n || x.name === String(n).replace(/\s+\u2014\s+/g, ": "));   // an old name with a dash still matches
   if (subStatus && SAAG_TO_LIBRARY[subStatus]) push(byName(SAAG_TO_LIBRARY[subStatus]), "SAAG sub-status: " + subStatus, 100);
   const text = [subStatus, claim.file_sub_status, claim.file_status, claim.file_action, claim.file_comments, claim.last_note].filter(Boolean).join(" \n ").toLowerCase();
   if (text.trim()) {
@@ -168,13 +168,16 @@ function downloadText(text, name, type = "text/csv;charset=utf-8") {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
+/* A cell that starts with = + - @, a tab or a carriage return would run as a formula in Excel: it gets a leading '
+   (plain numbers, negative ones too, stay numbers). */
+const csvSafe = (v) => { const s = v == null ? "" : String(v); return typeof v !== "number" && /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s) ? "'" + s : s; };
 /* a CSV from a header row and array rows (the Production layout the server builds) */
 function arrayCSV(header, rows) {
-  const esc = (v) => { let s = v == null ? "" : String(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
+  const esc = (v) => { let s = csvSafe(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
   return [header.map(esc).join(",")].concat(rows.map((r) => r.map(esc).join(","))).join("\r\n");
 }
 function toCSV(rows, cols) {
-  const esc = (v) => { let s = v == null ? "" : String(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
+  const esc = (v) => { let s = csvSafe(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
   return [cols.map((c) => esc(c.label)).join(",")].concat(rows.map((r) => cols.map((c) => esc(typeof c.get === "function" ? c.get(r) : r[c.key])).join(","))).join("\r\n");
 }
 
@@ -1206,7 +1209,7 @@ function SettingsView({ me, setMe, ctx }) {
           {lead && <div className="card set-sec" id="set-email">
             <h2>Email</h2><div className="sub">What Brahmastra emails you, besides sign-in codes.</div>
             <div className="row between mt8">
-              <div><div className="b">Monday digest</div><div className="small muted">Every Monday about 8:30 AM IST, one email for each manager's span you are a supervisor in (their clients): last week's health, AR, over 90, collected, entries, what needs attention, client by client, and the team. No patient details. Preview it from Client 360 or Portfolio.</div></div>
+              <div><div className="b">Monday digest</div><div className="small muted">Every Monday about 8:30 AM IST, one email for each manager's span you are a supervisor in (their clients): last week's health, AR, over 90, collected, entries, what needs attention, client by client, and the team. No patient details. Preview it from SLA › Digest.</div></div>
               <div className="seg2">{[["on", "On"], ["off", "Off"]].map(([k, l]) => <button key={k} className={(prefs.digest || "on") === k ? "on" : ""} onClick={() => save({ digest: k })}>{l}</button>)}</div>
             </div>
           </div>}
@@ -1525,6 +1528,9 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
     for (const x of notify.alloc_new || []) tellComputer("alloc:" + x.id, "Brahmastra: " + (x.n ? x.n + " new claim" + (x.n === 1 ? "" : "s") : "New claims") + " allocated to you", x.text);
   }, [notify]);
   const [openG, setOpenG] = useState(null);
+  // Esc closes the profile menu and an open menu group.
+  useEffect(() => { if (!menu && !openG) return undefined; const k = (e) => { if (e.key === "Escape") { setMenu(false); setOpenG(null); } };
+    window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [menu, openG]);
   const [fbOpen, setFbOpen] = useState(false);
   const nav = navFor(me, handoffs, fb, attention);
   const pageLabel = (navItems(nav).find(([k]) => k === view) || [view, view === "settings" ? "Settings" : view === "digest" ? "Monday digest" : view])[1];
@@ -1780,6 +1786,7 @@ function DashboardHub(props) {
   const { params } = props;
   const [tab, setTab] = useState(() => dashTab(params));
   useEffect(() => { if (params && params.tab) setTab(dashTab(params)); }, [params && params.tab]);
+  useEffect(() => { navKeep({ tab }); }, [tab]);
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const SUB = { team: "Team status: production and training, attainment and time on floor, for the dates picked.",
     inventory: "Inventory status: where every claim stands today, and what to work first to meet the SLA this month.",
@@ -1798,7 +1805,7 @@ function DashClientReport({ ctx, me, go, params }) {
   const active = ctx.clients.filter((c) => c.active);
   const [cid, setCid] = useState(() => { const want = (params && params.client_id) || c360Last(); return active.some((c) => c.id === want) ? want : (active[0] || {}).id || ""; });
   useEffect(() => { if (params && params.client_id && active.some((c) => c.id === params.client_id)) setCid(params.client_id); }, [params && params.client_id]);
-  useEffect(() => { try { if (cid) localStorage.setItem("brahmastra:c360", cid); } catch (e) {} }, [cid]);
+  useEffect(() => { try { if (cid) localStorage.setItem("brahmastra:c360", cid); } catch (e) {} if (cid) navKeep({ client_id: cid }); }, [cid]);
   if (!active.length) return <div className="card"><Empty>No clients in your span yet.</Empty></div>;
   return (
     <div className="stack" style={{ gap: 12 }}>
@@ -1913,7 +1920,7 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td className="num">{attainStamp((() => { const wd = gr.reduce((a, r) => a + r.worked_done, 0), td = gr.reduce((a, r) => a + r.target_done, 0), wt = gr.reduce((a, r) => a + r.worked_today, 0), tt = gr.reduce((a, r) => a + r.target_today, 0); return td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null; })())}</td><td className="num">{fmtHM(gr.reduce((a, r) => a + r.floor_needed_min, 0))}</td>
                   <td className="num">{gr.some((r) => r.on_floor_min != null) ? <>{fmtHM(gr.reduce((a, r) => a + (r.on_floor_min || 0), 0))}{gr.some((r) => r.floor === "short") ? <div className="tiny amber-ink">{gr.filter((r) => r.floor === "short").length} short</div> : null}</> : <span className="muted">–</span>}</td>
                   <td className="num">{gr.some((r) => r.idle_min != null) ? fmtHM(gr.reduce((a, r) => a + (r.idle_min || 0), 0)) : <span className="muted">–</span>}</td>
-                  <td className="num">{gr.some((r) => r.break_min != null) ? <>{fmtHM(gr.reduce((a, r) => a + (r.break_min || 0), 0))}{gr.reduce((a, r) => a + (r.break_over_days || 0), 0) ? <div className="tiny amber-ink">{gr.reduce((a, r) => a + (r.break_over_days || 0), 0)} days over 1 h</div> : null}</> : <span className="muted">–</span>}</td>
+                  <td className="num">{gr.some((r) => r.break_min != null) ? <>{fmtHM(gr.reduce((a, r) => a + (r.break_min || 0), 0))}{gr.reduce((a, r) => a + (r.break_over_days || 0), 0) ? <div className="tiny amber-ink">{plural(gr.reduce((a, r) => a + (r.break_over_days || 0), 0), "day")} over 1 h</div> : null}</> : <span className="muted">–</span>}</td>
                   <td>{gr.some((r) => r.perf === "below") ? <span className="badge amber">{plural(gr.filter((r) => r.perf === "below").length, "outlier")}</span> : <span className="badge green">Clear</span>}</td><td /></tr>
                 {open && gr.map((r) => <tr key={r.id}>
                   <td><span className="child">•</span><button type="button" className="btn link biller-link" style={{ padding: 0 }} onClick={() => go("claims", { assigned_to: r.id, state: "" })}>{r.name}</button>
@@ -2309,7 +2316,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
         <div className="card" key={c.id}>
           <div className="row between top">
             <div><h2>{c.name} {c.code && <span className="badge ink">{c.code}</span>} {!c.active && <span className="badge red">inactive</span>} {c.can_edit === false && !ro && <span className="badge amber" title="This client was shared with you view-only.">shared · view only</span>}</h2>
-              <div className="sub">Default follow-up after a claim is worked: {c.follow_up_days} days · added {fmtDate(new Date(c.created_at).toISOString().slice(0, 10))}</div></div>
+              <div className="sub">Default follow-up after a claim is worked: {plural(c.follow_up_days, "day")} · added {fmtDate(new Date(c.created_at).toISOString().slice(0, 10))}</div></div>
             {c.can_edit === false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}{!ro && <button className="btn sm" onClick={() => setHist(c)}>Change history</button>}</div>}
             {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}<button className="btn sm" onClick={() => setHist(c)}>Change history</button><button className="btn sm" onClick={() => setProf({ client: c })}>Edit profile</button>{go && <button className="btn sm" onClick={() => go("client", { client_id: c.id })}>Open Client 360</button>}{!isSmeUI(me) && <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button>}</div>}
           </div>
@@ -2318,7 +2325,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
                 <span className="muted">Brahmastra Clients › {c.name}</span>
                 <a className="btn sm" href={c.od.link} target="_blank" rel="noopener">Open folder</a>
                 {c.od.inventory && <a className="btn sm" href={c.od.inventory} target="_blank" rel="noopener">Inventory</a>}</>
-              : <><span className={c.od && c.od.status && c.od.status.ok === false ? "red-ink" : "muted"}>{c.od && c.od.status && c.od.status.ok === false ? "the folders could not be made: " + String(c.od.status.error || "").slice(0, 140) : "folders are being made (within the hour)"}</span>
+              : <><span className={c.od && c.od.status && c.od.status.ok === false ? "red-ink" : "muted"}>{c.od && c.od.status && c.od.status.ok === false ? "the folders could not be made: " + String(c.od.status.error || "").slice(0, 140) : DEMO ? "not made in demo mode (the live app makes them within the hour)" : "folders are being made (within the hour)"}</span>
                 {c.can_edit !== false && <button className="btn sm" disabled={busy} onClick={() => makeFolders(c)}>Make folders now</button>}</>}</div>
             {c.od && c.od.scopes && Object.keys(c.od.scopes).length > 0 && <table className="od-files"><tbody>
               {PROD_SCOPES.filter(([k]) => !(c.scope_of_work || []).length || (c.scope_of_work || []).includes(k)).map(([k, l]) => { const sc = c.od.scopes[k] || {}; const st = wbStatus(k === "ar" ? c.id : c.id + ":" + k); return (
@@ -3216,6 +3223,8 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   const payload = useMemo(() => { const o = {}; for (const k in f) if (f[k] !== "" && f[k] !== false) o[k] = f[k]; return o; }, [f]);
   const q = useRpc("claims.list", payload, [JSON.stringify(payload)]);
   const [sel, setSel] = useState(new Set());
+  // A new client or filter starts a new selection: bulk actions never reach claims that are no longer on screen.
+  useEffect(() => { setSel(new Set()); }, [JSON.stringify({ ...f, page: 0, sort: 0, dir: 0 })]);
   const [open, setOpen] = useState(null);
   const [bulkUser, setBulkUser] = useState("");
   const [busy, setBusy] = useState(false);
@@ -3293,7 +3302,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
           <button className="btn sm" disabled={busy} onClick={() => setPrio({ ids: [...sel], rows: rows.filter((r) => sel.has(r.id)) })}>Change priority</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Reopened", (ids) => rpc("claims.setState", { ids, state: "open" }))}>Reopen</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Excluded", (ids) => rpc("claims.setState", { ids, state: "excluded" }))}>Exclude</button>
-          <button className="btn sm danger" disabled={busy} onClick={() => bulk("Closed", (ids) => rpc("claims.setState", { ids, state: "closed" }))}>Close</button>
+          <button className="btn sm danger" disabled={busy} onClick={() => { if (window.confirm(`Close ${plural(sel.size, "claim")}? Closed claims leave every list until someone reopens them.`)) bulk("Closed", (ids) => rpc("claims.setState", { ids, state: "closed" })); }}>Close</button>
           <button className="btn sm link" onClick={() => setSel(new Set())}>Clear</button>
         </div>
       )}
@@ -3927,7 +3936,7 @@ function ClaimInfo({ c, siblings }) {
         <div className="card tight"><div className="cv-sec">🏥 Insurance &amp; claim</div>
           <dl className="cv-kv">
             <dt>Payer</dt><dd>{c.payer || "–"}</dd><dt>Claim #</dt><dd className="mono">{c.claim_no || "–"}</dd>
-            <dt>Date of service</dt><dd>{fmtDate(c.dos)}</dd><dt>Age</dt><dd>{c.age_days != null ? `${c.age_days} days · ${c.bucket}` : "–"}</dd>
+            <dt>Date of service</dt><dd>{fmtDate(c.dos)}</dd><dt>Age</dt><dd>{c.age_days != null ? `${plural(c.age_days, "day")} · ${c.bucket}` : "–"}</dd>
             <dt>CPT</dt><dd className="mono">{c.cpt || "–"}</dd><dt>Billed</dt><dd>{c.billed != null ? fmtMoney(c.billed, 2) : "–"}</dd>
             <dt>Balance</dt><dd className="mono">{fmtMoney(c.balance, 2)}{lines.length > 1 ? <span className="muted"> · {lines.length} lines</span> : null}</dd><dt>File status</dt><dd>{c.file_status || "–"}{c.file_sub_status ? <span className="muted"> · {c.file_sub_status}</span> : null}</dd>
             <dt>Follow-up on</dt><dd>{c.follow_up_on ? fmtDate(c.follow_up_on) : "–"}</dd><dt>Priority</dt><dd title={c.priority_reason}>{c.priority} · {c.tier}</dd>
@@ -4458,8 +4467,12 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   const changed = () => { q.reload(); setVer((v) => v + 1); onChanged && onChanged(); };
   const act = async (label, fn) => { setBusy(true); try { await fn(); toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const sup = me.role === "supervisor";
+  // Esc closes the drawer when nothing is open on top of it (a box opened from the drawer closes first).
+  const ovRef = useRef(null);
+  useEffect(() => { const k = (e) => { if (e.key !== "Escape" || !ovRef.current) return; const all = document.querySelectorAll(".overlay"); if (all[all.length - 1] === ovRef.current) onClose(); };
+    window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   return (
-    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="overlay" ref={ovRef} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal wide" style={{ maxWidth: 1240, background: "var(--card2)", position: "relative" }}>
         <ErrorBox error={q.error} />
         {!c && !q.error && <Spinner />}
@@ -4518,7 +4531,7 @@ function ClaimFacts({ c }) {
         <dl className="kv mt">
           <dt>Patient</dt><dd><b>{c.patient || "–"}</b></dd>
           <dt>Payer</dt><dd>{c.payer || "–"}</dd>
-          <dt>Date of service</dt><dd>{fmtDate(c.dos)} {c.age_days != null && <span className="muted">· {c.age_days} days · {c.bucket}</span>}</dd>
+          <dt>Date of service</dt><dd>{fmtDate(c.dos)} {c.age_days != null && <span className="muted">· {plural(c.age_days, "day")} · {c.bucket}</span>}</dd>
           <dt>Balance</dt><dd><b className="mono">{fmtMoney(c.balance, 2)}</b>{c.billed != null && <span className="muted"> billed {fmtMoney(c.billed, 2)}</span>}{c.lines > 1 && <span className="muted"> · {c.lines} service lines</span>}</dd>
           <dt>CPT</dt><dd className="mono">{c.cpt || "–"}</dd>
           <dt>Provider</dt><dd>{c.provider || "–"}</dd>
@@ -4887,14 +4900,17 @@ function AllocateView({ ctx, params, go, embedded }) {
   const [applied, setApplied] = useState(null);
   const stats = useRpc("claims.stats", { client_id: clientId || undefined, location_id: locId || undefined }, [clientId, locId], !!clientId);
   const today = todayISO();
+  // A slow answer for a client (or location) that is no longer picked is dropped.
+  const poolAsk = useRef(0);
   const loadPool = async () => {
     if (!clientId) return;
+    const ask = ++poolAsk.current;
     setLoading(true); setPlan(null);
-    try { const r = await rpc("claims.eligible", { client_id: clientId, location_id: locId || undefined }); setPool(rescore(r.claims, today)); }
-    catch (e) { toast(e.message, "err"); }
-    setLoading(false);
+    try { const r = await rpc("claims.eligible", { client_id: clientId, location_id: locId || undefined }); if (ask === poolAsk.current) setPool(rescore(r.claims, today)); }
+    catch (e) { if (ask === poolAsk.current) toast(e.message, "err"); }
+    if (ask === poolAsk.current) setLoading(false);
   };
-  useEffect(() => { setPool(null); setPlan(null); setApplied(null); if (clientId) loadPool(); }, [clientId, locId]);
+  useEffect(() => { poolAsk.current++; setPool(null); setPlan(null); setApplied(null); setLoading(false); if (clientId) loadPool(); }, [clientId, locId]);
   // Who gets the claims: the client's people (the location's own team when it has one), minus anyone out today in
   // Team today, each up to their daily target. People are changed on the client card.
   const [members, setMembers] = useState(null);
@@ -5093,7 +5109,7 @@ function TeamView({ ctx, reload, me }) {
     <div className="stack">
       <div className="row between"><div><h1>Team</h1><div className="sub">Team leads upload and allocate; billers work their day list one claim at a time.</div></div>
         <RosterSyncButton onDone={reload} />
-        <div className="row"><input className="input sm" style={{ width: 220 }} placeholder="find a person, project, manager…" value={find} onChange={(e) => setFind(e.target.value)} />{me.is_admin && <button className="btn primary" onClick={() => setEdit({ first_name: "", last_name: "", email: "", designation: "SME", role: "user", capacity: 35, active: true, tempPw: false, projects_text: "", reports_to: "" })}>Add team member</button>}</div></div>
+        <div className="row"><input className="input sm" style={{ width: 220 }} placeholder="find a person, project, manager…" value={find} onChange={(e) => setFind(e.target.value)} />{me.is_admin && <button className="btn primary" onClick={() => setEdit({ first_name: "", last_name: "", email: "", designation: "Biller", role: "user", capacity: 35, active: true, tempPw: false, projects_text: "", reports_to: "" })}>Add team member</button>}</div></div>
       <div className={"card tight row between " + (info.data && !info.data.email ? "" : "")} style={info.data && !info.data.email ? { borderLeft: "4px solid var(--amber)" } : { borderLeft: "4px solid var(--green)" }}>
         <div className="small">
           <b>Sign-in emails:</b> {!info.data ? "checking…" : info.data.email ? <>sent through <b>{PROVIDER_LABEL[info.data.email_provider] || info.data.email_provider}</b>{info.data.email_sender ? <> from <span className="mono">{info.data.email_sender}</span></> : info.data.email_from ? <> as <span className="mono">{info.data.email_from}</span></> : null}.</> : DEMO ? <>demo mode sends nothing; codes are shown on screen.</> : <>not set up on the Worker yet (EMAIL_PROVIDER). Billers cannot receive codes until it is; hand out codes from this list meanwhile. Setup steps are in the README.</>}
@@ -5595,7 +5611,8 @@ function InvStrip({ stages, mini }) {
 }
 function InventoryStatusTab(props) {
   const { ctx, go } = props;
-  const [clientId, setClientId] = useState(""), [leadId, setLeadId] = useState("");
+  const [clientId, setClientId] = useState(() => (props.params && props.params.client_id) || ""), [leadId, setLeadId] = useState("");
+  useEffect(() => { navKeep({ client_id: clientId }); }, [clientId]);
   const leadsQ = useRpc("team.leads", {}, []);
   const canLead = !!(leadsQ.data && leadsQ.data.can_pick_lead && leadsQ.data.leads.length);
   const q = useRpc("inventory.status", { client_id: clientId || undefined, lead_id: leadId || undefined, today: todayISO() }, [clientId, leadId]);
@@ -5723,7 +5740,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
               <td className="num">{r.missed || "–"}</td>
               <td className="small">{r.waiting ? <>{fmtMoney(r.waiting.bal)} · {r.waiting.n}<div className="tiny muted">oldest {r.waiting.oldest} d</div></> : "–"}</td>
               <td className="num">{r.tfl_soon_n || r.tfl_past_n ? <span className="red-ink">{fmtMoney(r.tfl_soon)}</span> : "–"}{r.tfl_past_n ? <div className="tiny red-ink">{r.tfl_past_n} past</div> : null}</td>
-              <td className="small">{r.days_to_clear != null ? <><b className={r.days_to_clear > 20 ? "red-ink" : r.days_to_clear > 10 ? "amber-ink" : ""}>{r.days_to_clear} days</b><div className="tiny muted">{fmtInt(r.to_work)} claims · {r.per_day}/day · {r.people} people</div></> : <span className="tiny muted">{r.to_work ? fmtInt(r.to_work) + " claims, no work in 2 weeks" : "nothing to work"}</span>}</td>
+              <td className="small">{r.days_to_clear != null ? <><b className={r.days_to_clear > 20 ? "red-ink" : r.days_to_clear > 10 ? "amber-ink" : ""}>{plural(r.days_to_clear, "day")}</b><div className="tiny muted">{fmtInt(r.to_work)} claims · {r.per_day}/day · {r.people} people</div></> : <span className="tiny muted">{r.to_work ? fmtInt(r.to_work) + " claims, no work in 2 weeks" : "nothing to work"}</span>}</td>
               <td className="small">{ago(r.last_inventory)}</td>
             </tr>))}</tbody></table></div></div></>}
         <ClaimsSection compact ctx={ctx} go={go} clientId={clientId} setClientId={setClientId} locId="" setLocId={() => {}} leadId={leadId} leadName={leadName} rangeMs={ms} rangeLabel={rangeText(dr)} />
@@ -5744,7 +5761,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
 }
 const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took a share back", "raci.save": "Changed the RACI", "feedback.recipients": "Changed who gets feedback",
   "client.responsibility": "Changed posting / submission responsibility", "settings.save": "Changed settings", "client.delete": "Deleted a client", "client.save": "Edited a client",
-  "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the client report", "creport.ev": "EV file for the client report", "client.logo": "Changed the client's logo",
+  "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
@@ -5756,7 +5773,7 @@ function AuditView({ ctx }) {
       <div className="card tight row" style={{ gap: 10, flexWrap: "wrap" }}>
         <span style={{ minWidth: 240 }}><Combo sm value={f.client_id} onChange={(v) => setF({ ...f, client_id: v })} placeholder="Every client" options={ctx.clients.map((c) => ({ id: c.id, label: c.name }))} /></span>
         <select className="input sm" style={{ width: "auto" }} value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })}>
-          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client report</option><option value="monthend">Month-end</option><option value="feedback">Feedback</option><option value="settings">Settings</option></select>
+          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="feedback">Feedback</option><option value="settings">Settings</option></select>
         <span className="small muted" style={{ marginLeft: "auto" }}>{rows.length} changes</span></div>
       {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No changes recorded yet. They are recorded from now on.</Empty></div> :
         <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Client</th><th>Detail</th></tr></thead>
@@ -5832,7 +5849,7 @@ function ClientView({ ctx, me, go, params }) {
   useEffect(() => { if (params && params.tab === "report" && cid) go("dashboard", { tab: "report", client_id: cid }); }, [params && params.tab]);
   const [from, to] = rangeSpan(dr);
   const q = useRpc("client.overview", { client_id: cid, from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1], month: month || undefined }, [cid, from, to, month], !!cid);
-  const d = q.data;
+  const d = q.data && q.data.client && q.data.client.id !== cid ? null : q.data;   // never client A's figures under client B's name
   const [log, setLog] = useState({ kind: "call", text: "", next_on: "" });
   const [busy, setBusy] = useState(false);
   const [scoreFor, setScoreFor] = useState(null);
@@ -7423,7 +7440,7 @@ const DRISHTI_TOKEN_KEY = "drishti:token:v1";
 function SlaHead({ title, sub, onHow, frame }) {
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
-    <div className="row between top" style={{ marginBottom: 12, flexWrap: "nowrap", gap: 16 }}>
+    <div className="row between top sla-head" style={{ marginBottom: 12, flexWrap: "nowrap", gap: 16 }}>
       <div style={{ minWidth: 0, flex: "1 1 auto" }}><h1>{title}</h1><div className="sub">{sub}</div></div>
       <div className="rh-acts" style={{ alignItems: "center", flex: "0 0 auto" }}>
         <span className="small muted">{stamp}</span>
@@ -7928,13 +7945,20 @@ function MyRechecks({ ctx, me }) {
     </div>
   );
 }
+/* The working day as the server counts it (Live status, My day): it starts at 05:00 IST, so a night shift (18:30 to 03:30)
+   is one day and "Worked today" does not drop to 0 at midnight. */
+const bizDayBounds = () => { const now = Date.now(), ist = now + 330 * 60000; const start = now - (((ist - 5 * 3600000) % 86400000) + 86400000) % 86400000; return [start, start + 86400000 - 1]; };
 function QueueView({ ctx, me }) {
   const today = todayISO();
-  const [from, to] = dayBounds(today);
-  const summary = useRpc("queue.summary", { day_from_ms: from, day_to_ms: to }, []);
+  const [[from, to], setBizDay] = useState(bizDayBounds);
+  // Back on the tab after the day rolled over: count the new day.
+  useEffect(() => { const f = () => setBizDay((b) => { const n = bizDayBounds(); return n[0] === b[0] ? b : n; });
+    window.addEventListener("focus", f); document.addEventListener("visibilitychange", f); const t = setInterval(f, 5 * 60000);
+    return () => { window.removeEventListener("focus", f); document.removeEventListener("visibilitychange", f); clearInterval(t); }; }, []);
+  const summary = useRpc("queue.summary", { day_from_ms: from, day_to_ms: to }, [from]);
   const EMPTY_F = { q: "", payer: "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: "", saag_bucket: "", state: "", client_id: "", location_id: "", due: "" };
   const [f, setF] = useState(EMPTY_F);
-  const payload = useMemo(() => { const o = { day_from_ms: from }; for (const k in f) if (f[k] !== "" && k !== "due") o[k] = f[k]; return o; }, [f]);
+  const payload = useMemo(() => { const o = { day_from_ms: from }; for (const k in f) if (f[k] !== "" && k !== "due") o[k] = f[k]; return o; }, [f, from]);
   const list = useRpc("queue.list", payload, [JSON.stringify(payload)]);
   const [bundle, setBundle] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -8118,21 +8142,62 @@ function HistoryView({ ctx, me }) {
   );
 }
 
-/* ---------- app ---------- */
+/* One page's render error shows a card in that page and keeps the menu, instead of ending the whole app. */
+class PageBoundary extends (React.Component || Object) {   // (Object: the test rig stubs React without Component)
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { try { console.error("Page error:", error, info && info.componentStack); } catch (e) {} }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="card" role="alert" style={{ maxWidth: 560, margin: "24px auto" }}>
+        <h2>This page hit a problem</h2>
+        <div className="sub mb">Nothing you saved is lost. Reload the page, or pick another page from the menu.</div>
+        <div className="small muted mb">{String((this.state.error && this.state.error.message) || this.state.error).slice(0, 200)}</div>
+        <div className="row"><button className="btn primary" onClick={() => location.reload()}>Reload</button>{this.props.onHome && <button className="btn" onClick={this.props.onHome}>Go to the start page</button>}</div>
+      </div>
+    );
+  }
+}
+/* The page and its params go in the hash ("#/claims?client_id=..&state=open") and each move is a history entry, so Back
+   returns to the last page and a reload keeps it. The params object itself rides in history.state (numbers stay numbers). */
+const navHash = (view, params) => {
+  const q = new URLSearchParams();
+  Object.entries(params || {}).forEach(([k, v]) => { if (v != null && v !== "" && typeof v !== "object") q.set(k, String(v)); });
+  const qs = q.toString();
+  return "#/" + view + (qs ? "?" + qs : "");
+};
+const navFromHistory = () => { const h = hashNav(); const st = history.state && history.state.bnav; return st && h && st.view === h.view ? st : h; };
+/* A choice inside a page (a tab, the picked client) is written into the current history entry, so Back from a drill-down
+   comes back to it. It does not reload the page. */
+function navKeep(patch) {
+  try {
+    const cur = navFromHistory(); if (!cur || !cur.view) return;
+    const params = { ...(cur.params || {}), ...patch }; Object.keys(params).forEach((k) => { if (params[k] == null || params[k] === "") delete params[k]; });
+    const next = { view: cur.view, params: Object.keys(params).length ? params : null };
+    history.replaceState({ bnav: next }, "", navHash(next.view, next.params));
+  } catch (e) {}
+}
 function App() {
   const [me, setMe] = useState(undefined);
-  const [nav, setNav] = useState(() => hashNav() || { view: null, params: null });
+  const [nav, setNav] = useState(() => navFromHistory() || { view: null, params: null });
   const [ctx, setCtx] = useState({ clients: [], codes: [], users: [], loaded: false });
   const [pwOpen, setPwOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
-  const go = useCallback((view, params) => { setNav({ view, params: params || null }); try { history.replaceState(null, "", "#/" + view); } catch (e) {} window.scrollTo(0, 0); }, []);
+  const go = useCallback((view, params) => {
+    const next = { view, params: params || null }, hash = navHash(view, params);
+    setNav(next);
+    try { if (location.hash === hash) history.replaceState({ bnav: next }, "", hash); else history.pushState({ bnav: next }, "", hash); } catch (e) {}
+    window.scrollTo(0, 0);
+  }, []);
   useEffect(() => {
     (async () => { if (!TOKEN) { setMe(null); return; } try { const r = await rpc("auth.me"); setMe(r.user); } catch (e) { setMe(null); } })();
     const h = () => setMe(null);
-    const hh = () => { const h = hashNav(); if (h) setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
+    const hh = () => { const h = navFromHistory(); if (h) setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
     window.addEventListener("brahmastra:signedout", h);
     window.addEventListener("hashchange", hh);
-    return () => { window.removeEventListener("brahmastra:signedout", h); window.removeEventListener("hashchange", hh); };
+    window.addEventListener("popstate", hh);
+    return () => { window.removeEventListener("brahmastra:signedout", h); window.removeEventListener("hashchange", hh); window.removeEventListener("popstate", hh); };
   }, []);
   const reload = useCallback(async () => {
     if (!me || me.must_change) return;
@@ -8190,6 +8255,8 @@ function App() {
   );
   const allowed = [...navItems(navFor(me, handoffs, fb, attention)).map((x) => x[0]), "settings", ...(me.role === "supervisor" ? ["digest"] : []), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   const view = allowed.includes(nav.view) ? nav.view : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
+  // A page this person cannot open (or a name that is not a page) shows their start page, and the address says so too.
+  if (nav.view && nav.view !== view && ctx.loaded && handoffs !== null) { try { if ((location.hash || "").replace(/^#\/?/, "").split("?")[0] === nav.view) history.replaceState(null, "", "#/" + view); } catch (e) {} }
   const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb };
   const body = !ctx.loaded ? <Spinner label="Loading…" />
     : view === "dashboard" ? (deskOf(me, handoffs) ? <DeskDashboard {...props} desk={deskOf(me, handoffs)} /> : <DashboardHub {...props} />)
@@ -8222,7 +8289,7 @@ function App() {
   return (
     <>
       <Shell me={me} view={view} attention={attention} handoffs={handoffs} fb={fb} notify={notify} onRefreshNotify={refreshNotify} onGo={go} onSearch={() => setPal(true)} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)} onDeleteAccount={() => setDelOpen(true)}>
-        <React.Fragment key={view + JSON.stringify(nav.params || {})}>{body}</React.Fragment>
+        <React.Fragment key={view + JSON.stringify(nav.params || {})}><PageBoundary onHome={() => go(me.role === "supervisor" ? "dashboard" : "queue")}>{body}</PageBoundary></React.Fragment>
       </Shell>
       {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
       {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb, attention)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
