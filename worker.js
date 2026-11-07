@@ -5938,7 +5938,8 @@ export default {
         const payload = (body && body.payload) || {};
         const auth = request.headers.get("Authorization") || "";
         const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-        const handler = OPS[op];
+        // Only the ops themselves: OPS["constructor"], "__proto__", "toString" and the like are inherited from every object.
+        const handler = Object.prototype.hasOwnProperty.call(OPS, op) ? OPS[op] : null;
         if (!handler) throw new ApiError(404, "Unknown operation: " + op);
         const user = await userFromToken(env, token);
         if (!PUBLIC_OPS.has(op) && !user) throw new ApiError(401, "Please sign in.");
