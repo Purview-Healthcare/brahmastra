@@ -322,7 +322,8 @@ tr.tat-missed td{background:var(--red-soft)}tr.tat-missed td:first-child{box-sha
 .dd-links{display:flex;gap:10px;margin-top:8px}
 .dd-att{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}.dd-att .li{font-size:12.5px;margin:4px 0}
 @media (max-width:1100px){.dd-kpis{grid-template-columns:repeat(4,1fr)}.dd-grid{grid-template-columns:1fr 1fr}}
-@media (max-width:700px){.dd-kpis{grid-template-columns:1fr 1fr}.dd-grid{grid-template-columns:1fr}}
+@media (max-width:700px){.dd-kpis{grid-template-columns:1fr 1fr}.dd-grid{grid-template-columns:1fr}
+.dd-top{padding:12px 14px;gap:12px}.dd-top>div{min-width:0;max-width:100%}.dd-tools{margin-left:0;flex-wrap:wrap;max-width:100%}.dd-tools .input{max-width:100%;min-width:0}}
 @media print{body.dd-printing{background:#fff!important}body.dd-printing .main{padding:0!important;max-width:none!important}body.dd-printing .dd{zoom:.66;gap:8px}body.dd-printing .dd-card{break-inside:auto}body.dd-printing .dd-kpis{grid-template-columns:repeat(8,1fr)}body.dd-printing .dd-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
   body.dd-printing *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 
@@ -351,6 +352,8 @@ kbd{font:600 11px/1 inherit;font-family:inherit;padding:3px 6px;border:1px solid
 .icon-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;padding:6px 9px;color:var(--slate)}.icon-btn.on{background:var(--soft);color:var(--tealink)}
 .bell-n{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#E8A13C;color:#fff;font:700 11px/18px inherit;font-family:inherit;text-align:center;border:2px solid var(--card)}.bell-n.red{background:#C94F4F}
 .bell-menu{width:360px;max-width:calc(100vw - 24px)}
+@media(max-width:600px){.bell-menu{position:fixed;left:12px;right:12px;top:auto;width:auto;max-width:none;min-width:0}
+.sla-head{flex-wrap:wrap!important}.sla-head .rh-acts{flex:1 1 100%!important;flex-wrap:wrap;margin-left:0}}
 .bell-item{display:flex !important;gap:10px;align-items:flex-start;width:100%;text-align:left;padding:9px 10px !important;border:0;background:transparent;border-radius:8px;font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
 .bell-item:hover{background:var(--hover)}.bell-item>i{flex:none;width:8px;height:8px;border-radius:50%;margin-top:5px}
 .cmdk-overlay{padding-top:12vh}
@@ -629,4 +632,4 @@ tr.inv-risk td{background:color-mix(in srgb,var(--sc-r) 4%,var(--card))}
 @media (max-width:1100px){.inv-k3{grid-template-columns:1fr}.inv-ins{grid-template-columns:1fr}.inv-legend{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head><body><div id="root"></div>
-<script src="app/app.js?v=945633d5b0"></script></body></html>
+<script src="app/app.js?v=6a46665513"></script></body></html>
