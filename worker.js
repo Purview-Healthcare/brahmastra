@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.78.0";
+const VERSION = "2.79.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -3406,6 +3406,117 @@ const OPS = {
       waiting_bal: rows.reduce((t, r) => t + (r.waiting ? r.waiting.bal : 0), 0), at_risk: rows.filter((r) => r.health === "risk").length, watch: rows.filter((r) => r.health === "watch").length, missed: sum("missed") },
       target: OVER90_TARGET, working_days: wd };
   },
+  /* Inventory status: where every workable claim stands today (one stage each), the age of the AR against the over-90 target,
+     the pace to clear, the SLA checks the inventory can answer today, and what to do first to meet the SLA, worked out from the
+     claims themselves. The same for one client when client_id is given. Built on portfolio.overview's per-client rows. */
+  "inventory.status": async ({ env, user, payload }) => {
+    const now = Date.now(), today = isoDate(payload.today) || isoToday();
+    const pf = await OPS["portfolio.overview"]({ env, user, payload: { client_id: payload.client_id, lead_id: payload.lead_id, today } });
+    const ids = pf.rows.map((r) => r.client_id);
+    const inIds = ids.length ? `(${ids.map(() => "?").join(",")})` : "(NULL)";
+    const ageSql = "CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END";
+    const d7 = istISO(Date.parse(today + "T12:00:00Z") - 7 * 86400000);
+    const monthStart = Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
+    // One stage per claim: an open hand-off wins (waiting on the client, or at a desk), then the claim's own state and follow-up date.
+    const ho = `(SELECT claim_id, MAX(status = 'client') AS waiting, MIN(CASE WHEN status <> 'client' THEN due_at END) AS due, MIN(CASE WHEN status = 'client' THEN COALESCE(client_sent_at, paused_at, created_at) END) AS since
+      FROM handoffs WHERE status IN ('pending','assigned','client') GROUP BY claim_id)`;
+    const st = await all(env, `SELECT c.client_id, CASE WHEN h.waiting = 1 THEN 'waiting' WHEN h.claim_id IS NOT NULL THEN 'desk' WHEN c.state = 'open' THEN 'open'
+          WHEN c.state IN ('assigned','in_progress') THEN 'list' WHEN c.follow_up_on <> '' AND c.follow_up_on < ? THEN 'overdue' WHEN c.follow_up_on = ? THEN 'due' ELSE 'later' END AS stage,
+        COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS bal,
+        SUM(c.follow_up_on <> '' AND c.follow_up_on < ?) AS o7, SUM(h.waiting = 1 AND h.since < ?) AS w10, SUM(h.waiting = 0 AND h.due < ?) AS late,
+        MIN(CASE WHEN c.state = 'open' THEN c.created_at END) AS first_open, MIN(CASE WHEN c.follow_up_on > ? THEN c.follow_up_on END) AS next_fu, COUNT(DISTINCT c.assigned_to) AS people
+      FROM claims c LEFT JOIN ${ho} h ON h.claim_id = c.id
+      WHERE c.client_id IN ${inIds} AND (c.state IN ${WORKABLE} OR (c.state = 'in_process' AND h.claim_id IS NOT NULL)) GROUP BY 1, 2`,
+      today, today, d7, now - 10 * 86400000, now, today, ...ids);
+    const ages = await all(env, `SELECT client_id, CASE WHEN age > 90 THEN 4 WHEN age > 60 THEN 3 WHEN age > 30 THEN 2 ELSE 1 END AS b, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal
+      FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE}) GROUP BY 1, 2`, today, ...ids);
+    const big = await all(env, `SELECT client_id, balance, payer FROM (SELECT c.client_id, c.balance, c.payer, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE})
+      WHERE age > 90 AND balance > 0 ORDER BY balance DESC LIMIT 3000`, today, ...ids);
+    const holders = await all(env, `SELECT c.client_id, c.assigned_to, u.name, COUNT(*) AS n FROM claims c LEFT JOIN users u ON u.id = c.assigned_to
+      WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL GROUP BY 1, 2`, ...ids, today);
+    const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND updated_at >= ? GROUP BY 1`, ...ids, monthStart);
+    const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.status IN ('pending','assigned') AND h.due_at < ? GROUP BY 1, 2`, ...ids, now);
+    const escOpen = await all(env, `SELECT client_id, COUNT(*) AS n FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, ...ids);
+    // working days left in the month, today included (Monday to Friday)
+    let wdLeft = 0; { const [y, m] = today.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      for (let dd = Number(today.slice(8, 10)); dd <= last; dd++) { const w = new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); if (w && w !== 6) wdLeft++; } }
+    const STAGES = ["open", "list", "later", "due", "overdue", "waiting", "desk"];
+    const blank = () => ({ stages: Object.fromEntries(STAGES.map((k) => [k, { n: 0, bal: 0 }])), o7: 0, w10: 0, late: 0, first_open: null, next_fu: null, list_people: 0,
+      ages: [1, 2, 3, 4].map(() => ({ n: 0, bal: 0 })), big: [], holders: [], closed: { n: 0, bal: 0 }, desk_late: {}, esc_open: 0 });
+    const per = new Map(ids.map((id) => [id, blank()])), tot = blank();
+    const both = (cid, fn) => { const p = per.get(cid); if (p) { fn(p); fn(tot); } };
+    for (const r of st) both(r.client_id, (x) => { const s = x.stages[r.stage]; s.n += r.n; s.bal += r.bal; if (r.stage === "overdue") x.o7 += r.o7 || 0; if (r.stage === "waiting") x.w10 += r.w10 || 0; if (r.stage === "desk") x.late += r.late || 0;
+      if (r.first_open && (!x.first_open || r.first_open < x.first_open)) x.first_open = r.first_open; if (r.next_fu && (!x.next_fu || r.next_fu < x.next_fu)) x.next_fu = r.next_fu; if (r.stage === "list") x.list_people += r.people; });
+    for (const r of ages) both(r.client_id, (x) => { x.ages[r.b - 1].n += r.n; x.ages[r.b - 1].bal += r.bal; });
+    for (const r of big) both(r.client_id, (x) => x.big.push(r));
+    for (const r of holders) both(r.client_id, (x) => { const h = x.holders.find((y) => y.id === r.assigned_to); if (h) h.n += r.n; else x.holders.push({ id: r.assigned_to, name: r.name || "someone", n: r.n }); });
+    for (const r of closed) both(r.client_id, (x) => { x.closed.n += r.n; x.closed.bal += r.bal; });
+    for (const r of deskLate) both(r.client_id, (x) => { x.desk_late[r.dept] = (x.desk_late[r.dept] || 0) + r.n; });
+    for (const r of escOpen) both(r.client_id, (x) => { x.esc_open += r.n; });
+    const pfBy = new Map(pf.rows.map((r) => [r.client_id, r]));
+    const T = OVER90_TARGET;
+    const money = (v) => { const a = Math.abs(v || 0); return "$" + (a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); };
+    const pl = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+    const deptName = { posting: "Posting", submission: "Submission", subcheck: "Submission", rejection: "Rejections" };
+    // What to do first, most SLA-damaging first. Each card: the number, why it matters, and the one action.
+    const insights = (x, cl, cid) => {
+      const out = [], arTot = x.ages.reduce((t, a) => t + a.bal, 0), o90 = x.ages[3].bal, pct = arTot ? Math.round(o90 / arTot * 1000) / 10 : 0;
+      const at = (k) => x.stages[k], params = cid ? { clientId: cid } : {};
+      if (pct > T) {
+        const need = (o90 - T / 100 * arTot) / (1 - T / 100); let n = 0, s = 0; const pay = {};
+        for (const b of x.big) { if (s >= need) break; n++; s += b.balance; pay[b.payer || "no payer"] = (pay[b.payer || "no payer"] || 0) + 1; }
+        const top = Object.entries(pay).sort((a, b) => b[1] - a[1]).slice(0, 2);
+        out.push({ tone: "red", num: money(s), sub: pl(n, "claim") + " · over 90 days", short: `Resolve the ${pl(n, "biggest claim")} over 90 days (${money(s)})`, title: `Over-90 AR is ${pct}%, target ≤ ${T}%.`,
+          text: `Resolve the ${n === 1 ? "biggest claim" : n + " biggest claims"} over 90 days and it comes under ${T}%.` + (top.length ? ` Most are with ${top.map(([p, k]) => p + " (" + k + ")").join(" and ")}.` : ""),
+          act: [{ label: "Open the list", to: "claims", params: { ...params, min_age: 91, sort: "balance", dir: "desc", state: "workable" } }] });
+      }
+      if (at("overdue").n) {
+        const hs = x.holders.sort((a, b) => b.n - a.n).slice(0, 3);
+        out.push({ tone: x.o7 ? "red" : "amber", short: pl(at("overdue").n, "overdue follow-up"), num: String(at("overdue").n), sub: "overdue follow-ups · " + money(at("overdue").bal), title: "Follow-up dates have passed and nobody has worked the claim since.",
+          text: (x.o7 ? `${x.o7} are over 7 days late. ` : "") + (hs.length ? `Most are with ${hs.map((h) => h.name + " (" + h.n + ")").join(", ")}.` : "") + " Overdue follow-ups keep Days in AR and the over-90 bucket up.",
+          act: [{ label: "Open them", to: "claims", params: { ...params, overdue: true, state: "" } }] });
+      }
+      const tf = cl ? { n: cl.tfl_soon_n, bal: cl.tfl_soon, past: cl.tfl_past_n } : pf.rows.reduce((a, r) => ({ n: a.n + r.tfl_soon_n, bal: a.bal + r.tfl_soon, past: a.past + r.tfl_past_n }), { n: 0, bal: 0, past: 0 });
+      if (tf.n) out.push({ tone: "amber", short: pl(tf.n, "claim") + " near timely filing", num: String(tf.n), sub: "claims · " + money(tf.bal) + " · timely filing", title: "Timely filing limit in the next 30 days.", text: "Lose these and the money cannot be collected. Work them before anything else on the list." + (tf.past ? ` ${tf.past} are already past the limit.` : ""),
+        act: [{ label: "Open the insurance limits", to: "limits", params: {} }] });
+      if (at("waiting").n) out.push({ tone: x.w10 ? "amber" : "blue", short: x.w10 ? `Chase the client: ${x.w10} waiting over 10 days` : pl(at("waiting").n, "claim") + " waiting on the client", num: String(at("waiting").n), sub: "waiting on the client · " + money(at("waiting").bal), title: x.w10 ? `${x.w10} ${x.w10 === 1 ? "has" : "have"} waited on the client more than 10 days.` : "Waiting on the client.",
+        text: "Days in AR keeps counting while they wait. Chase the client for the answers.", act: [{ label: "Open Client requests", to: "attention", params: { tab: "client" } }] });
+      if (at("open").n) { const days = x.first_open ? Math.floor((now - x.first_open) / 86400000) : 0;
+        out.push({ tone: days > 2 ? "amber" : "blue", short: "Allocate " + pl(at("open").n, "unassigned claim"), num: String(at("open").n), sub: "unassigned · " + money(at("open").bal), title: days > 0 ? `Not handed out yet, the oldest for ${pl(days, "day")}.` : "Not handed out yet.",
+          text: "Nobody works a claim that is not on a list. Hand them out so the team's pace covers them.", act: [{ label: "Allocate", to: "allocate", params }] }); }
+      if (x.late) { const by = Object.entries(x.desk_late).map(([k, n]) => n + " at " + (deptName[k] || k)).join(", ");
+        out.push({ tone: "amber", short: pl(x.late, "claim") + " past the desk TAT", num: String(x.late), sub: "past the desk TAT", title: "At Posting or Submission past the client's TAT.", text: by + ". These count against the Posting TAT and Submission TAT on the scorecard.", act: [{ label: "Open the desks", to: "handoffs", params: {} }] }); }
+      if (x.esc_open) out.push({ tone: "red", short: "Close " + pl(x.esc_open, "open escalation"), num: String(x.esc_open), sub: "open escalations", title: "Escalations are open. The SLA threshold is 0.", text: "Close them, or give the reason and expected date on the tracker.", act: [{ label: "Open the Escalation tracker", to: "escalations", params: cid ? { client_id: cid } : {} }] });
+      // what is fine, so the list is not all alarms
+      if (arTot && pct <= T) out.push({ tone: "green", num: pct + "%", sub: `over 90 days · target ≤ ${T}%`, title: "Over-90 AR is within target.", text: x.ages[2].bal ? `Keep it there: ${money(x.ages[2].bal)} is 61 to 90 days old and turns 90+ within the month if not worked.` : "Keep the follow-ups on time to hold it there.", act: [] });
+      if (!at("overdue").n && (at("later").n || at("due").n)) out.push({ tone: "green", num: "0", sub: "overdue follow-ups", title: "Every follow-up is on time.", text: at("due").n ? `${at("due").n} are due today.` : "Nothing is due today.", act: [] });
+      if (!x.esc_open && !x.late && arTot) out.push({ tone: "green", num: "0", sub: "open escalations · desks late", title: "No open escalations and every desk is within TAT.", text: "", act: [] });
+      const rank = { red: 0, amber: 1, blue: 2, green: 3 };
+      return out.sort((a, b) => rank[a.tone] - rank[b.tone]);
+    };
+    const pace = (rows) => { const tw = rows.reduce((t, r) => t + (r.to_work || 0), 0), pd = rows.reduce((t, r) => t + (r.per_day || 0), 0);
+      return { to_work: tw, per_day: Math.round(pd * 10) / 10, people: rows.reduce((t, r) => t + (r.people || 0), 0), days_to_clear: pd ? Math.ceil(tw / pd) : null, wd_left: wdLeft }; };
+    const shape = (x, rows, cl, cid) => {
+      const arTot = x.ages.reduce((t, a) => t + a.bal, 0), pc = pace(rows);
+      return { stages: x.stages, o7: x.o7, w10: x.w10, late: x.late, oldest_open: x.first_open ? Math.floor((now - x.first_open) / 86400000) : null, next_fu: x.next_fu, list_people: x.list_people,
+        ages: x.ages, ar: arTot, over90_pct: arTot ? Math.round(x.ages[3].bal / arTot * 1000) / 10 : 0, closed: x.closed, esc_open: x.esc_open, pace: pc,
+        checks: [
+          { key: "o90", name: "AR over 90 days", now: (arTot ? Math.round(x.ages[3].bal / arTot * 1000) / 10 : 0) + "%", target: "≤ " + T + "%", ok: !arTot || x.ages[3].bal / arTot * 100 <= T },
+          { key: "fu", name: "Follow-ups overdue", now: String(x.stages.overdue.n), target: "0", ok: !x.stages.overdue.n, warn: x.stages.overdue.n && !x.o7 },
+          { key: "tfl", name: "Timely filing in the next 30 days", now: String(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), target: "0", ok: !(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), warn: true },
+          { key: "desk", name: "Desks past the client's TAT", now: String(x.late), target: "0", ok: !x.late },
+          { key: "esc", name: "Escalations open", now: String(x.esc_open), target: "0", ok: !x.esc_open },
+          { key: "pace", name: "Days to clear at this pace", now: pc.days_to_clear == null ? "–" : pl(pc.days_to_clear, "day"), target: "≤ " + pl(wdLeft, "day") + " left", ok: pc.days_to_clear != null && pc.days_to_clear <= wdLeft, warn: pc.days_to_clear == null },
+        ],
+        insights: insights(x, cl, cid) };
+    };
+    const clients = pf.rows.map((r) => { const x = per.get(r.client_id), s = shape(x, [r], r, r.client_id);
+      return { client_id: r.client_id, client: r.client, health: r.health, tl: r.tl, manager: r.manager, drishti: r.drishti ? { score: r.drishti.score, band: r.drishti.band } : null,
+        stages: s.stages, ar: s.ar, over90_pct: s.over90_pct, overdue: s.stages.overdue.n, waiting: s.stages.waiting.n, days_to_clear: s.pace.days_to_clear, per_day: s.pace.per_day,
+        do_first: s.insights.filter((i) => i.tone !== "green").slice(0, 2).map((i) => i.short) }; });
+    return { today, wd_left: wdLeft, target: T, clients, last_inventory: pf.rows.reduce((m, r) => Math.max(m, r.last_inventory || 0), 0) || null,
+      drishti: pf.drishti, ...shape(tot, pf.rows, payload.client_id ? pfBy.get(payload.client_id) : null, payload.client_id || "") };
+  },
   /* Managers side by side: their clients, their people's work, missed tasks, SLA. The VP and admins see every
      manager; a manager sees their own line. */
   "portfolio.managers": async ({ env, user, payload }) => {
@@ -4145,6 +4256,8 @@ const OPS = {
     if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
     if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
     if (payload.min_balance != null && payload.min_balance !== "") { where.push("c.balance >= ?"); params.push(num(payload.min_balance, 0)); }
+    // Older than N days, by date of service (the age the over-90 target uses), else the file's age.
+    if (payload.min_age != null && payload.min_age !== "") { where.push("(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday(?) - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END) >= ?"); params.push(isoDate(payload.today) || isoToday(), num(payload.min_age, 0)); }
     if (payload.max_balance != null && payload.max_balance !== "") { where.push("c.balance <= ?"); params.push(num(payload.max_balance, 0)); }
     if (payload.saag_status) { where.push("c.last_status_code = ?"); params.push(str(payload.saag_status, 60)); }
     if (payload.saag_bucket) { where.push("c.last_bucket = ?"); params.push(str(payload.saag_bucket, 20)); }

@@ -157,7 +157,9 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("Team status has the suggestions", /Suggestions/i.test(await p.innerText(".main")) && /Do today/i.test(await p.innerText(".main")));
     ok("the Dashboard has three tabs: Team status, Inventory status, Client 360 report", (await p.locator(".dash-subtabs button").allInnerTexts()).map((x) => x.trim()).join("|") === "Team status|Inventory status|Client 360 report", await p.locator(".dash-subtabs button").allInnerTexts());
     await p.locator('.dash-subtabs button:has-text("Inventory status")').click(); await t(3500);
-    ok("Inventory status is the client list: Drishti's score and the claims in detail", /Workable AR/i.test(await p.innerText(".main")) && /SLA score/i.test(await p.innerText(".main")) && /Claims in detail/i.test(await p.innerText(".main")) && (await p.locator(".psla-score").count()) > 0, (await p.innerText(".main")).slice(0, 200));
+    { const tx = await p.innerText(".main");
+      ok("Inventory status: where the inventory stands, age, pace, SLA checks, do these first, by client, claims in detail", /Where the inventory stands/i.test(tx) && /Age of the workable AR/i.test(tx) && /Pace to clear/i.test(tx) && /SLA checks/i.test(tx) && /do these first/i.test(tx) && /Claims in detail/i.test(tx)
+        && (await p.locator(".inv-legend button").count()) === 7 && (await p.locator(".inv-it").count()) >= 1 && (await p.locator(".inv-ck tbody tr").count()) === 6, tx.slice(0, 300)); }
     ok("no error on Inventory status", !(await p.locator(".alert.err").count()));
     ok("no Monday digest card on Inventory status", !/Monday digest email/.test(await p.innerText(".main")));
     await open("#/sla"); await t(3500);
