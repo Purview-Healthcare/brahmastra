@@ -2045,6 +2045,18 @@ async function dashTeamFilter(env, user, payload) {
   return { people, leads, canPickLead, leadOf, clientIds, locationId, teamIds, narrow: !!payload.client_id };
 }
 /* The people a scoped team lead may see and edit: themselves, everyone below them, and everyone on their projects. */
+/* Sign-in codes and password resets for someone else: never for an admin unless you are one, and never for a team lead or
+   manager above or beside you: only for people who report up to you (or billers and desk people on your projects). */
+async function mayActAs(env, user, targetId) {
+  if (user.is_admin) return true;
+  if (targetId === user.id) return false;
+  const t = await one(env, "SELECT id, role, reports_to FROM users WHERE id = ?", targetId);
+  if (!t || t.role === "admin") return false;
+  if (t.role !== "supervisor") return true;
+  const seen = new Set();
+  for (let id = t.reports_to; id && !seen.has(id); ) { if (id === user.id) return true; seen.add(id); const u = await one(env, "SELECT reports_to FROM users WHERE id = ?", id); id = u ? u.reports_to : null; }
+  return false;
+}
 async function visibleUsers(env, user) {
   const users = await all(env, "SELECT * FROM users ORDER BY role DESC, name, email");
   if (!user.scope) return users;
@@ -2586,6 +2598,7 @@ const OPS = {
     const ex = await one(env, "SELECT id, email, active, name FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
+    if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
     if (!ex.active) throw bad("This account is switched off.");
     const code = await issueOtp(env, ex.email, "login", {}, { byTeamLead: true });
     return { email: ex.email, code, expires_in_min: OTP_TTL_MS / 60000 };
@@ -2595,6 +2608,7 @@ const OPS = {
     const ex = await one(env, "SELECT id FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
+    if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
     await env.DB.batch([
