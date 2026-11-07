@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.80.0";
+const VERSION = "2.81.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -213,7 +213,7 @@ const EXTRA_COLUMNS = {
     // Payment posting and Submission TAT for this client, in working hours (set on the client profile; 24 when not set).
     ["posting_tat_hours", "INTEGER"], ["submission_tat_hours", "INTEGER"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
-  users: [["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
+  users: [["failed_logins", "INTEGER NOT NULL DEFAULT 0"], ["locked_at", "INTEGER"], ["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
     ["department", "TEXT NOT NULL DEFAULT ''"], ["departments_also", "TEXT NOT NULL DEFAULT ''"], ["roster_status", "TEXT NOT NULL DEFAULT ''"], ["exit_date", "TEXT NOT NULL DEFAULT ''"],
@@ -1041,6 +1041,19 @@ async function makeHash(env, salt, passHash) { return hashWith(salt, passHash, e
    was set (hashed with the built-in default) still work: their hash is
    upgraded to the current PEPPER on the spot, so adding PEPPER later never
    locks anyone out. */
+/* Lockout: 5 wrong passwords in a row lock the account. Only a password reset with a one-time code sent to the official email
+   on the account (Forgot it?), or the admin's reset, opens it again. A team lead cannot. */
+const LOCK_AFTER = 5;
+const LOCKED_MSG = "This account is locked after " + LOCK_AFTER + " wrong passwords. Use Forgot it? to reset your password with a code sent to your official email, or ask the admin.";
+const triesLeft = (u) => { const n = LOCK_AFTER - (u.failed_logins || 0) - 1; return n + (n === 1 ? " try" : " tries") + " left before the account locks."; };
+async function passwordTry(env, u, passHash) {
+  if (u.locked_at) throw new ApiError(423, LOCKED_MSG);
+  if (await passwordOk(env, u, passHash)) { if (u.failed_logins) await run(env, "UPDATE users SET failed_logins = 0 WHERE id = ?", u.id); return true; }
+  const n = (u.failed_logins || 0) + 1;
+  await run(env, "UPDATE users SET failed_logins = ?, locked_at = CASE WHEN ? >= ? THEN ? ELSE locked_at END WHERE id = ?", n, n, LOCK_AFTER, Date.now(), u.id);
+  if (n >= LOCK_AFTER) throw new ApiError(423, LOCKED_MSG);
+  return false;
+}
 async function passwordOk(env, u, passHash) {
   if (!u || !u.pass_hash || !isHash(passHash)) return false;
   if (sameHash(await makeHash(env, u.pass_salt, passHash), u.pass_hash)) return true;
@@ -1651,6 +1664,8 @@ async function digestSpans(env, people) {
   }
   return spans;
 }
+/* A team lead sees only their own clients of a manager's digest; the manager, the admin and people with every client see it all. */
+const spanFor = (user, s) => (user.is_admin || user.access_all || (s.manager && s.manager.id === user.id)) ? s : { ...s, clients: s.clients.filter((c) => onClient(user, c.id)) };
 const spanVisible = (user, s) => user.is_admin || user.access_all || (s.manager && s.manager.id === user.id) || s.recipients.some((u) => u.id === user.id);
 async function digestData(env, clientId, wk) {
   const today = istISO(wk.to);
@@ -1797,9 +1812,11 @@ async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, b
     n++;
     const to = s.recipients.filter((u) => (u.prefs || {}).digest !== "off");
     const already = new Set((await all(env, "SELECT user_id FROM digest_log WHERE week = ? AND client_id = ? AND ok = 1", wk.week, s.key)).map((r) => r.user_id));
-    const mail = await spanMail(env, s, wk);
+    // one email per set of clients: the manager's whole span, or a team lead's own clients only
+    const mails = new Map(), mailFor = async (u) => { const su = spanFor(u, s), k = su.clients.map((c) => c.id).join(","); if (!mails.has(k)) mails.set(k, su.clients.length ? await spanMail(env, su, wk) : null); return mails.get(k); };
     let ok = 0, bad = 0;
     for (const u of to.filter((x) => !already.has(x.id))) {
+      const mail = await mailFor(u); if (!mail) continue;
       // claim this person's send first (ok = 2, sending), so two runs at once never both send it; a claim left by a run
       // that died is taken over after 30 minutes
       const t0 = Date.now();
@@ -2586,7 +2603,7 @@ const OPS = {
     if (!u || !u.active) throw fail();
     const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     if (!u.pass_hash) throw new ApiError(401, "This account has no password yet. Sign in with a code sent to your email, then set a password from the menu if you want one.");
-    if (!(await passwordOk(env, u, payload.passHash))) throw fail();
+    if (!(await passwordTry(env, u, payload.passHash))) throw new ApiError(401, "That email or password doesn't match. " + triesLeft(u));
     return openSession(env, u, "password");
   },
   "auth.sendOtp": async ({ env, payload }) => {
@@ -2666,7 +2683,7 @@ const OPS = {
     if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
     const extra = ((await getSetting(env, "extra_emails", [])) || []).map(mailClean);
     const mailable = !u.email_missing && mailOk(u.email) && (domainOk(env, u.email) || extra.includes(mailClean(u.email)));
-    if (!mailable) return { via: "lead" };
+    if (!mailable) return { via: u.locked_at ? "admin" : "lead" };
     const code = await issueOtp(env, u.email, "setup", {});
     const d = await deliverOtp(env, u.email, code, "setup");
     return { via: "email", email_hint: maskEmail(u.email), ...d };
@@ -2682,7 +2699,7 @@ const OPS = {
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
     await env.DB.batch([
-      env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0 WHERE id = ?").bind(salt, hash, u.id),
+      env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0, failed_logins = 0, locked_at = NULL WHERE id = ?").bind(salt, hash, u.id),
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id),
     ]);
     return openSession(env, { ...u, pass_hash: hash, must_change: 0 }, "password");
@@ -2694,6 +2711,8 @@ const OPS = {
     if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
     if (!isHash(payload.passHash)) throw bad("Set a password.");
     if (u.pass_hash) throw bad("You already have a password. Sign in with it, or use Forgot it? to reset it.");
+    // Live: the first password always needs a one-time code (to the official email, or from the team lead). Demo only skips it.
+    if (!env.DEMO) throw bad("First time here: we send a one-time code to your official email (or your team lead gives you one) before you choose a password.");
     await nameSignInOk(env, u);
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
@@ -2707,7 +2726,7 @@ const OPS = {
     if (!u || !u.active || u.role === "admin") throw fail();
     if (!isHash(payload.passHash)) throw bad("Enter your password.");
     if (!u.pass_hash) throw new ApiError(401, "No password set here yet. Use First time here to create one.");
-    if (!(await passwordOk(env, u, payload.passHash))) throw fail();
+    if (!(await passwordTry(env, u, payload.passHash))) throw new ApiError(401, "That password doesn't match. " + triesLeft(u));
     await nameSignInOk(env, u);
     return openSession(env, u, "password");
   },
@@ -2751,7 +2770,7 @@ const OPS = {
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.newHash);
     await env.DB.batch([
-      env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0 WHERE id = ?").bind(salt, hash, user.id),
+      env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 0, failed_logins = 0, locked_at = NULL WHERE id = ?").bind(salt, hash, user.id),
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND token <> ?").bind(user.id, token || ""),
     ]);
     return { ok: true };
@@ -2831,8 +2850,9 @@ const OPS = {
   },
   /* A team lead can fetch a sign-in code for someone whose email has not arrived (or when email is not set up). */
   "users.loginCode": async ({ env, user, payload }) => {
-    const ex = await one(env, "SELECT id, email, active, name FROM users WHERE id = ?", payload.id);
+    const ex = await one(env, "SELECT id, email, active, name, locked_at FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
+    if (ex.locked_at && !user.is_admin) throw denied("This account is locked after wrong passwords. Only the admin, or a code to the person's own official email (Forgot it?), can open it.");
     if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
     if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
     if (!ex.active) throw bad("This account is switched off.");
@@ -2841,14 +2861,15 @@ const OPS = {
   },
   "users.resetPassword": async ({ env, user, payload }) => {
     if (!isHash(payload.passHash)) throw bad("Set a temporary password.");
-    const ex = await one(env, "SELECT id FROM users WHERE id = ?", payload.id);
+    const ex = await one(env, "SELECT id, locked_at FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
     if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
+    if (ex.locked_at && !user.is_admin) throw denied("This account is locked after wrong passwords. Only the admin, or a code to the person's own official email (Forgot it?), can open it.");
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
     await env.DB.batch([
-      env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 1 WHERE id = ?").bind(salt, hash, ex.id),
+      env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 1, failed_logins = 0, locked_at = NULL WHERE id = ?").bind(salt, hash, ex.id),
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(ex.id),
     ]);
     return { ok: true };
@@ -3556,8 +3577,8 @@ const OPS = {
     const spans = (await digestSpans(env, await digestPeople(env))).filter((x) => spanVisible(user, x));
     if (!spans.length) return { empty: true, spans: [], weeks: [], clients: [], notices: [] };
     const askSpan = str(payload.span, 80), askWeek = str(payload.week, 20), notices = [];
-    const s = spans.find((x) => x.key === askSpan) || spans[0];
-    if (askSpan && s.key !== askSpan) notices.push(`The digest in the link is not one you can see, or it no longer exists. This is ${s.title}.`);
+    const s0 = spans.find((x) => x.key === askSpan) || spans[0], s = spanFor(user, s0);
+    if (askSpan && s0.key !== askSpan) notices.push(`The digest in the link is not one you can see, or it no longer exists. This is ${s.title}.`);
     const now = digestWeek(Date.now()), weeks = Array.from({ length: 9 }, (_, i) => digestWeek(Date.parse(now.week + "T12:00:00Z") - i * 7 * 86400000)).map((w) => ({ week: w.week, first: w.first, last: w.last }));
     const want = weeks.find((w) => w.week === isoDate(payload.week)) || weeks[0];
     if (askWeek && want.week !== askWeek) notices.push(`The week in the link (${askWeek}) is not one of the last 9 Mondays. This is the week of ${dDay(want.first)}.`);

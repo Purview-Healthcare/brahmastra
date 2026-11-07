@@ -65,7 +65,7 @@ const login = async (email, pw) => as(null)("auth.login", { email, passHash: awa
 const A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
 await A("roster.syncShastra");
 const users = (await A("users.list")).users; const U = (n) => users.find((u) => u.name === n);
-const firstIn = async (name, email) => { await as(null)("auth.firstPassword", { user_id: U(name).id, passHash: await sha("pw-" + email) }); return as((await login(email, "pw-" + email)).token); };
+const firstIn = async (name, email) => { const live = !rig.liveEnv.DEMO; rig.liveEnv.DEMO = true; await as(null)("auth.firstPassword", { user_id: U(name).id, passHash: await sha("pw-" + email) }); if (live) rig.liveEnv.DEMO = false; return as((await login(email, "pw-" + email)).token); };
 const SA = await firstIn("Sasha Vice", "sasha@purview-healthcare.com"), JO = await firstIn("Joseph Manager", "joseph@purview-healthcare.com"),
   TI = await firstIn("Tina Lead", "tina@purview-healthcare.com"), AR = await firstIn("Arun Agent", "arun@purview-healthcare.com"), SM = await firstIn("Sima Expert", "sima@purview-healthcare.com");
 const cl = (await A("clients.list")).clients; const sun = cl.find((c) => /Sunrise/.test(c.name)), lake = cl.find((c) => /Lakeview/.test(c.name));
