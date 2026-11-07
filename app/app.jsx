@@ -66,7 +66,10 @@ const tflDeadline = (dos, days) => (dos && /^\d{4}-\d{2}-\d{2}$/.test(dos) && da
 const daysUntil = (iso) => Math.round((Date.parse(iso + "T00:00:00Z") - Date.parse(todayISO() + "T00:00:00Z")) / 86400000);
 const riskColor = (left) => (left < 0 ? "#A32D2D" : left <= 30 ? "#854F0B" : undefined);
 /* Call start / end (HH:MM), entered by the biller for a call: for the Excel and the dashboard only, not the note text. Same rules as callMinutes in worker.js. */
-const callMins = (a, b) => { if (!/^\d{2}:\d{2}$/.test(a || "") || !/^\d{2}:\d{2}$/.test(b || "")) return null; const t = (x) => +x.slice(0, 2) * 60 + +x.slice(3, 5); let d = t(b) - t(a); if (d < 0) d += 1440; return d; };
+const callMins = (a, b) => { if (!/^\d{2}:\d{2}$/.test(a || "") || !/^\d{2}:\d{2}$/.test(b || "")) return null; const t = (x) => +x.slice(0, 2) * 60 + +x.slice(3, 5); let d = t(b) - t(a); if (d < 0) d += 1440; return d > 720 && t(b) < t(a) ? null : d; };
+/* The findings check the server makes (commentOk in worker.js): 8 characters and two words at least. */
+const findingsOk = (t) => { const s = String(t || "").trim(); return s.length >= 8 && s.split(/\s+/).filter((w) => w.length >= 2).length >= 2 && /[a-zA-Z]/.test(s); };
+const FINDINGS_MAX = 4000;
 function composeNote(fields, saag, followUp) {
   const t = (v) => String(v == null ? "" : v).replace(/\s*\|\s*/g, " / ").replace(/\s+/g, " ").trim();
   const pre = [...(fields.precheck || []), fields.precheck_text].map(t).filter(Boolean).join("; ");
@@ -1392,7 +1395,8 @@ function Bell({ notify, allowed, onGo }) {
   const items = ((notify && notify.items) || []).filter((x) => allowed.includes(x.view));
   const fresh = (x, s) => !(s[x.key] >= x.n);
   const unseen = items.filter((x) => fresh(x, seen));
-  useEffect(() => { if (!open) return undefined; const h = () => setOpen(false); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [open]);
+  useEffect(() => { if (!open) return undefined; const h = () => setOpen(false); const k = (e) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("click", h); window.addEventListener("keydown", k); return () => { window.removeEventListener("click", h); window.removeEventListener("keydown", k); }; }, [open]);
   const toggle = () => {
     if (!open) { const s = {}; items.forEach((x) => { s[x.key] = x.n; }); setWas(seen); setSeen(s); try { localStorage.setItem(BELL_KEY, JSON.stringify(s)); } catch (e) {} }
     setOpen(!open);
@@ -3069,7 +3073,9 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
               <label className="check small"><input type="checkbox" checked={autoAlloc && !!teamNames.length} disabled={!teamNames.length} onChange={(e) => setAutoAlloc(e.target.checked)} /> Allocate after loading</label>
             </div>
           )}
-          {!mappingOk && <div className="alert warn">The claim column was not recognised. Point at the <b>Claim #</b> column below (or Patient name and Date of service) so claims can be told apart.</div>}
+          {!table.rows.length && <div className="alert warn">This file has no claim rows (it is empty, or has only the header row). Pick another file.</div>}
+          {table.rows.length > 0 && built && !built.summary.included && mappingOk && <div className="alert warn">No claims to load from this file: every row was left out. Check the columns below.</div>}
+          {table.rows.length > 0 && !mappingOk && <div className="alert warn">The claim column was not recognised. Point at the <b>Claim #</b> column below (or Patient name and Date of service) so claims can be told apart.</div>}
           {mappingOk && !showCols && <div className="small muted">Columns were recognised by name. <button className="btn link sm" onClick={() => setShowCols(true)}>Check the columns</button></div>}
           {showCols && (
             <div className="table-wrap"><table className="t"><thead><tr><th>Brahmastra field</th><th>Column in your file</th><th>Sample values</th></tr></thead>
@@ -3083,7 +3089,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           )}
           {!mapping.balance && <div className="alert warn">No Balance column: every claim will be treated as a small balance and land in the Low tier.</div>}
           {locMode === "file" && !mapping.location && <div className="alert warn">You chose to split by the file's Location column, but none is mapped. Map it, or pick one location.</div>}
-          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!client || !mappingOk || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : !client ? "Pick the client to load" : `Load ${built ? fmtInt(built.summary.included) : ""} claims`}</button></div>
+          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!client || !mappingOk || !built || !built.summary.included || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : !client ? "Pick the client to load" : `Load ${built ? fmtInt(built.summary.included) : ""} claims`}</button></div>
         </div>
       )}
       {step === 4 && (
@@ -3131,7 +3137,9 @@ function BatchesTable({ ctx, onRefresh }) {
   const q = useRpc("inventory.batches", { client_id: clientId || undefined }, [clientId]);
   const [undo, setUndo] = useState(null);
   const [busy, setBusy] = useState(false);
-  const doUndo = async () => { setBusy(true); try { const r = await rpc("inventory.undoBatch", { batch_id: undo.id }); toast(`Removed ${fmtInt(r.removed)} untouched claims added by this upload.`); setUndo(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const doUndo = async () => { setBusy(true); try { const r = await rpc("inventory.undoBatch", { batch_id: undo.id }); const cl = (n) => fmtInt(n) + (n === 1 ? " claim" : " claims");
+      toast([`Removed ${cl(r.removed)} added by this upload that nobody had touched.`, r.kept ? `${cl(r.kept)} stay: they are on a list, worked, have notes or files, or a later file refreshed them.` : "",
+        r.reverted ? `${cl(r.reverted)} this file closed, excluded or reopened went back to how they were.` : "", r.refreshed ? `${cl(r.refreshed)} this file refreshed keep the file's figures.` : ""].filter(Boolean).join(" ")); setUndo(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const [dup, setDup] = useState(null);
   const checkDup = async () => { setBusy(true); try { const r = await rpc("inventory.dedupe", { client_id: clientId, dry_run: true }); setDup(r); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const doDedupe = async () => { setBusy(true); try { const r = await rpc("inventory.dedupe", { client_id: clientId }); toast(r.duplicates ? `Merged ${fmtInt(r.duplicates)} duplicate claims into ${fmtInt(r.groups)}.` : "No duplicates found."); setDup(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
@@ -3960,9 +3968,11 @@ function NoteForm({ c, files, onChanged }) {
   const setN = (k) => (v) => setNote((n) => ({ ...n, [k]: v }));
   const togglePre = (p) => setNote((n) => ({ ...n, precheck: n.precheck.includes(p) ? n.precheck.filter((x) => x !== p) : [...n.precheck, p] }));
   const missing = [];
-  if (String(note.findings || "").trim().length < 8) missing.push("RCA / findings");
+  if (!findingsOk(note.findings)) missing.push("RCA / findings (two words at least)");
+  if (String(note.findings || "").length > FINDINGS_MAX) missing.push(`RCA / findings shorter than ${fmtInt(FINDINGS_MAX)} characters`);
   if (note.source === "Call" && !String(note.ref || "").trim()) missing.push("call REF");
   if (note.source === "Call" && (!note.call_start || !note.call_end)) missing.push("call start and end time");
+  else if (note.source === "Call" && callMins(note.call_start, note.call_end) == null) missing.push("a call end time after the start time");
   const preview = composeNote({ ...note, dos: mmdd(note.dos) || note.dos }, null, "");
   const add = async () => { setBusy(true); setErr(null); try { await rpc("notes.add", { claim_id: c.id, note }); toast("Note added."); setNote(blank()); onChanged && onChanged(); } catch (e) { setErr(e.message); } setBusy(false); };
   return (
@@ -4040,18 +4050,18 @@ function HistEvent({ it, onEdit, onFile }) {
     case "handoff_none": dot = D("#EEF1F0", "ⓘ"); title = (it.text || "Hand-off") + ": " + ({ client: "done by the client", biller: "done by the biller", unset: "nobody set for this client" }[it.data && it.data.mode] || "not sent"); break;
     case "handoff_assigned": dot = D("#EEE7FB", "👤"); title = (DEPT_NAME[it.data && it.data.dept] || "Hand-off") + " assigned to " + (it.text || "someone") + who; break;
     case "handoff_done": { const pr = (it.data && it.data.proof) || {}; const posting = it.data && it.data.dept === "posting";
-      dot = D("#E3FBEF", "✓"); title = (posting ? "Payment posted" : it.data && it.data.dept === "subcheck" ? "Submission accepted by the payer" : "Submitted") + who; body = <><div className="x">{posting ? "Check / EFT " : "Batch / claim ID "}<b>{pr.ref}</b>{pr.date ? " · " + fmtDate(pr.date) : ""}{pr.amount != null ? " · " + fmtMoney(pr.amount, 2) : ""}{pr.mode ? " · " + pr.mode : ""}{it.data.note ? "\n" + it.data.note : ""}</div>{pr.files && pr.files.length ? <div className="m">📎 proof: {pr.files.join(", ")}</div> : null}<div className="m">{it.data.within_tat ? "within TAT" : "after the TAT"}</div></>; break; }
+      dot = D("#E3FBEF", "✓"); title = (posting ? "Payment posted" : it.data && it.data.dept === "subcheck" ? "Submission accepted by the payer" : it.data && it.data.dept === "rejection" ? "Corrected and resubmitted (Rejections)" : "Submitted") + who; body = <><div className="x">{pr.ref ? <>{posting ? "Check / EFT " : "Batch / claim ID "}<b>{pr.ref}</b></> : null}{pr.code ? (pr.ref ? " · " : "") + "Rejection: " + pr.code : ""}{pr.date ? (pr.ref || pr.code ? " · " : "") + (it.data && it.data.dept === "subcheck" ? "accepted " : "") + fmtDate(pr.date) : ""}{pr.amount != null ? " · " + fmtMoney(pr.amount, 2) : ""}{pr.mode ? " · " + pr.mode : ""}{it.data.note ? "\n" + it.data.note : ""}</div>{pr.files && pr.files.length ? <div className="m">📎 proof: {pr.files.join(", ")}</div> : null}<div className="m">{it.data.within_tat ? "within TAT" : "after the TAT"}</div></>; break; }
     case "handoff_check": dot = D("#E0F7F4", "⏱"); title = "48-hour recheck set for " + (it.text || "someone") + who; body = it.data && it.data.available_at ? <div className="m">check from {fmtWhen(it.data.available_at)} · due {fmtWhen(it.data.due_at)}</div> : null; break;
     case "handoff_rejected": dot = D("#FDEAEA", "✗"); title = "Submission rejected" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.resent ? "sent to " + (it.data.to === "Rejections" ? "the Rejections person (first priority)" : "the Submission team") + " to correct and resubmit" : "back on the biller's list"}</div></>; break;
-    case "handoff_back": dot = D("#FFF3D6", "↩"); title = (it.text || "The department") + " needs assistance from AR" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">on the biller's list today{it.data && it.data.within_tat === false ? " · after the 24h TAT" : ""}{it.data && it.data.returns ? " · returned " + it.data.returns + "×" : ""}{it.data && it.data.bounced ? " · escalated to the team lead" : ""}</div></>; break;
+    case "handoff_back": dot = D("#FFF3D6", "↩"); title = (it.text || "The department") + " needs assistance from AR" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">on the biller's list today{it.data && it.data.within_tat === false ? " · after the TAT" : ""}{it.data && it.data.returns ? " · returned " + it.data.returns + "×" : ""}{it.data && it.data.bounced ? " · escalated to the team lead" : ""}</div></>; break;
     case "handoff_client_sent": dot = D("#E4EEFA", "✉"); title = "Sent to the client for " + (it.text || "the department") + who; body = <><div className="x"><b>{it.data && it.data.how}</b>{it.data && it.data.reason ? " · " + it.data.reason : ""}{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">chased in 3 working days if the client has not answered</div></>; break;
     case "handoff_pending": dot = D("#EEF1F4", "…"); title = (it.text || "The department") + " · pending" + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
     case "handoff_inprocess": dot = D("#E6F0FB", "…"); title = (it.text || "The department") + " · in process" + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
     case "handoff_other": dot = D("#FDF0D7", "?"); title = (it.text || "The department") + " · other: " + ((it.data && it.data.reason) || "") + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
     case "review_to_biller": case "review_to_dept": dot = D("#E3F4EF", "✓"); title = "Supervisor review · " + (it.kind === "review_to_dept" ? "returned to " : "given to ") + (it.text || "") + who;
       body = it.data ? <div className="x">{it.data.origin && it.data.origin.by ? <div className="m">{it.data.origin.how === "escalated" ? "Escalated by " : (it.data.origin.how.charAt(0).toUpperCase() + it.data.origin.how.slice(1)) + ": "}{it.data.origin.by}{it.data.origin.at ? " · " + fmtWhen(it.data.origin.at) : ""}{it.data.origin.reason ? " · " + it.data.origin.reason : ""}</div> : null}<div><b>Why it came:</b> {it.data.why}</div><div><b>Reviewed:</b> {it.data.reviewed}</div><div><b>Findings:</b> {it.data.findings}</div><div><b>Next action:</b> {it.data.next}</div></div> : null; break;
-    case "handoff_client": dot = D("#FFF3D6", "⏸"); title = (it.text || "Department") + " needs assistance from client" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">waiting on the client · the 24h clock keeps running</div></>; break;
-    case "handoff_resume": dot = D("#E0F7F4", "▶"); title = "Client answered · back with " + (it.text || "the department") + who; body = <>{it.data && it.data.note ? <div className="x">{it.data.note}</div> : null}{it.data && it.data.due_at ? <div className="m">new due {fmtWhen(it.data.due_at)} (the client's TAT)</div> : null}</>; break;
+    case "handoff_client": dot = D("#FFF3D6", "⏸"); title = (it.text || "Department") + " needs assistance from client" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">waiting on the client · the TAT clock keeps running</div></>; break;
+    case "handoff_resume": dot = D("#E0F7F4", "▶"); title = "Client answered · back with " + (it.text || "the department") + who; body = <>{it.data && it.data.note ? <div className="x">{it.data.note}</div> : null}{it.data && it.data.due_at ? <div className="m">still due {fmtWhen(it.data.due_at)} (the clock did not stop)</div> : null}</>; break;
     case "handoff_assist": dot = D("#FDEAEA", "⚑"); title = (it.text || "Department") + " needs assistance" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">back on the biller's list · in the team lead's Needs attention</div></>; break;
     default: dot = D("#EEF1F0", "•"); title = it.kind + who; body = it.text ? <div className="x">{it.text}</div> : null;
   }
@@ -4165,10 +4175,14 @@ function ResponsibilityRow({ c, dept, ctx, onSaved, me, readOnly }) {
   );
 }
 /* The shared status on a claim, and (for the department) the actions. */
+/* Every hand-off still open on the claim (it can sit at Posting and have a recheck open at once), or else the latest one. */
 function HandoffCard({ handoffs, role, onChanged, compact }) {
-  const [act, setAct] = useState(null);
   if (!handoffs || !handoffs.length) return null;
-  const h = handoffs[0];
+  const open = handoffs.filter((h) => ["pending", "assigned", "client"].includes(h.status));
+  return <>{(open.length ? open : [handoffs[0]]).map((h) => <HandoffCardOne key={h.id} h={h} role={role} onChanged={onChanged} compact={compact} />)}</>;
+}
+function HandoffCardOne({ h, role, onChanged, compact }) {
+  const [act, setAct] = useState(null);
   const open = ["pending", "assigned", "client"].includes(h.status);
   const canClose = open && (role === "lead" || role === "member");
   return (
@@ -4457,7 +4471,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
             {sup && !q.data.handoff_role && (
               <div className="card tight row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <span className="cv-sec" style={{ margin: 0 }}>Team lead actions</span>
-                <Combo sm width={220} value={user} onChange={setUser} placeholder="Assign to…" options={ctx.users.filter((u) => u.active).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
+                <Combo sm width={220} value={user} onChange={setUser} placeholder="Assign to…" options={ctx.users.filter((u) => u.active && (u.role === "user" || u.id === me.id)).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
                 <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }))}>Assign</button>
                 {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }))}>Unassign</button>}
                 {(c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
@@ -4474,7 +4488,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
                 buttons={[{ key: "note", label: "Add as note (no SAAG)", noSaag: true, title: "Only the note: DOS, CLM#, denial, source, pre call check, RCA and action" }, { key: "save", label: "Save entry", primary: true }]}
                 onSave={async (data, key) => {
                   if (key === "note") { await rpc("notes.add", { claim_id: c.id, note: data.note }); toast("Note added."); }
-                  else { const r = await rpc("queue.complete", { id: c.id, ...data }); toast((r.closed ? "Saved. Claim closed." : `Saved. Follow-up on ${fmtDate(r.follow_up_on)}.`) + handoffToast(r.handoff)); }
+                  else { const r = await rpc("queue.complete", { id: c.id, ...data, rework: true }); toast((r.closed ? "Saved. Claim closed." : `Saved. Follow-up on ${fmtDate(r.follow_up_on)}.`) + handoffToast(r.handoff)); }
                   changed();
                 }} />
             </div>}
@@ -4636,9 +4650,12 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
   const missing = [];
   if (!saag.status || !saag.sub_status || !saag.action) missing.push("SAAG status, sub-status and action");
   if (!saag.bucket) missing.push("bucket");
-  if (String(note.findings || "").trim().length < 8) missing.push("RCA / findings");
+  if (!findingsOk(note.findings)) missing.push("RCA / findings");
+  if (String(note.findings || "").length > FINDINGS_MAX) missing.push(`RCA / findings shorter than ${fmtInt(FINDINGS_MAX)} characters`);
   if (note.source === "Call" && !String(note.ref || "").trim()) missing.push("call REF");
   if (note.source === "Call" && (!note.call_start || !note.call_end)) missing.push("call start and end time");
+  else if (note.source === "Call" && callMins(note.call_start, note.call_end) == null) missing.push("a call end time after the start time");
+  if (!closed && followUp && (followUp < today || followUp > addDaysISO(today, 365))) missing.push("a follow-up date from today to a year ahead");
   if ((String(note.tfl || "").trim() && !limDays(note.tfl)) || (String(note.afl || "").trim() && !limDays(note.afl))) missing.push("TFL / AFL as a number of days");
   const needFile = attachNeeded(saag);
   if (needFile && newFiles === 0) missing.push(`an attachment (EOB / appeal document) for "${needFile}"`);
@@ -4666,8 +4683,9 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
         <NoteFieldsRow note={note} setN={setN} />
         <LimitsRow note={note} setN={setN} claim={claim} />
         <PreCheck note={note} togglePre={togglePre} setN={setN} />
-        <div style={{ display: "grid", gridTemplateColumns: attachments ? "minmax(0,2fr) minmax(0,1fr)" : "1fr", gap: 14, marginTop: 10 }}>
-          <Field label={<span className="row between" style={{ gap: 8 }}><span>RCA / findings</span>{tpl.data && tpl.data.rows.length > 0 && <span style={{ minWidth: 220, textTransform: "none", letterSpacing: 0 }}><Combo sm value="" onChange={(v) => v && insertTpl(v)} placeholder="Insert a template…" options={tpl.data.rows.map((x) => ({ id: x.id, label: x.title, sub: x.client_name || "" }))} /></span>}</span>}><textarea className="textarea" value={note.findings} onChange={(e) => setN("findings")(e.target.value)} placeholder="What the payer or portal said, the root cause, and what happens next." /></Field>
+        <div className="wf-grid" style={{ display: "grid", gridTemplateColumns: attachments ? "minmax(0,2fr) minmax(0,1fr)" : "1fr", gap: 14, marginTop: 10 }}>
+          <Field label={<span className="row between" style={{ gap: 8 }}><span>RCA / findings</span>{tpl.data && tpl.data.rows.length > 0 && <span style={{ minWidth: 220, textTransform: "none", letterSpacing: 0 }}><Combo sm value="" onChange={(v) => v && insertTpl(v)} placeholder="Insert a template…" options={tpl.data.rows.map((x) => ({ id: x.id, label: x.title, sub: x.client_name || "" }))} /></span>}</span>}><textarea className="textarea" value={note.findings} onChange={(e) => setN("findings")(e.target.value)} placeholder="What the payer or portal said, the root cause, and what happens next." />
+            {String(note.findings || "").length > FINDINGS_MAX - 500 && <div className="tiny" style={{ color: String(note.findings).length > FINDINGS_MAX ? "var(--red-ink)" : undefined }}>{fmtInt(String(note.findings).length)} of {fmtInt(FINDINGS_MAX)} characters</div>}</Field>
           {attachments && <div>{needFile && <div className={"alert " + (newFiles ? "info" : "warn") + " mb"} style={{ fontSize: 12.5 }}>{newFiles ? `Document attached for "${needFile}".` : `"${needFile}" needs the document: attach the EOB / appeal / reconsideration file before saving.`}</div>}{attachments}</div>}
         </div>
       </div>
@@ -4848,9 +4866,9 @@ function Siblings({ rows, users, selectable, selected, onToggle, meId }) {
   return (
     <div className="card tight">
       <div className="b small mb">Other open claims for this patient ({rows.length})</div>
-      <table className="t"><thead><tr>{selectable && <th />}<th>Claim #</th><th>DOS</th><th>Payer</th><th className="r">Balance</th><th>State</th><th>With</th></tr></thead>
+      <div className="table-wrap"><table className="t"><thead><tr>{selectable && <th />}<th>Claim #</th><th>DOS</th><th>Payer</th><th className="r">Balance</th><th>State</th><th>With</th></tr></thead>
         <tbody>{rows.map((s) => { const mine = s.assigned_to === meId && (s.state === "assigned" || s.state === "in_progress"); return (
-          <tr key={s.id}>{selectable && <td>{mine ? <input type="checkbox" checked={selected.has(s.id)} onChange={() => onToggle(s.id)} /> : null}</td>}<td className="mono small">{s.claim_no || "–"}</td><td className="small">{fmtDate(s.dos)}</td><td className="small">{s.payer}</td><td className="num">{fmtMoney(s.balance)}</td><td><StateBadge state={s.state} /></td><td className="small">{s.assigned_to ? nameOf(s.assigned_to) : "–"}</td></tr>); })}</tbody></table>
+          <tr key={s.id}>{selectable && <td>{mine ? <input type="checkbox" checked={selected.has(s.id)} onChange={() => onToggle(s.id)} /> : null}</td>}<td className="mono small">{s.claim_no || "–"}</td><td className="small">{fmtDate(s.dos)}</td><td className="small">{s.payer}</td><td className="num">{fmtMoney(s.balance)}</td><td><StateBadge state={s.state} /></td><td className="small">{s.assigned_to ? nameOf(s.assigned_to) : "–"}</td></tr>); })}</tbody></table></div>
       {selectable && <div className="tiny muted mt8">Tick claims to apply the same status, action and note to them (only claims assigned to you can be ticked).</div>}
     </div>
   );
@@ -8027,16 +8045,22 @@ function WorkPanel({ bundle, ctx, me, onDone, onPatient }) {
   const [skipReason, setSkipReason] = useState("");
   const [sub, setSub] = useState("");
   const [ver, setVer] = useState(0);
+  // The claim was removed or moved while it was open (upload undone, deleted, reassigned): close the panel and say so.
+  const gone = (e) => /not in your queue|not on your desk|not found|no longer open on your desk/i.test((e && e.message) || "");
+  const leave = (e) => { toast(/already saved/i.test((e && e.message) || "") ? e.message : "This claim is no longer on your desk: it was removed or moved while it was open.", "err"); onDone(false); };
   const save = async (data, key) => {
-    const r = await rpc("queue.complete", { id: c.id, ...data, sibling_ids: [...sibs] });
+    let r;
+    try { r = await rpc("queue.complete", { id: c.id, ...data, sibling_ids: [...sibs], desk: true }); }
+    catch (e) { if (gone(e)) { leave(e); return; } throw e; }
     toast((r.closed ? "Claim closed." : `Saved. Follow-up on ${fmtDate(r.follow_up_on)}.`) + (r.completed > 1 ? ` Applied to ${r.completed} claims.` : "") + handoffToast(r.handoff));
     setVer((v) => v + 1);
     onDone(key === "next");
   };
   const skip = async (count) => {
     setBusy(true);
-    try { await rpc("queue.skip", { id: c.id, reason: skipReason, count }); toast(count ? "Skipped: it comes back after the rest of your list." : "Returned to your list."); onDone(false); }
-    catch (e) { toast(e.message, "err"); }
+    // Back to my day is not a skip: it never sends a reason typed into a cancelled Skip dialog.
+    try { await rpc("queue.skip", { id: c.id, reason: count ? skipReason : "", count }); toast(count ? "Skipped: it comes back after the rest of your list." : "Returned to your list."); setSkipReason(""); onDone(false); }
+    catch (e) { if (gone(e)) leave(e); else toast(e.message, "err"); }
     setBusy(false);
   };
   return (
@@ -8055,7 +8079,7 @@ function WorkPanel({ bundle, ctx, me, onDone, onPatient }) {
       </div>
       <ClaimHistory claimId={c.id} claim={c} me={me} version={ver} />
       {skipAsk && (
-        <Modal title="Skip this claim" sub="It goes to the back of your list and your team lead can see it was skipped." onClose={() => setSkipAsk(false)} narrow footer={<><button className="btn" onClick={() => setSkipAsk(false)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => skip(true)}>Skip</button></>}>
+        <Modal title="Skip this claim" sub="It goes to the back of your list and your team lead can see it was skipped." onClose={() => { setSkipAsk(false); setSkipReason(""); }} narrow footer={<><button className="btn" onClick={() => { setSkipAsk(false); setSkipReason(""); }}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => skip(true)}>Skip</button></>}>
           <Field label="Why? (optional)"><input className="input" value={skipReason} onChange={(e) => setSkipReason(e.target.value)} placeholder="e.g. payer portal down, need client input" autoFocus /></Field>
         </Modal>
       )}
