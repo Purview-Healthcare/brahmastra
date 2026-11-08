@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.85.0";
+const VERSION = "2.86.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -193,7 +193,8 @@ const EXTRA_COLUMNS = {
   // The supervisors' escalation format: who it was reported to at Purview, the email subject, whether it was a Purview error,
   // a comment, corrective and preventive action (with the root cause in rca) and the close date.
   escalations: [["reported_to", "TEXT NOT NULL DEFAULT ''"], ["email_subject", "TEXT NOT NULL DEFAULT ''"], ["is_error", "TEXT NOT NULL DEFAULT ''"], ["comment", "TEXT NOT NULL DEFAULT ''"],
-    ["corrective", "TEXT NOT NULL DEFAULT ''"], ["preventive", "TEXT NOT NULL DEFAULT ''"], ["close_on", "TEXT NOT NULL DEFAULT ''"]],
+    ["corrective", "TEXT NOT NULL DEFAULT ''"], ["preventive", "TEXT NOT NULL DEFAULT ''"], ["close_on", "TEXT NOT NULL DEFAULT ''"],
+    ["kind", "TEXT NOT NULL DEFAULT 'external'"], ["error_by_id", "TEXT"], ["error_by_name", "TEXT NOT NULL DEFAULT ''"], ["error_dow", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
     ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -502,15 +503,21 @@ async function recordWorkbookStatus(env, targetId, status) {
    The first four columns (SR No, Department, Description, Date) are the ones Drishti counts for the Escalations KPI. */
 const ESC_HEADER = ["SR No", "Department", "Client Name", "Received (mm/dd/yy)", "Raised by", "Reported to Purview", "Responding person Purview", "Email Subject",
   "Error description", "Error (Y/N)", "Comment", "Root Cause", "Corrective Action", "Preventive Action", "Status (Open/Closed)", "Close date (mm/dd/yy)",
-  "Hours to close", "Reason still open (after 24 h)", "Expected close date", "Reason given by", "Logged by"];
-const ESC_DATE_COLS = new Set([3, 15, 18]);
+  "Hours to close", "Reason still open (after 24 h)", "Expected close date", "Reason given by", "Logged by", "Escalation type", "Error by", "DOW of error (mm/dd/yy)"];
+const ESC_DATE_COLS = new Set([3, 15, 18, 23]);
 const ESC_TEMPLATE_B64 = "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";
 const ESC_DEPTS = ["Account Receivable", "Submission", "Payment Posting", "Benefit Verification", "PCC", "Credentialing", "Other"];
 const ESC_STATUS = { open: "Open", progress: "Open", resolved: "Closed" };
+/* External: raised by the client (these are the client's escalations, counted in its SLA). Internal: raised inside Purview
+   (a manager, QA, another team); kept in the same register, not counted in the client's SLA. */
+const ESC_KINDS = { external: "External", internal: "Internal" };
+const escKind = (e) => (e && e.kind === "internal" ? "internal" : "external");
+const isEscKind = (k) => k === "external" || k === "internal";
 const escHours = (e) => (e.resolved_at ? Math.max(0, Math.round((e.resolved_at - e.created_at) / 360000) / 10) : null);
 const escRow = (e, client) => ["SR" + e.sr, e.dept, client || e.client_name || "", excelSerial(e.day), e.raised_who, e.reported_to, e.owner_name, e.email_subject,
   e.description, e.is_error, e.comment, e.rca, e.corrective, e.preventive, ESC_STATUS[e.status] || e.status, excelSerial(e.close_on),
-  escHours(e) == null ? "" : escHours(e), e.delay_reason, excelSerial(e.expected_on), e.delay_by_name, e.created_by_name];
+  escHours(e) == null ? "" : escHours(e), e.delay_reason, excelSerial(e.expected_on), e.delay_by_name, e.created_by_name,
+  ESC_KINDS[escKind(e)], e.is_error === "Y" ? e.error_by_name || "" : "", e.is_error === "Y" ? excelSerial(e.error_dow) : ""];
 // the dates show as mm/dd/yy in Excel
 const escFormats = (n) => [ESC_HEADER.map(() => "General"), ...Array.from({ length: n }, () => ESC_HEADER.map((h, i) => (ESC_DATE_COLS.has(i) ? "mm/dd/yy" : "General")))];
 async function escalationFile(env, tok, clientId) {
@@ -538,7 +545,8 @@ async function escalationFile(env, tok, clientId) {
 /* The SLA copy: for Drishti's Escalations KPI (threshold 0: none in the month is green, one or more is red), each month's
    escalations also go to the client's SLA & KPI folder under each of its team leads, as
    Brahmastra Reports / <Team lead> / <Client> / SLA & KPI / Escalation Tracker - <Client> - Nov 2026.xlsx.
-   Drishti counts every row of the file it is given, by department, so this file holds that month's escalations only. */
+   Drishti counts every row of the file it is given, by department, so this file holds that month's external escalations only
+   (the client's own; internal ones stay in the client's tracker file and are not in its SLA). */
 const ESC_SLA_TARGET = 0;
 const monthLabel = (ym) => MONTHS_LONG[Number(ym.slice(5, 7)) - 1] + " " + ym.slice(0, 4);
 // the month after / before a YYYY-MM
@@ -549,7 +557,8 @@ async function escalationSlaFiles(env, tok, clientId, months) {
   const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT), saved = [];
   const leads = await clientTeamLeads(env, c.id, null);
   for (const ym of months) {
-    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? ORDER BY sr", c.id, ym)).map((e) => escRow(e, c.name));
+    // the client's own escalations only: internal ones are not in the client's SLA
+    const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? AND kind <> 'internal' ORDER BY sr", c.id, ym)).map((e) => escRow(e, c.name));
     const name = odName("Escalation Tracker - " + c.name + " - " + monthLabel(ym)) + ".xlsx";
     for (const lead of leads) {
       const path = [REPORTS_ROOT, odName(lead), odName(c.name), "SLA & KPI", name];
@@ -660,18 +669,50 @@ async function syncEscalations(env, clientId, months) {
     try { await folderTrouble(env, clientId, msg); } catch (x) {}
   }
 }
+/* The supervisors of a client's project, for escalation notices: its team leads from the Shastra roster. A client with no team
+   lead: the admins, so a notice is never sent to nobody. */
+async function escalationPeople(env, clientId) {
+  const names = await clientTeamLeads(env, clientId, null);
+  let people = await all(env, `SELECT id, name, email, email_missing FROM users WHERE active = 1 AND name IN (${names.map(() => "?").join(",") || "NULL"})`, ...names);
+  if (!people.length) people = await all(env, "SELECT id, name, email, email_missing FROM users WHERE active = 1 AND role = 'admin'");
+  return people;
+}
+/* A new escalation, or one marked as our error later: a notice in the bell and an email to the project's supervisors, except the
+   person who saved it. The client, SR, type, department and dates, and who made the error: never the description or the
+   client's email subject (they can carry patient details). */
+async function escalationNotice(env, e, clientName, by, what, appUrl = "", defer = null) {
+  const people = (await escalationPeople(env, e.client_id)).filter((u) => u.id !== by.id);
+  if (!people.length) return 0;
+  const kind = ESC_KINDS[escKind(e)].toLowerCase(), now = Date.now();
+  const err = e.is_error === "Y" ? ` Our error: made by ${e.error_by_name || "–"}, DOW ${e.error_dow ? mdy(e.error_dow) : "–"}.` : "";
+  const text = (what === "error" ? `${by.name || "Someone"} marked ${kind} escalation SR${e.sr} (${e.dept}) at ${clientName} as our error.`
+    : `${by.name || "Someone"} logged a new ${kind} escalation at ${clientName}: SR${e.sr}, ${e.dept}, received ${mdy(e.day)}.`) + err;
+  const subject = what === "error" ? `Our error on escalation SR${e.sr}: ${clientName}` : `New ${kind} escalation SR${e.sr}: ${clientName} (${e.dept})`;
+  const link = appUrl ? String(appUrl).replace(/\/+$/, "") + "/#/escalations?client_id=" + encodeURIComponent(e.client_id) : "";
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;color:#0f1b24;max-width:600px;margin:0 auto;border:1px solid #dfe4ea;border-radius:10px;overflow:hidden;background:#ffffff">
+<div style="background:#0b2740;color:#fff;padding:16px 22px"><div style="font-size:18px;font-weight:700">${htmlEsc(subject)}</div></div>
+<div style="padding:16px 22px;font-size:14px;line-height:1.5"><p style="margin:0">${htmlEsc(text)}</p>` +
+    (link ? `<p style="margin:16px 0 4px"><a href="${htmlEsc(link)}" style="display:inline-block;background:#17b39a;color:#ffffff;border-radius:7px;padding:9px 16px;font-weight:700;text-decoration:none">Open the Escalation tracker</a></p>` : "") +
+    `<p style="font-size:12px;color:#627079;margin-top:14px">You get this as a supervisor on ${htmlEsc(clientName)}. The details are in the Escalation tracker: no description or patient details by email.</p></div></div>`;
+  const mails = [];
+  for (const u of people) {
+    await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id, kind) VALUES (?,?,?,?,?,?,?)", uuid(), u.id, now, text.slice(0, 300), "escalations", e.client_id, "escalation");
+    if (env.EMAIL_PROVIDER && u.email && !u.email_missing) mails.push({ to: u.email, subject, text: text + (link ? "\n\nOpen the Escalation tracker: " + link : ""), html });
+  }
+  // the emails after the save has answered (waitUntil), when the platform allows it
+  const send = (async () => { for (const m of mails) { try { await sendEmail(env, m); } catch (x) {} } })();
+  if (defer) defer(send); else await send;
+  return people.length;
+}
 /* Open escalations past 24 hours with no reason yet: the client's team leads hear about it once, in the bell and by email. */
 async function escalationReminders(env) {
   const now = Date.now();
-  const rows = await all(env, `SELECT e.id, e.client_id, e.sr, e.dept, cl.name AS client_name FROM escalations e JOIN clients cl ON cl.id = e.client_id
+  const rows = await all(env, `SELECT e.id, e.client_id, e.sr, e.dept, e.kind, cl.name AS client_name FROM escalations e JOIN clients cl ON cl.id = e.client_id
     WHERE e.status != 'resolved' AND e.delay_reason = '' AND e.reason_asked_at IS NULL AND e.created_at < ? LIMIT 50`, subWorkingHours(now, ESC_TAT_HOURS));
   for (const e of rows) {
     await run(env, "UPDATE escalations SET reason_asked_at = ? WHERE id = ?", now, e.id);
-    const names = await clientTeamLeads(env, e.client_id, null);
-    let people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND name IN (${names.map(() => "?").join(",") || "NULL"})`, ...names);
-    // a client with no team lead: the admins hear about it instead, so the reminder is never asked of nobody
-    if (!people.length) people = await all(env, "SELECT id, email, email_missing FROM users WHERE active = 1 AND role = 'admin'");
-    const text = `Escalation SR${e.sr} (${e.dept}) at ${e.client_name} is still open after 24 working hours. Give the reason and the expected close date in the Escalation tracker.`;
+    const people = await escalationPeople(env, e.client_id);
+    const text = `${ESC_KINDS[escKind(e)]} escalation SR${e.sr} (${e.dept}) at ${e.client_name} is still open after 24 working hours. Give the reason and the expected close date in the Escalation tracker.`;
     for (const u of people) {
       await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), u.id, now, text, "escalations", e.client_id);
       if (env.EMAIL_PROVIDER && u.email && !u.email_missing) { try { await sendEmail(env, { to: u.email, subject: `Escalation SR${e.sr} open over 24 working hours: ${e.client_name}`, text, html: `<p style="font:14px Segoe UI,Arial,sans-serif">${htmlEsc(text)}</p>` }); } catch (x) {} }
@@ -1015,10 +1056,12 @@ async function clientWfm(env, clientIds) {
 const fteTxt = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
 /* A client's escalations received in a period, for the SLA (threshold 0). */
 async function escSummary(env, clientId, from, to, now = Date.now()) {
-  const rows = await all(env, "SELECT * FROM escalations WHERE client_id = ? AND day >= ? AND day <= ? ORDER BY day DESC, sr DESC", clientId, from, to);
+  // the client's SLA counts its own (external) escalations; internal ones are only counted
+  const every = await all(env, "SELECT * FROM escalations WHERE client_id = ? AND day >= ? AND day <= ? ORDER BY day DESC, sr DESC", clientId, from, to);
+  const rows = every.filter((e) => escKind(e) === "external");
   const open = rows.filter((e) => e.status !== "resolved"), closed = rows.filter((e) => e.status === "resolved" && e.resolved_at);
   const by = new Map(); rows.forEach((e) => by.set(e.dept, (by.get(e.dept) || 0) + 1));
-  return { from, to, target: ESC_SLA_TARGET, n: rows.length, met: rows.length <= ESC_SLA_TARGET, open: open.length,
+  return { from, to, target: ESC_SLA_TARGET, n: rows.length, met: rows.length <= ESC_SLA_TARGET, open: open.length, internal: every.length - rows.length,
     over24: open.filter((e) => escPast(e.created_at, now)).length, over24_reason: open.filter((e) => escPast(e.created_at, now) && e.delay_reason).length,
     errors: rows.filter((e) => e.is_error === "Y").length, avg_hours: closed.length ? Math.round(closed.reduce((t, e) => t + escHours(e), 0) / closed.length) : null,
     by_dept: [...by.entries()].map(([dept, n]) => ({ dept, n })),
@@ -2298,7 +2341,7 @@ const monthName = (ym) => { const [y, m] = String(ym || "").split("-").map(Numbe
 async function trackerEsc(env, clientId) {
   const late = subWorkingHours(Date.now(), ESC_TAT_HOURS);
   const rows = await all(env, `SELECT client_id, COUNT(*) AS n, SUM(CASE WHEN created_at < ? AND delay_reason = '' THEN 1 ELSE 0 END) AS late FROM escalations
-    WHERE status != 'resolved'${clientId ? " AND client_id = ?" : ""} GROUP BY client_id`, late, ...(clientId ? [clientId] : []));
+    WHERE status != 'resolved' AND kind <> 'internal'${clientId ? " AND client_id = ?" : ""} GROUP BY client_id`, late, ...(clientId ? [clientId] : []));
   return new Map(rows.map((r) => [r.client_id, { n: r.n || 0, late: r.late || 0 }]));
 }
 function healthOf({ pct, sla, tfl, escLate, waitingN, oldest, missed }) {
@@ -4020,7 +4063,7 @@ const OPS = {
     const add = (key, tone, n, text, view, params) => { if (n > 0) items.push({ key, tone, n, text, view, params: params || null }); };
     // what was done to this person: made responsible for a client, or taken off one (two weeks)
     for (const n of await all(env, "SELECT id, text, view, client_id, at FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
-      items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: null, at: n.at });
+      items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: n.view === "escalations" && n.client_id ? { client_id: n.client_id } : null, at: n.at });
     const ho = await OPS["handoffs.count"]({ env, user });
     add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the TAT` : ""), "handoffs");
     if (user.role === "supervisor") {
@@ -4052,8 +4095,8 @@ const OPS = {
       const at = await OPS["attention.count"]({ env, user });
       add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "claim flagged by a biller waits", "claims flagged by billers wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over ${ATTN_TAT_HOURS} working hours` : ""), "attention");
       const ec = await OPS["escalations.count"]({ env, user });
-      add("esc_reason", "red", ec.needs_reason, plural(ec.needs_reason, "client escalation is", "client escalations are") + " open over 24 hours: give the reason and expected close date", "escalations", { status: "reason" });
-      add("esc_expected", "amber", ec.past_expected, plural(ec.past_expected, "client escalation is", "client escalations are") + " past the expected close date", "escalations", { status: "open" });
+      add("esc_reason", "red", ec.needs_reason, plural(ec.needs_reason, "escalation is", "escalations are") + " open over 24 hours: give the reason and expected close date", "escalations", { status: "reason" });
+      add("esc_expected", "amber", ec.past_expected, plural(ec.past_expected, "escalation is", "escalations are") + " past the expected close date", "escalations", { status: "open" });
       add("client_requests", "amber", at.client_to_send, plural(at.client_to_send, "client request", "client requests") + " to send to the client", "attention");
       const missed = await missedByClient(env, payload);
       let m = 0; for (const [cid, v] of missed) if (leadFor(user, cid)) m += v.ar + v.posting + v.submission;
@@ -4092,7 +4135,7 @@ const OPS = {
     // new claims given to this person that they have not seen yet (the banner on their screen)
     const allocNew = (await all(env, "SELECT id, text, at FROM user_notices WHERE user_id = ? AND kind = 'alloc' AND seen_at IS NULL AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 2 * 86400000))
       .map((x) => ({ id: x.id, text: x.text, at: x.at, n: Number((/^(\d+)/.exec(x.text) || [])[1]) || 0 }));
-    // the bell's categories: Past TAT first, then Needs attention, Desks, Client escalations, Team, Setup; billers get My work and Updates
+    // the bell's categories: Past TAT first, then Needs attention, Desks, Escalations, Team, Setup; billers get My work and Updates
     const sup = user.role === "supervisor";
     const KEY_CAT = { handoffs: sup ? "desks" : "work", escalations: "attention", client_requests: "attention", esc_reason: "escalations", esc_expected: "escalations", missed: "team", absent: "team",
       shastra_missing: "team", profiles: "setup", monthend: "setup", queue: "work", answers: "work", back: "work", feedback: "updates" };
@@ -4273,7 +4316,7 @@ const OPS = {
       WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL AND ${INV_NO_OPEN_HO} GROUP BY 1, 2`, ...ids, today);
     const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND updated_at >= ? GROUP BY 1`, ...ids, monthStart);
     const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.status IN ('pending','assigned') AND h.due_at < ? GROUP BY 1, 2`, ...ids, now);
-    const escOpen = await all(env, `SELECT client_id, COUNT(*) AS n FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, ...ids);
+    const escOpen = await all(env, `SELECT client_id, COUNT(*) AS n FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' AND kind <> 'internal' GROUP BY 1`, ...ids);
     // working days left in the month, today included (Monday to Friday)
     let wdLeft = 0; { const [y, m] = today.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
       for (let dd = Number(today.slice(8, 10)); dd <= last; dd++) { const w = new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); if (w && w !== 6) wdLeft++; } }
@@ -6539,6 +6582,7 @@ const OPS = {
     const cid = str(payload.client_id, 60);
     if (cid) { if (!inScope(user, cid)) throw outOfScope(); where.push("e.client_id = ?"); args.push(cid); }
     if (ESC_DEPTS.includes(payload.dept)) { where.push("e.dept = ?"); args.push(payload.dept); }
+    if (isEscKind(payload.kind)) where.push(payload.kind === "internal" ? "e.kind = 'internal'" : "e.kind <> 'internal'");
     const from = isoDate(payload.from), to = isoDate(payload.to);
     if (from) { where.push("e.day >= ?"); args.push(from); }
     if (to) { where.push("e.day <= ?"); args.push(to); }
@@ -6548,7 +6592,7 @@ const OPS = {
     const isTL = !isSME(user);
     const out = rows.map((e) => {
       const open = e.status !== "resolved", past = open && escPast(e.created_at, now);
-      return { ...e, status_label: ESC_STATUS[e.status] || e.status, hours: escHours(e), open_hours: open ? Math.floor(workingHoursBetween(e.created_at, now)) : null, past_24: past,
+      return { ...e, kind: escKind(e), kind_label: ESC_KINDS[escKind(e)], status_label: ESC_STATUS[e.status] || e.status, hours: escHours(e), open_hours: open ? Math.floor(workingHoursBetween(e.created_at, now)) : null, past_24: past,
         needs_reason: past && !e.delay_reason, past_expected: open && !!e.expected_on && e.expected_on < today,
         can_edit: canEditClient(user, e.client_id), can_reason: isTL && canEditClient(user, e.client_id) && past };
     });
@@ -6557,18 +6601,20 @@ const OPS = {
     const done = out.filter((e) => e.resolved_at && istISO(e.resolved_at).slice(0, 7) === month);
     const stats = { open: out.filter((e) => e.status !== "resolved").length, needs_reason: out.filter((e) => e.needs_reason).length, past_expected: out.filter((e) => e.past_expected).length,
       logged_month: out.filter((e) => e.day.slice(0, 7) === month).length, resolved_month: done.length, closed_month: done.length,
+      logged_external: out.filter((e) => e.day.slice(0, 7) === month && e.kind === "external").length, logged_internal: out.filter((e) => e.day.slice(0, 7) === month && e.kind === "internal").length,
       avg_hours: done.length ? Math.round(done.reduce((t, e) => t + e.hours, 0) / done.length) : null };
     const file = cid ? await getSetting(env, "workbook_status:" + cid + ":esc", null) : null;
     const slaFile = cid ? await getSetting(env, "workbook_status:" + cid + ":escsla", null) : null;
     let sla = null;
     if (cid) {
-      const m = await all(env, "SELECT dept, COUNT(*) AS n FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? GROUP BY dept", cid, month);
+      // the client's SLA: external escalations only
+      const m = await all(env, "SELECT dept, COUNT(*) AS n FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? AND kind <> 'internal' GROUP BY dept", cid, month);
       const n = m.reduce((t, x) => t + x.n, 0);
       sla = { month: monthLabel(month), target: ESC_SLA_TARGET, n, met: n <= ESC_SLA_TARGET, by_dept: m.map((x) => ({ dept: x.dept, n: x.n })) };
     }
     const people = (await all(env, "SELECT id, name, designation, source FROM users WHERE active = 1 AND role IN ('supervisor','admin') ORDER BY name"))
       .map((u) => ({ id: u.id, name: u.name, tag: isSME(u) ? "SME" : /manager|vice|director|head/i.test(u.designation || "") ? (u.designation || "") : "TL" }));
-    return { rows: shown, stats, file, sla_file: slaFile, sla, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, can_reason: isTL };
+    return { rows: shown, stats, file, sla_file: slaFile, sla, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, kinds: ESC_KINDS, can_reason: isTL };
   },
   "escalations.save": async ({ env, user, payload, ctx }) => {
     const id = str(payload.id, 60), now = Date.now();
@@ -6578,6 +6624,9 @@ const OPS = {
     const c = clientId ? await one(env, "SELECT id, name FROM clients WHERE id = ?", clientId) : null;
     if (!c) throw bad("Pick the client.");
     editableOr(user, c.id);
+    // the type comes first: External (raised by the client) or Internal (raised inside Purview)
+    const kind = isEscKind(payload.kind) ? payload.kind : ex ? escKind(ex) : "";
+    if (!kind) throw bad("Pick the type first: External (raised by the client) or Internal (raised inside Purview).");
     const day = isoDate(payload.day), today = istISO(now);
     if (!day) throw bad("Pick the received date.");
     const realDay = (d) => { const t = Date.parse(d + "T00:00:00Z"); return !isNaN(t) && new Date(t).toISOString().slice(0, 10) === d; };
@@ -6585,12 +6634,23 @@ const OPS = {
     if (payload.status === "resolved" || payload.status === "closed") { const co = isoDate(payload.close_on); if (co && !realDay(co)) throw bad("The close date is not a real date."); }
     if (day > today) throw bad("The received date cannot be in the future.");
     const dept = ESC_DEPTS.includes(payload.dept) ? payload.dept : ""; if (!dept) throw bad("Pick the department.");
-    const raisedBy = str(payload.raised_who, 120).trim(); if (!raisedBy) throw bad("Who raised it? Name or role at the client.");
-    const reportedTo = str(payload.reported_to, 120).trim(); if (!reportedTo) throw bad("Who was it reported to at Purview?");
+    const raisedBy = str(payload.raised_who, 120).trim(); if (!raisedBy) throw bad(kind === "internal" ? "Who raised it? A name or team at Purview." : "Who raised it? Name or role at the client.");
+    const reportedTo = str(payload.reported_to, 120).trim(); if (!reportedTo) throw bad(kind === "internal" ? "Who was it reported to?" : "Who was it reported to at Purview?");
     const description = str(payload.description, 2000).trim();
     if (description.length < 8) throw bad("Write the error description, a sentence at least.");
     const status = payload.status === "resolved" || payload.status === "closed" ? "resolved" : "open";
     const isError = ["Y", "N"].includes(payload.is_error) ? payload.is_error : "";
+    // our error: who made it, and the DOW (the date the work with the error was done)
+    let errBy = null, dow = "";
+    if (isError === "Y") {
+      const bid = str(payload.error_by_id, 60);
+      errBy = bid ? await one(env, "SELECT id, name FROM users WHERE id = ?", bid) : null;
+      if (!errBy) throw bad("Our error: pick who made the error.");
+      dow = isoDate(payload.error_dow);
+      if (!dow) throw bad("Our error: pick the DOW, the date the work with the error was done.");
+      if (!realDay(dow)) throw bad("The DOW of the error is not a real date.");
+      if (dow > day) throw bad("The DOW of the error cannot be after the received date.");
+    }
     const rca = str(payload.rca, 2000).trim(), corrective = str(payload.corrective, 2000).trim(), preventive = str(payload.preventive, 2000).trim();
     const closeOn = status === "resolved" ? isoDate(payload.close_on) : "";
     if (status === "resolved") {
@@ -6605,7 +6665,8 @@ const OPS = {
     if (payload.owner_id) owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60));
     if (!owner) throw bad("Pick the responding person at Purview.");
     const vals = { day, dept, raised_who: raisedBy, reported_to: reportedTo, email_subject: str(payload.email_subject, 300).trim(), owner_id: owner.id, owner_name: owner.name, description,
-      is_error: isError, comment: str(payload.comment, 2000).trim(), status, rca, corrective, preventive, close_on: closeOn, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null };
+      is_error: isError, comment: str(payload.comment, 2000).trim(), status, rca, corrective, preventive, close_on: closeOn, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null,
+      kind, error_by_id: errBy ? errBy.id : null, error_by_name: errBy ? errBy.name : "", error_dow: dow };
     const cols = Object.keys(vals);
     let sr;
     if (ex) {
@@ -6625,7 +6686,11 @@ const OPS = {
       }
       sr = ((await one(env, "SELECT sr FROM escalations WHERE id = ?", eid)) || {}).sr;
     }
-    await audit(env, user, ex ? "escalation.edit" : "escalation.add", c.id, `SR${sr} ${dept}: ${ESC_STATUS[status]}`);
+    await audit(env, user, ex ? "escalation.edit" : "escalation.add", c.id, `SR${sr} ${ESC_KINDS[kind]} · ${dept}: ${ESC_STATUS[status]}` + (isError === "Y" ? ` · our error (${errBy.name})` : ""));
+    // the project's supervisors hear about a new escalation, and about one marked as our error later
+    const what = !ex ? "new" : isError === "Y" && ex.is_error !== "Y" ? "error" : "";
+    const defer = ctx && ctx.waitUntil ? (q) => ctx.waitUntil(q) : null;
+    if (what) { try { await escalationNotice(env, { ...vals, sr, client_id: c.id }, c.name, user, what, env.APP_URL, defer); } catch (x) {} }
     const p = syncEscalations(env, c.id, [day.slice(0, 7), ex ? ex.day.slice(0, 7) : ""]); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
     return { ok: true, sr };
   },

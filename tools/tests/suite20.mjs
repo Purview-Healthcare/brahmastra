@@ -75,9 +75,11 @@ const folder = (clientName) => { const root = child("root", "Brahmastra Clients"
 const runJob = async (at) => { const real = Date.now; if (at) Date.now = () => at; try { const ps = []; await rig.worker.default.scheduled({ cron: "17 * * * *" }, { ...rig.backend.env, ...rig.liveEnv, DB: rig.backend.env.DB }, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { Date.now = real; } };
 
 
-const base = { day: "2026-11-04", dept: "Submission", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Rejections again", description: "Claims rejected twice for the same modifier" };
+const base = { kind: "external", day: "2026-11-04", dept: "Submission", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Rejections again", description: "Claims rejected twice for the same modifier" };
 const close = { status: "resolved", is_error: "Y", rca: "Modifier 25 missing in the charge template", corrective: "Modifier 25 added to the charge template", preventive: "Template checked every Monday", close_on: "2026-11-05" };
 base.owner_id = U("Tina Lead").id;
+// our error: who made it and the DOW (the date the work was done)
+close.error_by_id = U("Arun Agent").id; close.error_dow = "2026-11-03";
 const adminIdE = (await A("auth.me")).user.id;
 S("Who can use it");
 let r = await T(() => AR("escalations.list", {}));
@@ -120,9 +122,10 @@ const notes = await sql("SELECT 1"); // keep the DB warm
 const tinaId = U("Tina Lead").id;
 const nn = DB.prepare("SELECT text FROM user_notices WHERE user_id = ? AND view = 'escalations'").bind(tinaId); const got = [];
 const res = await nn.all(); for (const x of (res.results || res)) got.push(x.text);
-ok("the hourly job tells the client's team lead once per escalation", got.length === 2 && got.every((t) => /24 working hours/.test(t)), got);
+const reminders = (xs) => xs.filter((t) => /24 working hours/.test(t));
+ok("the hourly job tells the client's team lead once per escalation", reminders(got).length === 2, got);
 await runJob();
-const res2 = await nn.all(); ok("and not again on the next run", (res2.results || res2).length === 2);
+const res2 = await nn.all(); ok("and not again on the next run", reminders((res2.results || res2).map((x) => x.text)).length === 2);
 ok("an email went to the team lead", mails.some((m) => /SR1/.test(JSON.stringify(m)) && /tina@/.test(JSON.stringify(m))), mails.length);
 r = await T(() => TI("escalations.reason", { id: sr1.id, reason: "x", expected_on: "2099-01-01" })); ok("the reason must be a sentence", !r.ok, r);
 r = await T(() => TI("escalations.reason", { id: sr1.id, reason: "Waiting on the corrected charge template", expected_on: "2020-01-01" })); ok("the expected date cannot be in the past", !r.ok && /date/i.test(r.e), r);

@@ -90,7 +90,7 @@ const flag = (await A("claims.list", { client_id: sun.id, state: "workable", pag
 await DB.prepare("UPDATE claims SET escalated = 1, escalated_at = ? WHERE id = ?").bind(Date.now() - 30 * 3600000, flag.id).run();
 let ov = await A("client.overview", { client_id: sun.id });
 ok("a claim flagged by a biller is not a client escalation", ov.escalations.open === 0 && ov.escalations.late === 0, ov.escalations);
-await A("escalations.save", { client_id: sun.id, day: new Date().toISOString().slice(0, 10), dept: "Account Receivable", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Posting delay", description: "Payment not posted for 3 days", owner_id: U("Tina Lead").id, status: "open" });
+await A("escalations.save", { kind: "external", client_id: sun.id, day: new Date().toISOString().slice(0, 10), dept: "Account Receivable", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Posting delay", description: "Payment not posted for 3 days", owner_id: U("Tina Lead").id, status: "open" });
 await DB.prepare("UPDATE escalations SET created_at = ? WHERE client_id = ?").bind(Date.now() - 5 * 86400000, sun.id).run();
 ov = await A("client.overview", { client_id: sun.id });
 ok("a client escalation in the tracker is counted, and flagged over 24 hours with no reason", ov.escalations.open === 1 && ov.escalations.late === 1, ov.escalations);
