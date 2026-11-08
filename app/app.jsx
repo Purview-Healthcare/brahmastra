@@ -3769,7 +3769,7 @@ function DigestDashboard({ params, go }) {
               <div><b>{money(c.collected.amount)}</b><span>collected · {fmtInt(c.worked.n)} entries</span></div>
             </div>
             {c.card && c.card.scopes.length > 0 && <div className="dd-scopes">{c.card.scopes.map((x) => <span key={x.name}>{drDot(x.band)}{x.name} {x.pct == null ? "–" : x.pct + "%"}</span>)}</div>}
-            {c.tat && <div className={"dd-esc " + (c.tat.worst ? (c.tat.worst.missed > 2 ? "r" : "a") : "g")}>TAT last week: {c.tat.parts.map((x) => <span key={x.k}>{x.label} <b>{x.pct}%</b> ({x.met} of {x.due}) </span>)}
+            {c.tat && <div className={"dd-esc " + (c.tat.worst ? (c.tat.worst.missed > 2 ? "r" : "a") : "g")}>TAT last week: {c.tat.parts.map((x, i) => <span key={x.k}>{i ? " · " : ""}{x.label} <b>{x.pct}%</b> ({x.met} of {x.due})</span>)}
               {c.tat.worst ? <> · most missed: <b>{c.tat.worst.label}</b>, {c.tat.worst.missed}{c.tat.worst.who ? ` (${c.tat.worst.who_n} with ${c.tat.worst.who})` : ""}</> : null}</div>}
             {c.esc && <div className={"dd-esc " + (c.esc.n ? "r" : "g")}>Escalations · {c.esc.from ? dd(c.esc.from).split(" ")[0] : ""}: <b>{c.esc.n}</b> (target 0){c.esc.n ? <> · {c.esc.by_dept.map((x) => x.dept + " " + x.n).join(", ")} · {c.esc.open ? <b>{c.esc.open} open</b> : "all closed"}{c.esc.over24 ? ` · ${c.esc.over24} over 24 h` + (c.esc.over24_reason ? ` (${c.esc.over24_reason} with a reason)` : ", no reason yet") : ""}{c.esc.errors ? " · our error " + c.esc.errors : ""}</> : " · Green"}</div>}
             {c.card && (c.card.drags.length ? <table className="dd-t"><thead><tr><th>Pulling it down</th><th>Value</th><th>Standard</th><th></th></tr></thead>
@@ -7886,7 +7886,7 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
   // Payment Posting TAT and Submission TAT: Brahmastra's own count of the month's hand-offs closed within TAT, next to what Drishti has
   const tatFor = (name) => (x && x.tat ? (/posting.*tat/i.test(name || "") ? x.tat.posting : /submission.*tat/i.test(name || "") ? x.tat.submission : null) : null);
   const tatNote = (i) => { const t = tatFor(i.name); if (!t || !t.due) return null; const met = /^met$/i.test(String(i.shown || "").trim());
-    return <span className="sc-bt">Brahmastra: <b className={t.missed ? "amber-ink" : "teal-ink"}>{t.pct}%</b> within TAT ({t.met} of {t.due}){t.missed && met ? <span className="amber-ink"> · check: {plural(t.missed, "closed after the TAT", "closed after the TAT")}</span> : null}</span>; };
+    return <span className="sc-bt" title={t.missed && met ? "Drishti has Met, but Brahmastra counted " + plural(t.missed, "hand-off") + " closed after the TAT this period. Click for the claims." : undefined}>Brahmastra: <b className={t.missed ? "amber-ink" : "teal-ink"}>{t.pct}%</b> within TAT ({t.met} of {t.due}){t.missed && met ? <span className="amber-ink"> · {t.missed} late</span> : null}</span>; };
   return (
     <div className="stack sc2" style={{ gap: 12 }}>
       <div className="card sc-bar">
