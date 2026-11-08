@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.84.0";
+const VERSION = "2.85.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -794,6 +794,93 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
   await attn(`SELECT client_id, COALESCE(paused_at, created_at) AS start, client_sent_at AS closed_at FROM handoffs WHERE client_req_by_name <> '' AND client_id IN ${IN} AND COALESCE(paused_at, created_at) > ?`, [...ids, back]);
   for (const o of out.values()) for (const k of ["posting", "submission", "attention"]) { const s = o[k]; s.pct = s.due ? Math.round(s.met / s.due * 1000) / 10 : null; }
   return out;
+}
+/* ---- Repeat denials and payer tips: learned from the team's own work entries ----
+   A denial is a work entry with status Claim Denied or Claim Rejected; its reason is the SAAG sub-status. What worked is the SAAG
+   action taken on a denial that was followed by a payment on the same claim, with no new denial for the same reason in between.
+   Only SAAG statuses and actions are used (a fixed list): never the free-text findings of another claim. */
+const DENIED_SQL = "COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Denied', 'Claim Rejected')";
+const PAID_SQL = "COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Paid', 'Partially Paid')";
+const reasonKey = (r) => String(r || "Other").trim().toLowerCase().replace(/\s+/g, " ");
+/* Every denial and payment entry of these clients in the last year, per claim in time order. */
+async function denialHistory(env, clientIds, payer = null) {
+  const ids = [...new Set(clientIds || [])].filter(Boolean); if (!ids.length) return [];
+  return await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status, c.client_id, c.payer
+    FROM notes n JOIN claims c ON c.id = n.claim_id
+    WHERE n.kind = 'work' AND c.client_id IN (${ids.map(() => "?").join(",")})${payer != null ? " AND c.payer = ?" : ""} AND n.created_at > ? AND (${DENIED_SQL} OR ${PAID_SQL})
+    ORDER BY n.claim_id, n.created_at LIMIT 50000`, ...ids, ...(payer != null ? [payer] : []), Date.now() - 365 * 86400000);
+}
+/* What worked for a denial reason: per (client, payer, reason) and per (client, reason), each action tried and how often a payment followed. */
+function whatWorked(rows) {
+  const tally = new Map(), add = (k, action, paid) => { if (!action) return; const m = tally.get(k) || new Map(); const t = m.get(action) || { action, tried: 0, paid: 0 }; t.tried++; if (paid) t.paid++; m.set(action, t); tally.set(k, m); };
+  for (let i = 0; i < rows.length; i++) {
+    const d = rows[i]; if (d.status !== "Claim Denied" && d.status !== "Claim Rejected") continue;
+    const rk = reasonKey(d.sub_status); let paid = false;
+    for (let j = i + 1; j < rows.length && rows[j].claim_id === d.claim_id; j++) {
+      const x = rows[j];
+      if (x.status === "Claim Paid" || x.status === "Partially Paid") { paid = true; break; }
+      if (reasonKey(x.sub_status) === rk) break; // denied again for the same reason: this action did not work
+    }
+    add(d.client_id + "|" + d.payer + "|" + rk, d.action, paid); add(d.client_id + "||" + rk, d.action, paid);
+  }
+  const best = (k) => { const m = tally.get(k); if (!m) return []; return [...m.values()].filter((t) => t.paid > 0).sort((a, b) => b.paid - a.paid || b.paid / b.tried - a.paid / a.tried).slice(0, 3); };
+  return (clientId, payer, reason) => { const rk = reasonKey(reason), own = best(clientId + "|" + payer + "|" + rk); return own.length ? { any_payer: false, top: own } : { any_payer: true, top: best(clientId + "||" + rk) }; };
+}
+async function repeatDenials(env, clientIds, now = Date.now()) {
+  const ids = [...new Set(clientIds || [])].filter(Boolean); if (!ids.length) return { claims: [], patterns: [] };
+  const IN = `(${ids.map(() => "?").join(",")})`;
+  const worked = whatWorked(await denialHistory(env, ids));
+  // the same claim denied again for the same reason, still being worked
+  const claims = (await all(env, `SELECT n.claim_id, c.client_id, cl.name AS client_name, c.claim_no, c.payer, c.balance, c.state, u.name AS biller,
+        MAX(COALESCE(NULLIF(n.sub_status, ''), 'Other')) AS reason, COUNT(*) AS times, MAX(n.created_at) AS last_at,
+        (SELECT n2.action FROM notes n2 WHERE n2.claim_id = n.claim_id AND n2.kind = 'work' ORDER BY n2.created_at DESC LIMIT 1) AS last_action
+      FROM notes n JOIN claims c ON c.id = n.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.assigned_to
+      WHERE n.kind = 'work' AND ${DENIED_SQL} AND c.client_id IN ${IN} AND c.state IN ('open','assigned','in_progress','completed','in_process') AND COALESCE(c.last_status_code, '') <> 'Claim Paid' AND n.created_at > ?
+      GROUP BY n.claim_id, LOWER(TRIM(COALESCE(NULLIF(n.sub_status, ''), 'Other'))) HAVING COUNT(*) >= 2 ORDER BY last_at DESC LIMIT 500`, ...ids, now - 365 * 86400000))
+    .map((r) => ({ ...r, worked: worked(r.client_id, r.payer, r.reason) }));
+  // the same payer and reason on 3 or more claims in 30 days: something to fix at the source (a setup, a code, a payer rule)
+  const patterns = (await all(env, `SELECT client_id, client_name, payer, MAX(reason) AS reason, COUNT(*) AS claims, COALESCE(SUM(balance), 0) AS bal, MAX(last_at) AS last_at FROM (
+        SELECT c.client_id, cl.name AS client_name, c.payer, n.claim_id, c.balance, MAX(COALESCE(NULLIF(n.sub_status, ''), 'Other')) AS reason, LOWER(TRIM(COALESCE(NULLIF(n.sub_status, ''), 'Other'))) AS rk, MAX(n.created_at) AS last_at
+        FROM notes n JOIN claims c ON c.id = n.claim_id LEFT JOIN clients cl ON cl.id = c.client_id
+        WHERE n.kind = 'work' AND ${DENIED_SQL} AND c.client_id IN ${IN} AND n.created_at > ? GROUP BY c.client_id, c.payer, n.claim_id, rk)
+      GROUP BY client_id, payer, rk HAVING COUNT(*) >= 3 ORDER BY claims DESC, bal DESC LIMIT 200`, ...ids, now - 30 * 86400000))
+    .map((r) => ({ ...r, worked: worked(r.client_id, r.payer, r.reason) }));
+  return { claims, patterns };
+}
+/* Payer tips for one claim: how long this payer usually takes to pay after an action, what worked for this status, and a follow-up
+   date to suggest. From the client's own entries at this payer in the last year; nothing shows on fewer than 3 cases. */
+async function payerTips(env, c, { status, sub_status, action } = {}, now = Date.now()) {
+  const rows = await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status
+    FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND c.client_id = ? AND c.payer = ? AND n.created_at > ? ORDER BY n.claim_id, n.created_at LIMIT 30000`,
+    c.client_id, c.payer || "", now - 365 * 86400000);
+  const st = status || c.last_status_code || "", act = action || c.last_action_code || "", sub = sub_status || (status ? "" : c.last_sub_status || "");
+  const isPaid = (x) => x.status === "Claim Paid" || x.status === "Partially Paid";
+  // days from an entry with this action to the payment that followed on the same claim
+  const days = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (!act || rows[i].action !== act) continue;
+    for (let j = i + 1; j < rows.length && rows[j].claim_id === rows[i].claim_id; j++) {
+      if (isPaid(rows[j])) { days.push((rows[j].created_at - rows[i].created_at) / 86400000); break; }
+      if (rows[j].status === "Claim Denied" || rows[j].status === "Claim Rejected") break; // denied again: the payment came from a later action
+    }
+  }
+  days.sort((a, b) => a - b);
+  const median = days.length >= 3 ? Math.max(1, Math.round(days[Math.floor(days.length / 2)])) : null;
+  // what worked for this status (and reason): the action on such an entry, and whether a payment followed
+  const sk = reasonKey(sub), tally = new Map();
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]; if (!st || r.status !== st || (sub && reasonKey(r.sub_status) !== sk) || !r.action) continue;
+    let paid = false; for (let j = i + 1; j < rows.length && rows[j].claim_id === r.claim_id; j++) { if (isPaid(rows[j])) { paid = true; break; } if (rows[j].status === r.status && reasonKey(rows[j].sub_status) === reasonKey(r.sub_status)) break; }
+    const t = tally.get(r.action) || { action: r.action, tried: 0, paid: 0 }; t.tried++; if (paid) t.paid++; tally.set(r.action, t);
+  }
+  const top = [...tally.values()].filter((t) => t.paid > 0 && t.tried >= 2).sort((a, b) => b.paid - a.paid || b.paid / b.tried - a.paid / a.tried).slice(0, 3);
+  const claims = new Set(rows.map((r) => r.claim_id)).size;
+  const fu = median ? istISO(now + Math.min(45, Math.max(3, median)) * 86400000) : null;
+  // this claim: denied again for the same reason?
+  const mine = rows.filter((r) => r.claim_id === c.id && (r.status === "Claim Denied" || r.status === "Claim Rejected"));
+  const lastDen = mine[mine.length - 1], again = lastDen ? mine.filter((r) => reasonKey(r.sub_status) === reasonKey(lastDen.sub_status)).length : 0;
+  return { payer: c.payer || "", claims, status: st, sub_status: sub, action: act, pay_days: median, pay_n: days.length, worked: top, follow_up: fu,
+    repeat: again >= 2 ? { reason: lastDen.sub_status || "Other", times: again } : null };
 }
 /* ---- TAT reminders by email: every supervisor, SME and above on the client, Monday to Friday.
    Posting, Submission and Rejections at 09:00 IST; AR (Needs attention) at 19:00 IST. A send that fails is tried again on the
@@ -1986,6 +2073,7 @@ function digestRollup(ds) {
   good.sort((a, b) => b[0] - a[0]);
   const tat = Object.fromEntries(TAT_PARTS.map(([k]) => { const xs = ds.map((d) => d.tat && d.tat.parts.find((p) => p.k === k)).filter(Boolean), due = xs.reduce((t, x) => t + x.due, 0), met = xs.reduce((t, x) => t + x.met, 0);
     return [k, due ? { due, met, pct: Math.round(met / due * 1000) / 10 } : null]; }));
+  for (const d of ds) if (d.turn90 && d.turn90.n) attention.push([d.ar.over90_pct > d.ar.target ? "red" : "amber", d.client.name, `${d.turn90.n} ${d.turn90.n === 1 ? "claim" : "claims"} (${dMoney(d.turn90.bal)}) turn 90 in the next 7 days: work them first`]);
   for (const d of ds) if (d.tat && d.tat.worst) attention.push([d.tat.worst.missed > 2 ? "red" : "amber", d.client.name, `TAT last week: ${d.tat.worst.missed} missed at ${d.tat.worst.label}` + (d.tat.worst.who ? `, ${d.tat.worst.who_n} with ${d.tat.worst.who}` : "")]);
   attention.sort((a, b) => (a[0] === "red" ? 0 : 1) - (b[0] === "red" ? 0 : 1));
   return { ar, o90, pct, tat, target: ds.length ? ds[0].ar.target : OVER90_TARGET, ar_ago: withAgo.length ? agoNow - ago : null, coll: sum((d) => d.collected.amount), coll_prev: sum((d) => d.collected.prev),
@@ -2079,6 +2167,13 @@ async function spanData(env, span, wk) {
     d.esc = await escSummary(env, d.client.id, wk.last.slice(0, 8) + "01", wk.last, wk.to);
   }
   const wfm = await clientWfm(env, ds.map((d) => d.client.id)); ds.forEach((d) => { d.wfm = wfm.get(d.client.id) || null; });
+  // turning 90 in the next 7 days, on the latest digest only (an older week's claims have moved on since): work them first
+  const dIds = ds.map((d) => d.client.id), ref = istISO(Date.now());
+  if (dIds.length && wk.week === digestWeek(Date.now()).week) {
+    const t9 = new Map((await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM (SELECT c.client_id, c.balance, ${AGE_SQL("c.")} AS age FROM claims c
+        WHERE c.client_id IN (${dIds.map(() => "?").join(",")}) AND c.state IN ${WORKABLE} AND c.balance > 0) WHERE age BETWEEN 84 AND 90 GROUP BY client_id`, ref, ...dIds)).map((r) => [r.client_id, r]));
+    for (const d of ds) d.turn90 = t9.get(d.client.id) || null;
+  }
   // TAT last week: Payment posting, Submission and Needs attention, and where it was missed most (no claim numbers in the digest)
   const ts = await tatStats(env, ds.map((d) => d.client.id), wk.from, wk.to);
   for (const d of ds) d.tat = tatDigest(ts.get(d.client.id));
@@ -2787,6 +2882,11 @@ function workingHoursBetween(a, b) {
   return ms / 3600000;
 }
 const escPast = (at, now = Date.now()) => !!at && addWorkingHours(at, ESC_TAT_HOURS) < now;
+/* A claim's age in days by date of service (the file's age when the date is missing or not a real date): one ? for today. */
+const AGE_SQL = (p = "") => `(CASE WHEN ${p}dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(${p}dos, 1, 10)), ${p}age_days) ELSE ${p}age_days END)`;
+/* Turning 90 soon: a claim crosses into "over 90" (the AR Aging KPI) when it is 91 days old. On a biller's list, claims 77 to 90 days
+   old move up (more in their last week), so they are worked before they cross. Two ? for today. */
+const TURN90_BOOST = (p = "") => `(CASE WHEN ${AGE_SQL(p)} BETWEEN 84 AND 90 THEN 40 WHEN ${AGE_SQL(p)} BETWEEN 77 AND 83 THEN 20 ELSE 0 END)`;
 function addWorkingHours(ms, hours) {
   let t = ms, left = hours * 3600000;
   for (let guard = 0; left > 0 && guard < 60; guard++) {
@@ -2909,7 +3009,7 @@ const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "aut
 /* Read-only claim lists a biller may open for the clients they are responsible for (posting, submission...). */
 const DESK_READ_OPS = /^claims\.(list|stats)$/;
 const respOnly = (user) => { if (user.role === "supervisor") return null; const ids = [...(user.resp_clients || [])]; if (!ids.length) throw denied("Supervisor access is needed for this."); return ids; };
-const SUPERVISOR_OPS = /^(tat\.|escalations\.|coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(tat\.|denials\.|escalations\.|coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent|review)|payers\.saveLimit|reports\.saveArInventory|raci\.save|team\.saveToday)/;
 // settings.get / settings.save: who reads and writes which keys (see the two ops).
@@ -3833,6 +3933,25 @@ const OPS = {
     return { claims: ok.map(({ assigned_to, last_worked_by, ...c }) => c) };
   },
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
+  /* Repeat denials on this person's clients: the same claim denied again for the same reason, and the payer and reason seen on
+     3 or more claims in 30 days, each with what worked before. */
+  "denials.repeats": async ({ env, user, payload }) => {
+    const cls = (await all(env, "SELECT id FROM clients WHERE active = 1")).filter((c) => inScope(user, c.id) && (!payload.client_id || c.id === payload.client_id));
+    return await repeatDenials(env, cls.map((c) => c.id));
+  },
+  /* Tips on one claim: payer tips (usual days to payment after the action, what worked for this status, a follow-up date to
+     suggest), whether it was denied again for the same reason and what worked, and whether it turns 90 soon. */
+  "claims.tips": async ({ env, user, payload }) => {
+    const c = await one(env, "SELECT * FROM claims WHERE id = ?", str(payload.id, 60));
+    if (!c) throw notFound("Claim not found.");
+    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    const tips = await payerTips(env, c, { status: str(payload.status, 60).trim(), sub_status: str(payload.sub_status, 160).trim(), action: str(payload.action, 160).trim() });
+    if (tips.repeat) tips.repeat.worked = whatWorked(await denialHistory(env, [c.client_id], c.payer || ""))(c.client_id, c.payer || "", tips.repeat.reason);
+    const today = isoDate(payload.today) || istISO(Date.now()), d = isoDate(c.dos);
+    const age = d ? Math.round((Date.parse(today) - Date.parse(d)) / 86400000) : c.age_days;
+    tips.turn90 = age != null && age >= 77 && age <= 90 && !["closed"].includes(c.state) ? { age, days_left: 91 - age } : null;
+    return tips;
+  },
   /* Past TAT: everything past its TAT on this person's clients, what is due in the next hours, and what is on hold with a reason. */
   "tat.list": async ({ env, user, payload }) => {
     const now = Date.now();
@@ -3922,6 +4041,13 @@ const OPS = {
           items.push({ key: `tat:${c.id}:attn`, cat: "tat", tone: "red", n: a.late, text: `${a.late} Needs attention ${a.late === 1 ? "item" : "items"} past ${ATTN_TAT_HOURS} working hours · ${c.name}`, sub: parts.join(" · ") + ` · oldest ${a.oldest_late_h} working hours`, view: "tat", params: { client_id: c.id } });
           pastTat += a.late;
         }
+      }
+      // claims denied again for the same reason in the last 14 days, on this person's clients
+      if (tcl.length) {
+        const rd = await one(env, `SELECT COUNT(*) AS n FROM (SELECT n.claim_id FROM notes n JOIN claims c ON c.id = n.claim_id
+            WHERE n.kind = 'work' AND ${DENIED_SQL} AND c.client_id IN (${tcl.map(() => "?").join(",")}) AND c.state IN ('open','assigned','in_progress','completed','in_process') AND COALESCE(c.last_status_code, '') <> 'Claim Paid' AND n.created_at > ?
+            GROUP BY n.claim_id, LOWER(TRIM(COALESCE(NULLIF(n.sub_status, ''), 'Other'))) HAVING COUNT(*) >= 2 AND MAX(n.created_at) > ?)`, ...tcl.map((c) => c.id), now - 365 * 86400000, now - 14 * 86400000);
+        if (rd && rd.n) items.push({ key: "repeat_denials", cat: "attention", tone: "amber", n: rd.n, text: plural(rd.n, "claim was", "claims were") + " denied again for the same reason in the last 14 days", sub: "See what worked before for the same payer and reason", view: "attention", params: { tab: "denials" } });
       }
       const at = await OPS["attention.count"]({ env, user });
       add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "claim flagged by a biller waits", "claims flagged by billers wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over ${ATTN_TAT_HOURS} working hours` : ""), "attention");
@@ -4137,6 +4263,10 @@ const OPS = {
       today, today, d7, now - 10 * 86400000, now, today, ...ids);
     const ages = await all(env, `SELECT client_id, CASE WHEN age > 90 THEN 4 WHEN age > 60 THEN 3 WHEN age > 30 THEN 2 ELSE 1 END AS b, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal, COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS pbal
       FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE}) GROUP BY 1, 2`, today, ...ids);
+    // turning 90 soon: claims that cross into over 90 in the next 7 / 14 days (91 days old is over 90)
+    const t90 = await all(env, `SELECT client_id, SUM(CASE WHEN age BETWEEN 84 AND 90 THEN 1 ELSE 0 END) AS n7, COALESCE(SUM(CASE WHEN age BETWEEN 84 AND 90 THEN balance END), 0) AS bal7,
+        SUM(CASE WHEN age BETWEEN 77 AND 90 THEN 1 ELSE 0 END) AS n14, COALESCE(SUM(CASE WHEN age BETWEEN 77 AND 90 THEN balance END), 0) AS bal14
+      FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE} AND c.balance > 0) GROUP BY client_id`, today, ...ids);
     const big = await all(env, `SELECT client_id, balance, payer FROM (SELECT c.client_id, c.balance, c.payer, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE})
       WHERE age > 90 AND balance > 0 ORDER BY balance DESC LIMIT 3000`, today, ...ids);
     const holders = await all(env, `SELECT c.client_id, c.assigned_to, u.name, COUNT(*) AS n FROM claims c LEFT JOIN users u ON u.id = c.assigned_to
@@ -4149,7 +4279,7 @@ const OPS = {
       for (let dd = Number(today.slice(8, 10)); dd <= last; dd++) { const w = new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); if (w && w !== 6) wdLeft++; } }
     const STAGES = ["open", "list", "later", "due", "overdue", "waiting", "desk"];
     const blank = () => ({ stages: Object.fromEntries(STAGES.map((k) => [k, { n: 0, bal: 0 }])), o7: 0, w10: 0, late: 0, first_open: null, next_fu: null, list_people: 0,
-      ages: [1, 2, 3, 4].map(() => ({ n: 0, bal: 0, pbal: 0 })), big: [], holders: [], closed: { n: 0, bal: 0 }, desk_late: {}, esc_open: 0 });
+      ages: [1, 2, 3, 4].map(() => ({ n: 0, bal: 0, pbal: 0 })), big: [], holders: [], closed: { n: 0, bal: 0 }, desk_late: {}, esc_open: 0, t90: { n7: 0, bal7: 0, n14: 0, bal14: 0 } });
     const per = new Map(ids.map((id) => [id, blank()])), tot = blank();
     const both = (cid, fn) => { const p = per.get(cid); if (p) { fn(p); fn(tot); } };
     for (const r of st) both(r.client_id, (x) => { const s = x.stages[r.stage]; s.n += r.n; s.bal += r.bal; if (r.stage === "overdue") x.o7 += r.o7 || 0; if (r.stage === "waiting") x.w10 += r.w10 || 0; if (r.stage === "desk") x.late += r.late || 0;
@@ -4160,6 +4290,7 @@ const OPS = {
     for (const r of closed) both(r.client_id, (x) => { x.closed.n += r.n; x.closed.bal += r.bal; });
     for (const r of deskLate) both(r.client_id, (x) => { x.desk_late[r.dept] = (x.desk_late[r.dept] || 0) + r.n; });
     for (const r of escOpen) both(r.client_id, (x) => { x.esc_open += r.n; });
+    for (const r of t90) both(r.client_id, (x) => { for (const f of ["n7", "bal7", "n14", "bal14"]) x.t90[f] += Number(r[f]) || 0; });
     const pfBy = new Map(pf.rows.map((r) => [r.client_id, r]));
     const T = OVER90_TARGET;
     const money = (v) => { const a = Math.abs(v || 0); return "$" + (a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); };
@@ -4178,6 +4309,12 @@ const OPS = {
         if (n) out.push({ tone: "red", num: money(s), sub: pl(n, "claim") + " · over 90 days", short: `Resolve the ${pl(n, "biggest claim")} over 90 days (${money(s)})`, title: `Over-90 AR is ${pct}%, target ≤ ${T}%.`,
           text: `Resolve the ${n === 1 ? "biggest claim" : n + " biggest claims"} over 90 days and it comes ${under ? "under " + T + "%" : "down to " + after + "%"}.` + (top.length ? ` Most are with ${top.map(([p, k]) => p + " (" + k + ")").join(" and ")}.` : ""),
           act: [{ label: "Open the list", to: "claims", params: { ...params, min_age: 91, sort: "balance", dir: "desc", state: "workable" } }] });
+      }
+      if (x.t90.n7) {
+        const next = arTot ? Math.round((o90 + x.t90.bal7) / arTot * 1000) / 10 : 0;
+        out.push({ tone: next > T ? "red" : "amber", num: money(x.t90.bal7), sub: pl(x.t90.n7, "claim") + " · turn 90 in 7 days", short: `Work the ${pl(x.t90.n7, "claim")} turning 90 this week (${money(x.t90.bal7)})`,
+          title: "Turning 90 in the next 7 days.", text: `If they are not resolved, over 90 goes from ${pct}% to ${next}% next week${next > T && pct <= T ? `, past the ${T}% target` : ""}. They are already moved up the billers' lists` + (x.t90.n14 > x.t90.n7 ? `; ${x.t90.n14 - x.t90.n7} more turn 90 the week after.` : "."),
+          act: [{ label: "Open the list", to: "claims", params: { ...params, turning90: 7, sort: "balance", dir: "desc", state: "workable" } }] });
       }
       if (at("overdue").n) {
         const hs = x.holders.sort((a, b) => b.n - a.n).slice(0, 3);
@@ -4211,6 +4348,7 @@ const OPS = {
         ages: x.ages, ar: arTot, over90_pct: owed ? Math.round(o90p / owed * 1000) / 10 : 0, closed: x.closed, esc_open: x.esc_open, pace: pc,
         checks: [
           { key: "o90", name: "AR over 90 days", now: (owed ? Math.round(o90p / owed * 1000) / 10 : 0) + "%", target: "≤ " + T + "%", ok: !owed || o90p / owed * 100 <= T },
+          { key: "t90", name: "Turning 90 in the next 7 days", now: String(x.t90.n7), target: "worked first", ok: !x.t90.n7, warn: true },
           { key: "fu", name: "Follow-ups overdue", now: String(x.stages.overdue.n), target: "0", ok: !x.stages.overdue.n, warn: x.stages.overdue.n && !x.o7 },
           { key: "tfl", name: "Timely filing in the next 30 days", now: String(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), target: "0", ok: !(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), warn: true },
           { key: "desk", name: "Desks past the client's TAT", now: String(x.late), target: "0", ok: !x.late },
@@ -5020,6 +5158,8 @@ const OPS = {
     if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
     if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
     if (payload.min_balance != null && payload.min_balance !== "") { where.push("c.balance >= ?"); params.push(num(payload.min_balance, 0)); }
+    // Turning 90 within N days: 91 - N to 90 days old today
+    if (payload.turning90 != null && payload.turning90 !== "") { const n = Math.max(1, Math.min(30, Math.round(num(payload.turning90, 7)))); where.push(`${AGE_SQL("c.")} BETWEEN ? AND 90 AND c.balance > 0`); params.push(isoDate(payload.today) || isoToday(), 91 - n); }
     // Older than N days, by date of service (the age the over-90 target uses), else the file's age.
     if (payload.min_age != null && payload.min_age !== "") { where.push("(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(c.dos, 1, 10)), c.age_days) ELSE c.age_days END) >= ?"); params.push(isoDate(payload.today) || isoToday(), num(payload.min_age, 0)); }
     if (payload.max_balance != null && payload.max_balance !== "") { where.push("c.balance <= ?"); params.push(num(payload.max_balance, 0)); }
@@ -5033,7 +5173,7 @@ const OPS = {
     // stage: exactly one of Inventory status's stages, so a stage button opens the claims it counts
     if (payload.stage && INV_STAGE_SQL[payload.stage]) { where.push(INV_STAGE_SQL[payload.stage]); const t = isoDate(payload.today) || isoToday(); params.push(...(payload.stage === "overdue" || payload.stage === "due" ? [t] : payload.stage === "later" ? [t, t] : [])); }
     if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
-    const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "c.age_days", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on",
+    const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday('now') - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END)", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on",
       claim_no: "c.claim_no", tier: "c.tier", status_class: "c.status_class", inventory_kind: "c.inventory_kind", provider: "c.provider", cpt: "c.cpt" };
     const sort = SORTS[payload.sort] || "c.priority";
     const dir = payload.dir === "asc" ? "ASC" : "DESC";
@@ -5352,7 +5492,7 @@ const OPS = {
     // Pick the top claim in two plain steps (no RETURNING / subquery update), retrying once if it was taken meanwhile.
     for (let attempt = 0; !c && attempt < 2; attempt++) {
       const cand = await one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)
-          ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, first_up DESC, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, skipId || "");
+          ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, first_up DESC, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority + ${TURN90_BOOST()} DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, skipId || "", today, today);
       if (!cand) break;
       const r = await run(env, "UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned'", now, now, cand.id);
       if (changesOf(r)) { c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id); await claimEvent(env, c.id, user, "opened", "Next claim").run(); }
@@ -5495,7 +5635,7 @@ const OPS = {
         c.file_status, c.file_sub_status, c.inventory_kind, c.worked_before, c.follow_up_on, c.priority, c.priority_reason, c.state, c.assigned_at, c.started_at, c.completed_at, c.skips, c.escalated,
         c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action, c.last_worked_on, c.handoff_status, cl.name AS client_name, l.name AS location_name
       FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")}
-      ORDER BY CASE c.state WHEN 'in_progress' THEN 0 WHEN 'assigned' THEN 1 ELSE 2 END, c.first_up DESC, CASE WHEN c.skipped_at IS NULL THEN 0 ELSE 1 END, c.priority DESC, c.balance DESC LIMIT 1000`, ...params);
+      ORDER BY CASE c.state WHEN 'in_progress' THEN 0 WHEN 'assigned' THEN 1 ELSE 2 END, c.first_up DESC, CASE WHEN c.skipped_at IS NULL THEN 0 ELSE 1 END, c.priority + ${TURN90_BOOST("c.")} DESC, c.balance DESC LIMIT 1000`, ...params, isoDate(payload.today) || istISO(Date.now()), isoDate(payload.today) || istISO(Date.now()));
     return { rows };
   },
   /* Edit a work note at any time (its author or a team lead). Each edit is kept in the claim history. */

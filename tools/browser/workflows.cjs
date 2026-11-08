@@ -159,7 +159,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await p.locator('.dash-subtabs button:has-text("Inventory status")').click(); await t(3500);
     { const tx = await p.innerText(".main");
       ok("Inventory status: where the inventory stands, age, pace, SLA checks, do these first, by client, claims in detail", /Where the inventory stands/i.test(tx) && /Age of the workable AR/i.test(tx) && /Pace to clear/i.test(tx) && /SLA checks/i.test(tx) && /do these first/i.test(tx) && /Claims in detail/i.test(tx)
-        && (await p.locator(".inv-legend button").count()) === 7 && (await p.locator(".inv-it").count()) >= 1 && (await p.locator(".inv-ck tbody tr").count()) === 6, tx.slice(0, 300)); }
+        && (await p.locator(".inv-legend button").count()) === 7 && (await p.locator(".inv-it").count()) >= 1 && (await p.locator(".inv-ck tbody tr").count()) === 7, tx.slice(0, 300)); }
     ok("no error on Inventory status", !(await p.locator(".alert.err").count()));
     ok("no Monday digest card on Inventory status", !/Monday digest email/.test(await p.innerText(".main")));
     await open("#/sla"); await t(3500);
