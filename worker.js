@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.83.0";
+const VERSION = "2.84.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -126,6 +126,8 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at)`,
   `CREATE TABLE IF NOT EXISTS user_notices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, text TEXT NOT NULL, view TEXT NOT NULL DEFAULT 'clients', client_id TEXT)`,
   `CREATE TABLE IF NOT EXISTS digest_runs (week TEXT NOT NULL, client_id TEXT NOT NULL, at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id))`,
+  `CREATE TABLE IF NOT EXISTS tat_holds (id TEXT PRIMARY KEY, kind TEXT NOT NULL, ref_id TEXT NOT NULL, client_id TEXT NOT NULL, claim_id TEXT, since INTEGER, reason TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', until TEXT NOT NULL, by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, cleared_at INTEGER, cleared_by_name TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_tat_holds_ref ON tat_holds (kind, ref_id, cleared_at)`,
   `CREATE TABLE IF NOT EXISTS tat_mail_log (day TEXT NOT NULL, kind TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', items INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, kind, user_id))`,
   `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
@@ -292,6 +294,8 @@ const ageBucketLetter = (age) => { if (age == null || age === "") return ""; for
 const IST_MIN = 330;
 const istDate = (ms) => new Date(ms + IST_MIN * 60000);
 const istISO = (ms) => istDate(ms).toISOString().slice(0, 10);
+// the first and last millisecond of an IST day given as YYYY-MM-DD
+const istDayStart = (iso) => Date.parse(iso + "T00:00:00Z") - IST_MIN * 60000, istDayEnd = (iso) => istDayStart(iso) + 86400000 - 1;
 const mdy = (iso) => { const [y, m, d] = iso.split("-"); return `${m}/${d}/${y}`; };
 /* Week ending Saturday; the range starts on the Sunday before. A week that crosses a month is split at the month end:
    a day in the earlier month ends its range (and week) on that month's last day, a day in the later month starts on the 1st. */
@@ -537,6 +541,9 @@ async function escalationFile(env, tok, clientId) {
    Drishti counts every row of the file it is given, by department, so this file holds that month's escalations only. */
 const ESC_SLA_TARGET = 0;
 const monthLabel = (ym) => MONTHS_LONG[Number(ym.slice(5, 7)) - 1] + " " + ym.slice(0, 4);
+// the month after / before a YYYY-MM
+const nextMonthISO = (ym) => { const [y, m] = ym.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`; };
+const prevMonthISO = (ym) => { const [y, m] = ym.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; };
 async function escalationSlaFiles(env, tok, clientId, months) {
   const c = await one(env, "SELECT id, name FROM clients WHERE id = ?", clientId); if (!c) return [];
   const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT), saved = [];
@@ -568,6 +575,66 @@ async function escalationSlaFiles(env, tok, clientId, months) {
     }
   }
   return saved;
+}
+/* The TAT report for the SLA: after a month closes, each client's hand-offs that fell due in it, closed within TAT or not, go to
+   the client's SLA & KPI folder under each of its team leads, as
+   Brahmastra Reports / <Team lead> / <Client> / SLA & KPI / TAT Report - <Client> - Nov 2026.xlsx,
+   next to the Escalation Tracker copy, for the Payment Posting TAT and Submission TAT on Drishti's scorecard. */
+const TAT_HEADER = ["Claim #", "Department", "Sent to the desk (IST)", "Due by (IST)", "Closed (IST)", "Within TAT", "Working hours taken", "TAT (working hours)"];
+async function tatReportRows(env, clientId, ym) {
+  const cl = await one(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", clientId); if (!cl) return { cl: null, rows: [] };
+  const from = istDayStart(ym + "-01"), to = istDayStart(nextMonthISO(ym) + "-01") - 1, now = Date.now();
+  const t = (ms) => { if (!ms) return ""; const d = new Date(ms + IST_MIN * 60000); return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
+  const rows = (await all(env, `SELECT h.dept, h.status, h.created_at, h.due_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
+      WHERE h.client_id = ? AND h.dept IN ('posting','submission','rejection') AND h.due_at BETWEEN ? AND ? ORDER BY h.due_at LIMIT 20000`, clientId, from, to)).map((h) => {
+    const open = ["pending", "assigned"].includes(h.status), closed = open ? null : h.closed_at;
+    const within = closed != null ? (closed <= h.due_at ? "Yes" : "No") : h.due_at < now ? "No" : "Open";
+    return [h.claim_no || "", DEPT_LABEL[h.dept] || h.dept, t(h.created_at), t(h.due_at), t(closed), within, closed != null ? Math.round(workingHoursBetween(h.created_at, closed) * 10) / 10 : "", tatHours(cl, h.dept)];
+  });
+  return { cl, rows };
+}
+async function tatSlaFiles(env, tok, clientId, ym) {
+  const { cl, rows } = await tatReportRows(env, clientId, ym); if (!cl) return [];
+  const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT), saved = [], name = odName("TAT Report - " + cl.name + " - " + monthLabel(ym)) + ".xlsx";
+  for (const lead of await clientTeamLeads(env, cl.id, null)) {
+    const path = [REPORTS_ROOT, odName(lead), odName(cl.name), "SLA & KPI", name];
+    const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
+    let it = null;
+    try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference"); }
+    catch (e) {
+      if (!/\(404/.test(String(e.message))) throw e;
+      const r = await fetchT("https://graph.microsoft.com/v1.0" + at + "/content?@microsoft.graph.conflictBehavior=fail", { method: "PUT",
+        headers: { Authorization: "Bearer " + tok, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: b64Bytes(ESC_TEMPLATE_B64) });
+      if (r.ok) it = await r.json();
+      else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference");
+      else throw new ApiError(502, "OneDrive did not create " + name + " (" + r.status + ").");
+    }
+    const base = `/drives/${encodeURIComponent(it.parentReference.driveId)}/items/${encodeURIComponent(it.id)}/workbook`;
+    const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
+    const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
+    const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(TAT_HEADER.length);
+    await graphCall(tok, "POST", ws + `/range(address='A2:${last}20000')/clear`, { applyTo: "Contents" });
+    await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [TAT_HEADER, ...rows], numberFormat: [TAT_HEADER.map(() => "@"), ...rows.map(() => TAT_HEADER.map((h, i) => (i >= 6 ? "General" : "@")))] });
+    saved.push(path.join(" › "));
+  }
+  return saved;
+}
+/* After a month closes: each active client's TAT report for it, once (a few clients per run). */
+async function tatMonthFiles(env, now = Date.now()) {
+  if (env.DEMO || !env.MS_CLIENT_SECRET || String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return 0;
+  const ym = prevMonthISO(istISO(now).slice(0, 7));
+  const cls = await all(env, `SELECT id FROM clients WHERE active = 1 AND EXISTS (SELECT 1 FROM handoffs h WHERE h.client_id = clients.id AND h.dept IN ('posting','submission','rejection') AND h.due_at BETWEEN ? AND ?) ORDER BY name`,
+    istDayStart(ym + "-01"), istDayStart(nextMonthISO(ym) + "-01") - 1);
+  let done = 0, tok = null;
+  for (const c of cls) {
+    const key = "tatsla:" + c.id + ":" + ym, st = await getSetting(env, key, null);
+    if (st && st.ok) continue;
+    if (done >= 6) break;
+    try { tok = tok || await graphAppToken(env); const files = await tatSlaFiles(env, tok, c.id, ym); await setSetting(env, key, { ok: true, at: Date.now(), files }); }
+    catch (e) { await setSetting(env, key, { ok: false, at: Date.now(), error: str(String(e && e.message || e), 300) }); }
+    done++;
+  }
+  return done;
 }
 async function syncEscalations(env, clientId, months) {
   if (env.DEMO || !env.MS_CLIENT_SECRET || String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
@@ -618,67 +685,115 @@ async function escalationReminders(env) {
    `late` lists the items past TAT for the reminders: claim numbers and names of the team only, never patient details or note text. */
 const TAT_DEPTS = [["posting", "Payment posting"], ["submission", "Submission"], ["rejection", "Rejections"]];
 const ATTN_PARTS = [["flagged", "Flagged by billers"], ["back", "Sent back by Posting / Submission"], ["requests", "Client requests to send"]];
+/* "Can't close yet": a team lead gives the reason and the expected close date; until that date the task is on hold (amber), off
+   the Past TAT reminders. Once the date passes it is back, marked as past the expected date. */
+const TAT_HOLD_REASONS = ["Waiting on the payer", "Waiting on the client", "Waiting on a portal or the clearinghouse", "Waiting on another department", "Needs a manager's decision", "Other"];
 function blankTat() {
-  const d = () => ({ n: 0, bal: 0, ok: 0, soon: 0, late: 0, rechecks: 0, oldest_late_h: 0 });
-  return { desks: { posting: d(), submission: d(), rejection: d() }, attn: { flagged: { n: 0, late: 0 }, back: { n: 0, late: 0 }, requests: { n: 0, late: 0 }, n: 0, soon: 0, late: 0, oldest_late_h: 0 }, late: [] };
+  const d = () => ({ n: 0, bal: 0, ok: 0, soon: 0, late: 0, hold: 0, rechecks: 0, oldest_late_h: 0 });
+  return { desks: { posting: d(), submission: d(), rejection: d() }, attn: { flagged: { n: 0, late: 0 }, back: { n: 0, late: 0 }, requests: { n: 0, late: 0 }, n: 0, soon: 0, late: 0, hold: 0, oldest_late_h: 0 }, late: [], soon: [], held: [] };
+}
+/* The holds in force or past for these clients: kind + ref -> the latest one not cleared. */
+async function tatHolds(env, ids) {
+  if (!ids.length) return new Map();
+  const rows = await all(env, `SELECT * FROM tat_holds WHERE cleared_at IS NULL AND client_id IN (${ids.map(() => "?").join(",")}) ORDER BY at`, ...ids);
+  return new Map(rows.map((h) => [h.kind + ":" + h.ref_id, h]));
 }
 async function tatBoard(env, clientIds, now = Date.now()) {
   const ids = [...new Set(clientIds || [])].filter(Boolean);
   const per = new Map(ids.map((id) => [id, blankTat()]));
   if (!ids.length) return per;
-  const IN = `(${ids.map(() => "?").join(",")})`, soonMs = DUE_SOON_HOURS * 3600000;
-  const desk = await all(env, `SELECT h.client_id, h.dept, h.due_at, h.created_at, h.created_by_name, c.claim_no, c.balance, u.name AS with_name
+  const IN = `(${ids.map(() => "?").join(",")})`, soonMs = DUE_SOON_HOURS * 3600000, today = istISO(now);
+  const holds = await tatHolds(env, ids);
+  // a hold counts while its date has not passed; one whose date passed travels with the item as "past the expected date"
+  const holdOf = (kind, ref, since) => { const h = holds.get(kind + ":" + ref); if (!h || (kind === "flag" && h.since && since && h.since !== since)) return { on: null, past: null };
+    const x = { id: h.id, reason: h.reason, note: h.note, until: h.until, by: h.by_name, at: h.at }; return h.until >= today ? { on: x, past: null } : { on: null, past: x }; };
+  const desk = await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, h.due_at, h.created_at, h.created_by_name, c.claim_no, c.balance, u.name AS with_name
     FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
     WHERE h.status IN ('pending','assigned') AND h.client_id IN ${IN} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?) ORDER BY h.due_at LIMIT 5000`, ...ids, now);
   for (const h of desk) {
     const t = per.get(h.client_id), k = h.dept === "subcheck" ? "submission" : h.dept, b = t && t.desks[k];
     if (!b) continue;
     b.n++; b.bal += Number(h.balance) || 0; if (h.dept === "subcheck") b.rechecks++;
-    if (h.due_at < now) {
-      b.late++;
-      const over = workingHoursBetween(h.due_at, now), waited = workingHoursBetween(h.created_at, now);
-      b.oldest_late_h = Math.max(b.oldest_late_h, Math.floor(waited));
-      t.late.push({ group: "desks", dept: k, recheck: h.dept === "subcheck", claim_no: h.claim_no || "", at: h.created_at, by: h.created_by_name || "", with: h.with_name || "", waited_h: Math.floor(waited), over_h: Math.max(1, Math.ceil(over)) });
-    } else if (h.due_at - now <= soonMs) b.soon++; else b.ok++;
+    const hd = holdOf("handoff", h.id), waited = workingHoursBetween(h.created_at, now);
+    const item = { group: "desks", dept: k, recheck: h.dept === "subcheck", ref_kind: "handoff", ref_id: h.id, claim_id: h.claim_id, claim_no: h.claim_no || "", at: h.created_at, due: h.due_at,
+      by: h.created_by_name || "", with: h.with_name || "", waited_h: Math.floor(waited), hold_past: hd.past };
+    if (hd.on) { b.hold++; t.held.push({ ...item, hold: hd.on }); }
+    else if (h.due_at < now) { b.late++; b.oldest_late_h = Math.max(b.oldest_late_h, Math.floor(waited)); t.late.push({ ...item, over_h: Math.max(1, Math.ceil(workingHoursBetween(h.due_at, now))) }); }
+    else if (h.due_at - now <= soonMs) { b.soon++; t.soon.push({ ...item, left_h: Math.max(0, Math.round((h.due_at - now) / 360000) / 10) }); }
+    else b.ok++;
   }
-  const attnItem = (t, part, start, claimNo, by, extra) => {
-    const a = t.attn, due = addWorkingHours(start || now, ATTN_TAT_HOURS);
+  const attnItem = (t, part, kind, ref, claimId, start, claimNo, by, extra) => {
+    const a = t.attn, due = addWorkingHours(start || now, ATTN_TAT_HOURS), hd = holdOf(kind, ref, start), waited = workingHoursBetween(start, now);
     a[part].n++; a.n++;
-    if (due < now) {
-      a[part].late++; a.late++;
-      const waited = workingHoursBetween(start, now);
-      a.oldest_late_h = Math.max(a.oldest_late_h, Math.floor(waited));
-      t.late.push({ group: "ar", part, claim_no: claimNo || "", at: start, by: by || "", waited_h: Math.floor(waited), over_h: Math.max(1, Math.ceil(workingHoursBetween(due, now))), ...(extra || {}) });
-    } else if (due - now <= soonMs) a.soon++;
+    const item = { group: "ar", part, ref_kind: kind, ref_id: ref, claim_id: claimId, claim_no: claimNo || "", at: start, due, by: by || "", waited_h: Math.floor(waited), hold_past: hd.past, ...(extra || {}) };
+    if (hd.on) { a.hold++; t.held.push({ ...item, hold: hd.on }); }
+    else if (due < now) { a[part].late++; a.late++; a.oldest_late_h = Math.max(a.oldest_late_h, Math.floor(waited)); t.late.push({ ...item, over_h: Math.max(1, Math.ceil(workingHoursBetween(due, now))) }); }
+    else if (due - now <= soonMs) { a.soon++; t.soon.push({ ...item, left_h: Math.max(0, Math.round((due - now) / 360000) / 10) }); }
   };
-  for (const r of await all(env, `SELECT c.client_id, c.claim_no, c.escalated_at, e.name AS by_name FROM claims c LEFT JOIN users e ON e.id = c.escalated_by
+  for (const r of await all(env, `SELECT c.id, c.client_id, c.claim_no, c.escalated_at, e.name AS by_name FROM claims c LEFT JOIN users e ON e.id = c.escalated_by
       WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND c.client_id IN ${IN} LIMIT 5000`, ...ids)) {
-    const t = per.get(r.client_id); if (t) attnItem(t, "flagged", r.escalated_at || now, r.claim_no, r.by_name);
+    const t = per.get(r.client_id); if (t) attnItem(t, "flagged", "flag", r.id, r.id, r.escalated_at || now, r.claim_no, r.by_name);
   }
-  for (const r of await all(env, `SELECT h.client_id, h.dept, COALESCE(h.paused_at, h.created_at) AS at, h.client_req_by_name AS by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
+  for (const r of await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, COALESCE(h.paused_at, h.created_at) AS at, h.client_req_by_name AS by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
       WHERE h.status = 'client' AND h.client_sent_at IS NULL AND h.client_id IN ${IN} LIMIT 5000`, ...ids)) {
-    const t = per.get(r.client_id); if (t) attnItem(t, "requests", r.at, r.claim_no, r.by_name, { dept: r.dept });
+    const t = per.get(r.client_id); if (t) attnItem(t, "requests", "handoff", r.id, r.claim_id, r.at, r.claim_no, r.by_name, { dept: r.dept });
   }
   // sent back by the desks: waiting until a team lead reviews it (or a biller works it, or it goes to a desk again)
-  for (const r of await all(env, `SELECT h.client_id, h.dept, h.done_at, h.done_by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
+  for (const r of await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, h.done_at, h.done_by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
       WHERE h.status IN ('assistance','back') AND h.done_at > ? AND h.client_id IN ${IN} AND NOT (c.reviewed_at IS NOT NULL AND c.reviewed_at > h.done_at)
         AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)
         AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at) LIMIT 5000`, now - 30 * 86400000, ...ids)) {
-    const t = per.get(r.client_id); if (t) attnItem(t, "back", r.done_at, r.claim_no, r.done_by_name, { dept: r.dept });
+    const t = per.get(r.client_id); if (t) attnItem(t, "back", "handoff", r.id, r.claim_id, r.done_at, r.claim_no, r.done_by_name, { dept: r.dept });
   }
   return per;
 }
 /* Several clients' boards added up (Inventory status for everyone). */
 function sumTat(boards) {
-  const o = blankTat(); delete o.late;
+  const o = blankTat(); delete o.late; delete o.soon; delete o.held;
   for (const t of boards) {
-    for (const [k] of TAT_DEPTS) for (const f of ["n", "bal", "ok", "soon", "late", "rechecks"]) o.desks[k][f] += t.desks[k][f];
+    for (const [k] of TAT_DEPTS) for (const f of ["n", "bal", "ok", "soon", "late", "hold", "rechecks"]) o.desks[k][f] += t.desks[k][f];
     for (const [k] of TAT_DEPTS) o.desks[k].oldest_late_h = Math.max(o.desks[k].oldest_late_h, t.desks[k].oldest_late_h);
     for (const [p] of ATTN_PARTS) { o.attn[p].n += t.attn[p].n; o.attn[p].late += t.attn[p].late; }
-    for (const f of ["n", "soon", "late"]) o.attn[f] += t.attn[f];
+    for (const f of ["n", "soon", "late", "hold"]) o.attn[f] += t.attn[f];
     o.attn.oldest_late_h = Math.max(o.attn.oldest_late_h, t.attn.oldest_late_h);
   }
   return o;
+}
+/* How much was closed within TAT in a window (the month on the SLA scorecard, last week in the Monday digest): the tasks that
+   fell due in it. Payment posting; Submission (Rejections resubmit to the Submission TAT); Needs attention (48 working hours).
+   Closed after the due time, or still open past it, is missed; still open and not yet due is left out. */
+async function tatStats(env, clientIds, from, to, now = Date.now()) {
+  const ids = [...new Set(clientIds || [])].filter(Boolean);
+  const blank = () => ({ due: 0, met: 0, missed: 0, open: 0, pct: null, who: {} });
+  const out = new Map(ids.map((id) => [id, { posting: blank(), submission: blank(), attention: blank(), missed_list: [] }]));
+  if (!ids.length) return out;
+  const IN = `(${ids.map(() => "?").join(",")})`, lim = Math.min(to, now);
+  const tally = (s, due, closed, who, row) => {
+    if (closed == null && due >= now) { s.open++; return; }
+    s.due++;
+    if (closed != null && closed <= due) s.met++;
+    else { s.missed++; if (who) s.who[who] = (s.who[who] || 0) + 1; if (row) row(); }
+  };
+  for (const h of await all(env, `SELECT h.client_id, h.dept, h.status, h.due_at, h.created_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no, COALESCE(NULLIF(h.done_by_name, ''), u.name) AS who
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
+      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, lim)) {
+    const o = out.get(h.client_id); if (!o) continue;
+    const k = h.dept === "posting" ? "posting" : "submission", open = ["pending", "assigned"].includes(h.status);
+    tally(o[k], h.due_at, open ? null : h.closed_at, h.who || "", () => o.missed_list.push({ dept: k, claim_no: h.claim_no || "", sent: h.created_at, due: h.due_at, closed: open ? null : h.closed_at, who: h.who || "" }));
+  }
+  // Needs attention: flagged by billers (closed when answered or reviewed), sent back (when reviewed or worked again), client requests (when sent)
+  const attn = async (sql, args) => { for (const r of await all(env, sql, ...args)) { const o = out.get(r.client_id); if (!o || !r.start) continue; const due = addWorkingHours(r.start, ATTN_TAT_HOURS); if (due < from || due > lim) continue; tally(o.attention, due, r.closed_at || null, ""); } };
+  const back = now - 120 * 86400000;
+  await attn(`SELECT client_id, escalated_at AS start, CASE WHEN escalated = 1 THEN NULL ELSE COALESCE(escalation_answered_at, reviewed_at, updated_at) END AS closed_at FROM claims
+    WHERE client_id IN ${IN} AND escalated_at > ? AND (escalated = 1 OR escalation_answered_at >= escalated_at OR reviewed_at >= escalated_at)`, [...ids, back]);
+  // the first of: reviewed by a team lead, worked by a biller, sent to a desk again (none yet: still open)
+  await attn(`SELECT h.client_id, h.done_at AS start, NULLIF(MIN(COALESCE(CASE WHEN c.reviewed_at > h.done_at THEN c.reviewed_at END, 9e15),
+        COALESCE((SELECT MIN(n.created_at) FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at), 9e15),
+        COALESCE((SELECT MIN(h2.created_at) FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at), 9e15)), 9e15) AS closed_at
+    FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.status IN ('assistance','back') AND h.client_id IN ${IN} AND h.done_at > ?`, [...ids, back]);
+  await attn(`SELECT client_id, COALESCE(paused_at, created_at) AS start, client_sent_at AS closed_at FROM handoffs WHERE client_req_by_name <> '' AND client_id IN ${IN} AND COALESCE(paused_at, created_at) > ?`, [...ids, back]);
+  for (const o of out.values()) for (const k of ["posting", "submission", "attention"]) { const s = o[k]; s.pct = s.due ? Math.round(s.met / s.due * 1000) / 10 : null; }
+  return out;
 }
 /* ---- TAT reminders by email: every supervisor, SME and above on the client, Monday to Friday.
    Posting, Submission and Rejections at 09:00 IST; AR (Needs attention) at 19:00 IST. A send that fails is tried again on the
@@ -706,7 +821,8 @@ function tatMailFor(u, kind, clients, board, now, appUrl = "") {
   const when = new Date(now + IST_MIN * 60000), dt = when.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) + ", " + String(when.getUTCHours()).padStart(2, "0") + ":" + String(when.getUTCMinutes()).padStart(2, "0") + " IST";
   const subject = `${n} ${n === 1 ? "task" : "tasks"} past TAT on your clients · ${TAT_MAIL[kind].title} · ${dt}`;
   const fmtAt = (ms) => { const d = new Date(ms + IST_MIN * 60000); return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) + ", " + String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
-  const who = (x) => kind === "desks" ? (x.recheck ? "Recheck · " : "") + (x.by ? "Sent by " + x.by + " · " : "") + fmtAt(x.at) : (x.part === "flagged" ? "Flagged by " : x.part === "back" ? "Sent back by " : "Asked by ") + (x.by || "the team") + " · " + fmtAt(x.at);
+  const passed = (x) => (x.hold_past ? " · expected " + x.hold_past.until + " (" + x.hold_past.reason.toLowerCase() + "): the date has passed" : "");
+  const who = (x) => (kind === "desks" ? (x.recheck ? "Recheck · " : "") + (x.by ? "Sent by " + x.by + " · " : "") + fmtAt(x.at) : (x.part === "flagged" ? "Flagged by " : x.part === "back" ? "Sent back by " : "Asked by ") + (x.by || "the team") + " · " + fmtAt(x.at)) + passed(x);
   const th = "text-align:left;font-size:11px;letter-spacing:.05em;color:#627079;padding:6px;border-bottom:1px solid #dfe4ea;text-transform:uppercase";
   const td = "padding:7px 6px;border-bottom:1px solid #f0f2f5;font-size:13px;vertical-align:top";
   const link = appUrl ? String(appUrl).replace(/\/+$/, "") + "/#/dashboard?tab=inventory" : "";
@@ -762,6 +878,23 @@ async function syncWfm(env) {
   const rows = data.projects.filter((x) => x && x.name).map((x) => ({ name: str(x.name, 120), billable: n(x.billable), assigned_fte: n(x.assigned_fte) || 0, agents: n(x.agents) || 0,
     training: n(x.training) || 0, team_fte: n(x.team_fte) || 0, people: n(x.people) || 0 }));
   await setSetting(env, "wfm_projects", { ok: true, at: Date.now(), today: data.today || "", rows });
+  return rows;
+}
+/* Company holidays from Purview Shastra (dev/shastra-holidays-feed.sql): the TAT clock skips them. Until the function is
+   there, the last list stays (none at first: Saturday and Sunday only). */
+async function syncHolidays(env) {
+  const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
+  let r = null, data = null;
+  try { r = await fetchT(base + "/rest/v1/rpc/brahmastra_holidays", { method: "POST", headers: { apikey: pub, Authorization: "Bearer " + pub, "Content-Type": "application/json" }, body: JSON.stringify({ p_key: env.SHASTRA_FEED_KEY }) }); data = await r.json(); } catch (e) { data = null; }
+  if (!r || !r.ok || !data || data.ok === false || !Array.isArray(data.holidays)) {
+    const prev = await getSetting(env, "holidays", null);
+    const why = (data && (data.error || data.message)) || (r && r.ok && data ? "the answer has no list of holidays" : r ? "HTTP " + r.status : "no answer");
+    await setSetting(env, "holidays", { ...(prev || {}), ok: false, tried_at: Date.now(), error: str(why, 200) });
+    return null;
+  }
+  const rows = data.holidays.filter((x) => x && /^\d{4}-\d{2}-\d{2}/.test(String(x.date || ""))).map((x) => ({ date: String(x.date).slice(0, 10), name: str(x.name || "", 80) }));
+  await setSetting(env, "holidays", { ok: true, at: Date.now(), rows });
+  await loadHolidays(env, true);
   return rows;
 }
 /* Each client's people from WFM: the projects matched to it (its roster project names), added up. */
@@ -1149,6 +1282,7 @@ const noteFields = (n) => { let f = {}; try { f = JSON.parse(n.fields_json || "{
 class ApiError extends Error { constructor(status, message) { super(message); this.status = status; } }
 const bad = (m) => new ApiError(400, m);
 const denied = (m) => new ApiError(403, m || "Not allowed.");
+const notFound = (m) => new ApiError(404, m || "Not found.");
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -1448,6 +1582,7 @@ async function syncShastra(env, by) {
   await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings, removed,
     emails: res.warnings.slice(0, 200), no_access: res.excluded.length });
   try { await syncWfm(env); } catch (e) {}
+  try { await syncHolidays(env); } catch (e) {}
   return { ...res, removed, synced: true };
 }
 /* Purview Shastra's time on the floor and idle time (dev/shastra-floor-feed.sql): brahmastra_floor(p_key, p_from, p_to)
@@ -1849,11 +1984,26 @@ function digestRollup(ds) {
     if (d.collected.amount > d.collected.prev && d.collected.amount > 0) good.push([d.collected.amount, `${d.client.name} collected ${dMoney(d.collected.amount)}, more than the week before`]);
   }
   good.sort((a, b) => b[0] - a[0]);
-  return { ar, o90, pct, target: ds.length ? ds[0].ar.target : OVER90_TARGET, ar_ago: withAgo.length ? agoNow - ago : null, coll: sum((d) => d.collected.amount), coll_prev: sum((d) => d.collected.prev),
+  const tat = Object.fromEntries(TAT_PARTS.map(([k]) => { const xs = ds.map((d) => d.tat && d.tat.parts.find((p) => p.k === k)).filter(Boolean), due = xs.reduce((t, x) => t + x.due, 0), met = xs.reduce((t, x) => t + x.met, 0);
+    return [k, due ? { due, met, pct: Math.round(met / due * 1000) / 10 } : null]; }));
+  for (const d of ds) if (d.tat && d.tat.worst) attention.push([d.tat.worst.missed > 2 ? "red" : "amber", d.client.name, `TAT last week: ${d.tat.worst.missed} missed at ${d.tat.worst.label}` + (d.tat.worst.who ? `, ${d.tat.worst.who_n} with ${d.tat.worst.who}` : "")]);
+  attention.sort((a, b) => (a[0] === "red" ? 0 : 1) - (b[0] === "red" ? 0 : 1));
+  return { ar, o90, pct, tat, target: ds.length ? ds[0].ar.target : OVER90_TARGET, ar_ago: withAgo.length ? agoNow - ago : null, coll: sum((d) => d.collected.amount), coll_prev: sum((d) => d.collected.prev),
     work: sum((d) => d.worked.n), work_prev: sum((d) => d.worked.prev), count, bands, sla_avg: scored.length ? Math.round(scored.reduce((t, d) => t + d.card.score, 0) / scored.length) : null,
     sla_month: scored.length && scored.every((d) => d.card.period.label === scored[0].card.period.label) ? scored[0].card.period.label : "", esc: es.length ? { n: et("n"), open: et("open"), over24: et("over24"), over24_reason: et("over24_reason"), errors: et("errors"), month: monthLabel(es[0].esc.from.slice(0, 7)) } : null,
     attention, good: good.map((g) => g[1]) };
 }
+/* One client's TAT for the digest: each part's % within TAT, and the part missed most with the person most of it sat with. */
+const TAT_PARTS = [["posting", "Payment posting"], ["submission", "Submission"], ["attention", "Needs attention"]];
+function tatDigest(t) {
+  if (!t) return null;
+  const parts = TAT_PARTS.map(([k, label]) => ({ k, label, due: t[k].due, met: t[k].met, missed: t[k].missed, pct: t[k].pct })).filter((x) => x.due);
+  if (!parts.length) return null;
+  const w = [...parts].filter((x) => x.missed).sort((a, b) => b.missed - a.missed)[0] || null;
+  const whoList = w && t[w.k].who ? Object.entries(t[w.k].who).sort((a, b) => b[1] - a[1]) : [];
+  return { parts, worst: w ? { label: w.label, missed: w.missed, who: whoList.length ? whoList[0][0] : "", who_n: whoList.length ? whoList[0][1] : 0 } : null };
+}
+const tatLine = (t) => t ? t.parts.map((x) => `${x.label} ${x.pct}% (${x.met} of ${x.due})`).join(" · ") + (t.worst ? ` · most missed: ${t.worst.label}, ${t.worst.missed}` + (t.worst.who ? ` (${t.worst.who_n} with ${t.worst.who})` : "") : "") : "";
 // worst first: red SLA, then amber, green, then clients Drishti has not scored, by health
 const digestOrder = (ds) => [...ds].sort((a, b) => (a.card ? a.card.score : 999) - (b.card ? b.card.score : 999) || ({ risk: 0, watch: 1, good: 2 }[a.health] - { risk: 0, watch: 1, good: 2 }[b.health]));
 const BAND_LOOK = { ok: ["Green", "#127A4D", "#E3F5EC", "#1A9E6A"], warn: ["Amber", "#935300", "#FDF0D7", "#E8A13C"], miss: ["Red", "#BA2340", "#FDE7EB", "#C94F4F"] };
@@ -1891,6 +2041,9 @@ ${sec("CLIENT BY CLIENT")}
 <tr><td style="padding:0 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12.5px;border-collapse:collapse">
 <tr>${hcell("Client")}${hcell("SLA", "center")}${hcell("Escalations", "center")}${hcell("Billable / Assign FTE", "center")}${hcell("Over 90", "right")}</tr>
 ${order.map(row).join("")}</table></td></tr>
+${ds.some((d) => d.tat) ? sec("TAT LAST WEEK · WORKING HOURS, MONDAY TO FRIDAY") + `<tr><td style="padding:0 22px;font-size:12.5px;line-height:1.6">` +
+  TAT_PARTS.filter(([k]) => R.tat[k]).map(([k, label]) => `<span style="white-space:nowrap;margin-right:12px">${label}: <b style="color:${R.tat[k].pct >= 100 ? "#127A4D" : R.tat[k].pct >= 90 ? "#935300" : "#BA2340"}">${R.tat[k].pct}%</b> <span style="color:#627079">(${R.tat[k].met} of ${R.tat[k].due})</span></span>`).join("") +
+  order.filter((d) => d.tat).map((d) => `<div style="margin-top:3px"><b>${htmlEsc(d.client.name)}</b>: ${htmlEsc(tatLine(d.tat))}</div>`).join("") + `</td></tr>` : ""}
 ${sec("NEEDS YOUR ATTENTION")}
 <tr><td style="padding:0 22px;font-size:13px;line-height:1.6">${R.attention.length ? R.attention.slice(0, 5).map(([t, c, x]) => `<div><span style="color:${t === "red" ? "#C94F4F" : "#E8A13C"}">●</span> <b>${htmlEsc(c)}</b>: ${htmlEsc(x)}</div>`).join("") + (R.attention.length > 5 ? `<div style="color:#627079;font-size:12px">and ${R.attention.length - 5} more on the dashboard</div>` : "") : `<div style="color:#627079">Nothing needs you this week.</div>`}
 ${R.good.length ? `<div style="color:#127A4D;margin-top:4px">Good news: ${htmlEsc(R.good.slice(0, 2).join("; "))}.</div>` : ""}</td></tr>
@@ -1903,6 +2056,8 @@ ${link ? `<tr><td style="padding:16px 22px 4px"><table role="presentation" cellp
     ...(wf.length ? [`Total team: Billable FTE: ${fteTxt(wsum("billable"))} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}`] : []),
     `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} (target ${ESC_SLA_TARGET})` : ""), "", "Client by client:",
     ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "not scored"}` + (d.esc ? `, escalations ${d.esc.n}` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
+    ...(ds.some((d) => d.tat) ? ["", "TAT last week (working hours, Monday to Friday):", ...TAT_PARTS.filter(([k]) => R.tat[k]).map(([k, label]) => `- ${label}: ${R.tat[k].pct}% (${R.tat[k].met} of ${R.tat[k].due})`),
+      ...order.filter((d) => d.tat).map((d) => `- ${d.client.name}: ${tatLine(d.tat)}`)] : []),
     "", "Needs your attention:", ...(R.attention.length ? R.attention.slice(0, 5).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "",
     ...(link ? ["Open the full digest: " + link, ""] : []), "Turn this off in Brahmastra, Settings, Email."].join("\n");
   const subject = `${span.title} · week of ${dDay(wk.first)}: ${R.count.risk ? R.count.risk + " at risk, " : ""}AR ${dMoney(R.ar)}${R.attention.length ? ", " + R.attention.length + " to look at" : ""}`;
@@ -1924,6 +2079,9 @@ async function spanData(env, span, wk) {
     d.esc = await escSummary(env, d.client.id, wk.last.slice(0, 8) + "01", wk.last, wk.to);
   }
   const wfm = await clientWfm(env, ds.map((d) => d.client.id)); ds.forEach((d) => { d.wfm = wfm.get(d.client.id) || null; });
+  // TAT last week: Payment posting, Submission and Needs attention, and where it was missed most (no claim numbers in the digest)
+  const ts = await tatStats(env, ds.map((d) => d.client.id), wk.from, wk.to);
+  for (const d of ds) d.tat = tatDigest(ts.get(d.client.id));
   return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null };
 }
 async function spanMail(env, span, wk) {
@@ -2589,16 +2747,27 @@ const REJECT_REASONS = REJECT_CODES;
 const ASSIST_REASONS = { subcheck: ["Payer has no record yet", "Cannot reach the payer / portal", "Other"], posting: ["No EOB / ERA", "Amount mismatch", "Patient / account not found", "Payer not set up", "Duplicate payment", "Other"],
   submission: ["Missing claim data", "Clearinghouse rejection", "No payer ID / address", "Authorization missing", "Duplicate claim", "Other"] };
 ASSIST_REASONS.rejection = ASSIST_REASONS.submission;
-/* Every TAT counts working hours only: Monday to Friday, IST (Saturday and Sunday are skipped). */
+/* Every TAT counts working hours only: Monday to Friday, IST. Saturday, Sunday and the company holidays from Purview Shastra
+   (its holidays table, through dev/shastra-holidays-feed.sql) are skipped. The holidays sit in the setting "holidays" and are
+   read again at most every 10 minutes. */
+let HOLIDAYS = new Set(), holidaysAt = 0;
+async function loadHolidays(env, force = false) {
+  if (!force && Date.now() - holidaysAt < 600000) return HOLIDAYS;
+  holidaysAt = Date.now();
+  try { const h = await getSetting(env, "holidays", null); HOLIDAYS = new Set(h && Array.isArray(h.rows) ? h.rows.map((r) => String(r && r.date || "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) : []); } catch (e) { /* keep the last list */ }
+  return HOLIDAYS;
+}
+// d: a Date shifted to IST (its UTC fields are the IST date)
+const offDay = (d) => { const dow = d.getUTCDay(); return dow === 0 || dow === 6 || HOLIDAYS.has(d.toISOString().slice(0, 10)); };
 const ATTN_TAT_HOURS = 48;  // Needs attention (flagged by billers, sent back by the desks, client requests): a team lead closes it within 48
 const ESC_TAT_HOURS = 24;   // Escalation tracker: open past 24 working hours, the team lead gives the reason and expected date
 /* The moment N working hours before ms: anything that started before it is past an N-hour TAT now. */
 function subWorkingHours(ms, hours) {
   let t = ms, left = hours * 3600000;
   for (let guard = 0; left > 0 && guard < 60; guard++) {
-    const d = new Date(t - 1 + IST_MIN * 60000), dow = d.getUTCDay();
+    const d = new Date(t - 1 + IST_MIN * 60000);
     const dayStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - IST_MIN * 60000;
-    if (dow === 0 || dow === 6) { t = dayStart; continue; }
+    if (offDay(d)) { t = dayStart; continue; }
     const step = Math.min(left, t - dayStart);
     t -= step; left -= step;
   }
@@ -2609,10 +2778,10 @@ function workingHoursBetween(a, b) {
   if (!(b > a)) return 0;
   let t = a, ms = 0;
   for (let guard = 0; t < b && guard < 800; guard++) {
-    const d = new Date(t + IST_MIN * 60000), dow = d.getUTCDay();
+    const d = new Date(t + IST_MIN * 60000);
     const dayEnd = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - IST_MIN * 60000 + 86400000;
     const step = Math.min(b, dayEnd) - t;
-    if (dow !== 0 && dow !== 6) ms += step;
+    if (!offDay(d)) ms += step;
     t += step;
   }
   return ms / 3600000;
@@ -2621,9 +2790,9 @@ const escPast = (at, now = Date.now()) => !!at && addWorkingHours(at, ESC_TAT_HO
 function addWorkingHours(ms, hours) {
   let t = ms, left = hours * 3600000;
   for (let guard = 0; left > 0 && guard < 60; guard++) {
-    const d = new Date(t + IST_MIN * 60000), dow = d.getUTCDay();
+    const d = new Date(t + IST_MIN * 60000);
     const dayStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - IST_MIN * 60000;
-    if (dow === 0 || dow === 6) { t = dayStart + (dow === 6 ? 2 : 1) * 86400000; continue; }
+    if (offDay(d)) { t = dayStart + 86400000; continue; }
     const step = Math.min(left, dayStart + 86400000 - t);
     t += step; left -= step;
   }
@@ -3664,6 +3833,58 @@ const OPS = {
     return { claims: ok.map(({ assigned_to, last_worked_by, ...c }) => c) };
   },
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
+  /* Past TAT: everything past its TAT on this person's clients, what is due in the next hours, and what is on hold with a reason. */
+  "tat.list": async ({ env, user, payload }) => {
+    const now = Date.now();
+    const cls = (await all(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id) && (!payload.client_id || c.id === payload.client_id));
+    const board = await tatBoard(env, cls.map((c) => c.id), now);
+    const label = (x) => x.group === "desks" ? (TAT_DEPTS.find(([k]) => k === x.dept) || [, x.dept])[1] + (x.recheck ? " · recheck" : "") : "Needs attention · " + (ATTN_PARTS.find(([k]) => k === x.part) || [, x.part])[1];
+    const shape = (c, x) => ({ ...x, client_id: c.id, client_name: c.name, type: label(x), tat: x.group === "desks" ? tatHours(c, x.dept) : ATTN_TAT_HOURS, can_hold: canEditClient(user, c.id) });
+    const late = [], soon = [], held = [];
+    for (const c of cls) { const t = board.get(c.id); if (!t) continue; t.late.forEach((x) => late.push(shape(c, x))); t.soon.forEach((x) => soon.push(shape(c, x))); t.held.forEach((x) => held.push(shape(c, x))); }
+    late.sort((a, b) => b.over_h - a.over_h); soon.sort((a, b) => a.due - b.due); held.sort((a, b) => a.hold.until.localeCompare(b.hold.until));
+    return { late, soon, held, reasons: TAT_HOLD_REASONS, due_soon_hours: DUE_SOON_HOURS, max_days: 30, clients: cls.map((c) => ({ id: c.id, name: c.name })) };
+  },
+  /* "Can't close yet": the reason and the expected close date. Until that date the task is off the Past TAT reminders. */
+  "tat.hold": async ({ env, user, payload }) => {
+    const kind = payload.kind === "flag" ? "flag" : "handoff", id = str(payload.id, 60), now = Date.now();
+    let clientId, claimId, since = null;
+    if (kind === "handoff") {
+      const h = await one(env, "SELECT id, client_id, claim_id, status FROM handoffs WHERE id = ?", id);
+      if (!h) throw notFound("That task was not found.");
+      if (!["pending", "assigned", "client", "assistance", "back"].includes(h.status)) throw bad("This task is already closed.");
+      clientId = h.client_id; claimId = h.claim_id;
+    } else {
+      const c = await one(env, "SELECT id, client_id, escalated, escalated_at FROM claims WHERE id = ?", id);
+      if (!c) throw notFound("That claim was not found.");
+      if (!c.escalated) throw bad("This claim is no longer flagged for a team lead.");
+      clientId = c.client_id; claimId = c.id; since = c.escalated_at;
+    }
+    editableOr(user, clientId);
+    const reason = TAT_HOLD_REASONS.includes(payload.reason) ? payload.reason : "";
+    if (!reason) throw bad("Pick why it cannot be closed yet.");
+    const note = str(payload.note, 500).trim();
+    if (reason === "Other" && note.length < 3) throw bad("Write the reason.");
+    const today = istISO(now), until = isoDate(payload.until);
+    if (!until || until < today) throw bad("Pick the expected close date: today or later.");
+    if (until > istISO(now + 30 * 86400000)) throw bad("The expected close date can be at most 30 days ahead.");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE tat_holds SET cleared_at = ?, cleared_by_name = ? WHERE kind = ? AND ref_id = ? AND cleared_at IS NULL").bind(now, user.name || "", kind, id),
+      env.DB.prepare("INSERT INTO tat_holds (id, kind, ref_id, client_id, claim_id, since, reason, note, until, by_id, by_name, at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(uuid(), kind, id, clientId, claimId, since, reason, note, until, user.id, user.name || "", now),
+      claimEvent(env, claimId, user, "tat_hold", reason, { until, note, kind }),
+    ]);
+    return { ok: true, until };
+  },
+  "tat.unhold": async ({ env, user, payload }) => {
+    const h = await one(env, "SELECT * FROM tat_holds WHERE id = ? AND cleared_at IS NULL", str(payload.id, 60));
+    if (!h) throw notFound("That hold was not found, or it was already cleared.");
+    editableOr(user, h.client_id);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE tat_holds SET cleared_at = ?, cleared_by_name = ? WHERE id = ?").bind(Date.now(), user.name || "", h.id),
+      claimEvent(env, h.claim_id, user, "tat_unhold", h.reason, { until: h.until }),
+    ]);
+    return { ok: true };
+  },
   /* The TAT reminder email as this person would get it now (Posting, Submission and Rejections at 09:00; AR at 19:00 IST). */
   "tat.preview": async ({ env, user, payload }) => {
     const kind = payload.kind === "ar" ? "ar" : "desks", now = Date.now();
@@ -3691,14 +3912,14 @@ const OPS = {
         const t = tb.get(c.id); if (!t) continue;
         for (const [k, label] of TAT_DEPTS) {
           const b = t.desks[k], what = (n) => `${n} ${label} ${n === 1 ? "claim" : "claims"}`;
-          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${tatHours(c, k)} h)`, view: "handoffs", params: { client_id: c.id } }); pastTat += b.late; }
+          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${tatHours(c, k)} h)`, view: "tat", params: { client_id: c.id } }); pastTat += b.late; }
           if (b.soon) items.push({ key: `soon:${c.id}:${k}`, cat: "desks", tone: "amber", n: b.soon, text: `${what(b.soon)} due in the next ${DUE_SOON_HOURS} hours · ${c.name}`, sub: "Still within TAT", view: "handoffs", params: { client_id: c.id } });
         }
         const a = t.attn;
         if (a.late) {
           const one = { flagged: ["flagged by a biller", "flagged by billers"], back: ["sent back by Posting / Submission", "sent back by Posting / Submission"], requests: ["client request to send", "client requests to send"] };
           const parts = ATTN_PARTS.filter(([p]) => a[p].late).map(([p]) => a[p].late + " " + one[p][a[p].late === 1 ? 0 : 1]);
-          items.push({ key: `tat:${c.id}:attn`, cat: "tat", tone: "red", n: a.late, text: `${a.late} Needs attention ${a.late === 1 ? "item" : "items"} past ${ATTN_TAT_HOURS} working hours · ${c.name}`, sub: parts.join(" · ") + ` · oldest ${a.oldest_late_h} working hours`, view: "attention", params: null });
+          items.push({ key: `tat:${c.id}:attn`, cat: "tat", tone: "red", n: a.late, text: `${a.late} Needs attention ${a.late === 1 ? "item" : "items"} past ${ATTN_TAT_HOURS} working hours · ${c.name}`, sub: parts.join(" · ") + ` · oldest ${a.oldest_late_h} working hours`, view: "tat", params: { client_id: c.id } });
           pastTat += a.late;
         }
       }
@@ -3794,7 +4015,7 @@ const OPS = {
       strengths: c.strengths.slice(0, 2).map((i) => ({ name: i.name, shown: i.shown })) } : null;
     return { span: { key: s.key, title: s.title }, spans: spans.map((x) => ({ key: x.key, title: x.title })), manager, week: want, weeks, rollup: R, notices,
       clients: digestOrder(ds).map((d) => ({ id: d.client.id, name: d.client.name, health: d.health, tls: d.tls, smes: d.smes, wfm: d.wfm ? { billable: d.wfm.billable, assigned_fte: d.wfm.assigned_fte } : null,
-        ar: d.ar, collected: d.collected, worked: d.worked, esc: d.esc ? { ...d.esc, rows: undefined } : null, card: card(d.card), monthend: d.monthend })) };
+        ar: d.ar, collected: d.collected, worked: d.worked, esc: d.esc ? { ...d.esc, rows: undefined } : null, card: card(d.card), monthend: d.monthend, tat: d.tat || null, tat_line: tatLine(d.tat) })) };
   },
   "digest.sendMe": async ({ env, user, payload }) => {
     const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
@@ -4004,7 +4225,9 @@ const OPS = {
         do_first: s.insights.filter((i) => i.tone !== "green").slice(0, 2).map((i) => i.short) }; });
     // pending with the desks and team leads, against each TAT (working hours)
     const tb = await tatBoard(env, ids), tcl = payload.client_id ? await one(env, "SELECT posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", payload.client_id) : null;
-    const pending = { ...sumTat([...tb.values()]), tat: { posting: tcl ? tatHours(tcl, "posting") : null, submission: tcl ? tatHours(tcl, "submission") : null, attention: ATTN_TAT_HOURS }, due_soon_hours: DUE_SOON_HOURS };
+    const hol = await getSetting(env, "holidays", null), hrows = hol && Array.isArray(hol.rows) ? hol.rows : [];
+    const pending = { ...sumTat([...tb.values()]), tat: { posting: tcl ? tatHours(tcl, "posting") : null, submission: tcl ? tatHours(tcl, "submission") : null, attention: ATTN_TAT_HOURS }, due_soon_hours: DUE_SOON_HOURS,
+      holidays: { ok: !!(hol && hol.ok), next: hrows.filter((h) => h.date >= today).slice(0, 3) } };
     for (const c of clients) { const t = tb.get(c.client_id); c.past_tat = t ? t.late.length : 0; }
     return { today, wd_left: wdLeft, target: T, clients, pending, last_inventory: pf.rows.reduce((m, r) => Math.max(m, r.last_inventory || 0), 0) || null,
       drishti: pf.drishti, ...shape(tot, pf.rows, payload.client_id ? pfBy.get(payload.client_id) : null, payload.client_id || "") };
@@ -5542,7 +5765,10 @@ const OPS = {
     const from = isoDate(payload.from) || today.slice(0, 8) + "01", to = isoDate(payload.to) || today;
     const w = (await clientWfm(env, [clientId])).get(clientId) || null;
     const feed = await getSetting(env, "wfm_projects", null);
-    return { wfm: w, wfm_ok: !!(feed && feed.ok), esc: await escSummary(env, clientId, from, to), month: monthLabel(from.slice(0, 7)) };
+    const ts = (await tatStats(env, [clientId], istDayStart(from), istDayEnd(to))).get(clientId);
+    const cl = await one(env, "SELECT posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", clientId);
+    const tat = ts ? { posting: { ...ts.posting, who: undefined, tat: tatHours(cl, "posting") }, submission: { ...ts.submission, who: undefined, tat: tatHours(cl, "submission") }, attention: { ...ts.attention, who: undefined, tat: ATTN_TAT_HOURS }, missed: ts.missed_list.slice(0, 50) } : null;
+    return { wfm: w, wfm_ok: !!(feed && feed.ok), esc: await escSummary(env, clientId, from, to), tat, month: monthLabel(from.slice(0, 7)) };
   },
   /* The Claims tab's CSV in the Production Conso layout: one row per claim with its last entry (blank work columns when
      nobody has worked it yet). Same filters as the list. */
@@ -6538,12 +6764,13 @@ export default {
   async scheduled(event, env, ctx) {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
-      try { await ensureReady(env); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) { console.log("Snapshot: " + (e && e.message)); }
+      try { await ensureReady(env); await loadHolidays(env); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) { console.log("Snapshot: " + (e && e.message)); }
       if (env.MS_CLIENT_SECRET && String(env.REPORTS_AUTO || "on").toLowerCase() !== "off") {
         try { const tok = await graphAppToken(env); for (const r of await all(env, "SELECT id FROM clients WHERE active = 1 AND (od_production_id IS NULL OR od_production_id = '' OR od_prod_json NOT LIKE '%rejection%') ORDER BY COALESCE(CASE WHEN json_valid(od_status_json) THEN json_extract(od_status_json, '$.at') END, 0), name LIMIT 8")) { try { await ensureClientFolders(env, r.id, tok); } catch (e) { console.log("Folders: " + (e && e.message)); } } } catch (e) { console.log("Folders: " + (e && e.message)); }
       }
       try { await escalationReminders(env); } catch (e) { console.log("Escalation reminders: " + (e && e.message)); }
       // TAT reminders, Monday to Friday: Posting, Submission and Rejections at 09:00 IST, AR at 19:00 IST (and the hourly runs retry a failed send for 3 hours)
+      try { await tatMonthFiles(env); } catch (e) { console.log("TAT report files: " + (e && e.message)); }
       if (env.EMAIL_PROVIDER && !env.DEMO) { try { const r = await sendTatReminders(env); if (r.kind && (r.sent || r.failed)) console.log(`TAT reminders ${r.kind} ${r.day}: ${r.sent} sent, ${r.failed} failed`); } catch (e) { console.log("TAT reminders: " + (e && e.message)); } }
       if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
       // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
@@ -6559,6 +6786,7 @@ export default {
     try {
       if (!env.DB) throw new ApiError(500, "No D1 database is bound as DB. Add the binding in the Worker settings.");
       await ensureReady(env);
+      await loadHolidays(env);
       if (url.pathname === "/" || url.pathname === "/health") return json({ ok: true, app: "brahmastra-api", version: VERSION });
       if (url.pathname === "/api" && request.method === "POST") {
         let body;
