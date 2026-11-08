@@ -84,6 +84,21 @@ ok("it lists only the team lead's own clients", dd.ok && (dd.r.empty || (shown.l
 const full = await A("digest.dashboard", { span: dd.ok && dd.r.span ? dd.r.span.key : undefined });
 ok("the admin still sees the whole digest", (full.clients || []).length >= shown.length, { admin: (full.clients || []).length, tl: shown.length });
 
+S("4. Escalations = the client escalations in the tracker only");
+const sun = cls.find((c) => /Sunrise/.test(c.name));
+const flag = (await A("claims.list", { client_id: sun.id, state: "workable", page_size: 1 })).rows[0];
+await DB.prepare("UPDATE claims SET escalated = 1, escalated_at = ? WHERE id = ?").bind(Date.now() - 30 * 3600000, flag.id).run();
+let ov = await A("client.overview", { client_id: sun.id });
+ok("a claim flagged by a biller is not a client escalation", ov.escalations.open === 0 && ov.escalations.late === 0, ov.escalations);
+await A("escalations.save", { client_id: sun.id, day: new Date().toISOString().slice(0, 10), dept: "Account Receivable", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Posting delay", description: "Payment not posted for 3 days", owner_id: U("Tina Lead").id, status: "open" });
+await DB.prepare("UPDATE escalations SET created_at = ? WHERE client_id = ?").bind(Date.now() - 30 * 3600000, sun.id).run();
+ov = await A("client.overview", { client_id: sun.id });
+ok("a client escalation in the tracker is counted, and flagged over 24 hours with no reason", ov.escalations.open === 1 && ov.escalations.late === 1, ov.escalations);
+const pf = await A("portfolio.overview", { client_id: sun.id });
+ok("client health names it as a client escalation", pf.rows[0].reasons.some((x) => /client escalation/.test(x)), pf.rows[0].reasons);
+const at = await A("attention.count", {});
+ok("Needs attention still counts the biller's flag on its own", at.escalations >= 1, at);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.81.0";
+const VERSION = "2.82.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1907,13 +1907,22 @@ async function missedByClient(env, payload) {
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const monthName = (ym) => { const [y, m] = String(ym || "").split("-").map(Number); return m >= 1 && m <= 12 ? MONTHS[m - 1] + " " + y : String(ym || ""); };
 /* Health of a client from its numbers: plain reasons, worst first, and a verdict (good / watch / risk). */
+/* "Escalations" everywhere a client is scored means the client's escalations in the Escalation tracker (logged by SMEs and above):
+   open ones, and those open over 24 hours with no reason given yet. A biller flagging a claim for their team lead is Needs attention,
+   counted apart, never as an escalation. */
+async function trackerEsc(env, clientId) {
+  const late = Date.now() - ESC_TAT_MS;
+  const rows = await all(env, `SELECT client_id, COUNT(*) AS n, SUM(CASE WHEN created_at < ? AND delay_reason = '' THEN 1 ELSE 0 END) AS late FROM escalations
+    WHERE status != 'resolved'${clientId ? " AND client_id = ?" : ""} GROUP BY client_id`, late, ...(clientId ? [clientId] : []));
+  return new Map(rows.map((r) => [r.client_id, { n: r.n || 0, late: r.late || 0 }]));
+}
 function healthOf({ pct, sla, tfl, escLate, waitingN, oldest, missed }) {
   const out = [];
   if (pct > OVER90_TARGET) out.push({ tone: pct > OVER90_TARGET + 5 ? "red" : "amber", text: `Over-90 AR is ${pct}%, above the ${OVER90_TARGET}% target` });
   if (sla && sla.score < 90) out.push({ tone: sla.score < 85 ? "red" : "amber", text: `SLA ${sla.score}% for ${monthName(sla.month)}, below 90%` });
   if (tfl && tfl.past_n) out.push({ tone: "red", text: `${tfl.past_n} claim${tfl.past_n > 1 ? "s are" : " is"} past the timely filing limit` });
   else if (tfl && tfl.soon_n) out.push({ tone: "amber", text: `${tfl.soon_n} claim${tfl.soon_n > 1 ? "s reach" : " reaches"} the timely filing limit in 30 days` });
-  if (escLate) out.push({ tone: "red", text: `${escLate} escalation${escLate > 1 ? "s have" : " has"} waited over 24 hours` });
+  if (escLate) out.push({ tone: "red", text: `${escLate} client escalation${escLate > 1 ? "s are" : " is"} open over 24 hours with no reason given` });
   if (waitingN && oldest >= 5) out.push({ tone: "amber", text: `${waitingN} request${waitingN > 1 ? "s" : ""} waiting on the client, oldest ${oldest} days` });
   if (missed >= 10) out.push({ tone: "amber", text: `${missed} missed tasks` });
   out.sort((a, b) => (a.tone === "red" ? 0 : 1) - (b.tone === "red" ? 0 : 1));
@@ -3506,10 +3515,10 @@ const OPS = {
     add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the 24-hour TAT` : ""), "handoffs");
     if (user.role === "supervisor") {
       const at = await OPS["attention.count"]({ env, user });
-      add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "escalated claim waits", "escalated claims wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over 24 hours` : ""), "attention");
+      add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "claim flagged by a biller waits", "claims flagged by billers wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over 24 hours` : ""), "attention");
       const ec = await OPS["escalations.count"]({ env, user });
-      add("esc_reason", "red", ec.needs_reason, plural(ec.needs_reason, "escalation is", "escalations are") + " open over 24 hours: give the reason and expected close date", "escalations", { status: "reason" });
-      add("esc_expected", "amber", ec.past_expected, plural(ec.past_expected, "escalation is", "escalations are") + " past the expected close date", "escalations", { status: "open" });
+      add("esc_reason", "red", ec.needs_reason, plural(ec.needs_reason, "client escalation is", "client escalations are") + " open over 24 hours: give the reason and expected close date", "escalations", { status: "reason" });
+      add("esc_expected", "amber", ec.past_expected, plural(ec.past_expected, "client escalation is", "client escalations are") + " past the expected close date", "escalations", { status: "open" });
       add("client_requests", "amber", at.client_to_send, plural(at.client_to_send, "client request", "client requests") + " to send to the client", "attention");
       const missed = await missedByClient(env, payload);
       let m = 0; for (const [cid, v] of missed) if (leadFor(user, cid)) m += v.ar + v.posting + v.submission;
@@ -3631,7 +3640,7 @@ const OPS = {
     const sla = mapOf(await all(env, `SELECT m.client_id, m.score, m.month FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`));
     const missed = await missedByClient(env, payload);
     const wait = mapOf(await all(env, `SELECT h.client_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS bal, MIN(COALESCE(h.client_sent_at, h.paused_at)) AS first FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.status = 'client' GROUP BY h.client_id`));
-    const esc = mapOf(await all(env, `SELECT client_id, COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND ? - escalated_at > ? THEN 1 ELSE 0 END) AS late FROM claims WHERE escalated = 1 AND state IN ${WORKABLE} GROUP BY client_id`, now, ESCALATION_TAT_MS));
+    const esc = await trackerEsc(env);
     const tflRows = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows;
     const tfl = new Map(); for (const r of tflRows) { const t = tfl.get(r.client_id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 }; t.soon_n += r.soon_n; t.soon_bal += r.soon_bal; t.past_n += r.past_n; t.past_bal += r.past_bal; tfl.set(r.client_id, t); }
     // capacity: entries a working day over the last 14 days, against the claims still to work
@@ -3815,7 +3824,7 @@ const OPS = {
     const skips = new Map((await all(env, "SELECT user_id, COUNT(*) AS n FROM notes WHERE kind = 'skip' AND created_at BETWEEN ? AND ? GROUP BY user_id", from, to)).map((r) => [r.user_id, r.n]));
     const missed = await missedByClient(env, payload);
     const sla = new Map((await all(env, `SELECT m.client_id, m.score FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`)).map((r) => [r.client_id, r.score]));
-    const esc = new Map((await all(env, `SELECT client_id, SUM(CASE WHEN escalated_at IS NOT NULL AND ? - escalated_at > ? THEN 1 ELSE 0 END) AS late FROM claims WHERE escalated = 1 AND state IN ${WORKABLE} GROUP BY client_id`, now, ESCALATION_TAT_MS)).map((r) => [r.client_id, r.late || 0]));
+    const escT = await trackerEsc(env), esc = new Map([...escT].map(([k, v]) => [k, v.late]));
     const rows = managers.map((m) => {
       const names = new Set(jsonList(m.scope_projects_json).map(projKey));
       const mine = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n))));
@@ -4044,7 +4053,7 @@ const OPS = {
       GROUP BY reason ORDER BY bal DESC LIMIT 6`, clientId, from, to);
     const lim = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows.filter((r) => r.client_id === clientId);
     const tfl = lim.reduce((a, r) => ({ soon_bal: a.soon_bal + r.soon_bal, soon_n: a.soon_n + r.soon_n, past_bal: a.past_bal + r.past_bal, past_n: a.past_n + r.past_n }), { soon_bal: 0, soon_n: 0, past_bal: 0, past_n: 0 });
-    const esc = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND ? - escalated_at > ? THEN 1 ELSE 0 END) AS late FROM claims WHERE client_id = ? AND escalated = 1 AND state IN ${WORKABLE}`, now, ESCALATION_TAT_MS, clientId);
+    const esc = (await trackerEsc(env, clientId)).get(clientId) || { n: 0, late: 0 };
     const missed = (await missedByClient(env, payload)).get(clientId) || { ar: 0, posting: 0, submission: 0 };
     const worked = await one(env, "SELECT COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, from, to);
     const month = okMonth(payload.month, today) ? payload.month : closingMonth(today);
