@@ -139,16 +139,21 @@ ok("N · not our error clears the person and the DOW", r.ok && s4.is_error === "
 
 S("Only external escalations count in the client's SLA");
 L1 = await TI("escalations.list", { client_id: sun.id, status: "all", today });
-ok("the screen's SLA box counts the external ones: 3 (SR1, SR3, SR4), not the internal SR2", L1.sla && L1.sla.n === 3 && !L1.sla.met, L1.sla);
+ok("the screen's SLA box: external 3 (SR1, SR3, SR4) against the target, red", L1.sla && L1.sla.n === 3 && !L1.sla.met, L1.sla);
+ok("and internal 1 (SR2) beside it, with its department", L1.sla.internal === 1 && L1.sla.by_dept_internal.length === 1 && L1.sla.by_dept_internal[0].n === 1, L1.sla);
+ok("open: 3 external, 1 internal", L1.stats.open_external === 3 && L1.stats.open_internal === 1, L1.stats);
 ok("this month's split: 3 external, 1 internal", L1.stats.logged_external === 3 && L1.stats.logged_internal === 1, L1.stats);
 const LI = await TI("escalations.list", { client_id: sun.id, status: "all", kind: "internal" });
 const LE = await TI("escalations.list", { client_id: sun.id, status: "all", kind: "external" });
 ok("the Type filter: Internal shows SR2 only, External the other three", LI.rows.map((x) => x.sr).join() === "2" && LE.rows.map((x) => x.sr).sort().join() === "1,3,4", [LI.rows.map((x) => x.sr), LE.rows.map((x) => x.sr)]);
 const inv = await TI("inventory.status", { client_id: sun.id, today });
 const escCk = inv.checks.find((x) => x.key === "esc");
-ok("Inventory status: Escalations open counts the external ones only", escCk && escCk.now === "3", escCk);
+ok("Inventory status: Escalations open · external is 3", escCk && escCk.now === "3" && /external/.test(escCk.name), escCk);
+const escInt = inv.checks.find((x) => x.key === "esc_int");
+ok("and Escalations open · internal is 1, its own row", escInt && escInt.now === "1" && !escInt.ok && /internal/.test(escInt.name), escInt);
 const X = await TI("sla.extras", { client_id: sun.id, today });
-ok("the SLA scorecard's escalations: 3 external, the internal one counted apart", X.esc && X.esc.n === 3 && X.esc.internal === 1, X.esc && { n: X.esc.n, internal: X.esc.internal });
+ok("the SLA scorecard's escalations: 3 external, 1 internal, side by side", X.esc && X.esc.n === 3 && X.esc.internal === 1 && X.esc.int && X.esc.int.n === 1 && X.esc.int.open === 1, X.esc && { n: X.esc.n, internal: X.esc.internal, int: X.esc.int });
+ok("its list has both kinds, each with its type and who made the error", X.esc.rows.length === 4 && X.esc.rows.some((r) => r.kind === "internal" && r.sr === 2) && X.esc.rows.find((r) => r.sr === 1).error_by_name === "Arun Agent", X.esc.rows.map((r) => [r.sr, r.kind, r.error_by_name]));
 await sleep(800);
 const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(today.slice(5, 7)) - 1] + " " + today.slice(0, 4);
 const slaDir = () => { const root = child("root", "Brahmastra Reports"); const ld = root && child(root.id, "Tina Lead"); const cf = ld && child(ld.id, sun.name); return cf && child(cf.id, "SLA & KPI"); };
@@ -181,9 +186,10 @@ ok("Arun's row shows his 2 escalations as our error, newest first", ar && ar.esc
 ok("each with the client, type, department, received date, DOW and status", ar && ar.escalations.every((e) => e.client_name === sun.name && e.dept && e.day === today && e.dow === dow && e.status === "Open") && ar.escalations.map((e) => e.kind).sort().join() === "external,internal", ar && ar.escalations);
 ok("the one taken back (SR4, N) is not counted against him", ar && !ar.escalations.some((e) => e.sr === 4));
 ok("people with none show 0", !si || si.esc_n === 0, si && si.esc_n);
-ok("the totals for the red line at the top: 2 escalations, 1 person", TS.totals.esc === 2 && TS.totals.esc_people === 1, TS.totals);
+ok("the totals for the red line at the top: 2 escalations (1 external, 1 internal), 1 person", TS.totals.esc === 2 && TS.totals.esc_ext === 1 && TS.totals.esc_int === 1 && TS.totals.esc_people === 1, TS.totals);
+ok("Arun's row splits them too: 1 external, 1 internal", ar && ar.esc_ext === 1 && ar.esc_int === 1, ar && [ar.esc_ext, ar.esc_int]);
 const sg = TS.suggestions.today.find((x) => x.who === "Arun Agent" && /escalations as our error/.test(x.seen));
-ok("and a Do today pointer: go through it with them", sg && /SR2 at Sunrise Eye Care \(internal/.test(sg.seen) && /root cause/.test(sg.do), TS.suggestions.today);
+ok("and a Do today pointer: go through it with them", sg && /2 escalations as our error \(1 external, 1 internal\)/.test(sg.seen) && /SR2 at Sunrise Eye Care \(internal/.test(sg.seen) && /root cause/.test(sg.do), TS.suggestions.today);
 const TSold = await TI("team.status", { from: daysBefore(today, 40), to: daysBefore(today, 20), today });
 const arOld = TSold.rows.find((x) => x.name === "Arun Agent");
 ok("dates before they were received: nothing", !arOld || arOld.esc_n === 0, arOld && arOld.esc_n);

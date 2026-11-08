@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.87.0";
+const VERSION = "2.88.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1056,17 +1056,20 @@ async function clientWfm(env, clientIds) {
 const fteTxt = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
 /* A client's escalations received in a period, for the SLA (threshold 0). */
 async function escSummary(env, clientId, from, to, now = Date.now()) {
-  // the client's SLA counts its own (external) escalations; internal ones are only counted
+  // External (the client's own escalations: its SLA KPI, target 0) and Internal, counted side by side
   const every = await all(env, "SELECT * FROM escalations WHERE client_id = ? AND day >= ? AND day <= ? ORDER BY day DESC, sr DESC", clientId, from, to);
-  const rows = every.filter((e) => escKind(e) === "external");
-  const open = rows.filter((e) => e.status !== "resolved"), closed = rows.filter((e) => e.status === "resolved" && e.resolved_at);
-  const by = new Map(); rows.forEach((e) => by.set(e.dept, (by.get(e.dept) || 0) + 1));
-  return { from, to, target: ESC_SLA_TARGET, n: rows.length, met: rows.length <= ESC_SLA_TARGET, open: open.length, internal: every.length - rows.length,
-    over24: open.filter((e) => escPast(e.created_at, now)).length, over24_reason: open.filter((e) => escPast(e.created_at, now) && e.delay_reason).length,
-    errors: rows.filter((e) => e.is_error === "Y").length, avg_hours: closed.length ? Math.round(closed.reduce((t, e) => t + escHours(e), 0) / closed.length) : null,
-    by_dept: [...by.entries()].map(([dept, n]) => ({ dept, n })),
-    rows: rows.slice(0, 20).map((e) => ({ id: e.id, sr: e.sr, dept: e.dept, day: e.day, description: e.description, is_error: e.is_error, owner_name: e.owner_name, status: e.status,
-      close_on: e.close_on, open_hours: e.status !== "resolved" ? Math.floor(workingHoursBetween(e.created_at, now)) : null, delay_reason: e.delay_reason, expected_on: e.expected_on })) };
+  const part = (xs) => {
+    const open = xs.filter((e) => e.status !== "resolved"), closed = xs.filter((e) => e.status === "resolved" && e.resolved_at);
+    const by = new Map(); xs.forEach((e) => by.set(e.dept, (by.get(e.dept) || 0) + 1));
+    return { n: xs.length, open: open.length, over24: open.filter((e) => escPast(e.created_at, now)).length, over24_reason: open.filter((e) => escPast(e.created_at, now) && e.delay_reason).length,
+      errors: xs.filter((e) => e.is_error === "Y").length, avg_hours: closed.length ? Math.round(closed.reduce((t, e) => t + escHours(e), 0) / closed.length) : null,
+      by_dept: [...by.entries()].map(([dept, n]) => ({ dept, n })) };
+  };
+  const ext = part(every.filter((e) => escKind(e) === "external")), int = part(every.filter((e) => escKind(e) === "internal")), both = part(every);
+  return { from, to, target: ESC_SLA_TARGET, ...ext, met: ext.n <= ESC_SLA_TARGET, internal: int.n, int, all: both,
+    rows: every.slice(0, 20).map((e) => ({ id: e.id, sr: e.sr, kind: escKind(e), dept: e.dept, day: e.day, description: e.description, is_error: e.is_error, error_by_name: e.is_error === "Y" ? e.error_by_name || "" : "",
+      error_dow: e.is_error === "Y" ? e.error_dow || "" : "", owner_name: e.owner_name, status: e.status, close_on: e.close_on, open_hours: e.status !== "resolved" ? Math.floor(workingHoursBetween(e.created_at, now)) : null,
+      delay_reason: e.delay_reason, expected_on: e.expected_on })) };
 }
 /* Fire-and-forget after a save: find the workbook (location first, then client) and append the entry. */
 async function syncEntryToWorkbook(env, claimId, by, extra) {
@@ -2121,7 +2124,7 @@ function digestRollup(ds) {
   attention.sort((a, b) => (a[0] === "red" ? 0 : 1) - (b[0] === "red" ? 0 : 1));
   return { ar, o90, pct, tat, target: ds.length ? ds[0].ar.target : OVER90_TARGET, ar_ago: withAgo.length ? agoNow - ago : null, coll: sum((d) => d.collected.amount), coll_prev: sum((d) => d.collected.prev),
     work: sum((d) => d.worked.n), work_prev: sum((d) => d.worked.prev), count, bands, sla_avg: scored.length ? Math.round(scored.reduce((t, d) => t + d.card.score, 0) / scored.length) : null,
-    sla_month: scored.length && scored.every((d) => d.card.period.label === scored[0].card.period.label) ? scored[0].card.period.label : "", esc: es.length ? { n: et("n"), open: et("open"), over24: et("over24"), over24_reason: et("over24_reason"), errors: et("errors"), month: monthLabel(es[0].esc.from.slice(0, 7)) } : null,
+    sla_month: scored.length && scored.every((d) => d.card.period.label === scored[0].card.period.label) ? scored[0].card.period.label : "", esc: es.length ? { n: et("n"), internal: et("internal"), open: et("open"), over24: et("over24"), over24_reason: et("over24_reason"), errors: et("errors"), month: monthLabel(es[0].esc.from.slice(0, 7)) } : null,
     attention, good: good.map((g) => g[1]) };
 }
 /* One client's TAT for the digest: each part's % within TAT, and the part missed most with the person most of it sat with. */
@@ -2155,7 +2158,7 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
   const row = (d) => {
     const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : ""].filter(Boolean).join(" · ");
     const sla = d.card ? tag(`${d.card.score}%${d.card.delta ? (d.card.delta > 0 ? " ▲" : " ▼") + Math.abs(d.card.delta) : ""}`, BAND_LOOK[d.card.band]) : `<span style="color:#627079">not scored</span>`;
-    const esc = d.esc ? tag(d.esc.n ? `${d.esc.n} · ${d.esc.open ? d.esc.open + " open" : "closed"}` : "0", BAND_LOOK[d.esc.n ? "miss" : "ok"]) : "–";
+    const esc = d.esc ? tag((d.esc.n ? `${d.esc.n} ext · ${d.esc.open ? d.esc.open + " open" : "closed"}` : "0 ext") + ` · ${d.esc.internal || 0} int`, BAND_LOOK[d.esc.n ? "miss" : "ok"]) : "–";
     return `<tr>${cell(`<b>${htmlEsc(d.client.name)}</b>${ppl ? `<div style="color:#627079;font-size:11px">${htmlEsc(ppl)}</div>` : ""}`)}${cell(sla, "center")}${cell(esc, "center")}${cell(d.wfm ? `${fteTxt(d.wfm.billable)} / ${fteTxt(d.wfm.assigned_fte)}` : "–", "center")}${cell(d.ar.over90_pct + "%", "right", d.ar.over90_pct > d.ar.target ? ";color:#BA2340" : "")}</tr>`;
   };
   const hcell = (x, align) => `<td align="${align || "left"}" style="padding:6px 4px;border-bottom:2px solid #DFE4EA;color:#627079;font-size:11px"><b>${x}</b></td>`;
@@ -2166,11 +2169,11 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
 <div style="font-size:19px;font-weight:bold;margin:4px 0 8px;color:#FFFFFF">${htmlEsc(span.title)} · week of ${weekTxt}</div>
 <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:13px">${hrow("Manager name", extra.manager ? `<b>${htmlEsc(extra.manager.name)}</b>` : "No manager (VP and admins)")}${hrow("Designation", extra.manager ? htmlEsc(extra.manager.designation) : "–")}${hrow("Period", "Week of " + weekTxt)}${hrow("Clients", `<b>${ds.length}</b>${bandTxt ? " · " + bandTxt : ""}`)}${teamLine ? hrow("Total team", teamLine) : ""}</table></td></tr>
 <tr><td style="padding:16px 22px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr>
-${box(R.sla_avg == null ? "–" : R.sla_avg + "%", "avg SLA score" + (R.sla_month ? " · " + htmlEsc(R.sla_month.slice(0, 3)) : ""))}${box(R.esc ? R.esc.n : "–", `escalations ${R.esc ? htmlEsc(R.esc.month.slice(0, 3)) + " " : ""}· target ${ESC_SLA_TARGET}`, R.esc && R.esc.n ? "#BA2340" : "#127A4D")}${box(dShort(R.ar), "AR" + (R.ar_ago != null ? (R.ar_ago <= 0 ? " · down " : " · up ") + dShort(Math.abs(R.ar_ago)) : ""))}${box(R.pct + "%", "over 90 · target " + R.target + "%", R.pct > R.target ? "#BA2340" : "#0F1B24")}
+${box(R.sla_avg == null ? "–" : R.sla_avg + "%", "avg SLA score" + (R.sla_month ? " · " + htmlEsc(R.sla_month.slice(0, 3)) : ""))}${box(R.esc ? R.esc.n + " · " + (R.esc.internal || 0) : "–", `external · internal escalations ${R.esc ? htmlEsc(R.esc.month.slice(0, 3)) + " " : ""}· target ${ESC_SLA_TARGET}`, R.esc && R.esc.n ? "#BA2340" : "#127A4D")}${box(dShort(R.ar), "AR" + (R.ar_ago != null ? (R.ar_ago <= 0 ? " · down " : " · up ") + dShort(Math.abs(R.ar_ago)) : ""))}${box(R.pct + "%", "over 90 · target " + R.target + "%", R.pct > R.target ? "#BA2340" : "#0F1B24")}
 </tr></table></td></tr>
 ${sec("CLIENT BY CLIENT")}
 <tr><td style="padding:0 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12.5px;border-collapse:collapse">
-<tr>${hcell("Client")}${hcell("SLA", "center")}${hcell("Escalations", "center")}${hcell("Billable / Assign FTE", "center")}${hcell("Over 90", "right")}</tr>
+<tr>${hcell("Client")}${hcell("SLA", "center")}${hcell("Escalations<br>external · internal", "center")}${hcell("Billable / Assign FTE", "center")}${hcell("Over 90", "right")}</tr>
 ${order.map(row).join("")}</table></td></tr>
 ${ds.some((d) => d.tat) ? sec("TAT LAST WEEK · WORKING HOURS, MONDAY TO FRIDAY") + `<tr><td style="padding:0 22px;font-size:12.5px;line-height:1.6">` +
   TAT_PARTS.filter(([k]) => R.tat[k]).map(([k, label]) => `<span style="white-space:nowrap;margin-right:12px">${label}: <b style="color:${R.tat[k].pct >= 100 ? "#127A4D" : R.tat[k].pct >= 90 ? "#935300" : "#BA2340"}">${R.tat[k].pct}%</b> <span style="color:#627079">(${R.tat[k].met} of ${R.tat[k].due})</span></span>`).join("") +
@@ -2185,8 +2188,8 @@ ${link ? `<tr><td style="padding:16px 22px 4px"><table role="presentation" cellp
   const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`,
     `Manager name: ${extra.manager ? extra.manager.name : "No manager"} · Designation: ${extra.manager ? extra.manager.designation : "-"} · Period: week of ${weekTxt}`,
     ...(wf.length ? [`Total team: Billable FTE: ${fteTxt(wsum("billable"))} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}`] : []),
-    `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} (target ${ESC_SLA_TARGET})` : ""), "", "Client by client:",
-    ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "not scored"}` + (d.esc ? `, escalations ${d.esc.n}` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
+    `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} external (target ${ESC_SLA_TARGET}) and ${R.esc.internal || 0} internal` : ""), "", "Client by client:",
+    ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "not scored"}` + (d.esc ? `, escalations ${d.esc.n} external and ${d.esc.internal || 0} internal` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
     ...(ds.some((d) => d.tat) ? ["", "TAT last week (working hours, Monday to Friday):", ...TAT_PARTS.filter(([k]) => R.tat[k]).map(([k, label]) => `- ${label}: ${R.tat[k].pct}% (${R.tat[k].met} of ${R.tat[k].due})`),
       ...order.filter((d) => d.tat).map((d) => `- ${d.client.name}: ${tatLine(d.tat)}`)] : []),
     "", "Needs your attention:", ...(R.attention.length ? R.attention.slice(0, 5).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "",
@@ -2577,7 +2580,8 @@ function teamSuggestions(rows) {
     const away = r.out_today === "out";
     if (r.esc_n) {
       const xs = r.escalations, open = xs.filter((e) => e.status === "Open").length;
-      today.push(item(r, `${xs.length} ${xs.length === 1 ? "escalation" : "escalations"} as our error: ` + xs.slice(0, 2).map((e) => `SR${e.sr} at ${e.client_name} (${e.kind}, ${e.dept}${e.dow ? ", DOW " + fmtD(e.dow) : ""})`).join("; ") + (xs.length > 2 ? "…" : ""),
+      const split = [r.esc_ext ? r.esc_ext + " external" : "", r.esc_int ? r.esc_int + " internal" : ""].filter(Boolean).join(", ");
+      today.push(item(r, `${xs.length} ${xs.length === 1 ? "escalation" : "escalations"} as our error (${split}): ` + xs.slice(0, 2).map((e) => `SR${e.sr} at ${e.client_name} (${e.kind}, ${e.dept}${e.dow ? ", DOW " + fmtD(e.dow) : ""})`).join("; ") + (xs.length > 2 ? "…" : ""),
         away ? "Out today: when they are back, go through it with them: the root cause and what to check next time." : `Go through ${xs.length === 1 ? "it" : "them"} with them today: the root cause and what to check next time.` + (open ? ` Close ${open === 1 ? "it" : "them"} in the Escalation tracker with the corrective and preventive action.` : "")));
       flagged.add(r.id);
     }
@@ -3775,6 +3779,7 @@ const OPS = {
         perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? "none" : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
         out_today: outToday.get(u.id) || "",
         escalations: escBy.get(u.id) || [], esc_n: (escBy.get(u.id) || []).length,
+        esc_ext: (escBy.get(u.id) || []).filter((e) => e.kind === "external").length, esc_int: (escBy.get(u.id) || []).filter((e) => e.kind === "internal").length,
         start_date: n.start_date || "", end_date: n.end_date || "", comment: n.comment || "", comment_by: n.by_name || "", comment_at: n.at || null };
     }).sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.name.localeCompare(b.name));
     const sum = (k, rs = rows) => rs.reduce((t, r) => t + (r[k] || 0), 0);
@@ -3803,7 +3808,7 @@ const OPS = {
       on_floor_min: rows.some((r) => r.on_floor_min != null) ? sum("on_floor_min") : null, idle_min: rows.some((r) => r.idle_min != null) ? sum("idle_min") : null,
       break_min: rows.some((r) => r.break_min != null) ? sum("break_min") : null, break_over_days: sum("break_over_days"),
       floor_judged: rows.filter((r) => r.floor === "met" || r.floor === "short").length, floor_met: rows.filter((r) => r.floor === "met").length,
-      esc: sum("esc_n"), esc_people: rows.filter((r) => r.esc_n).length };
+      esc: sum("esc_n"), esc_ext: sum("esc_ext"), esc_int: sum("esc_int"), esc_people: rows.filter((r) => r.esc_n).length };
     totals.attain_basis = totals.target_done > 0 ? "done" : "today";
     totals.attain = totals.attain_basis === "done" ? Math.round(totals.worked_done / totals.target_done * 100) : totals.target_today ? Math.round(totals.worked_today / totals.target_today * 100) : null;
     return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals, by_status: byStatus, checks, perf_mark: PERF_MARK, ramp_weeks: RAMP_WEEKS,
@@ -4330,13 +4335,13 @@ const OPS = {
       WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL AND ${INV_NO_OPEN_HO} GROUP BY 1, 2`, ...ids, today);
     const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND updated_at >= ? GROUP BY 1`, ...ids, monthStart);
     const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.status IN ('pending','assigned') AND h.due_at < ? GROUP BY 1, 2`, ...ids, now);
-    const escOpen = await all(env, `SELECT client_id, COUNT(*) AS n FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' AND kind <> 'internal' GROUP BY 1`, ...ids);
+    const escOpen = await all(env, `SELECT client_id, SUM(CASE WHEN kind = 'internal' THEN 0 ELSE 1 END) AS n, SUM(CASE WHEN kind = 'internal' THEN 1 ELSE 0 END) AS ni FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, ...ids);
     // working days left in the month, today included (Monday to Friday)
     let wdLeft = 0; { const [y, m] = today.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
       for (let dd = Number(today.slice(8, 10)); dd <= last; dd++) { const w = new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); if (w && w !== 6) wdLeft++; } }
     const STAGES = ["open", "list", "later", "due", "overdue", "waiting", "desk"];
     const blank = () => ({ stages: Object.fromEntries(STAGES.map((k) => [k, { n: 0, bal: 0 }])), o7: 0, w10: 0, late: 0, first_open: null, next_fu: null, list_people: 0,
-      ages: [1, 2, 3, 4].map(() => ({ n: 0, bal: 0, pbal: 0 })), big: [], holders: [], closed: { n: 0, bal: 0 }, desk_late: {}, esc_open: 0, t90: { n7: 0, bal7: 0, n14: 0, bal14: 0 } });
+      ages: [1, 2, 3, 4].map(() => ({ n: 0, bal: 0, pbal: 0 })), big: [], holders: [], closed: { n: 0, bal: 0 }, desk_late: {}, esc_open: 0, esc_int_open: 0, t90: { n7: 0, bal7: 0, n14: 0, bal14: 0 } });
     const per = new Map(ids.map((id) => [id, blank()])), tot = blank();
     const both = (cid, fn) => { const p = per.get(cid); if (p) { fn(p); fn(tot); } };
     for (const r of st) both(r.client_id, (x) => { const s = x.stages[r.stage]; s.n += r.n; s.bal += r.bal; if (r.stage === "overdue") x.o7 += r.o7 || 0; if (r.stage === "waiting") x.w10 += r.w10 || 0; if (r.stage === "desk") x.late += r.late || 0;
@@ -4346,7 +4351,7 @@ const OPS = {
     for (const r of holders) both(r.client_id, (x) => { const h = x.holders.find((y) => y.id === r.assigned_to); if (h) h.n += r.n; else x.holders.push({ id: r.assigned_to, name: r.name || "someone", n: r.n }); });
     for (const r of closed) both(r.client_id, (x) => { x.closed.n += r.n; x.closed.bal += r.bal; });
     for (const r of deskLate) both(r.client_id, (x) => { x.desk_late[r.dept] = (x.desk_late[r.dept] || 0) + r.n; });
-    for (const r of escOpen) both(r.client_id, (x) => { x.esc_open += r.n; });
+    for (const r of escOpen) both(r.client_id, (x) => { x.esc_open += r.n || 0; x.esc_int_open += r.ni || 0; });
     for (const r of t90) both(r.client_id, (x) => { for (const f of ["n7", "bal7", "n14", "bal14"]) x.t90[f] += Number(r[f]) || 0; });
     const pfBy = new Map(pf.rows.map((r) => [r.client_id, r]));
     const T = OVER90_TARGET;
@@ -4402,14 +4407,15 @@ const OPS = {
     const shape = (x, rows, cl, cid) => {
       const arTot = x.ages.reduce((t, a) => t + a.bal, 0), owed = x.ages.reduce((t, a) => t + a.pbal, 0), o90p = x.ages[3].pbal, pc = pace(rows);
       return { stages: x.stages, o7: x.o7, w10: x.w10, late: x.late, oldest_open: x.first_open ? Math.floor((now - x.first_open) / 86400000) : null, next_fu: x.next_fu, list_people: x.list_people,
-        ages: x.ages, ar: arTot, over90_pct: owed ? Math.round(o90p / owed * 1000) / 10 : 0, closed: x.closed, esc_open: x.esc_open, pace: pc,
+        ages: x.ages, ar: arTot, over90_pct: owed ? Math.round(o90p / owed * 1000) / 10 : 0, closed: x.closed, esc_open: x.esc_open, esc_int_open: x.esc_int_open, pace: pc,
         checks: [
           { key: "o90", name: "AR over 90 days", now: (owed ? Math.round(o90p / owed * 1000) / 10 : 0) + "%", target: "≤ " + T + "%", ok: !owed || o90p / owed * 100 <= T },
           { key: "t90", name: "Turning 90 in the next 7 days", now: String(x.t90.n7), target: "worked first", ok: !x.t90.n7, warn: true },
           { key: "fu", name: "Follow-ups overdue", now: String(x.stages.overdue.n), target: "0", ok: !x.stages.overdue.n, warn: x.stages.overdue.n && !x.o7 },
           { key: "tfl", name: "Timely filing in the next 30 days", now: String(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), target: "0", ok: !(cl ? cl.tfl_soon_n : rows.reduce((t, r) => t + r.tfl_soon_n, 0)), warn: true },
           { key: "desk", name: "Desks past the client's TAT", now: String(x.late), target: "0", ok: !x.late },
-          { key: "esc", name: "Escalations open", now: String(x.esc_open), target: "0", ok: !x.esc_open },
+          { key: "esc", name: "Escalations open · external", now: String(x.esc_open), target: "0", ok: !x.esc_open },
+          { key: "esc_int", name: "Escalations open · internal", now: String(x.esc_int_open), target: "0", ok: !x.esc_int_open, warn: true },
           { key: "pace", name: "Days to clear at this pace", now: pc.days_to_clear == null ? "–" : pl(pc.days_to_clear, "day"), target: wdLeft ? "≤ " + pl(wdLeft, "day") + " left" : "no working days left this month", ok: pc.days_to_clear != null && pc.days_to_clear <= wdLeft, warn: pc.days_to_clear == null },
         ],
         insights: insights(x, cl, cid) };
@@ -6616,15 +6622,17 @@ const OPS = {
     const stats = { open: out.filter((e) => e.status !== "resolved").length, needs_reason: out.filter((e) => e.needs_reason).length, past_expected: out.filter((e) => e.past_expected).length,
       logged_month: out.filter((e) => e.day.slice(0, 7) === month).length, resolved_month: done.length, closed_month: done.length,
       logged_external: out.filter((e) => e.day.slice(0, 7) === month && e.kind === "external").length, logged_internal: out.filter((e) => e.day.slice(0, 7) === month && e.kind === "internal").length,
+      open_external: out.filter((e) => e.status !== "resolved" && e.kind === "external").length, open_internal: out.filter((e) => e.status !== "resolved" && e.kind === "internal").length,
       avg_hours: done.length ? Math.round(done.reduce((t, e) => t + e.hours, 0) / done.length) : null };
     const file = cid ? await getSetting(env, "workbook_status:" + cid + ":esc", null) : null;
     const slaFile = cid ? await getSetting(env, "workbook_status:" + cid + ":escsla", null) : null;
     let sla = null;
     if (cid) {
-      // the client's SLA: external escalations only
-      const m = await all(env, "SELECT dept, COUNT(*) AS n FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? AND kind <> 'internal' GROUP BY dept", cid, month);
-      const n = m.reduce((t, x) => t + x.n, 0);
-      sla = { month: monthLabel(month), target: ESC_SLA_TARGET, n, met: n <= ESC_SLA_TARGET, by_dept: m.map((x) => ({ dept: x.dept, n: x.n })) };
+      // the client's SLA: external escalations make its KPI (target 0); internal ones are counted beside them
+      const m = await all(env, "SELECT CASE WHEN kind = 'internal' THEN 'internal' ELSE 'external' END AS k, dept, COUNT(*) AS n FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? GROUP BY 1, 2", cid, month);
+      const ex = m.filter((x) => x.k === "external"), inn = m.filter((x) => x.k === "internal"), n = ex.reduce((t, x) => t + x.n, 0);
+      sla = { month: monthLabel(month), target: ESC_SLA_TARGET, n, met: n <= ESC_SLA_TARGET, by_dept: ex.map((x) => ({ dept: x.dept, n: x.n })),
+        internal: inn.reduce((t, x) => t + x.n, 0), by_dept_internal: inn.map((x) => ({ dept: x.dept, n: x.n })) };
     }
     const people = (await all(env, "SELECT id, name, designation, source FROM users WHERE active = 1 AND role IN ('supervisor','admin') ORDER BY name"))
       .map((u) => ({ id: u.id, name: u.name, tag: isSME(u) ? "SME" : /manager|vice|director|head/i.test(u.designation || "") ? (u.designation || "") : "TL" }));
