@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.82.0";
+const VERSION = "2.83.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -126,6 +126,7 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at)`,
   `CREATE TABLE IF NOT EXISTS user_notices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, text TEXT NOT NULL, view TEXT NOT NULL DEFAULT 'clients', client_id TEXT)`,
   `CREATE TABLE IF NOT EXISTS digest_runs (week TEXT NOT NULL, client_id TEXT NOT NULL, at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id))`,
+  `CREATE TABLE IF NOT EXISTS tat_mail_log (day TEXT NOT NULL, kind TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', items INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, kind, user_id))`,
   `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
   `CREATE TABLE IF NOT EXISTS team_notes (user_id TEXT PRIMARY KEY, start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
@@ -502,7 +503,6 @@ const ESC_DATE_COLS = new Set([3, 15, 18]);
 const ESC_TEMPLATE_B64 = "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";
 const ESC_DEPTS = ["Account Receivable", "Submission", "Payment Posting", "Benefit Verification", "PCC", "Credentialing", "Other"];
 const ESC_STATUS = { open: "Open", progress: "Open", resolved: "Closed" };
-const ESC_TAT_MS = 24 * 3600000;
 const escHours = (e) => (e.resolved_at ? Math.max(0, Math.round((e.resolved_at - e.created_at) / 360000) / 10) : null);
 const escRow = (e, client) => ["SR" + e.sr, e.dept, client || e.client_name || "", excelSerial(e.day), e.raised_who, e.reported_to, e.owner_name, e.email_subject,
   e.description, e.is_error, e.comment, e.rca, e.corrective, e.preventive, ESC_STATUS[e.status] || e.status, excelSerial(e.close_on),
@@ -597,20 +597,152 @@ async function syncEscalations(env, clientId, months) {
 async function escalationReminders(env) {
   const now = Date.now();
   const rows = await all(env, `SELECT e.id, e.client_id, e.sr, e.dept, cl.name AS client_name FROM escalations e JOIN clients cl ON cl.id = e.client_id
-    WHERE e.status != 'resolved' AND e.delay_reason = '' AND e.reason_asked_at IS NULL AND e.created_at < ? LIMIT 50`, now - ESC_TAT_MS);
+    WHERE e.status != 'resolved' AND e.delay_reason = '' AND e.reason_asked_at IS NULL AND e.created_at < ? LIMIT 50`, subWorkingHours(now, ESC_TAT_HOURS));
   for (const e of rows) {
     await run(env, "UPDATE escalations SET reason_asked_at = ? WHERE id = ?", now, e.id);
     const names = await clientTeamLeads(env, e.client_id, null);
     let people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND name IN (${names.map(() => "?").join(",") || "NULL"})`, ...names);
     // a client with no team lead: the admins hear about it instead, so the reminder is never asked of nobody
     if (!people.length) people = await all(env, "SELECT id, email, email_missing FROM users WHERE active = 1 AND role = 'admin'");
-    const text = `Escalation SR${e.sr} (${e.dept}) at ${e.client_name} is still open after 24 hours. Give the reason and the expected close date in the Escalation tracker.`;
+    const text = `Escalation SR${e.sr} (${e.dept}) at ${e.client_name} is still open after 24 working hours. Give the reason and the expected close date in the Escalation tracker.`;
     for (const u of people) {
       await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), u.id, now, text, "escalations", e.client_id);
-      if (env.EMAIL_PROVIDER && u.email && !u.email_missing) { try { await sendEmail(env, { to: u.email, subject: `Escalation SR${e.sr} open over 24 hours: ${e.client_name}`, text, html: `<p style="font:14px Segoe UI,Arial,sans-serif">${htmlEsc(text)}</p>` }); } catch (x) {} }
+      if (env.EMAIL_PROVIDER && u.email && !u.email_missing) { try { await sendEmail(env, { to: u.email, subject: `Escalation SR${e.sr} open over 24 working hours: ${e.client_name}`, text, html: `<p style="font:14px Segoe UI,Arial,sans-serif">${htmlEsc(text)}</p>` }); } catch (x) {} }
     }
   }
   return rows.length;
+}
+/* ---- TAT board: what is pending against each TAT, per client ----
+   The desks (Payment posting, Submission with its rechecks, Rejections) against the client's TAT, and Needs attention (flagged by
+   billers, sent back by the desks, client requests to send) against 48 hours: every TAT in working hours, Monday to Friday, IST.
+   `late` lists the items past TAT for the reminders: claim numbers and names of the team only, never patient details or note text. */
+const TAT_DEPTS = [["posting", "Payment posting"], ["submission", "Submission"], ["rejection", "Rejections"]];
+const ATTN_PARTS = [["flagged", "Flagged by billers"], ["back", "Sent back by Posting / Submission"], ["requests", "Client requests to send"]];
+function blankTat() {
+  const d = () => ({ n: 0, bal: 0, ok: 0, soon: 0, late: 0, rechecks: 0, oldest_late_h: 0 });
+  return { desks: { posting: d(), submission: d(), rejection: d() }, attn: { flagged: { n: 0, late: 0 }, back: { n: 0, late: 0 }, requests: { n: 0, late: 0 }, n: 0, soon: 0, late: 0, oldest_late_h: 0 }, late: [] };
+}
+async function tatBoard(env, clientIds, now = Date.now()) {
+  const ids = [...new Set(clientIds || [])].filter(Boolean);
+  const per = new Map(ids.map((id) => [id, blankTat()]));
+  if (!ids.length) return per;
+  const IN = `(${ids.map(() => "?").join(",")})`, soonMs = DUE_SOON_HOURS * 3600000;
+  const desk = await all(env, `SELECT h.client_id, h.dept, h.due_at, h.created_at, h.created_by_name, c.claim_no, c.balance, u.name AS with_name
+    FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
+    WHERE h.status IN ('pending','assigned') AND h.client_id IN ${IN} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?) ORDER BY h.due_at LIMIT 5000`, ...ids, now);
+  for (const h of desk) {
+    const t = per.get(h.client_id), k = h.dept === "subcheck" ? "submission" : h.dept, b = t && t.desks[k];
+    if (!b) continue;
+    b.n++; b.bal += Number(h.balance) || 0; if (h.dept === "subcheck") b.rechecks++;
+    if (h.due_at < now) {
+      b.late++;
+      const over = workingHoursBetween(h.due_at, now), waited = workingHoursBetween(h.created_at, now);
+      b.oldest_late_h = Math.max(b.oldest_late_h, Math.floor(waited));
+      t.late.push({ group: "desks", dept: k, recheck: h.dept === "subcheck", claim_no: h.claim_no || "", at: h.created_at, by: h.created_by_name || "", with: h.with_name || "", waited_h: Math.floor(waited), over_h: Math.max(1, Math.ceil(over)) });
+    } else if (h.due_at - now <= soonMs) b.soon++; else b.ok++;
+  }
+  const attnItem = (t, part, start, claimNo, by, extra) => {
+    const a = t.attn, due = addWorkingHours(start || now, ATTN_TAT_HOURS);
+    a[part].n++; a.n++;
+    if (due < now) {
+      a[part].late++; a.late++;
+      const waited = workingHoursBetween(start, now);
+      a.oldest_late_h = Math.max(a.oldest_late_h, Math.floor(waited));
+      t.late.push({ group: "ar", part, claim_no: claimNo || "", at: start, by: by || "", waited_h: Math.floor(waited), over_h: Math.max(1, Math.ceil(workingHoursBetween(due, now))), ...(extra || {}) });
+    } else if (due - now <= soonMs) a.soon++;
+  };
+  for (const r of await all(env, `SELECT c.client_id, c.claim_no, c.escalated_at, e.name AS by_name FROM claims c LEFT JOIN users e ON e.id = c.escalated_by
+      WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND c.client_id IN ${IN} LIMIT 5000`, ...ids)) {
+    const t = per.get(r.client_id); if (t) attnItem(t, "flagged", r.escalated_at || now, r.claim_no, r.by_name);
+  }
+  for (const r of await all(env, `SELECT h.client_id, h.dept, COALESCE(h.paused_at, h.created_at) AS at, h.client_req_by_name AS by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
+      WHERE h.status = 'client' AND h.client_sent_at IS NULL AND h.client_id IN ${IN} LIMIT 5000`, ...ids)) {
+    const t = per.get(r.client_id); if (t) attnItem(t, "requests", r.at, r.claim_no, r.by_name, { dept: r.dept });
+  }
+  // sent back by the desks: waiting until a team lead reviews it (or a biller works it, or it goes to a desk again)
+  for (const r of await all(env, `SELECT h.client_id, h.dept, h.done_at, h.done_by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
+      WHERE h.status IN ('assistance','back') AND h.done_at > ? AND h.client_id IN ${IN} AND NOT (c.reviewed_at IS NOT NULL AND c.reviewed_at > h.done_at)
+        AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)
+        AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at) LIMIT 5000`, now - 30 * 86400000, ...ids)) {
+    const t = per.get(r.client_id); if (t) attnItem(t, "back", r.done_at, r.claim_no, r.done_by_name, { dept: r.dept });
+  }
+  return per;
+}
+/* Several clients' boards added up (Inventory status for everyone). */
+function sumTat(boards) {
+  const o = blankTat(); delete o.late;
+  for (const t of boards) {
+    for (const [k] of TAT_DEPTS) for (const f of ["n", "bal", "ok", "soon", "late", "rechecks"]) o.desks[k][f] += t.desks[k][f];
+    for (const [k] of TAT_DEPTS) o.desks[k].oldest_late_h = Math.max(o.desks[k].oldest_late_h, t.desks[k].oldest_late_h);
+    for (const [p] of ATTN_PARTS) { o.attn[p].n += t.attn[p].n; o.attn[p].late += t.attn[p].late; }
+    for (const f of ["n", "soon", "late"]) o.attn[f] += t.attn[f];
+    o.attn.oldest_late_h = Math.max(o.attn.oldest_late_h, t.attn.oldest_late_h);
+  }
+  return o;
+}
+/* ---- TAT reminders by email: every supervisor, SME and above on the client, Monday to Friday.
+   Posting, Submission and Rejections at 09:00 IST; AR (Needs attention) at 19:00 IST. A send that fails is tried again on the
+   hourly runs for the next 3 hours; nobody gets the same reminder twice in a day. */
+const TAT_MAIL = { desks: { hour: 9, title: "Payment posting, Submission and Rejections", view: "handoffs" }, ar: { hour: 19, title: "Needs attention (AR)", view: "attention" } };
+function tatMailDue(now) {
+  const d = new Date(now + IST_MIN * 60000), dow = d.getUTCDay(), h = d.getUTCHours() + d.getUTCMinutes() / 60;
+  if (dow === 0 || dow === 6) return null;
+  for (const [k, m] of Object.entries(TAT_MAIL)) if (h >= m.hour && h < m.hour + 3) return k;
+  return null;
+}
+/* One person's reminder: their clients' items past TAT of this kind, grouped by client and type. null when nothing is late. */
+function tatMailFor(u, kind, clients, board, now, appUrl = "") {
+  const groups = [];
+  for (const c of clients) {
+    if (!onClient(u, c.id)) continue;
+    const t = board.get(c.id); if (!t) continue;
+    const late = t.late.filter((x) => x.group === kind);
+    if (!late.length) continue;
+    if (kind === "desks") for (const [k, label] of TAT_DEPTS) { const xs = late.filter((x) => x.dept === k); if (xs.length) groups.push({ c, label, tat: tatHours(c, k), xs }); }
+    else for (const [p, label] of ATTN_PARTS) { const xs = late.filter((x) => x.part === p); if (xs.length) groups.push({ c, label: "Needs attention · " + label, tat: ATTN_TAT_HOURS, xs }); }
+  }
+  if (!groups.length) return null;
+  const n = groups.reduce((t, g) => t + g.xs.length, 0);
+  const when = new Date(now + IST_MIN * 60000), dt = when.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) + ", " + String(when.getUTCHours()).padStart(2, "0") + ":" + String(when.getUTCMinutes()).padStart(2, "0") + " IST";
+  const subject = `${n} ${n === 1 ? "task" : "tasks"} past TAT on your clients · ${TAT_MAIL[kind].title} · ${dt}`;
+  const fmtAt = (ms) => { const d = new Date(ms + IST_MIN * 60000); return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) + ", " + String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
+  const who = (x) => kind === "desks" ? (x.recheck ? "Recheck · " : "") + (x.by ? "Sent by " + x.by + " · " : "") + fmtAt(x.at) : (x.part === "flagged" ? "Flagged by " : x.part === "back" ? "Sent back by " : "Asked by ") + (x.by || "the team") + " · " + fmtAt(x.at);
+  const th = "text-align:left;font-size:11px;letter-spacing:.05em;color:#627079;padding:6px;border-bottom:1px solid #dfe4ea;text-transform:uppercase";
+  const td = "padding:7px 6px;border-bottom:1px solid #f0f2f5;font-size:13px;vertical-align:top";
+  const link = appUrl ? String(appUrl).replace(/\/+$/, "") + "/#/dashboard?tab=inventory" : "";
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;color:#0f1b24;max-width:640px;margin:0 auto;border:1px solid #dfe4ea;border-radius:10px;overflow:hidden;background:#ffffff">
+<div style="background:#0b2740;color:#fff;padding:16px 22px"><div style="font-size:18px;font-weight:700">${n} ${n === 1 ? "task is" : "tasks are"} past ${n === 1 ? "its" : "their"} TAT</div>
+<div style="color:#bcd0e2;font-size:13px;margin-top:3px">${htmlEsc(TAT_MAIL[kind].title)} · every supervisor, SME and above on these clients gets this until they are closed.</div></div>
+<div style="padding:16px 22px">` + groups.map((g) => `<div style="font-weight:700;font-size:13px;margin-top:10px">${htmlEsc(g.c.name)} · ${htmlEsc(g.label)} · TAT ${g.tat} working hours</div>
+<table style="width:100%;border-collapse:collapse;margin:6px 0 10px"><tr><th style="${th}">Claim #</th><th style="${th}">${kind === "desks" ? "Sent" : "What"}</th><th style="${th}">Waiting</th>${kind === "desks" ? `<th style="${th}">With</th>` : ""}</tr>` +
+    g.xs.map((x) => `<tr><td style="${td};white-space:nowrap">${htmlEsc(x.claim_no || "–")}</td><td style="${td}">${htmlEsc(who(x))}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${x.waited_h} h</b> (${x.over_h} h over)</td>${kind === "desks" ? `<td style="${td}">${htmlEsc(x.with || "–")}</td>` : ""}</tr>`).join("") + "</table>").join("") +
+    (link ? `<p style="margin:16px 0 4px"><a href="${htmlEsc(link)}" style="display:inline-block;background:#17b39a;color:#ffffff;border-radius:7px;padding:9px 16px;font-weight:700;text-decoration:none">Open Brahmastra</a></p>` : "") +
+    `<p style="font-size:12px;color:#627079;margin-top:14px">Working hours: Monday to Friday. Claim numbers only: no patient details and no note text. You get this because you are a supervisor, SME or above on these clients.</p></div></div>`;
+  const text = `${n} ${n === 1 ? "task is" : "tasks are"} past TAT (${TAT_MAIL[kind].title}).\n\n` + groups.map((g) => `${g.c.name} · ${g.label} · TAT ${g.tat} working hours\n` + g.xs.map((x) => `  ${x.claim_no || "–"} · ${who(x)} · waiting ${x.waited_h} h (${x.over_h} h over)${x.with ? " · with " + x.with : ""}`).join("\n")).join("\n\n") + (link ? "\n\nOpen Brahmastra: " + link : "") + "\n\nWorking hours: Monday to Friday.";
+  return { subject, html, text, n };
+}
+async function sendTatReminders(env, { now = Date.now(), kind = null } = {}) {
+  kind = kind || tatMailDue(now);
+  if (!kind) return { kind: null, sent: 0, failed: 0 };
+  const day = istISO(now);
+  const clients = await all(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE active = 1 ORDER BY name");
+  const board = await tatBoard(env, clients.map((c) => c.id), now);
+  let sent = 0, failed = 0, people = 0;
+  for (const u of await digestPeople(env)) {
+    const mail = tatMailFor(u, kind, clients, board, now, env.APP_URL);
+    if (!mail) continue;
+    people++;
+    // claim the send first (ok = 2), so two runs at once never both send it; a claim left by a run that died is taken over after 30 minutes
+    const t0 = Date.now();
+    const claim = await run(env, `INSERT INTO tat_mail_log (day, kind, user_id, email, at, ok, error, items) VALUES (?,?,?,?,?,2,'',?)
+      ON CONFLICT (day, kind, user_id) DO UPDATE SET at = excluded.at, ok = 2, error = '', items = excluded.items WHERE tat_mail_log.ok = 0 OR (tat_mail_log.ok = 2 AND tat_mail_log.at < ?)`,
+      day, kind, u.id, u.email, t0, mail.n, t0 - 30 * 60000);
+    if (!changesOf(claim)) continue;
+    let err = "";
+    try { await sendEmail(env, { to: u.email, subject: mail.subject, text: mail.text, html: mail.html }); sent++; } catch (e) { err = str((e && e.message) || e, 300); failed++; }
+    await run(env, "UPDATE tat_mail_log SET at = ?, ok = ?, error = ? WHERE day = ? AND kind = ? AND user_id = ?", Date.now(), err ? 0 : 1, err, day, kind, u.id);
+  }
+  return { kind, day, people, sent, failed };
 }
 /* Workforce Management from Purview Shastra: each project's Billable (what the manager set in WFM) and Assigned FTE, worked
    out the way WFM's Explore does (working agents split evenly across their projects, a fresher counting half), plus everyone on
@@ -667,11 +799,11 @@ async function escSummary(env, clientId, from, to, now = Date.now()) {
   const open = rows.filter((e) => e.status !== "resolved"), closed = rows.filter((e) => e.status === "resolved" && e.resolved_at);
   const by = new Map(); rows.forEach((e) => by.set(e.dept, (by.get(e.dept) || 0) + 1));
   return { from, to, target: ESC_SLA_TARGET, n: rows.length, met: rows.length <= ESC_SLA_TARGET, open: open.length,
-    over24: open.filter((e) => now - e.created_at > ESC_TAT_MS).length, over24_reason: open.filter((e) => now - e.created_at > ESC_TAT_MS && e.delay_reason).length,
+    over24: open.filter((e) => escPast(e.created_at, now)).length, over24_reason: open.filter((e) => escPast(e.created_at, now) && e.delay_reason).length,
     errors: rows.filter((e) => e.is_error === "Y").length, avg_hours: closed.length ? Math.round(closed.reduce((t, e) => t + escHours(e), 0) / closed.length) : null,
     by_dept: [...by.entries()].map(([dept, n]) => ({ dept, n })),
     rows: rows.slice(0, 20).map((e) => ({ id: e.id, sr: e.sr, dept: e.dept, day: e.day, description: e.description, is_error: e.is_error, owner_name: e.owner_name, status: e.status,
-      close_on: e.close_on, open_hours: e.status !== "resolved" ? Math.floor((now - e.created_at) / 3600000) : null, delay_reason: e.delay_reason, expected_on: e.expected_on })) };
+      close_on: e.close_on, open_hours: e.status !== "resolved" ? Math.floor(workingHoursBetween(e.created_at, now)) : null, delay_reason: e.delay_reason, expected_on: e.expected_on })) };
 }
 /* Fire-and-forget after a save: find the workbook (location first, then client) and append the entry. */
 async function syncEntryToWorkbook(env, claimId, by, extra) {
@@ -1911,7 +2043,7 @@ const monthName = (ym) => { const [y, m] = String(ym || "").split("-").map(Numbe
    open ones, and those open over 24 hours with no reason given yet. A biller flagging a claim for their team lead is Needs attention,
    counted apart, never as an escalation. */
 async function trackerEsc(env, clientId) {
-  const late = Date.now() - ESC_TAT_MS;
+  const late = subWorkingHours(Date.now(), ESC_TAT_HOURS);
   const rows = await all(env, `SELECT client_id, COUNT(*) AS n, SUM(CASE WHEN created_at < ? AND delay_reason = '' THEN 1 ELSE 0 END) AS late FROM escalations
     WHERE status != 'resolved'${clientId ? " AND client_id = ?" : ""} GROUP BY client_id`, late, ...(clientId ? [clientId] : []));
   return new Map(rows.map((r) => [r.client_id, { n: r.n || 0, late: r.late || 0 }]));
@@ -2457,6 +2589,35 @@ const REJECT_REASONS = REJECT_CODES;
 const ASSIST_REASONS = { subcheck: ["Payer has no record yet", "Cannot reach the payer / portal", "Other"], posting: ["No EOB / ERA", "Amount mismatch", "Patient / account not found", "Payer not set up", "Duplicate payment", "Other"],
   submission: ["Missing claim data", "Clearinghouse rejection", "No payer ID / address", "Authorization missing", "Duplicate claim", "Other"] };
 ASSIST_REASONS.rejection = ASSIST_REASONS.submission;
+/* Every TAT counts working hours only: Monday to Friday, IST (Saturday and Sunday are skipped). */
+const ATTN_TAT_HOURS = 48;  // Needs attention (flagged by billers, sent back by the desks, client requests): a team lead closes it within 48
+const ESC_TAT_HOURS = 24;   // Escalation tracker: open past 24 working hours, the team lead gives the reason and expected date
+/* The moment N working hours before ms: anything that started before it is past an N-hour TAT now. */
+function subWorkingHours(ms, hours) {
+  let t = ms, left = hours * 3600000;
+  for (let guard = 0; left > 0 && guard < 60; guard++) {
+    const d = new Date(t - 1 + IST_MIN * 60000), dow = d.getUTCDay();
+    const dayStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - IST_MIN * 60000;
+    if (dow === 0 || dow === 6) { t = dayStart; continue; }
+    const step = Math.min(left, t - dayStart);
+    t -= step; left -= step;
+  }
+  return t;
+}
+/* Working hours (Monday to Friday, IST) between two moments. */
+function workingHoursBetween(a, b) {
+  if (!(b > a)) return 0;
+  let t = a, ms = 0;
+  for (let guard = 0; t < b && guard < 800; guard++) {
+    const d = new Date(t + IST_MIN * 60000), dow = d.getUTCDay();
+    const dayEnd = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - IST_MIN * 60000 + 86400000;
+    const step = Math.min(b, dayEnd) - t;
+    if (dow !== 0 && dow !== 6) ms += step;
+    t += step;
+  }
+  return ms / 3600000;
+}
+const escPast = (at, now = Date.now()) => !!at && addWorkingHours(at, ESC_TAT_HOURS) < now;
 function addWorkingHours(ms, hours) {
   let t = ms, left = hours * 3600000;
   for (let guard = 0; left > 0 && guard < 60; guard++) {
@@ -2579,14 +2740,13 @@ const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "aut
 /* Read-only claim lists a biller may open for the clients they are responsible for (posting, submission...). */
 const DESK_READ_OPS = /^claims\.(list|stats)$/;
 const respOnly = (user) => { if (user.role === "supervisor") return null; const ids = [...(user.resp_clients || [])]; if (!ids.length) throw denied("Supervisor access is needed for this."); return ids; };
-const SUPERVISOR_OPS = /^(escalations\.|coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
+const SUPERVISOR_OPS = /^(tat\.|escalations\.|coach\.|digest\.|portfolio\.|audit\.|client\.|monthend\.|users\.|clients\.save|clients\.saveTeam|clients\.delete|clients\.access|raci\.|locations\.|settings\.save|inventory\.|claims\.(list|stats|eligible|setState|setPriority|priorityLog)|attention\.|alloc\.|reports\.|supervisor\.|email\.|demo\.|projects\.|team\.|roster\.|payers\.)/;
 const ADMIN_OPS = /^roster\./;
 const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\.(set|mark)|clients\.(save|delete|access(Save|Remove))|locations\.|inventory\.(upload|undoBatch|dedupe|enrich\b)|alloc\.|claims\.set|attention\.(answer|clientSent|review)|payers\.saveLimit|reports\.saveArInventory|raci\.save|team\.saveToday)/;
 // settings.get / settings.save: who reads and writes which keys (see the two ops).
 const SETTINGS_OPEN = ["onedrive_folder"], SETTINGS_LEAD = ["onedrive_folder", "digest_enabled"], SETTINGS_LEAD_SAVE = ["onedrive_folder"];
 const SETTINGS_ADMIN_OWN = ["extra_emails", "roster_meta", "feedback_to"];
 const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$)/;
-const ESCALATION_TAT_MS = 24 * 60 * 60 * 1000;
 
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
@@ -3504,18 +3664,46 @@ const OPS = {
     return { claims: ok.map(({ assigned_to, last_worked_by, ...c }) => c) };
   },
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
+  /* The TAT reminder email as this person would get it now (Posting, Submission and Rejections at 09:00; AR at 19:00 IST). */
+  "tat.preview": async ({ env, user, payload }) => {
+    const kind = payload.kind === "ar" ? "ar" : "desks", now = Date.now();
+    const clients = await all(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE active = 1 ORDER BY name");
+    const board = await tatBoard(env, clients.filter((c) => onClient(user, c.id)).map((c) => c.id), now);
+    const mail = tatMailFor(user, kind, clients, board, now, env.APP_URL);
+    const log = await all(env, "SELECT day, kind, at, ok, error, items FROM tat_mail_log WHERE user_id = ? ORDER BY at DESC LIMIT 10", user.id);
+    return { kind, hour: TAT_MAIL[kind].hour, mail, log };
+  },
   "notify.list": async ({ env, user, payload }) => {
     const items = [], now = Date.now(), today = isoDate(payload.today) || isoToday(), plural = (n, a, b) => n + " " + (n === 1 ? a : b);
+    let pastTat = 0;
     let alerts = [];
     const add = (key, tone, n, text, view, params) => { if (n > 0) items.push({ key, tone, n, text, view, params: params || null }); };
     // what was done to this person: made responsible for a client, or taken off one (two weeks)
     for (const n of await all(env, "SELECT id, text, view, client_id, at FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
       items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: null, at: n.at });
     const ho = await OPS["handoffs.count"]({ env, user });
-    add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the 24-hour TAT` : ""), "handoffs");
+    add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the TAT` : ""), "handoffs");
     if (user.role === "supervisor") {
+      // past TAT and due soon on this person's clients: every supervisor, SME and above on the client sees them until they are closed
+      const tcl = (await all(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id));
+      const tb = await tatBoard(env, tcl.map((c) => c.id), now);
+      for (const c of tcl) {
+        const t = tb.get(c.id); if (!t) continue;
+        for (const [k, label] of TAT_DEPTS) {
+          const b = t.desks[k], what = (n) => `${n} ${label} ${n === 1 ? "claim" : "claims"}`;
+          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${tatHours(c, k)} h)`, view: "handoffs", params: { client_id: c.id } }); pastTat += b.late; }
+          if (b.soon) items.push({ key: `soon:${c.id}:${k}`, cat: "desks", tone: "amber", n: b.soon, text: `${what(b.soon)} due in the next ${DUE_SOON_HOURS} hours · ${c.name}`, sub: "Still within TAT", view: "handoffs", params: { client_id: c.id } });
+        }
+        const a = t.attn;
+        if (a.late) {
+          const one = { flagged: ["flagged by a biller", "flagged by billers"], back: ["sent back by Posting / Submission", "sent back by Posting / Submission"], requests: ["client request to send", "client requests to send"] };
+          const parts = ATTN_PARTS.filter(([p]) => a[p].late).map(([p]) => a[p].late + " " + one[p][a[p].late === 1 ? 0 : 1]);
+          items.push({ key: `tat:${c.id}:attn`, cat: "tat", tone: "red", n: a.late, text: `${a.late} Needs attention ${a.late === 1 ? "item" : "items"} past ${ATTN_TAT_HOURS} working hours · ${c.name}`, sub: parts.join(" · ") + ` · oldest ${a.oldest_late_h} working hours`, view: "attention", params: null });
+          pastTat += a.late;
+        }
+      }
       const at = await OPS["attention.count"]({ env, user });
-      add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "claim flagged by a biller waits", "claims flagged by billers wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over 24 hours` : ""), "attention");
+      add("escalations", at.overdue ? "red" : "amber", at.escalations, plural(at.escalations, "claim flagged by a biller waits", "claims flagged by billers wait") + " for your answer" + (at.overdue ? `, ${at.overdue} over ${ATTN_TAT_HOURS} working hours` : ""), "attention");
       const ec = await OPS["escalations.count"]({ env, user });
       add("esc_reason", "red", ec.needs_reason, plural(ec.needs_reason, "client escalation is", "client escalations are") + " open over 24 hours: give the reason and expected close date", "escalations", { status: "reason" });
       add("esc_expected", "amber", ec.past_expected, plural(ec.past_expected, "client escalation is", "client escalations are") + " past the expected close date", "escalations", { status: "open" });
@@ -3557,7 +3745,13 @@ const OPS = {
     // new claims given to this person that they have not seen yet (the banner on their screen)
     const allocNew = (await all(env, "SELECT id, text, at FROM user_notices WHERE user_id = ? AND kind = 'alloc' AND seen_at IS NULL AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 2 * 86400000))
       .map((x) => ({ id: x.id, text: x.text, at: x.at, n: Number((/^(\d+)/.exec(x.text) || [])[1]) || 0 }));
-    return { items, at: now, alerts, alloc_new: allocNew };
+    // the bell's categories: Past TAT first, then Needs attention, Desks, Client escalations, Team, Setup; billers get My work and Updates
+    const sup = user.role === "supervisor";
+    const KEY_CAT = { handoffs: sup ? "desks" : "work", escalations: "attention", client_requests: "attention", esc_reason: "escalations", esc_expected: "escalations", missed: "team", absent: "team",
+      shastra_missing: "team", profiles: "setup", monthend: "setup", queue: "work", answers: "work", back: "work", feedback: "updates" };
+    const VIEW_CAT = { queue: "work", escalations: "escalations", attention: "attention", handoffs: "desks", clients: "setup", client: "setup", raci: "team", live: "team", teamtoday: "team" };
+    for (const x of items) if (!x.cat) x.cat = x.key.startsWith("notice:") ? (sup ? VIEW_CAT[x.view] || "updates" : x.view === "queue" || x.view === "handoffs" ? "work" : "updates") : KEY_CAT[x.key] || "updates";
+    return { items, at: now, alerts, alloc_new: allocNew, past_tat: pastTat };
   },
 
   /* ---- Monday digest: the spans this person can see (all for admins and the VP), who gets each, and when it went ---- */
@@ -3808,7 +4002,11 @@ const OPS = {
       return { client_id: r.client_id, client: r.client, health: r.health, tl: r.tl, manager: r.manager, drishti: r.drishti ? { score: r.drishti.score, band: r.drishti.band } : null,
         stages: s.stages, ar: s.ar, over90_pct: s.over90_pct, overdue: s.stages.overdue.n, waiting: s.stages.waiting.n, days_to_clear: s.pace.days_to_clear, per_day: s.pace.per_day,
         do_first: s.insights.filter((i) => i.tone !== "green").slice(0, 2).map((i) => i.short) }; });
-    return { today, wd_left: wdLeft, target: T, clients, last_inventory: pf.rows.reduce((m, r) => Math.max(m, r.last_inventory || 0), 0) || null,
+    // pending with the desks and team leads, against each TAT (working hours)
+    const tb = await tatBoard(env, ids), tcl = payload.client_id ? await one(env, "SELECT posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", payload.client_id) : null;
+    const pending = { ...sumTat([...tb.values()]), tat: { posting: tcl ? tatHours(tcl, "posting") : null, submission: tcl ? tatHours(tcl, "submission") : null, attention: ATTN_TAT_HOURS }, due_soon_hours: DUE_SOON_HOURS };
+    for (const c of clients) { const t = tb.get(c.client_id); c.past_tat = t ? t.late.length : 0; }
+    return { today, wd_left: wdLeft, target: T, clients, pending, last_inventory: pf.rows.reduce((m, r) => Math.max(m, r.last_inventory || 0), 0) || null,
       drishti: pf.drishti, ...shape(tot, pf.rows, payload.client_id ? pfBy.get(payload.client_id) : null, payload.client_id || "") };
   },
   /* Managers side by side: their clients, their people's work, missed tasks, SLA. The VP and admins see every
@@ -5921,9 +6119,9 @@ const OPS = {
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN users e ON e.id = c.escalated_by LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
       WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES}${scopeSql(user, "c.client_id")} ORDER BY c.escalated_at ASC LIMIT 500`, ...scopeArgs(user));
     const now = Date.now();
-    const out = rows.map((r) => ({ ...reviewShape(r), waiting_ms: r.escalated_at ? now - r.escalated_at : 0, overdue: !!r.escalated_at && now - r.escalated_at > ESCALATION_TAT_MS, sent_by_id: r.escalated_by || r.assigned_to || null,
+    const out = rows.map((r) => ({ ...reviewShape(r), waiting_ms: r.escalated_at ? workingHoursBetween(r.escalated_at, now) * 3600000 : 0, overdue: !!r.escalated_at && addWorkingHours(r.escalated_at, ATTN_TAT_HOURS) < now, sent_by_id: r.escalated_by || r.assigned_to || null,
       sent_by_name: r.escalated_by_name || r.assigned_name || "" }));
-    return { rows: out, overdue: out.filter((r) => r.overdue).length, tat_hours: ESCALATION_TAT_MS / 3600000, people: await reviewPeople(env, user) };
+    return { rows: out, overdue: out.filter((r) => r.overdue).length, tat_hours: ATTN_TAT_HOURS, people: await reviewPeople(env, user) };
   },
   /* Client requests: claims Posting / Submission / Rejections need the client for. Sending them to the client is the AR team
      lead's job; marking one Sent records how and when, and the department chases the client 3 working days later. */
@@ -5933,7 +6131,7 @@ const OPS = {
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN users u ON u.id = c.assigned_to
       WHERE h.status = 'client'${scopeSql(user, "h.client_id")} ORDER BY h.client_sent_at IS NOT NULL, h.paused_at LIMIT 500`, ...scopeArgs(user));
     const now = Date.now();
-    const out = rows.map((r) => ({ ...r, dept_label: DEPT_LABEL[r.dept] || r.dept, late: !r.client_sent_at && now > addWorkingHours(r.asked_at || now, 24), chase: !!r.chase_at && now >= r.chase_at }));
+    const out = rows.map((r) => ({ ...r, dept_label: DEPT_LABEL[r.dept] || r.dept, late: !r.client_sent_at && now > addWorkingHours(r.asked_at || now, ATTN_TAT_HOURS), chase: !!r.chase_at && now >= r.chase_at }));
     return { rows: out, to_send: out.filter((r) => !r.client_sent_at).length, late: out.filter((r) => r.late).length, hows: CLIENT_SENT_HOW };
   },
   /* Sent back to AR: claims Posting, Submission or Rejections returned with "Need assistance from AR" in the last 30 days that
@@ -5948,7 +6146,7 @@ const OPS = {
         AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at)${scopeSql(user, "h.client_id")}
       ORDER BY h.done_at ASC LIMIT 500`, Date.now() - 30 * 86400000, ...scopeArgs(user));
     const now = Date.now();
-    return { rows: rows.map((r) => ({ ...reviewShape({ ...r, last_dept: r.dept }), dept_label: DEPT_LABEL[r.dept] || r.dept, late: now > addWorkingHours(r.done_at, 24),
+    return { rows: rows.map((r) => ({ ...reviewShape({ ...r, last_dept: r.dept }), dept_label: DEPT_LABEL[r.dept] || r.dept, late: now > addWorkingHours(r.done_at, ATTN_TAT_HOURS) && !(r.reviewed_at && r.reviewed_at > r.done_at),
       sent_by_id: r.assigned_to || r.biller_id || r.created_by || null, sent_by_name: r.biller_name || "", reviewed: !!r.reviewed_at && r.reviewed_at > r.done_at })), people: await reviewPeople(env, user) };
   },
   "attention.clientSent": async ({ env, user, payload }) => {
@@ -5983,8 +6181,8 @@ const OPS = {
     const now = Date.now(), today = isoDate(payload.today) || istISO(now), month = today.slice(0, 7);
     const isTL = !isSME(user);
     const out = rows.map((e) => {
-      const open = e.status !== "resolved", past = open && now - e.created_at > ESC_TAT_MS;
-      return { ...e, status_label: ESC_STATUS[e.status] || e.status, hours: escHours(e), open_hours: open ? Math.floor((now - e.created_at) / 3600000) : null, past_24: past,
+      const open = e.status !== "resolved", past = open && escPast(e.created_at, now);
+      return { ...e, status_label: ESC_STATUS[e.status] || e.status, hours: escHours(e), open_hours: open ? Math.floor(workingHoursBetween(e.created_at, now)) : null, past_24: past,
         needs_reason: past && !e.delay_reason, past_expected: open && !!e.expected_on && e.expected_on < today,
         can_edit: canEditClient(user, e.client_id), can_reason: isTL && canEditClient(user, e.client_id) && past };
     });
@@ -6083,12 +6281,12 @@ const OPS = {
   "escalations.count": async ({ env, user }) => {
     const rows = await all(env, `SELECT client_id, created_at, delay_reason, expected_on FROM escalations WHERE status != 'resolved'${scopeSql(user, "client_id")}`, ...scopeArgs(user));
     const now = Date.now(), today = istISO(now);
-    const reason = isSME(user) ? 0 : rows.filter((e) => now - e.created_at > ESC_TAT_MS && !e.delay_reason && leadFor(user, e.client_id)).length;
+    const reason = isSME(user) ? 0 : rows.filter((e) => escPast(e.created_at, now) && !e.delay_reason && leadFor(user, e.client_id)).length;
     return { open: rows.length, needs_reason: reason, past_expected: rows.filter((e) => e.expected_on && e.expected_on < today).length };
   },
   "attention.count": async ({ env, user }) => {
     const cr = await one(env, `SELECT COUNT(*) AS n FROM handoffs WHERE status = 'client' AND client_sent_at IS NULL${scopeSql(user, "client_id")}`, ...scopeArgs(user));
-    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND escalated_at < ? THEN 1 ELSE 0 END) AS overdue FROM claims WHERE escalated = 1 AND state IN ${ESCALATION_STATES}${scopeSql(user, "client_id")}`, Date.now() - ESCALATION_TAT_MS, ...scopeArgs(user));
+    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND escalated_at < ? THEN 1 ELSE 0 END) AS overdue FROM claims WHERE escalated = 1 AND state IN ${ESCALATION_STATES}${scopeSql(user, "client_id")}`, subWorkingHours(Date.now(), ATTN_TAT_HOURS), ...scopeArgs(user));
     const mine = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state IN ('assigned','in_progress')", user.id);
     const fd = await one(env, `SELECT COUNT(*) AS n FROM handoffs h WHERE h.status IN ('assistance','back') AND h.done_at > ? AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)
       AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at)${scopeSql(user, "h.client_id")}`, Date.now() - 30 * 86400000, ...scopeArgs(user));
@@ -6345,6 +6543,8 @@ export default {
         try { const tok = await graphAppToken(env); for (const r of await all(env, "SELECT id FROM clients WHERE active = 1 AND (od_production_id IS NULL OR od_production_id = '' OR od_prod_json NOT LIKE '%rejection%') ORDER BY COALESCE(CASE WHEN json_valid(od_status_json) THEN json_extract(od_status_json, '$.at') END, 0), name LIMIT 8")) { try { await ensureClientFolders(env, r.id, tok); } catch (e) { console.log("Folders: " + (e && e.message)); } } } catch (e) { console.log("Folders: " + (e && e.message)); }
       }
       try { await escalationReminders(env); } catch (e) { console.log("Escalation reminders: " + (e && e.message)); }
+      // TAT reminders, Monday to Friday: Posting, Submission and Rejections at 09:00 IST, AR at 19:00 IST (and the hourly runs retry a failed send for 3 hours)
+      if (env.EMAIL_PROVIDER && !env.DEMO) { try { const r = await sendTatReminders(env); if (r.kind && (r.sent || r.failed)) console.log(`TAT reminders ${r.kind} ${r.day}: ${r.sent} sent, ${r.failed} failed`); } catch (e) { console.log("TAT reminders: " + (e && e.message)); } }
       if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
       // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
       // only the Monday job sends it (the hourly run falls inside the same hours and could send it twice)

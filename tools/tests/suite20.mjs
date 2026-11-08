@@ -106,7 +106,7 @@ ok("closing needs the root cause", !r.ok && /root cause/i.test(r.e), r);
 for (const [k, w] of [["is_error", /Y or N/], ["corrective", /corrective/], ["preventive", /preventive/], ["close_on", /close date/]]) { r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close, [k]: "" })); ok("closing needs " + k, !r.ok && w.test(r.e), r); }
 r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close, close_on: "2026-11-01" })); ok("the close date cannot be before the received date", !r.ok && /between/.test(r.e), r);
 S("Open past 24 hours");
-await sql("UPDATE escalations SET created_at = ? WHERE client_id = ?", Date.now() - 30 * 3600000, sun.id);
+await sql("UPDATE escalations SET created_at = ? WHERE client_id = ?", Date.now() - 5 * 86400000, sun.id);
 L = await TI("escalations.list", { client_id: sun.id, status: "open" });
 ok("both are flagged: reason needed", L.rows.every((x) => x.needs_reason && x.can_reason) && L.stats.needs_reason === 2, L.stats);
 const SL = await SM("escalations.list", { client_id: sun.id, status: "open" });
@@ -120,7 +120,7 @@ const notes = await sql("SELECT 1"); // keep the DB warm
 const tinaId = U("Tina Lead").id;
 const nn = DB.prepare("SELECT text FROM user_notices WHERE user_id = ? AND view = 'escalations'").bind(tinaId); const got = [];
 const res = await nn.all(); for (const x of (res.results || res)) got.push(x.text);
-ok("the hourly job tells the client's team lead once per escalation", got.length === 2 && got.every((t) => /24 hours/.test(t)), got);
+ok("the hourly job tells the client's team lead once per escalation", got.length === 2 && got.every((t) => /24 working hours/.test(t)), got);
 await runJob();
 const res2 = await nn.all(); ok("and not again on the next run", (res2.results || res2).length === 2);
 ok("an email went to the team lead", mails.some((m) => /SR1/.test(JSON.stringify(m)) && /tina@/.test(JSON.stringify(m))), mails.length);

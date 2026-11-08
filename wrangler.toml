@@ -32,5 +32,6 @@ MS_CLIENT_ID = "111e229f-1aab-4b75-9282-811742bfd707"
 
 # Every hour at :17, the roster from Purview Shastra (does nothing until the SHASTRA_FEED_KEY secret is set).
 # Every 10 minutes on Monday morning (08:30 to 13:20 IST), the Monday digest, a few clients per run.
+# 09:00 and 19:00 IST, Monday to Friday: the TAT reminders (Posting, Submission and Rejections at 09:00; AR at 19:00).
 [triggers]
-crons = ["17 * * * *", "*/10 3-7 * * 1"]
+crons = ["17 * * * *", "*/10 3-7 * * 1", "30 3,13 * * 1-5"]

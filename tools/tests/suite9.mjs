@@ -76,9 +76,9 @@ n = await TI("notify.list", {});
 ok("claims on desks of people out today", key(n, "absent") && key(n, "absent").n === 4 && key(n, "absent").view === "teamtoday", key(n, "absent"));
 const nl = await LE("notify.list", {});
 ok("another team's lead is not told about it", !key(nl, "escalations") && !key(nl, "absent"), nl.items.map((i) => i.key));
-await sql("UPDATE claims SET escalated_at = ? WHERE id = ?", Date.now() - 30 * 3600000, mineC.id);
+await sql("UPDATE claims SET escalated_at = ? WHERE id = ?", Date.now() - 6 * 86400000, mineC.id);
 n = await TI("notify.list", {});
-ok("an escalation over 24 hours turns red", key(n, "escalations").tone === "red" && /over 24 hours/.test(key(n, "escalations").text), key(n, "escalations"));
+ok("a claim flagged by a biller past 48 working hours turns red", key(n, "escalations").tone === "red" && /over 48 working hours/.test(key(n, "escalations").text), key(n, "escalations"));
 
 S("Bell: biller");
 let b = await AR("notify.list", {});

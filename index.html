@@ -631,6 +631,25 @@ html[data-text="large"] body{zoom:1.1}
 .inv-it.green{border-left-color:var(--sc-g);background:color-mix(in srgb,var(--sc-g) 6%,var(--card))}.inv-it.green .inv-num b{color:var(--sc-g)}
 tr.inv-risk td{background:color-mix(in srgb,var(--sc-r) 4%,var(--card))}
 @media (max-width:1100px){.inv-k3{grid-template-columns:1fr}.inv-ins{grid-template-columns:1fr}.inv-legend{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Inventory status: pending with the desks and team leads */
+.pend{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:10px}
+.pend-box{border:1px solid var(--line);border-top:4px solid;border-radius:10px;padding:11px 13px;background:var(--card);min-width:0}
+.pend-n{font-size:27px;font-weight:800;line-height:1.1;margin-top:6px}.pend-n small{font-size:12px;font-weight:600;color:var(--slate);margin-left:5px}
+.pend-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;margin:8px 0 6px;background:var(--soft);gap:1px}.pend-bar i{display:block;height:100%}
+.pend-t{width:100%;border-collapse:collapse}.pend-t td{padding:2px 0;font-size:12.5px}.pend-t td:last-child{text-align:right;font-weight:700}
+@media (max-width:1100px){.pend{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:600px){.pend{grid-template-columns:1fr}}
+/* the bell, in categories */
+@media (min-width:601px){.bell-menu{width:440px;max-height:78vh;overflow:auto}}
+.bell-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px;border-bottom:1px solid var(--line)}
+.nav .menu .bell-chips button,.menu .bell-chips button{border:1px solid var(--line);border-radius:999px;padding:3px 9px;font:inherit;font-size:12px;font-weight:600;color:var(--body);background:var(--card);cursor:pointer;display:inline-flex;gap:5px;align-items:center;width:auto}
+.bell-chips button i{font-style:normal;font-size:10.5px;font-weight:800;border-radius:999px;padding:0 6px;background:var(--chipbg);color:var(--body)}
+.bell-chips button i.r{background:color-mix(in srgb,var(--sc-r) 18%,var(--card));color:var(--red-ink)}.bell-chips button i.a{background:color-mix(in srgb,var(--sc-a) 22%,var(--card));color:var(--amber-ink)}
+.nav .menu .bell-chips button.on,.menu .bell-chips button.on{background:var(--ink);color:var(--card);border-color:var(--ink)}.menu .bell-chips button:hover{border-color:var(--line2)}.bell-chips button.on i{background:var(--card);color:var(--ink)}
+.bell-sec{border-bottom:1px solid var(--line)}.bell-sec:last-child{border-bottom:0}
+.bell-sh{display:flex;justify-content:space-between;gap:8px;padding:8px 10px 4px;font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--slate)}
+.bell-sh span:last-child{letter-spacing:0;text-transform:none;font-weight:700}
+.bell-sec.tat .bell-sh{color:var(--red-ink)}.bell-t{display:block}
 </style>
 </head><body><div id="root"></div>
-<script src="app/app.js?v=1c9169301d"></script></body></html>
+<script src="app/app.js?v=b7c8386232"></script></body></html>

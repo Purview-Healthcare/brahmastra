@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.92.0";
+const APP_VERSION = "2.93.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -1393,13 +1393,23 @@ const SearchIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="n
 const BellIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>;
 /* The bell: what needs this person now. A count shows for what changed since they last opened it. */
 const BELL_KEY = "brahmastra2:bell";
+/* The bell, in categories: Past TAT first (red), then Needs attention, Desks, Client escalations, Team, Setup; billers and desk
+   people get My work and Updates. All shows every category in this order, each with its first 3; a chip shows one category. */
+const BELL_CATS = [["tat", "⏰", "Past TAT"], ["attention", "🙋", "Needs attention"], ["desks", "🏢", "Desks"], ["escalations", "📣", "Client escalations"],
+  ["team", "👥", "Team"], ["setup", "⚙", "Setup"], ["work", "📋", "My work"], ["updates", "🔔", "Updates"]];
 function Bell({ notify, allowed, onGo }) {
   const [open, setOpen] = useState(false);
+  const [cat, setCat] = useState("all");
+  const [more, setMore] = useState({});
   const [seen, setSeen] = useState(() => { try { return JSON.parse(localStorage.getItem(BELL_KEY) || "{}") || {}; } catch (e) { return {}; } });
   const [was, setWas] = useState({});
   const items = ((notify && notify.items) || []).filter((x) => allowed.includes(x.view));
   const fresh = (x, s) => !(s[x.key] >= x.n);
   const unseen = items.filter((x) => fresh(x, seen));
+  const groups = BELL_CATS.map(([k, icon, label]) => ({ k, icon, label, xs: items.filter((x) => (x.cat || "updates") === k) })).filter((g) => g.xs.length);
+  const count = (g) => g.k === "tat" ? g.xs.reduce((t, x) => t + (x.n || 0), 0) : g.xs.length;
+  const shown = cat === "all" ? groups : groups.filter((g) => g.k === cat);
+  useEffect(() => { if (cat !== "all" && !groups.some((g) => g.k === cat)) setCat("all"); }, [groups.map((g) => g.k).join(",")]);
   useEffect(() => { if (!open) return undefined; const h = () => setOpen(false); const k = (e) => { if (e.key === "Escape") setOpen(false); };
     window.addEventListener("click", h); window.addEventListener("keydown", k); return () => { window.removeEventListener("click", h); window.removeEventListener("keydown", k); }; }, [open]);
   const toggle = () => {
@@ -1413,8 +1423,18 @@ function Bell({ notify, allowed, onGo }) {
         <BellIcon />{unseen.length > 0 && <span className={"bell-n" + (unseen.some((x) => x.tone === "red") ? " red" : "")}>{unseen.length}</span>}</button>
       {open && <div className="menu bell-menu">
         <div className="row between" style={{ padding: "6px 10px 8px" }}><b className="small">What needs you</b><span className="tiny muted">{notify && notify.at ? "as of " + new Date(notify.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}</span></div>
-        {items.map((x) => <button key={x.key} type="button" className="bell-item" onClick={() => { setOpen(false); onGo(x.view, x.params); }}>
-          <i style={{ background: dot[x.tone] || dot.info }} /><span>{x.text}</span>{fresh(x, was) && <span className="badge teal" style={{ marginLeft: "auto" }}>new</span>}</button>)}
+        {groups.length > 1 && <div className="bell-chips">
+          <button type="button" className={cat === "all" ? "on" : ""} onClick={() => setCat("all")}>All <i>{items.length}</i></button>
+          {groups.map((g) => <button type="button" key={g.k} className={cat === g.k ? "on" : ""} onClick={() => setCat(g.k)}>{g.label} <i className={g.k === "tat" ? "r" : g.xs.some((x) => x.tone === "red") ? "r" : g.xs.some((x) => x.tone === "amber") ? "a" : ""}>{count(g)}</i></button>)}
+        </div>}
+        {shown.map((g) => { const all = cat !== "all" || more[g.k] || g.xs.length <= 3, xs = all ? g.xs : g.xs.slice(0, 3); return (
+          <div key={g.k} className={"bell-sec" + (g.k === "tat" ? " tat" : "")}>
+            {(groups.length > 1 || g.k === "tat") && <div className="bell-sh"><span>{g.icon} {g.label}</span><span>{g.k === "tat" ? plural(count(g), "task") + " · reminders until closed" : g.xs.length}</span></div>}
+            {xs.map((x) => <button key={x.key} type="button" className="bell-item" onClick={() => { setOpen(false); onGo(x.view, x.params); }}>
+              <i style={{ background: dot[x.tone] || dot.info }} /><span><span className="bell-t">{x.text}</span>{x.sub && <span className="tiny muted" style={{ display: "block", marginTop: 2 }}>{x.sub}</span>}</span>
+              {fresh(x, was) && <span className="badge teal" style={{ marginLeft: "auto" }}>new</span>}</button>)}
+            {!all && <button type="button" className="btn link sm" style={{ padding: "2px 10px 8px" }} onClick={() => setMore({ ...more, [g.k]: true })}>Show all {g.xs.length} ▾</button>}
+          </div>); })}
         {!items.length && <div className="small muted" style={{ padding: "4px 10px 10px" }}>Nothing needs you right now.</div>}
       </div>}
     </div>
@@ -1570,13 +1590,17 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
         </div>
         </div>
       </div></div>
-      {attention && attention.overdue > 0 && view !== "attention" && (
-        <div className="tat-bar" onClick={() => setView("attention")}>⚠ {attention.overdue} claim{attention.overdue > 1 ? "s" : ""} flagged by billers {attention.overdue > 1 ? "have" : "has"} waited more than 24 hours for a team lead. Open Needs attention to answer {attention.overdue > 1 ? "them" : "it"}.</div>
-      )}
-      {handoffs && handoffs.overdue > 0 && view !== "handoffs" && (
+      {me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention" && view !== "handoffs" && (() => {
+        // every task past its TAT on this person's clients: Payment posting, Submission, Rejections and Needs attention
+        const by = {}; for (const x of (notify.items || []).filter((i) => i.cat === "tat")) { const k = x.key.split(":").pop(); by[k] = (by[k] || 0) + (x.n || 0); }
+        const parts = [["posting", "at Payment posting"], ["submission", "at Submission"], ["rejection", "at Rejections"], ["attn", "in Needs attention over 48 working hours"]].filter(([k]) => by[k]).map(([k, l]) => by[k] + " " + l);
+        return <div className="tat-bar" role="button" tabIndex={0} onClick={() => onGo("dashboard", { tab: "inventory" })} onKeyDown={(e) => { if (e.key === "Enter") onGo("dashboard", { tab: "inventory" }); }}>
+          ⏰ {plural(notify.past_tat, "task is", "tasks are")} past {notify.past_tat === 1 ? "its" : "their"} TAT on your clients: {parts.join(", ")}. Every supervisor, SME and above on these clients is reminded until {notify.past_tat === 1 ? "it is" : "they are"} closed. <u>Show them</u></div>;
+      })()}
+      {handoffs && handoffs.overdue > 0 && view !== "handoffs" && !(me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention") && (
         <div className="tat-bar" onClick={() => setView("handoffs")}>⚠ {handoffs.overdue} posting / submission hand-off{handoffs.overdue > 1 ? "s are" : " is"} past the TAT. Open Posting &amp; submission to complete {handoffs.overdue > 1 ? "them" : "it"} or ask for assistance.</div>
       )}
-      {handoffs && !handoffs.overdue && handoffs.due_soon > 0 && view !== "handoffs" && (
+      {handoffs && !handoffs.overdue && handoffs.due_soon > 0 && view !== "handoffs" && !(me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention") && (
         <div className="tat-bar soon" onClick={() => setView("handoffs")}>⏱ {handoffs.due_soon} posting / submission hand-off{handoffs.due_soon > 1 ? "s have" : " has"} under 4 hours left on the TAT. Open {(DESK[deskOf(me, handoffs)] || { tab: "Posting & submission" }).tab} to finish {handoffs.due_soon > 1 ? "them" : "it"} on time.</div>
       )}
       {me.role === "supervisor" && notify && <MissingAlertPopup alerts={notify.alerts} onChanged={onRefreshNotify} />}
@@ -3392,7 +3416,7 @@ function PriorityLogModal({ onClose, onOpen }) {
 }
 
 
-/* ---------- needs attention: escalations from billers, oldest first; red once past the 24-hour TAT ---------- */
+/* ---------- needs attention: claims flagged by billers, oldest first; red once past the 48-hour TAT (working hours, Monday to Friday) ---------- */
 const fmtWait = (ms) => { const h = Math.floor(ms / 3600000); return h >= 48 ? Math.floor(h / 24) + "d " + (h % 24) + "h" : h >= 1 ? h + "h " + Math.floor((ms % 3600000) / 60000) + "m" : Math.max(1, Math.floor(ms / 60000)) + "m"; };
 /* Insurance TFL / AFL: one row per client and insurance. Billers fill the limits from their notes; team leads can set or correct them here.
    The open claims near or past the TFL show which insurance and which claims to give priority. */
@@ -3523,12 +3547,12 @@ function EscalationTrackerView({ ctx, me, params }) {
   return (
     <div className="stack">
       <div className="row between" style={{ alignItems: "flex-end" }}>
-        <div style={{ maxWidth: 980 }}><h1>Escalation tracker</h1><div className="sub">Client escalations, one register per client. SMEs and above log and update them. Open past 24 hours, the team lead gives the reason and the expected close date. Every change is saved to the client's OneDrive file.</div></div>
+        <div style={{ maxWidth: 980 }}><h1>Escalation tracker</h1><div className="sub">Client escalations, one register per client. SMEs and above log and update them. Open past 24 working hours (Monday to Friday), the team lead gives the reason and the expected close date. Every change is saved to the client's OneDrive file.</div></div>
         <button className="btn primary" style={{ flex: "none" }} onClick={() => setForm(escBlank(clientId))}>+ Log an escalation</button>
       </div>
       <div className="grid g5">
         <Kpi label="Open" value={fmtInt(st.open || 0)} tone={st.open ? "bad" : ""} onClick={() => setStatus("open")} />
-        <Kpi label="Over 24 h, reason needed" value={fmtInt(st.needs_reason || 0)} tone={st.needs_reason ? "bad" : ""} sub="the team lead gives the reason" onClick={() => setStatus("reason")} />
+        <Kpi label="Over 24 working h, reason needed" value={fmtInt(st.needs_reason || 0)} tone={st.needs_reason ? "bad" : ""} sub="the team lead gives the reason" onClick={() => setStatus("reason")} />
         <Kpi label="Logged · this month" value={fmtInt(st.logged_month || 0)} />
         <Kpi label="Closed · this month" value={fmtInt(st.closed_month || 0)} tone="good" />
         <Kpi label="Average time to close" value={st.avg_hours == null ? "–" : st.avg_hours + " h"} sub="this month" />
@@ -3573,7 +3597,7 @@ function EscalationTrackerView({ ctx, me, params }) {
                 {r.can_edit && <button className="btn sm" onClick={() => edit(r)}>{r.status === "resolved" ? "View" : "Update"}</button>}
               </td>
             </tr>))}
-            {q.data && !rows.length && <tr><td colSpan={10}><Empty>{status === "open" ? "No open escalations." : status === "reason" ? "Nothing open over 24 hours without a reason." : "No escalations match these filters."}</Empty></td></tr>}</tbody></table></div>
+            {q.data && !rows.length && <tr><td colSpan={10}><Empty>{status === "open" ? "No open escalations." : status === "reason" ? "Nothing open over 24 working hours without a reason." : "No escalations match these filters."}</Empty></td></tr>}</tbody></table></div>
       </div>
       {form && (
         <Modal title={form.id ? "SR" + form.sr + " · " + form.client_name : "Log an escalation"} sub={form.id ? "Changes are saved here and to the client's OneDrive file." : "Saved here and to the client's OneDrive file. The SR No is given by itself."} onClose={() => setForm(null)}
@@ -3606,7 +3630,7 @@ function EscalationTrackerView({ ctx, me, params }) {
         </Modal>
       )}
       {why && (
-        <Modal title={"SR" + why.row.sr + " is open over 24 hours"} sub={why.row.client_name + " · " + why.row.dept + ": " + why.row.description} onClose={() => setWhy(null)} narrow
+        <Modal title={"SR" + why.row.sr + " is open over 24 working hours"} sub={why.row.client_name + " · " + why.row.dept + ": " + why.row.description} onClose={() => setWhy(null)} narrow
           footer={<><button className="btn" onClick={() => setWhy(null)} disabled={busy}>Cancel</button><button className="btn primary" onClick={saveWhy} disabled={busy}>{busy ? "Saving…" : "Save"}</button></>}>
           <div className="stack">
             <Field label="Why it is still open"><textarea className="textarea" style={{ minHeight: 70 }} value={why.reason} onChange={(e) => setWhy({ ...why, reason: e.target.value })} placeholder="e.g. Waiting on the client's corrected charge template" /></Field>
@@ -3841,15 +3865,15 @@ function EscalationsView({ ctx, me, refreshAttention }) {
   };
   return (
     <>
-      <div><div className="sub">Review within {q.data ? q.data.tat_hours : 24} hours: write why it came, what you reviewed, your findings and the next action, then give it to the biller who sent it, another biller, or back to the department; after that they turn red and a reminder stays at the top of every screen until they are answered.</div></div>
-      {q.data && q.data.overdue > 0 && <div className="alert err"><b>{q.data.overdue} past the 24-hour TAT.</b> Answer these first.</div>}
+      <div><div className="sub">Review within {q.data ? q.data.tat_hours : 48} working hours (Monday to Friday): write why it came, what you reviewed, your findings and the next action, then give it to the biller who sent it, another biller, or back to the department; after that they turn red and a reminder stays at the top of every screen until they are answered.</div></div>
+      {q.data && q.data.overdue > 0 && <div className="alert err"><b>{q.data.overdue} past the {q.data.tat_hours}-hour TAT.</b> Answer these first.</div>}
       <div className="card tight">
         <ErrorBox error={q.error} />
         {q.loading && !q.data && <Spinner />}
         <div className="table-wrap"><table className="t"><thead><tr><th>Waiting</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Payer</th><th className="r">Balance</th><th>Biller</th><th>Last entry</th><th></th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className={r.overdue ? "tat-missed" : ""}>
-              <td>{r.overdue ? <span className="badge red">TAT missed · {fmtWait(r.waiting_ms)}</span> : <span className={"badge " + (r.waiting_ms > 18 * 3600000 ? "amber" : "gray")}>{fmtWait(r.waiting_ms)}</span>}<div className="tiny muted">since {fmtWhen(r.escalated_at)}</div></td>
+              <td>{r.overdue ? <span className="badge red">TAT missed · {fmtWait(r.waiting_ms)}</span> : <span className={"badge " + (r.waiting_ms > (q.data.tat_hours - 8) * 3600000 ? "amber" : "gray")}>{fmtWait(r.waiting_ms)}</span>}<div className="tiny muted">since {fmtWhen(r.escalated_at)}</div></td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td className="small">{r.escalated_by_name || r.assigned_name || "–"}</td>
               <td className="small" style={{ maxWidth: 340 }}>{r.last_status_code ? <b>{r.last_status_code}{r.last_sub_status ? " › " + r.last_sub_status : ""}</b> : null}<div className="tiny" style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{r.last_note}</div></td>
@@ -4382,7 +4406,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const desk = deskOf(me, handoffs);
   const hd = (handoffs && handoffs.depts) || [];
   const mine = desk === "submission" && (hd.includes("subcheck") || hd.includes("rejection")) ? ["submission", ...hd.filter((x) => x === "subcheck" || x === "rejection")] : null;
-  const [dept, setDept] = useState(desk === "posting" ? "posting" : desk === "submission" && !mine ? "submission" : "");
+  const [dept, setDept] = useState((params && ["posting", "submission", "rejection"].includes(params.dept) && params.dept) || (desk === "posting" ? "posting" : desk === "submission" && !mine ? "submission" : ""));
   const [view, setView] = useState("open");
   // which client, and when the claim was sent to the desk (the same day the AR biller worked it)
   const [clientId, setClientId] = useState((params && params.client_id) || "");
@@ -5611,6 +5635,36 @@ function InvStrip({ stages, mini }) {
   if (!tot) return <div className={mini ? "inv-mini" : "inv-strip"} style={{ background: "var(--soft)" }} />;
   return <div className={mini ? "inv-mini" : "inv-strip"}>{INV_STAGES.map(([k, l, c]) => stages[k] && stages[k].n ? <i key={k} title={l + ": " + stages[k].n} style={{ width: (stages[k].n / tot * 100) + "%", background: c }} /> : null)}</div>;
 }
+/* Inventory status: what waits with the desks and the team leads right now, against each TAT (working hours, Monday to Friday). */
+function PendingCard({ p, clientId, go }) {
+  const tatTxt = (h) => (h ? h + " working hours" : "each client's own");
+  const desk = (k, title, color) => { const b = p.desks[k]; return { k, title, color, n: b.n, bal: b.bal, rows: [["Within TAT", b.ok, b.ok ? "g" : ""], ["Due in the next " + p.due_soon_hours + " hours", b.soon, b.soon ? "a" : ""], ["Past TAT", b.late, b.late ? "r" : "g"]],
+    extra: k === "submission" && b.rechecks ? "includes " + plural(b.rechecks, "recheck") : "", tat: tatTxt(k === "posting" ? p.tat.posting : p.tat.submission),
+    badge: b.late ? ["red", b.late + " past TAT"] : b.soon ? ["amber", b.soon + " due soon"] : b.n ? ["green", "all within TAT"] : ["gray", "nothing pending"],
+    open: () => go("handoffs", { client_id: clientId || undefined, dept: k }) }; };
+  const a = p.attn;
+  const boxes = [desk("posting", "Payment posting", "#2563EB"), desk("submission", "Submission", "#7C5CFF"), desk("rejection", "Rejections", "#E5484D"),
+    { k: "attn", title: "Needs attention", color: "#F5A623", n: a.n, rows: [["Flagged by billers", a.flagged.n, ""], ["Sent back by Posting / Submission", a.back.n, ""], ["Client requests to send", a.requests.n, ""], ["Past " + p.tat.attention + " h", a.late, a.late ? "r" : "g"]],
+      tat: p.tat.attention + " working hours", badge: a.late ? ["red", a.late + " past " + p.tat.attention + " h"] : a.soon ? ["amber", a.soon + " due soon"] : a.n ? ["green", "all within TAT"] : ["gray", "nothing waiting"],
+      open: () => go("attention") }];
+  const seg = (b) => { const t = Math.max(1, b.n), x = b.k === "attn" ? [[a.n - a.late - a.soon, "var(--sc-g)"], [a.soon, "var(--sc-a)"], [a.late, "var(--sc-r)"]] : [[p.desks[b.k].ok, "var(--sc-g)"], [p.desks[b.k].soon, "var(--sc-a)"], [p.desks[b.k].late, "var(--sc-r)"]];
+    return <div className="pend-bar">{b.n ? x.filter(([v]) => v > 0).map(([v, c], i) => <i key={i} style={{ width: (v / t * 100) + "%", background: c }} />) : null}</div>; };
+  return (
+    <div className="card">
+      <div className="row between" style={{ flexWrap: "wrap", gap: 6 }}><div><span className="inv-lbl">Pending with the desks and team leads</span> <span className="small muted">· waiting right now, against each TAT</span></div>
+        <span className="small muted">Every TAT counts Monday to Friday only · Needs attention: {p.tat.attention} working hours</span></div>
+      <div className="pend">{boxes.map((b) => (
+        <div key={b.k} className="pend-box" style={{ borderTopColor: b.color }}>
+          <div className="row between" style={{ gap: 6 }}><b>{b.title}</b><span className={"badge " + b.badge[0]}>{b.badge[1]}</span></div>
+          <div className="pend-n">{fmtInt(b.n)}<small>{b.k === "attn" ? "waiting for a team lead" : "pending · " + fmtK(b.bal)}</small></div>
+          {seg(b)}
+          <table className="pend-t"><tbody>{b.rows.map(([l, v, tone]) => <tr key={l}><td>{l}</td><td className={tone === "r" ? "red-ink" : tone === "a" ? "amber-ink" : tone === "g" ? "teal-ink" : ""}>{fmtInt(v)}</td></tr>)}</tbody></table>
+          <div className="tiny muted" style={{ margin: "4px 0 8px" }}>TAT: {b.tat}{b.extra ? " · " + b.extra : ""}</div>
+          <button type="button" className={"btn sm" + (b.badge[0] === "red" ? " primary" : "")} onClick={b.open}>Open {b.title === "Needs attention" ? "Needs attention" : b.title}</button>
+        </div>))}</div>
+    </div>
+  );
+}
 function InventoryStatusTab(props) {
   const { ctx, go } = props;
   const [clientId, setClientId] = useState(() => (props.params && props.params.client_id) || ""), [leadId, setLeadId] = useState("");
@@ -5644,6 +5698,7 @@ function InventoryStatusTab(props) {
             <b>{fmtInt(d.stages[k].n)}</b><span>{l}</span><small>{fmtK(d.stages[k].bal)}{stageSub(k) ? " · " + stageSub(k) : ""}</small></button>)}</div>
         </>}
       </div>
+      {d && d.pending && <PendingCard p={d.pending} clientId={clientId} go={go} />}
       {d && <>
         <div className="inv-k3">
           <div className="card"><span className="inv-lbl">Age of the workable AR</span> <span className="small muted">· SLA: over 90 days ≤ {d.target}% · the dashed line is {d.target}% of the AR</span>
@@ -5904,7 +5959,7 @@ function ClientView({ ctx, me, go, params }) {
           <div className="card"><h3 className="c3-h">Team and follow-through · {rangeText(dr)}</h3>
             <div className="c3-line"><span title="Client escalations in the Escalation tracker">Client escalations open</span><span><b>{d.escalations.open}</b> {d.escalations.late ? <span className="badge red">{d.escalations.late} over 24 h</span> : null}</span></div>
             <div className="c3-line"><span>Missed tasks · AR</span><span><b>{d.missed.ar}</b> <span className="tiny muted">allocated, not worked</span></span></div>
-            <div className="c3-line"><span>Missed tasks · posting / submission</span><span><b>{d.missed.posting + d.missed.submission}</b> <span className="tiny muted">past 24 h TAT</span></span></div>
+            <div className="c3-line"><span>Missed tasks · posting / submission</span><span><b>{d.missed.posting + d.missed.submission}</b> <span className="tiny muted">past the TAT</span></span></div>
             <div className="c3-line"><span>Entries made</span><span><b>{fmtInt(d.worked.entries)}</b> <span className="tiny muted">by {d.worked.people} people</span></span></div>
             <div className="c3-line"><span>Over 120 days</span><span><b>{fmtMoney(d.ar.over120)}</b></span></div>
             {d.raci && <div className="tiny muted mt8">RACI: R {d.raci.r.slice(0, 2).map((p) => p.name).join(", ")}{d.raci.r.length > 2 ? " +" + (d.raci.r.length - 2) : ""} · A {d.raci.a.map((p) => p.name).join(", ") || "–"} · C {d.raci.c.map((p) => p.name).join(", ") || "–"} · I {d.raci.i.map((p) => p.name).join(", ")} <button className="btn link sm no-print" onClick={() => go("raci")}>edit</button></div>}</div>
@@ -7860,7 +7915,7 @@ function SlaExtras({ clientId, from, to, label, go, escOnly }) {
         <div className="grid g5" style={{ marginTop: 10 }}>
           <Kpi label={"Logged · target " + e.target} value={fmtInt(e.n)} tone={e.n ? "bad" : "good"} sub={e.n ? "Red" : "Green"} />
           <Kpi label="Open" value={fmtInt(e.open)} tone={e.open ? "bad" : ""} />
-          <Kpi label="Open over 24 h" value={fmtInt(e.over24)} tone={e.over24 ? "warn" : ""} sub={e.over24 ? e.over24_reason + " with a reason" : ""} />
+          <Kpi label="Open over 24 working h" value={fmtInt(e.over24)} tone={e.over24 ? "warn" : ""} sub={e.over24 ? e.over24_reason + " with a reason" : ""} />
           <Kpi label="Our error (Y)" value={fmtInt(e.errors)} />
           <Kpi label="Average time to close" value={e.avg_hours == null ? "–" : e.avg_hours + " h"} />
         </div>
