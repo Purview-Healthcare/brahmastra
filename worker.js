@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.86.0";
+const VERSION = "2.87.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -2575,6 +2575,12 @@ function teamSuggestions(rows) {
   const attainSeen = (r) => r.attain_basis === "done" ? `Attainment ${r.attain}% (${r.worked_done} of ${Math.round(r.target_done)} claims up to yesterday)` : `Attainment ${r.attain}% today (${r.worked_today} of ${Math.round(r.target_today)} claims)`;
   for (const r of rows) {
     const away = r.out_today === "out";
+    if (r.esc_n) {
+      const xs = r.escalations, open = xs.filter((e) => e.status === "Open").length;
+      today.push(item(r, `${xs.length} ${xs.length === 1 ? "escalation" : "escalations"} as our error: ` + xs.slice(0, 2).map((e) => `SR${e.sr} at ${e.client_name} (${e.kind}, ${e.dept}${e.dow ? ", DOW " + fmtD(e.dow) : ""})`).join("; ") + (xs.length > 2 ? "…" : ""),
+        away ? "Out today: when they are back, go through it with them: the root cause and what to check next time." : `Go through ${xs.length === 1 ? "it" : "them"} with them today: the root cause and what to check next time.` + (open ? ` Close ${open === 1 ? "it" : "them"} in the Escalation tracker with the corrective and preventive action.` : "")));
+      flagged.add(r.id);
+    }
     if (r.ramp.flag === "over") { today.push(r.ramp.extended
       ? item(r, `${r.status}, the date agreed for production was ${fmtD(r.ramp.due)} (${nDays(-r.ramp.days)} ago)`, "If they have moved to production, update Purview Shastra; if not, agree a new date on their row.")
       : item(r, `${r.status}${r.ramp.start ? " since " + fmtD(r.ramp.start) : ""}, was due in production ${fmtD(r.ramp.due)} (${nDays(-r.ramp.days)} ago)`, "Decide today: move to production or extend, and note the new date on their row.")); flagged.add(r.id); }
@@ -3693,7 +3699,9 @@ const OPS = {
     const days = [], span = []; for (let d = from; d <= to; d = addDays(d, 1)) { span.push(d); if (weekday(d)) days.push(d); }
     if (!people.length) return { rows: [], leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals: { people: 0 }, by_status: [], checks: [], suggestions: { today: [], week: [], good: [] }, floor_source: "pending" };
     const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
-    const [work, closed, att, notes, desk, outNow] = await Promise.all([
+    // escalations where the person is named as who made the error (our error), received in these dates
+    const ew = f.clientIds ? ` AND e.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "";
+    const [work, closed, att, notes, desk, outNow, escs] = await Promise.all([
       all(env, `SELECT nt.user_id, COUNT(*) AS worked, SUM(nt.created_at < ?) AS worked_done, COUNT(DISTINCT date((nt.created_at / 1000) + ?, 'unixepoch')) AS days_worked FROM notes nt JOIN claims c ON c.id = nt.claim_id
         WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN (${qs})${cw}${lw} GROUP BY nt.user_id`, todayStart, off * 60, start, end, ...ids, ...ca, ...la),
       all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ? AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la),
@@ -3701,7 +3709,11 @@ const OPS = {
       all(env, `SELECT * FROM team_notes WHERE user_id IN (${qs})`, ...ids),
       all(env, `SELECT c.assigned_to, c.tier FROM claims c WHERE c.state = 'assigned' AND c.assigned_at < ? AND c.assigned_to IN (${qs})${cw}${lw}`, todayStart, ...ids, ...ca, ...la),
       all(env, `SELECT user_id, reason FROM attendance WHERE status = 'out' AND day = ? AND user_id IN (${qs})`, today, ...ids),
+      all(env, `SELECT e.id, e.error_by_id AS user_id, e.sr, e.client_id, cl.name AS client_name, e.kind, e.dept, e.day, e.error_dow, e.status FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
+        WHERE e.is_error = 'Y' AND e.error_by_id IN (${qs}) AND e.day BETWEEN ? AND ?${ew} ORDER BY e.day DESC, e.sr DESC`, ...ids, from, to, ...ca),
     ]);
+    const escBy = new Map(); for (const e of escs) { if (!escBy.has(e.user_id)) escBy.set(e.user_id, []); escBy.get(e.user_id).push({ id: e.id, sr: e.sr, client_id: e.client_id, client_name: e.client_name || "",
+      kind: escKind(e), dept: e.dept, day: e.day, dow: e.error_dow || "", status: e.status === "resolved" ? "Closed" : "Open" }); }
     const outToday = new Map(outNow.map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x.n])), nb = new Map(notes.map((x) => [x.user_id, x]));
     // time on the floor and idle time from Purview Shastra (and its attendance for each day), when its feed is set up
@@ -3762,6 +3774,7 @@ const OPS = {
         // judged against the production mark: production only, on finished days; Training and OJT are in ramp-up
         perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? "none" : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
         out_today: outToday.get(u.id) || "",
+        escalations: escBy.get(u.id) || [], esc_n: (escBy.get(u.id) || []).length,
         start_date: n.start_date || "", end_date: n.end_date || "", comment: n.comment || "", comment_by: n.by_name || "", comment_at: n.at || null };
     }).sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.name.localeCompare(b.name));
     const sum = (k, rs = rows) => rs.reduce((t, r) => t + (r[k] || 0), 0);
@@ -3789,7 +3802,8 @@ const OPS = {
       worked_done: sum("worked_done"), target_done: sum("target_done"), worked_today: sum("worked_today"), target_today: sum("target_today"),
       on_floor_min: rows.some((r) => r.on_floor_min != null) ? sum("on_floor_min") : null, idle_min: rows.some((r) => r.idle_min != null) ? sum("idle_min") : null,
       break_min: rows.some((r) => r.break_min != null) ? sum("break_min") : null, break_over_days: sum("break_over_days"),
-      floor_judged: rows.filter((r) => r.floor === "met" || r.floor === "short").length, floor_met: rows.filter((r) => r.floor === "met").length };
+      floor_judged: rows.filter((r) => r.floor === "met" || r.floor === "short").length, floor_met: rows.filter((r) => r.floor === "met").length,
+      esc: sum("esc_n"), esc_people: rows.filter((r) => r.esc_n).length };
     totals.attain_basis = totals.target_done > 0 ? "done" : "today";
     totals.attain = totals.attain_basis === "done" ? Math.round(totals.worked_done / totals.target_done * 100) : totals.target_today ? Math.round(totals.worked_today / totals.target_today * 100) : null;
     return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals, by_status: byStatus, checks, perf_mark: PERF_MARK, ramp_weeks: RAMP_WEEKS,

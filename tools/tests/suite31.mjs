@@ -173,6 +173,23 @@ r = await T(() => TI("escalations.save", { ...sr3, id: sr3.id, kind: undefined, 
 const s3 = (await TI("escalations.list", { client_id: sun.id, status: "all" })).rows.find((x) => x.sr === 3);
 ok("an edit without a type keeps the one it has", r.ok && s3.kind === "internal", s3 && s3.kind);
 
+S("Team status: escalations against each person");
+// Arun is named on SR1 (external) and SR2 (internal); SR4 went back to N
+const TS = await TI("team.status", { from: daysBefore(today, 6), to: today, today });
+const ar = TS.rows.find((x) => x.name === "Arun Agent"), si = TS.rows.find((x) => x.name === "Sima Expert");
+ok("Arun's row shows his 2 escalations as our error, newest first", ar && ar.esc_n === 2 && ar.escalations.map((e) => "SR" + e.sr).join() === "SR2,SR1", ar && ar.escalations);
+ok("each with the client, type, department, received date, DOW and status", ar && ar.escalations.every((e) => e.client_name === sun.name && e.dept && e.day === today && e.dow === dow && e.status === "Open") && ar.escalations.map((e) => e.kind).sort().join() === "external,internal", ar && ar.escalations);
+ok("the one taken back (SR4, N) is not counted against him", ar && !ar.escalations.some((e) => e.sr === 4));
+ok("people with none show 0", !si || si.esc_n === 0, si && si.esc_n);
+ok("the totals for the red line at the top: 2 escalations, 1 person", TS.totals.esc === 2 && TS.totals.esc_people === 1, TS.totals);
+const sg = TS.suggestions.today.find((x) => x.who === "Arun Agent" && /escalations as our error/.test(x.seen));
+ok("and a Do today pointer: go through it with them", sg && /SR2 at Sunrise Eye Care \(internal/.test(sg.seen) && /root cause/.test(sg.do), TS.suggestions.today);
+const TSold = await TI("team.status", { from: daysBefore(today, 40), to: daysBefore(today, 20), today });
+const arOld = TSold.rows.find((x) => x.name === "Arun Agent");
+ok("dates before they were received: nothing", !arOld || arOld.esc_n === 0, arOld && arOld.esc_n);
+const TSc = await TI("team.status", { client_id: sun.id, from: daysBefore(today, 6), to: today, today });
+ok("with the client picked, the same", (TSc.rows.find((x) => x.name === "Arun Agent") || {}).esc_n === 2);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
