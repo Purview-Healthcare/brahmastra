@@ -213,6 +213,23 @@ S("Purview's workflow: posting closes the claim for AR; submission does not");
   c = await row("SELECT state, last_effective, last_bucket FROM claims WHERE id = ?", wid);
   ok("posted: Posting Closed, the claim closed", c.state === "closed" && c.last_effective === "Posting Closed" && c.last_bucket === "Closed", c);
   ok("...and the biller who worked it can still open it", (await T(() => AR("claims.get", { id: wid }))).ok);
+  // anyone may open a claim Posting closed, to read it; nobody edits its earlier notes
+  const CY = await firstIn("Cyra Agent", "cyra@purview-healthcare.com"), LA = await firstIn("Lara Lead", "lara@purview-healthcare.com");
+  const cg = await T(() => CY("claims.get", { id: wid }));
+  ok("anyone can open a claim Posting closed, to read it (a biller on another client)", cg.ok && cg.r.claim.view_only === true && cg.r.claim.locked === true && cg.r.siblings.length === 0 && cg.r.notes.every((n) => !n.editable),
+    cg.ok ? [cg.r.claim.view_only, cg.r.claim.locked, cg.r.siblings.length] : cg.e);
+  ok("...a team lead of another client too", (await T(() => LA("claims.get", { id: wid }))).ok);
+  ok("...with its history and its files", (await T(() => CY("claims.timeline", { id: wid }))).ok && cg.ok && cg.r.attachments.length > 0 && (await T(() => CY("attachments.get", { id: cg.r.attachments[0].id }))).ok);
+  const wno = (await row("SELECT claim_no FROM claims WHERE id = ?", wid)).claim_no, fnd = await CY("search.global", { q: wno });
+  ok("...and finds it by its claim number", fnd.claims.some((x) => x.id === wid && x.posted), fnd.claims.map((x) => [x.claim_no, x.posted]));
+  ok("...but adds nothing to it: it is not their claim", !(await T(() => CY("notes.add", { claim_id: wid, comment: "a note from someone else" }))).ok);
+  const mine = await AR("claims.get", { id: wid }), wn = mine.notes.find((n) => n.kind === "work");
+  ok("for the biller who worked it the notes are locked too", mine.claim.view_only === false && mine.claim.locked === true && wn && !wn.editable, [mine.claim.view_only, wn && wn.editable]);
+  const fix = { saag: { status: "Claim Paid", sub_status: "EOB Available", action: "Need to Post/Posting Correction", bucket: "Closed", effective: "" }, note: nt, today };
+  const e1 = await T(() => AR("notes.update", { id: wn.id, ...fix })), e2 = await T(() => TI("notes.update", { id: wn.id, ...fix }));
+  ok("nobody edits an earlier note: not the biller who wrote it, not a team lead", !e1.ok && !e2.ok && /no longer be edited/.test(e1.e || "") && /no longer be edited/.test(e2.e || ""), [e1.e, e2.e]);
+  await sql("UPDATE claims SET state = 'closed', handoff_status = '' WHERE id = ?", ids[29]);
+  ok("a claim AR closed (not posted) is not opened by everyone", !(await T(() => CY("claims.get", { id: ids[29] }))).ok);
   await AR("queue.open", { id: sid });
   const ss = await AR("queue.complete", { id: sid, desk: true, saag: { status: "Claim Denied", sub_status: "Coding Error", action: "Need to Resubmit", bucket: "Payer", effective: "Pending-Purview internal review" }, note: nt, today });
   c = await row("SELECT state, last_effective, last_bucket FROM claims WHERE id = ?", sid);
@@ -221,6 +238,12 @@ S("Purview's workflow: posting closes the claim for AR; submission does not");
   await QU("handoffs.close", { id: hs.id, outcome: "complete", proof: { date: today, ref: "BATCH-77" } });
   c = await row("SELECT state, last_effective, last_bucket, follow_up_on FROM claims WHERE id = ?", sid);
   ok("submitted: back with AR for its follow-up (with the payer, Pending-Collectible Insurance)", c.state === "completed" && c.last_effective === "Pending-Collectible Insurance" && c.last_bucket === "Payer" && c.follow_up_on > today, c);
+  // 15 days later the AR follow-up is back in the allocation pool, named as such
+  await sql("UPDATE claims SET follow_up_on = ? WHERE id = ?", today, sid);
+  const ec = (await TI("claims.eligible", { client_id: sun.id, today })).claims.find((x) => x.id === sid);
+  ok("15 days after submission the AR follow-up is in the allocation pool", ec && ec.state === "completed" && ec.handoff_status === "submitted", ec && [ec.state, ec.handoff_status]);
+  const sc = ec && rig.app.scoreClaim({ ...ec, age_days: 40 }, today), sc0 = ec && rig.app.scoreClaim({ ...ec, age_days: 40, handoff_status: "" }, today);
+  ok("...named \"AR follow-up after submission\", with the same points as any follow-up due", sc && /AR follow-up after submission due/.test(sc.reason) && sc.priority === sc0.priority && /follow-up due/.test(sc0.reason), sc && [sc.reason, sc.priority, sc0.priority]);
   // a claim taken back to a biller while Posting still had it: posting it does not mark the biller's claim closed
   const gid = ids[27];
   await sql("UPDATE claims SET state = 'assigned', assigned_to = ?, first_up = 0, follow_up_on = '' WHERE id = ?", arun, gid);
@@ -238,6 +261,17 @@ S("Purview's workflow: posting closes the claim for AR; submission does not");
   const rb = await AR("queue.open", { id: ids[28] });
   ok("...and a Rejections person shows on the work form when one is set", rb.claim.desk_rejection === true, rb.claim.desk_rejection);
   await sql("UPDATE clients SET rejection_mode = '', rejection_lead = NULL WHERE id = ?", sun.id); }
+
+S("A part of the scope of work always has a responsible person");
+{ const was = (await row("SELECT scope_json FROM clients WHERE id = ?", sun.id)).scope_json;
+  await sql("UPDATE clients SET scope_json = ? WHERE id = ?", JSON.stringify(["ar", "posting", "submission"]), sun.id);
+  const r1 = await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "posting", mode: "client" }));
+  const r2 = await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "" }));
+  ok("Payment posting / Submission in the scope cannot be left with nobody (not \"the client\", not unset)", !r1.ok && /Payment posting is in this client's scope of work/.test(r1.e || "") && !r2.ok && /Submission is in/.test(r2.e || ""), [r1.e, r2.e]);
+  ok("...a person can be set", (await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "posting", mode: "person", lead: U("Pia Poster").id }))).ok);
+  ok("...the 48-hour recheck can be the biller who sent it, not nobody", (await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "subcheck", mode: "biller" }))).ok && !(await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "subcheck", mode: "" }))).ok);
+  ok("a part that is not in the scope can be unset", (await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "" }))).ok);
+  await sql("UPDATE clients SET scope_json = ? WHERE id = ?", was, sun.id); }
 
 S("Production rows for Third Eye");
 await sql("UPDATE claims SET dos = ?, age_days = 3, created_at = ? WHERE id = ?", dosAgo(120), Date.now() - 50 * d, ids[19]);

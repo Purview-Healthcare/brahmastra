@@ -366,6 +366,9 @@ keeps it, or the client's own workbook), and the **responsible person** for each
 - **A new client needs all of it.** Manage › Clients & locations › Add client opens the setup; it cannot be
   created until each part is filled in. Older clients show **Profile incomplete** with what is missing (and
   when a responsible person has left), the team lead's bell says so, and **Edit profile** completes it.
+- **A part of the scope always has a responsible person.** On the client card a part that is in the scope of
+  work can only be given to a person (the 48-hour recheck may also be the biller who sent it); to stop a part,
+  take it out of the scope on the profile.
 - **Responsible means access.** Whoever is set on a client as AR, posting, submission, follow-up or rejections
   person, or is on the client's team, gets that client straight away: its profile in **My clients** and its
   claims. Supervisors set there can change the profile; billers only see it. Posting and submission people get a
@@ -496,6 +499,11 @@ When the client has no active Posting person, a posting entry still closes the c
 to ask the team lead to set one). When it has no active Submission person, the claim stays on the biller's
 list with a 15-day follow-up. A claim taken back to a biller while a desk still had it keeps the biller's
 own SAAG when the desk finishes.
+
+**After Posting closes a claim, anyone can open it to read.** Search (Ctrl+K) finds it for everyone, marked
+"posted · closed". Someone it is not with sees it read only: no entry, no note, no team lead actions, not the
+patient's other claims. Its notes are **locked** for everyone, the biller who wrote them and team leads included.
+A claim AR closed itself (not posted) stays with its own people.
 
 Each hand-off has 24 working hours (a TAT tag and bar; red once past). The department
 has four choices: **Completed** (with proof), **Pending** (still theirs; the comment
@@ -916,6 +924,10 @@ strategy, preview, assign.
 - **Payer batching**: fewest payers per person for the most money.
 - **Patient batching**: one touch resolves several claims.
 - **Straight priority, round robin** and **Balance the dollars**.
+
+**AR follow-up after submission.** When Submission submits a claim it comes back to AR 15 days later. On that
+day it joins the pool like any follow-up due (the same points), its priority reason says "AR follow-up after
+submission", and it has its own count and tick box on Allocate, so a team lead can send these out or leave them.
 
 Claims already on a desk are not touched; "Return unworked to pool" or the
 bulk actions on the Claims screen move them.

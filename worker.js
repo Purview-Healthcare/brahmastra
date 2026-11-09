@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.95.0";
+const VERSION = "2.96.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -3163,6 +3163,11 @@ async function canSeeClaim(env, user, c) {
   if (user.resp_clients && user.resp_clients.has(c.client_id)) return true;
   return !!(await handoffRole(env, user, c.id));
 }
+/* A claim Posting closed (the payment posted, the claim closed): anyone signed in may open it to read, and nobody can edit
+   its earlier notes. Adding a note or an entry stays with the people above. */
+const postedClosed = (c) => !!c && c.state === "closed" && c.handoff_status === "posted";
+const POSTED_CLOSED_SQL = "(c.state = 'closed' AND c.handoff_status = 'posted')";
+async function canViewClaim(env, user, c) { return postedClosed(c) || (await canSeeClaim(env, user, c)); }
 
 /* --------------------------------------------------------- the ops */
 /* ---- how a claim is recognised across uploads ----
@@ -3618,6 +3623,10 @@ const OPS = {
     if (!c) throw bad("Unknown client.");
     editableOr(user, c.id);
     const mode = ["person", "client", "biller", ""].includes(payload.mode) ? payload.mode : "";
+    // a part of the scope of work always has a responsible person (the 48-hour recheck may also be the biller who sent it)
+    const scope = jsonList(c.scope_json), needed = dept === "subcheck" ? scope.includes("submission") : scope.includes(dept);
+    if (needed && !(mode === "person" || (dept === "subcheck" && mode === "biller")))
+      throw bad(`${SERVICE_NAME[dept]} is in this client's scope of work, so it needs a responsible person. To stop it, take it out of the scope on the client profile.`);
     const lead = mode === "person" ? str(payload.lead, 60) || null : null, backup = mode === "person" && bcol ? str(payload.backup, 60) || null : null;
     if (mode === "person" && !lead) throw bad("Pick the person responsible.");
     for (const id of [lead, backup].filter(Boolean)) if (!(await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", id))) throw bad("That person is not active.");
@@ -4190,13 +4199,13 @@ const OPS = {
     const q = str(payload.q, 80).trim().replace(/[%_\\]/g, "");
     if (q.length < 2) return { claims: [] };
     const like = "%" + q + "%", sup = user.role === "supervisor";
-    const rows = await all(env, `SELECT c.id, c.client_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.assigned_to, c.last_worked_by,
+    const rows = await all(env, `SELECT c.id, c.client_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.assigned_to, c.last_worked_by, c.handoff_status,
         cl.name AS client_name, u.name AS assigned_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?)${sup ? scopeSql(user, "c.client_id") : " AND (c.assigned_to = ? OR c.last_worked_by = ?)"}
+      WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?) AND (${sup ? "1 = 1" + scopeSql(user, "c.client_id") : "c.assigned_to = ? OR c.last_worked_by = ?"} OR ${POSTED_CLOSED_SQL})
       ORDER BY CASE WHEN c.claim_no = ? OR c.account_no = ? THEN 0 ELSE 1 END, CASE WHEN c.state IN ('open','assigned','in_progress') THEN 0 ELSE 1 END, c.balance DESC LIMIT 40`,
       like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id]), q, q);
-    const ok = rows.filter((c) => leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id).slice(0, 8);
-    return { claims: ok.map(({ assigned_to, last_worked_by, ...c }) => c) };
+    const ok = rows.filter((c) => leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c)).slice(0, 8);
+    return { claims: ok.map(({ assigned_to, last_worked_by, handoff_status, ...c }) => ({ ...c, posted: handoff_status === "posted" && c.state === "closed" })) };
   },
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
   /* Repeat denials on this person's clients: the same claim denied again for the same reason, and the payer and reason seen on
@@ -4210,7 +4219,7 @@ const OPS = {
   "claims.tips": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", str(payload.id, 60));
     if (!c) throw notFound("Claim not found.");
-    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    if (!(await canViewClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const tips = await payerTips(env, c, { status: str(payload.status, 60).trim(), sub_status: str(payload.sub_status, 160).trim(), action: str(payload.action, 160).trim() });
     if (tips.repeat) tips.repeat.worked = whatWorked(await denialHistory(env, [c.client_id], c.payer || ""))(c.client_id, c.payer || "", tips.repeat.reason);
     const today = isoDate(payload.today) || istISO(Date.now()), d = isoDate(c.dos);
@@ -5564,7 +5573,7 @@ const OPS = {
     const today = isoDate(payload.today) || isoToday();
     where.push("((state = 'open') OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?))"); params.push(today);
     const rows = await all(env, `SELECT id, location_id, claim_no, account_no, patient, payer, dos, cpt, balance, age_days, bucket, tier, status_class, inventory_kind, worked_before,
-        last_worked_on, follow_up_on, priority, priority_reason, state, skips, escalated, touches, priority_set, priority_set_label, denial_date FROM claims WHERE ${where.join(" AND ")} ORDER BY priority DESC LIMIT 20000`, ...params);
+        last_worked_on, follow_up_on, priority, priority_reason, state, skips, escalated, touches, priority_set, priority_set_label, denial_date, handoff_status FROM claims WHERE ${where.join(" AND ")} ORDER BY priority DESC LIMIT 20000`, ...params);
     // The insurance's TFL / AFL go with each claim, so the score can count the days left.
     const lims = new Map((await all(env, "SELECT payer_key, tfl_days, afl_days FROM payer_limits WHERE client_id = ?", payload.client_id)).map((l) => [l.payer_key, l]));
     for (const r of rows) { const l = lims.get(payerKey(r.payer)); r.tfl_days = l ? l.tfl_days : null; r.afl_days = l ? l.afl_days : null; }
@@ -5573,15 +5582,16 @@ const OPS = {
   "claims.get": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT c.*, u.name AS assigned_name, wb.name AS last_worked_name, l.name AS location_name, cl.name AS client_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN users wb ON wb.id = c.last_worked_by LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
-    return claimBundle(env, user, c);
+    const see = await canSeeClaim(env, user, c);
+    if (!see && !postedClosed(c)) throw denied("This claim is not in your queue.");
+    return claimBundle(env, user, c, { viewOnly: !see });
   },
   /* Everything that happened to one claim, newest first: loads and refreshes, assignments, openings, work entries
      (SAAG, the note fields and what changed), notes, escalations and answers, skips, files and state changes. */
   "claims.timeline": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT c.*, u.name AS assigned_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    if (!(await canViewClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const [notes, files, events] = await Promise.all([
       all(env, "SELECT * FROM notes WHERE claim_id = ? ORDER BY created_at DESC LIMIT 300", c.id),
       all(env, "SELECT id, user_name, name, type, size, created_at FROM attachments WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id),
@@ -5597,7 +5607,7 @@ const OPS = {
       if (n.kind === "work") {
         const ev = workEv.find((e) => e.user_id === n.user_id && Math.abs(e.at - n.created_at) < 5000);
         const d = ev ? jsonObj(ev.data_json) : {};
-        out.push({ at: n.created_at, kind: "work", id: n.id, editable: (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
+        out.push({ at: n.created_at, kind: "work", id: n.id, editable: !postedClosed(c) && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
           follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at });
       } else if (n.kind === "skip") out.push({ at: n.created_at, kind: "skip", who: n.user_name, text: n.comment });
       else if (/^Escalation answered:/.test(n.comment || "")) out.push({ at: n.created_at, kind: "answer", who: n.user_name, text: n.comment.replace(/^Escalation answered:\s*/, "") });
@@ -5934,6 +5944,7 @@ const OPS = {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", n.claim_id);
     if (n.user_id !== user.id && !(c && leadFor(user, c.client_id))) throw denied("Only the author or a team lead can edit this note.");
     if (!c) throw bad("Claim not found.");
+    if (postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): its notes can no longer be edited.");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
     if (!attachNeeded({ sub_status: n.sub_status, action: n.action })) {
@@ -6034,8 +6045,8 @@ const OPS = {
   "attachments.get": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
-    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", a.claim_id);
-    if (!c || !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", a.claim_id);
+    if (!c || !(await canViewClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", a.id);
     return { name: a.name, type: a.type, size: a.size, data: parts.map((p) => p.data).join("") };
   },
@@ -7274,17 +7285,18 @@ const OPS = {
    (two patients with the same name are told apart by their account numbers). */
 const samePatientSql = (p = "") => `((${p}account_no <> '' AND ${p}account_no = ?) OR (${p}patient <> '' AND ${p}patient = ? AND (${p}account_no = '' OR ? = '')))`;
 const samePatientArgs = (c) => [c.account_no || "\u0000", c.patient || "\u0000", c.account_no || ""];
-async function claimBundle(env, user, c) {
+async function claimBundle(env, user, c, opts = {}) {
   const notes = await all(env, "SELECT * FROM notes WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id);
   const files = await all(env, "SELECT id, claim_id, user_id, user_name, name, type, size, created_at FROM attachments WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id);
-  const key = c.account_no || c.patient;
+  // a reader (someone who may only read a claim Posting closed) sees this claim alone, not the patient's other claims
+  const key = opts.viewOnly ? "" : c.account_no || c.patient, locked = postedClosed(c);
   const siblings = key ? await all(env, `SELECT id, claim_no, account_no, patient, dos, cpt, payer, balance, state, assigned_to, priority, follow_up_on, last_status_code FROM claims
       WHERE client_id = ? AND id <> ? AND state IN ${WORKABLE} AND ${samePatientSql()} ORDER BY priority DESC LIMIT 50`, c.client_id, c.id, ...samePatientArgs(c)) : [];
   let lines = []; try { lines = JSON.parse(c.lines_json || "[]"); } catch {}
   let raw = {}; try { raw = JSON.parse(c.raw_json || "{}"); } catch {}
   const { raw_json, lines_json, ...rest } = c;
   const now = Date.now();
-  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
+  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: !locked && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
   const handoffs = await all(env, `SELECT h.*, l.name AS lead_name, b.name AS backup_name, a.name AS assigned_name FROM handoffs h LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
       LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
   const role = await handoffRole(env, user, c.id);
@@ -7294,7 +7306,7 @@ async function claimBundle(env, user, c) {
   // there leaves AR with no follow-up date until the desk is done
   const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")} FROM clients WHERE id = ?`, c.client_id);
   const [dp, ds, dr] = await Promise.all(["posting", "submission", "rejection"].map((d) => deskPeople(env, dc, d)));
-  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr }, notes: shaped, attachments, siblings,
+  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr, locked, view_only: !!opts.viewOnly }, notes: shaped, attachments, siblings,
     handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role, payer_limits: limits || null };
 }
 
