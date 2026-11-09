@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.98.0";
+const APP_VERSION = "2.99.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -151,6 +151,8 @@ function fmtDate(iso) { if (!iso) return "–"; const [y, m, d] = String(iso).sp
 function fmtWhen(ms) { if (!ms) return "–"; const d = new Date(Number(ms)); return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
 function dayBounds(iso) { const [y, m, d] = iso.split("-").map(Number); return [new Date(y, m - 1, d, 0, 0, 0, 0).getTime(), new Date(y, m - 1, d, 23, 59, 59, 999).getTime()]; }
 function addDaysISO(iso, n) { const [y, m, d] = iso.split("-").map(Number); return isoOf(new Date(y, m - 1, d + n)); }
+/* A follow-up on a Saturday or Sunday moves to the Monday (the server also skips Shastra holidays). */
+function weekdayOnOrAfter(iso) { let d = iso; for (let i = 0; i < 3; i++) { const [y, m, dd] = d.split("-").map(Number); const w = new Date(y, m - 1, dd).getDay(); if (w !== 0 && w !== 6) break; d = addDaysISO(d, 1); } return d; }
 function daysBetween(fromISO, toISO) { const [y1, m1, d1] = fromISO.split("-").map(Number); const [y2, m2, d2] = toISO.split("-").map(Number); return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000); }
 async function sha256Hex(s) { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s))); return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 function randomPassword() { const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"; const a = new Uint8Array(10); crypto.getRandomValues(a); return "pv-" + [...a].map((x) => chars[x % chars.length]).join(""); }
@@ -747,6 +749,8 @@ const Kpi = ({ label, value, sub, tone, onClick }) => (
   </div>
 );
 const STATE_META = { open: ["gray", "Open"], assigned: ["blue", "Assigned"], in_progress: ["amber", "In progress"], completed: ["teal", "Worked"], in_process: ["purple", "In process"], closed: ["green", "Closed"], excluded: ["red", "Excluded"] };
+/* A SAAG entry is saved on a claim on a biller's list (queue.complete takes these states); any claim can take a note. */
+const canSaveEntry = (c) => !!c && ["in_progress", "assigned", "completed"].includes(c.state);
 const StateBadge = ({ state }) => { const m = STATE_META[state] || ["gray", state]; return <span className={"badge " + m[0]}>{m[1]}</span>; };
 const TierBadge = ({ tier }) => <span className={"badge " + (tier === "High" ? "red" : tier === "Medium" ? "teal" : "gray")}>{tier || "–"}</span>;
 const CLASS_TONE = { rejected: "amber", denied: "red", partial: "amber", secondary: "teal", awaiting: "teal", patient: "gray", paid: "green", other: "gray", unknown: "gray" };
@@ -1733,7 +1737,7 @@ function DeskDashboard({ ctx, desk, go }) {
         <div className="grid g4">
           <Kpi label="Received" value={fmtInt(t.received || 0)} sub={"sent to " + label + ", " + rangeText(dr)} tone="accent" />
           <Kpi label={desk === "posting" ? "Posted" : desk === "submission" ? "Submitted" : "Completed"} value={fmtInt(t.completed || 0)} sub={(desk === "posting" ? fmtMoney(t.amount || 0) + " balance posted" : fmtInt(t.rejected || 0) + " rejected on recheck") + " · " + fmtInt(t.back || 0) + " back to AR"} tone="good" />
-          <Kpi label="Within TAT" value={pct(t.met || 0, t.done || 0)} sub={"average " + hrs(t.avg_hours) + " to complete"} tone={t.done && t.met / t.done < 0.9 ? "warn" : undefined} />
+          <Kpi label="Within TAT" value={pct(t.met || 0, t.done || 0)} sub={"average " + hrs(t.avg_hours) + " (working hours) to complete"} tone={t.done && t.met / t.done < 0.9 ? "warn" : undefined} />
           <Kpi label="Open now" value={fmtInt(t.open_now || 0)} sub={fmtInt(t.overdue_now || 0) + " past TAT · " + fmtInt(t.assist || 0) + " needed assistance"} tone={t.overdue_now ? "bad" : undefined} />
         </div>
         {t.overdue_now > 0 && <div className="alert err row between"><span><b>{t.overdue_now} past the TAT.</b> Answer these first.</span><button className="btn sm" onClick={() => go("handoffs")}>Open {label}</button></div>}
@@ -1814,7 +1818,7 @@ function LiveStatusView({ ctx, me, go, params }) {
       {d && <div className="grid g3">
         <Kpi label="Unassigned" value={fmtInt(st("open").n)} sub={fmtMoney(st("open").amt) + " waiting for allocation"} onClick={() => openClaims({ state: "open" })} />
         <Kpi label="With Posting / Submission" value={fmtInt(st("in_process").n)} sub={fmtMoney(st("in_process").amt) + " in process"} onClick={() => openClaims({ state: "in_process" })} />
-        <Kpi label="Follow-ups due today" value={<span className={d.follow_ups_due && d.follow_ups_due.n ? "amber-ink" : ""}>{fmtInt(d.follow_ups_due ? d.follow_ups_due.n : 0)}</span>} sub={fmtInt(d.overdue ? d.overdue.n : 0) + " overdue"} onClick={() => openClaims({ follow_up_due: true })} />
+        <Kpi label="Follow-ups due (today and overdue)" value={<span className={d.follow_ups_due && d.follow_ups_due.n ? "amber-ink" : ""}>{fmtInt(d.follow_ups_due ? d.follow_ups_due.n : 0)}</span>} sub={fmtInt(d.overdue ? d.overdue.n : 0) + " overdue"} onClick={() => openClaims({ follow_up_due: true })} />
       </div>}
     </div>
   );
@@ -1866,11 +1870,11 @@ const rampCell = (r) => { const x = r.ramp || {}; if (x.kind === "prod") return 
   const md = (d) => { try { return new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); } catch { return d; } };
   if (x.flag === "over") return <span className="badge red" title={"Was due in production " + fmtDate(x.due)}>Overdue · +{-x.days}d</span>; if (x.flag === "soon") return <span className="badge amber" title={"Due in production " + fmtDate(x.due)}>Due {md(x.due)} · {x.days}d left{ext}</span>;
   return <span className="badge gray" title={"Due in production " + fmtDate(x.due)}>Due {md(x.due)} · {x.extended ? "date agreed" : "on track"}</span>; };
-const PERF_BADGE = { below: ["red", "Below the mark"], ok: ["green", "Meeting the mark"], ramp: ["blue", "In ramp-up"], pending: ["gray", "Day under way"], none: ["gray", "No entries yet"] };
+const PERF_BADGE = { below: ["red", "Below the mark"], ok: ["green", "Meeting the mark"], ramp: ["blue", "In ramp-up"], pending: ["gray", "Day under way"], none: ["gray", "No entries yet"], notarget: ["gray", "No target on these days"] };
 const perfCell = (r, mark) => { const b = PERF_BADGE[r.perf]; if (!b) return <span className="muted">–</span>;
   const tip = r.perf === "ramp" ? "Training and OJT are not judged against the production mark" : r.perf === "pending" ? "Judged once the day is finished" : r.perf === "below" ? "Under " + mark + "% attainment" : "";
   return <span className={"badge " + b[0]} title={tip}>{b[1]}</span>; };
-const attainStamp = (v) => v == null ? <span className="muted">–</span> : <span className={"stamp " + (v >= 95 ? "good" : v >= 80 ? "warn" : "bad")}>{v}%</span>;
+const attainStamp = (v) => v == null ? <span className="muted">–</span> : <span className={"stamp " + (v >= 90 ? "good" : v >= 80 ? "warn" : "bad")}>{v}%</span>;   // 90%: the production mark
 /* On floor and Idle on Team status, from Purview Shastra: met or short on the finished days; idle is Shastra Guard's no
    movement plus screen locked while punched in, breaks left out. */
 const FLOOR_SRC = { off: "Purview Shastra is not connected", not_set_up: "waiting for the floor-time feed in Purview Shastra", error: "Purview Shastra did not answer", pending: "from Purview Shastra" };
@@ -1913,9 +1917,11 @@ function TeamStatusTab({ ctx, me, go }) {
     try { await navigator.clipboard.writeText(text); toast("Copied: paste it into your 1:1 notes."); } catch (e) { toast("Could not copy here; select the text instead.", "err"); }
   };
   const csv = () => {
-    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Entries", "Target", "Performance", "Floor time needed (h)", "On floor (h)", "Floor time met", "Idle (h)", "Of it screen locked (h)", "Breaks (h)", "Days over 1 h of breaks", "Left over", "Of them high priority", "Escalations external (our error)", "Escalations internal (our error)", "Escalation SR numbers", "Start", "Due in production / plan end", "Comment"];
+    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Entries counted", "Target counted", "Entries", "Target", "Performance", "Floor time needed (h)", "On floor (h)", "Floor time met", "Idle (h)", "Of it screen locked (h)", "Breaks (h)", "Days over 1 h of breaks", "Left over", "Of them high priority", "Escalations external (our error)", "Escalations internal (our error)", "Escalation SR numbers", "Start", "Due in production / plan end", "Comment"];
     const rampTxt = (x) => x.kind === "prod" ? "In production" : x.kind !== "ramp" ? "" : !x.due ? "No start date" : (x.flag === "over" ? "Overdue, was due " : "Due ") + x.due + (x.extended ? " (date agreed)" : "");
+    // Attainment % = Entries counted / Target counted (the days up to yesterday when there are any); Entries and Target include today
     const line = (r) => [r.lead_name, r.name, r.doj, r.status, rampTxt(r.ramp) || r.status, r.attain == null ? "" : r.attain, r.attain == null ? "" : r.attain_basis === "done" ? "days up to yesterday" : "today",
+      r.attain == null ? "" : r.attain_basis === "done" ? r.worked_done : r.worked_today, r.attain == null ? "" : r.attain_basis === "done" ? r.target_done : r.target_today,
       r.worked, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10,
       r.on_floor_min == null ? "" : Math.round(r.on_floor_min / 6) / 10, r.floor === "met" ? "Met" : r.floor === "short" ? "Short " + Math.round(r.floor_short_min / 6) / 10 + " h" : r.floor === "pending" ? "Day under way" : r.floor === "no_attendance" ? "No attendance in Shastra" : "",
       r.idle_min == null ? "" : Math.round(r.idle_min / 6) / 10, r.locked_min == null ? "" : Math.round(r.locked_min / 6) / 10, r.break_min == null ? "" : Math.round(r.break_min / 6) / 10, r.break_min == null ? "" : r.break_over_days, r.left, r.left_high, r.esc_ext || 0, r.esc_int || 0, (r.escalations || []).map((e) => "SR" + e.sr + " " + e.client_name + " (" + e.kind + ")").join("; "), r.start_date, r.end_date, r.comment];
@@ -1982,7 +1988,7 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td className="small nowrap">{r.doj ? fmtDate(r.doj) : <span className="muted">–</span>}</td>
                   <td><span className={"badge " + (TS_STATUS_TONE[r.status] || "gray")}>{r.status}</span></td>
                   <td>{rampCell(r)}</td>
-                  <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " of " + Math.round(r.target_done) + " to yesterday" : r.worked_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.worked_today ? " · " + r.worked_today + " today" : ""}</div></td>
+                  <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " of " + Math.round(r.target_done) + " to yesterday" : r.worked_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.worked_today ? " · " + r.worked_today + " today" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div></td>
                   <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
                   <td className="num">{floorCell(r, d.floor_source)}</td><td className="num">{idleCell(r)}</td><td className="num">{breakCell(r)}</td>
                   <td>{perfCell(r, d.perf_mark)}{r.out_today ? <div className="tiny muted">{r.out_today === "half" ? "half day today" : "out today"}</div> : null}</td>
@@ -3657,8 +3663,8 @@ function EscalationTrackerView({ ctx, me, params }) {
     ["Raised by", (r) => r.raised_who], ["Reported to Purview", (r) => r.reported_to], ["Responding person Purview", (r) => r.owner_name], ["Email Subject", (r) => r.email_subject],
     ["Error description", (r) => r.description], ["Error (Y/N)", (r) => r.is_error], ["Comment", (r) => r.comment], ["Root Cause", (r) => r.rca], ["Corrective Action", (r) => r.corrective],
     ["Preventive Action", (r) => r.preventive], ["Status (Open/Closed)", (r) => r.status_label], ["Close date (mm/dd/yy)", (r) => (r.close_on ? fmtMDY(r.close_on) : "")],
-    ["Reason still open", (r) => r.delay_reason], ["Expected close date", (r) => (r.expected_on ? fmtMDY(r.expected_on) : "")],
-    ["Escalation type", (r) => r.kind_label || "External"], ["Error by", (r) => (r.is_error === "Y" ? r.error_by_name || "" : "")], ["DOW of error (mm/dd/yy)", (r) => (r.is_error === "Y" && r.error_dow ? fmtMDY(r.error_dow) : "")]]
+    ["Working hours to close", (r) => (r.hours == null ? "" : r.hours)], ["Reason still open (after 24 h)", (r) => r.delay_reason], ["Expected close date", (r) => (r.expected_on ? fmtMDY(r.expected_on) : "")],
+    ["Reason given by", (r) => r.delay_by_name || ""], ["Logged by", (r) => r.created_by_name || ""], ["Escalation type", (r) => r.kind_label || "External"], ["Error by", (r) => (r.is_error === "Y" ? r.error_by_name || "" : "")], ["DOW of error (mm/dd/yy)", (r) => (r.is_error === "Y" && r.error_dow ? fmtMDY(r.error_dow) : "")]]
     .map(([label, get]) => ({ label, get }))), "Escalation tracker " + todayISO() + ".csv");
   const people = (d.people || []).map((u) => ({ id: u.id, label: u.name + (u.tag ? " (" + u.tag + ")" : "") }));
   // who made the error: anyone at Purview (billers, desks, leads), the team of the escalation's client first
@@ -3879,7 +3885,7 @@ function FromDesksView({ ctx, me, refreshAttention }) {
   const rows = q.data ? q.data.rows : [];
   return (
     <>
-      {rows.some((r) => r.late) && <div className="alert err"><b>{rows.filter((r) => r.late).length} waiting more than a working day</b> since the department sent them back. Make sure the biller picks them up.</div>}
+      {rows.some((r) => r.late) && <div className="alert err"><b>{rows.filter((r) => r.late).length} waiting more than 48 working hours</b> since the department sent them back. Make sure the biller picks them up.</div>}
       <div className="card tight">
         <ErrorBox error={q.error} />
         {q.loading && !q.data && <Spinner />}
@@ -3920,7 +3926,7 @@ function ClientRequestsView({ ctx, me, onChanged, params }) {
   return (
     <>
       {only && <div className="row" style={{ gap: 6 }}><label className="check small"><input type="checkbox" checked onChange={() => setOnly("")} /> Only {(ctx.clients.find((c) => c.id === only) || {}).name || "one client"}</label></div>}
-      {q.data && q.data.late > 0 && <div className="alert err"><b>{q.data.late} not sent within a working day.</b> Send these to the client first.</div>}
+      {q.data && q.data.late > 0 && <div className="alert err"><b>{q.data.late} not sent within 48 working hours.</b> Send these to the client first.</div>}
       <div className="row between">
         <div className="seg2">{[["to_send", "To send", all.filter((r) => !r.client_sent_at).length], ["sent", "Sent, waiting for the client", all.filter((r) => r.client_sent_at).length]].map(([k, l, n]) => <button key={k} className={show === k ? "on" : ""} onClick={() => setShow(k)}>{l} {n}</button>)}</div>
         <div className="small muted">The TAT keeps running; the department chases the client 3 working days after it is sent.</div>
@@ -3962,13 +3968,16 @@ function ReviewModal({ row, people, onClose, onDone }) {
   const [f, setF] = useState(() => ({ why: row.review_why || "", reviewed: "", findings: "", next: "", route: row.sent_by_id ? "biller" : "other", user_id: "", dept: row.last_dept || (row.depts && row.depts[0] ? row.depts[0].id : "") }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  // "Another biller": only the active AR billers on this claim's client (the server checks the same).
+  const pq = useRpc("attention.reviewPeople", { id: row.claim_id || row.id }, [row.claim_id || row.id]);
+  const billers = pq.data ? pq.data.people : people || [];
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const words = (t) => t.trim().length >= 8;
-  const ok = f.why.trim().length >= 3 && words(f.reviewed) && words(f.findings) && words(f.next) && (f.route === "biller" ? !!row.sent_by_id : f.route === "other" ? !!f.user_id : !!f.dept);
+  const ok = f.why.trim().length >= 3 && words(f.reviewed) && words(f.findings) && words(f.next) && (f.route === "biller" ? !!row.sent_by_id : f.route === "other" ? !!f.user_id : f.route === "keep" ? row.state === "closed" : !!f.dept);
   const go = async () => {
     setBusy(true); setErr(null);
     try { const r = await rpc("attention.review", { id: row.claim_id || row.id, why: f.why, reviewed: f.reviewed, findings: f.findings, next: f.next, route: f.route, sent_by: row.sent_by_id, user_id: f.user_id, dept: f.dept, today: todayISO() });
-      toast(f.route === "dept" ? "Reviewed and returned to " + r.to + " with your notes." : "Reviewed and given to " + r.to + ": first on their list, with a notice."); onDone(); }
+      toast(f.route === "keep" ? "Reviewed and kept closed. The biller gets your notes." : f.route === "dept" ? "Reviewed and returned to " + r.to + " with your notes." : r.waits ? "Reviewed and given to " + r.to + ". It is with " + r.waits + " now and comes to their list when " + r.waits + " finishes." : "Reviewed and given to " + r.to + (r.reopened ? ": opened again, first on their list, with a notice." : ": first on their list, with a notice.")); onDone(); }
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -3988,12 +3997,13 @@ function ReviewModal({ row, people, onClose, onDone }) {
           <div className="stack" style={{ gap: 8 }}>
             <label className="check"><input type="radio" name="rv" checked={f.route === "biller"} disabled={!row.sent_by_id} onChange={() => set("route", "biller")} /> {row.sent_by_id ? <>The biller who sent it: <b>{row.sent_by_name || "the biller"}</b></> : "The biller who sent it (nobody on record)"}</label>
             <label className="check"><input type="radio" name="rv" checked={f.route === "other"} onChange={() => set("route", "other")} /> Another biller</label>
-            {f.route === "other" && <div style={{ marginLeft: 24, maxWidth: 320 }}><Combo value={f.user_id} onChange={(v) => set("user_id", v || "")} placeholder="Pick the biller…" options={(people || []).filter((p) => p.id !== row.sent_by_id).map((p) => ({ id: p.id, label: p.name }))} /></div>}
+            {f.route === "other" && <div style={{ marginLeft: 24, maxWidth: 320 }}><Combo value={f.user_id} onChange={(v) => set("user_id", v || "")} placeholder="Pick the biller…" options={billers.filter((p) => p.id !== row.sent_by_id).map((p) => ({ id: p.id, label: p.name }))} /></div>}
             <label className="check"><input type="radio" name="rv" checked={f.route === "dept"} disabled={!depts.length} onChange={() => set("route", "dept")} /> Back to the department{row.last_dept ? " that sent it" : ""}{!depts.length ? " (none set on this client)" : ""}</label>
+            {row.state === "closed" && <label className="check"><input type="radio" name="rv" checked={f.route === "keep"} onChange={() => set("route", "keep")} /> Keep it closed (you agree; the biller gets your notes)</label>}
             {f.route === "dept" && <div className="seg2" style={{ marginLeft: 24 }}>{depts.map((d) => <button key={d.id} type="button" className={f.dept === d.id ? "on" : ""} onClick={() => set("dept", d.id)}>{d.label}{row.last_dept === d.id ? " (sent it)" : ""}</button>)}</div>}
           </div>
         </Field>
-        <div className="tiny muted">{f.route === "dept" ? "It goes back on the department's desk with the client's TAT. Your four notes go on the claim's timeline; the claim's notes and work stay as they are." : "It goes to the top of the biller's list with a notice. Your four notes go on the claim's timeline (who escalated it, who reviewed it, what was found and where it went); the claim's notes and work stay as they are."}</div>
+        <div className="tiny muted">{f.route === "dept" ? "It goes back on the department's desk with the client's TAT. Your four notes go on the claim's timeline; the claim's notes and work stay as they are." : row.state === "in_process" ? "It is with a desk now: it stays there and comes to the biller's list, with a notice, when the desk finishes. Your four notes go on the claim's timeline." : (row.state === "closed" ? (f.route === "keep" ? "The claim stays closed and the biller who sent it gets a notice with your next action. " : "This claim is closed: giving it to a biller opens it again, first on their list. To agree with the closure, pick Keep it closed. ") : "It goes to the top of the biller's list with a notice. ") + "Your four notes go on the claim's timeline (who escalated it, who reviewed it, what was found and where it went); the claim's notes and work stay as they are."}</div>
         <ErrorBox error={err} />
       </div>
     </Modal>
@@ -4024,9 +4034,9 @@ function EscalationsView({ ctx, me, refreshAttention }) {
             <tr key={r.id} className={r.overdue ? "tat-missed" : ""}>
               <td>{r.overdue ? <span className="badge red">TAT missed · {fmtWait(r.waiting_ms)}</span> : <span className={"badge " + (r.waiting_ms > (q.data.tat_hours - 8) * 3600000 ? "amber" : "gray")}>{fmtWait(r.waiting_ms)}</span>}<div className="tiny muted">since {fmtWhen(r.escalated_at)}</div></td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
-              <td className="small">{r.escalated_by_name || r.assigned_name || "–"}</td>
+              <td className="small">{r.escalated_by_name || r.assigned_name || "–"}{r.flag_label && <div className="tiny amber-ink">{r.flag_label}</div>}</td>
               <td className="small" style={{ maxWidth: 340 }}>{r.last_status_code ? <b>{r.last_status_code}{r.last_sub_status ? " › " + r.last_sub_status : ""}</b> : null}<div className="tiny" style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{r.last_note}</div></td>
-              <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: "Escalated by " + (r.sent_by_name || "the biller") + (r.last_status_code ? " (" + r.last_status_code + (r.last_sub_status ? " › " + r.last_sub_status : "") + ")" : ""), review_context: r.last_note })}>Review</button></td>
+              <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.flag_label ? r.flag_label + " (Need assistance from AR)" : "Escalated by " + (r.sent_by_name || "the biller") + (r.last_status_code ? " (" + r.last_status_code + (r.last_sub_status ? " › " + r.last_sub_status : "") + ")" : ""), review_context: r.last_note })}>Review</button></td>
             </tr>))}
             {q.data && !rows.length && <tr><td colSpan={9}><Empty>Nothing escalated. Billers flag a claim for their team lead from the work form.</Empty></td></tr>}</tbody></table></div>
       </div>
@@ -4244,7 +4254,7 @@ function HistEvent({ it, onEdit, onFile }) {
     case "handoff_other": dot = D("#FDF0D7", "?"); title = (it.text || "The department") + " · other: " + ((it.data && it.data.reason) || "") + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
     case "tat_hold": dot = D("#FDF0D7", "⏸"); title = "Can't close yet · on hold until " + fmtMDY(it.data && it.data.until) + who; body = <div className="x"><b>{it.text}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div>; break;
     case "tat_unhold": dot = D("#E3F4EF", "▶"); title = "Hold cleared · back on the TAT reminders" + who; break;
-    case "review_to_biller": case "review_to_dept": dot = D("#E3F4EF", "✓"); title = "Supervisor review · " + (it.kind === "review_to_dept" ? "returned to " : "given to ") + (it.text || "") + who;
+    case "review_to_biller": case "review_to_dept": dot = D("#E3F4EF", "✓"); title = "Supervisor review · " + (it.kind === "review_to_dept" ? "returned to " + (it.text || "") : it.data && it.data.kept ? "kept closed" : "given to " + (it.text || "") + (it.data && it.data.reopened ? " (opened again)" : it.data && it.data.waits ? " (after the desk finishes)" : "")) + who;
       body = it.data ? <div className="x">{it.data.origin && it.data.origin.by ? <div className="m">{it.data.origin.how === "escalated" ? "Escalated by " : (it.data.origin.how.charAt(0).toUpperCase() + it.data.origin.how.slice(1)) + ": "}{it.data.origin.by}{it.data.origin.at ? " · " + fmtWhen(it.data.origin.at) : ""}{it.data.origin.reason ? " · " + it.data.origin.reason : ""}</div> : null}<div><b>Why it came:</b> {it.data.why}</div><div><b>Reviewed:</b> {it.data.reviewed}</div><div><b>Findings:</b> {it.data.findings}</div><div><b>Next action:</b> {it.data.next}</div></div> : null; break;
     case "handoff_client": dot = D("#FFF3D6", "⏸"); title = (it.text || "Department") + " needs assistance from client" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">waiting on the client · the TAT clock keeps running</div></>; break;
     case "handoff_resume": dot = D("#E0F7F4", "▶"); title = "Client answered · back with " + (it.text || "the department") + who; body = <>{it.data && it.data.note ? <div className="x">{it.data.note}</div> : null}{it.data && it.data.due_at ? <div className="m">still due {fmtWhen(it.data.due_at)} (the clock did not stop)</div> : null}</>; break;
@@ -4436,13 +4446,15 @@ function TatTag({ h }) {
   const now = Date.now();
   if (h.dept === "subcheck" && h.available_at && now < h.available_at) return <div><span className="badge gray">Recheck from {fmtWhen(h.available_at)}</span><div className="tiny muted">48 working hours after submitting</div></div>;
   const start = h.dept === "subcheck" && h.available_at ? h.available_at : h.created_at;
-  const left = h.due_at - now, used = Math.max(0, Math.min(100, (100 * (now - start)) / Math.max(1, h.due_at - start)));
+  const wh = h.left_wh != null, left = wh ? h.left_wh * 3600000 : h.due_at - now;
+  const used = wh && h.used_pct != null ? h.used_pct : Math.max(0, Math.min(100, (100 * (now - start)) / Math.max(1, h.due_at - start)));
+  const whText = (x) => (x < 1 ? Math.max(1, Math.round(x * 60)) + " min" : (Math.round(x * 10) / 10) + " working h");
   const tone = left < 0 ? "red" : used > 75 ? "amber" : "teal";
   return (
     <div>
       {h.chase ? <div><span className="badge red" style={{ marginBottom: 4 }}>Chase the client</span></div> : h.status === "client" ? <div><span className="badge amber" style={{ marginBottom: 4 }}>Waiting on client</span></div> : null}
       {h.due_soon && <div><span className="badge amber" style={{ marginBottom: 4 }}>⚠ under 4 hours left</span></div>}
-      <span className={"badge " + tone}>{left < 0 ? "Past the TAT by " + durText(left) : (h.dept === "subcheck" ? "Recheck now · " : "TAT · ") + durText(left) + " left"}</span>
+      <span className={"badge " + tone}>{left < 0 ? "Past the TAT by " + (wh ? whText(-h.left_wh) : durText(left)) : (h.dept === "subcheck" ? "Recheck now · " : "TAT · ") + (wh ? whText(h.left_wh) : durText(left)) + " left"}</span>
       <div className="tatline"><i style={{ width: (left < 0 ? 100 : used) + "%", background: "var(--" + (tone === "teal" ? "teal" : tone === "amber" ? "amber" : "red") + ")" }} /></div>
       <div className="tiny muted">{h.status === "client" ? "asked the client " + fmtWhen(h.paused_at) : "sent " + fmtWhen(h.created_at)} · due {fmtWhen(h.due_at)}</div>
     </div>
@@ -4581,7 +4593,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const met = st.done_n ? Math.round((st.met || 0) / st.done_n * 100) : null;
   return (
     <div className="stack">
-      {desk ? <div><h1>{DESK_TEXT[desk][0]}</h1><div className="sub">{DESK_TEXT[desk][1]} Each client's TAT (working hours) is set on its profile.</div></div> : <div><h1>Payment posting & submission</h1><div className="sub">Claims sent by billers through their SAAG action (Need to Post / Posting Correction → Payment Posting; resubmission and paper claims → Submission). Each client's TAT (working hours, set on its profile) to complete each one or ask for assistance; Saturday and Sunday do not count.</div></div>}
+      {desk ? <div><h1>{DESK_TEXT[desk][0]}</h1><div className="sub">{DESK_TEXT[desk][1]} Each client's TAT (working hours) is set on its profile.</div></div> : <div><h1>Payment posting & submission</h1><div className="sub">Claims sent by billers through their SAAG action (Need to Post / Posting Correction → Payment Posting; resubmission and paper claims → Submission). Each client's TAT (working hours, set on its profile) to complete each one or ask for assistance; Saturday, Sunday and Shastra holidays do not count.</div></div>}
       <div className="grid g5">
         <Kpi label="Open" value={fmtInt(st.open_n || 0)} sub={st.rejection_n ? st.rejection_n + " rejection" + (st.rejection_n === 1 ? "" : "s") + " first" : "within each client's TAT"} tone="accent" />
         <Kpi label="Past TAT" value={fmtInt(st.overdue || 0)} tone={st.overdue ? "bad" : ""} sub="answer these first" />
@@ -4671,14 +4683,14 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
             )}
             <Suggestions claim={c} subStatus={c.last_sub_status} />
             {(c.mine || (sup && !q.data.handoff_role)) && <div className="card stack" style={{ paddingBottom: 0 }}>
-              <div className="row between"><h2 style={{ margin: 0 }}>Work this claim</h2><span className="tiny muted">Save entry records the SAAG and the note; Add as note keeps just the note (for example on a closed claim)</span></div>
+              <div className="row between"><h2 style={{ margin: 0 }}>Work this claim</h2><span className="tiny muted">{canSaveEntry(c) ? "Save entry records the SAAG and the note; Add as note keeps just the note (for example on a closed claim)" : c.state === "in_process" ? "It is with a desk now: add a note here; a SAAG entry is saved when it is back on a biller's list." : "Not on a biller's list (" + ((STATE_META[c.state] || [])[1] || c.state) + "): add a note here, or allocate it to save a SAAG entry."}</span></div>
               <WorkForm key={"wf" + ver} claim={c}
                 newFiles={(q.data.attachments || []).filter((a) => a.created_at > Math.max(0, ...q.data.notes.filter((n) => n.kind === "work").map((n) => n.created_at))).length}
                 attachments={<Attachments plain claimId={c.id} files={q.data.attachments} onChanged={changed} />}
-                buttons={[{ key: "note", label: "Add as note (no SAAG)", noSaag: true, title: "Only the note: DOS, CLM#, denial, source, pre call check, RCA and action" }, { key: "save", label: "Save entry", primary: true }]}
+                buttons={[{ key: "note", label: "Add as note (no SAAG)", noSaag: true, title: "Only the note: DOS, CLM#, denial, source, pre call check, RCA and action" }, ...(canSaveEntry(c) ? [{ key: "save", label: "Save entry", primary: true }] : [])]}
                 onSave={async (data, key) => {
                   if (key === "note") { await rpc("notes.add", { claim_id: c.id, note: data.note }); toast("Note added."); }
-                  else { const r = await rpc("queue.complete", { id: c.id, ...data, rework: true }); toast((r.closed ? "Saved. Claim closed." : `Saved. Follow-up on ${fmtDate(r.follow_up_on)}.`) + handoffToast(r.handoff)); }
+                  else { const r = await rpc("queue.complete", { id: c.id, ...data, rework: true }); toast((r.closed ? "Saved. Claim closed." : r.follow_up_on ? `Saved. Follow-up on ${fmtDate(r.follow_up_on)}.` : "Saved.") + handoffToast(r.handoff)); }
                   changed();
                 }} />
             </div>}
@@ -4837,7 +4849,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
   const subs = saagSubs(saag.status);
   const acts = saagActions(saag.status, saag.sub_status);
   const closed = isClosedSaag(saag);
-  const autoFollow = saag.effective ? addDaysISO(today, EFFECTIVE_DAYS[saag.effective] || claim.client_follow_up_days || 30) : "";
+  const autoFollow = saag.effective ? weekdayOnOrAfter(addDaysISO(today, EFFECTIVE_DAYS[saag.effective] || claim.client_follow_up_days || 30)) : "";
   const fu = closed ? "" : (followUp || autoFollow);
   useEffect(() => { if (onChange) onChange({ saag, note }); }, [saag.sub_status, saag.action]);
   const pickStatus = (v) => setSaag({ status: v, sub_status: "", action: "", effective: "", bucket: "" });
@@ -4870,6 +4882,8 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
   if (needFile && newFiles === 0) missing.push(`an attachment (EOB / appeal document) for "${needFile}"`);
   const ready = !missing.length;
   const noteMissing = missing.filter((m) => m === "RCA / findings" || m === "call REF");
+  // only "Add as note" offered (a claim not on a biller's list): ask only for what a note needs
+  const onlyNote = !!buttons && buttons.length > 0 && buttons.every((b) => b.noSaag), shownMissing = onlyNote ? noteMissing : missing;
   const preview = composeNote({ ...note, dos: mmdd(note.dos) || note.dos }, saag, fu);
   const submit = async (key) => { setBusy(key); setErr(null); try { await onSave({ saag, note, follow_up_on: fu, escalate }, key); } catch (e) { setErr(e.message); } setBusy(null); };
   const sel = (v, on, list, ph, dis) => <Combo value={v} onChange={on} disabled={dis} placeholder={ph} options={[{ id: "", label: ph }, ...list.map((x) => ({ id: x, label: x }))]} />;
@@ -4912,7 +4926,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
       <div className="wf-bar">
         <span className="tiny muted b" style={{ whiteSpace: "nowrap" }}>NOTE PREVIEW</span>
         <div className="cell">{preview}</div>
-        {!ready && <span className="tiny" style={{ color: "var(--amber-ink)", maxWidth: 220 }}>Still needed: {missing.join(", ")}.</span>}
+        {shownMissing.length > 0 && <span className="tiny" style={{ color: "var(--amber-ink)", maxWidth: 220 }}>Still needed: {shownMissing.join(", ")}.</span>}
         {onCancel && <button className="btn" type="button" onClick={onCancel} disabled={!!busy}>Cancel</button>}
         {(buttons || [{ key: "save", label: "Save", primary: true }]).map((b) => <button key={b.key} type="button" title={b.title} className={"btn " + (b.primary ? "primary" : "")} disabled={(b.noSaag ? noteMissing.length > 0 : !ready) || !!busy} onClick={() => submit(b.key)}>{busy === b.key ? "Saving…" : b.label}</button>)}
       </div>
@@ -5707,7 +5721,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 <td style={{ minWidth: 190 }}>{r.current ? <><button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.current.id)}>{r.current.claim_no || "claim"}</button>{r.current.minutes != null ? <span className="small muted"> · {r.current.minutes} min</span> : null}<div className="tiny muted">{[r.current.client, r.current.payer, r.current.balance != null ? fmtMoney(r.current.balance) : ""].filter(Boolean).join(" · ")}</div></>
                   : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span> : <span className="tiny muted">–</span>}</td>
                 <td style={{ minWidth: 180 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
-                  <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}</div></>}</td>
+                  <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div></>}</td>
                 <td className="num">{r.on_desk}</td>
                 <td className="num">{r.closed || <span className="muted">0</span>}</td>
                 <td>{leftCell(r)}</td>
@@ -5863,7 +5877,7 @@ function InventoryStatusTab(props) {
           {d && <div className="small muted" style={{ marginLeft: "auto", textAlign: "right" }}>{plural(d.clients.length, "client")} · last inventory upload <b>{ago(d.last_inventory)}</b><br />Month-end in <b>{plural(d.wd_left, "working day")}</b></div>}
         </div>
         {q.error ? <ErrorBox error={q.error} /> : !d ? <Spinner label="Reading the inventory…" /> : <>
-          <div className="row between" style={{ marginTop: 14, flexWrap: "wrap" }}><div><span className="inv-lbl">Where the inventory stands</span> <span className="small muted">· {plural(INV_STAGES.reduce((t, [k]) => t + d.stages[k].n, 0), "workable claim")} · {fmtK(INV_STAGES.reduce((t, [k]) => t + d.stages[k].bal, 0))}</span></div>
+          <div className="row between" style={{ marginTop: 14, flexWrap: "wrap" }}><div><span className="inv-lbl">Where the inventory stands</span> <span className="small muted">· {plural(INV_STAGES.reduce((t, [k]) => t + d.stages[k].n, 0), "open claim")} (at a desk or waiting on the client included) · {fmtK(INV_STAGES.reduce((t, [k]) => t + d.stages[k].bal, 0))}</span></div>
             <span className="small muted">Closed this month: <b className="teal-ink">{plural(d.closed.n, "claim")} · {fmtK(d.closed.bal)}</b></span></div>
           <InvStrip stages={d.stages} />
           <div className="inv-legend">{INV_STAGES.map(([k, l, c]) => <button type="button" key={k} style={{ borderColor: c }} onClick={() => k === "open" ? go("allocate", clientId ? { clientId } : {}) : go("claims", { clientId, stage: k, state: "" })}>
@@ -5876,8 +5890,8 @@ function InventoryStatusTab(props) {
           <div className="card"><span className="inv-lbl">Age of the workable AR</span> <span className="small muted">· SLA: over 90 days ≤ {d.target}% · the dashed line is {d.target}% of the AR</span>
             <div className="inv-age"><div className="inv-tline" style={{ bottom: tLine }} title="The over-90 bucket must stay under this line" />
               {d.ages.map((a, k) => <div key={k}><b className={k === 3 && d.over90_pct > d.target ? "red-ink" : ""}>{fmtK(a.bal)}</b><i style={{ height: barH(a.bal), background: ["#30C48D", "#22CAE4", "#F5A623", d.over90_pct > d.target ? "#E5484D" : "#9AA5B1"][k] }} />
-                <span className={k === 3 ? "b " + (d.over90_pct > d.target ? "red-ink" : "teal-ink") : ""}>{["0–30", "31–60", "61–90", "90+"][k]}<br />{d.ar ? Math.round(a.bal / d.ar * 1000) / 10 : 0}%</span></div>)}</div>
-            <div className="small muted mt8">{d.over90_pct > d.target ? <>Over 90 days is <b className="red-ink">{d.over90_pct}%</b>, above the {d.target}% target. {d.insights[0] && /Over-90/.test(d.insights[0].title) ? <>Resolve the biggest <b>{d.insights[0].sub.split(" ")[0]}</b> claims over 90 days ({d.insights[0].num}) and it comes under.</> : null}</>
+                <span className={k === 3 ? "b " + (d.over90_pct > d.target ? "red-ink" : "teal-ink") : ""}>{["0–30", "31–60", "61–90", "90+"][k]}<br />{(() => { const owed = d.ages.reduce((t, x) => t + (x.pbal || 0), 0); return owed ? Math.round((a.pbal || 0) / owed * 1000) / 10 : 0; })()}%</span></div>)}</div>
+            <div className="small muted mt8">{d.over90_pct > d.target ? <>Over 90 days is <b className="red-ink">{d.over90_pct}%</b>, above the {d.target}% target. {d.insights[0] && /Over-90/.test(d.insights[0].title) ? <>{d.insights[0].text}</> : null}</>
               : <>Over 90 days is <b className="teal-ink">{d.over90_pct}%</b>, within target. {d.ages[2].bal ? <>{fmtK(d.ages[2].bal)} is 61 to 90 days old: work it before it turns 90.</> : null}</>}</div></div>
           <div className="card"><span className="inv-lbl">Pace to clear</span> <span className="small muted">· last 2 weeks</span>
             <div className="inv-pace"><div className="inv-ring" style={{ background: `conic-gradient(${pc.days_to_clear == null ? "#9AA5B1" : pc.days_to_clear <= d.wd_left ? "var(--sc-g)" : "var(--sc-r)"} 0 ${pc.days_to_clear == null ? 0 : Math.min(100, d.wd_left / Math.max(1, pc.days_to_clear) * 100)}%, var(--soft) 0 100%)` }}>
@@ -6121,7 +6135,7 @@ function ClientView({ ctx, me, go, params }) {
             {d.reasons_top.length ? <Bars rows={d.reasons_top} labelOf={(r) => r.reason} valueOf={(r) => r.bal} countOf={(r) => r.n} subOf={(r) => fmtInt(r.n) + " claims"} /> : <Empty>No denied or rejected entries in these dates.</Empty>}</div>
         </div>
         <div className="c3-g2">
-          <div className="card"><div className="row between"><h3 className="c3-h">Waiting on the client</h3><span className="tiny muted">chased by itself after 3 working days</span></div>
+          <div className="card"><div className="row between"><h3 className="c3-h">Waiting on the client</h3><span className="tiny muted">chased 3 working days after it is sent to the client</span></div>
             {d.waiting.rows.length ? <div className="table-wrap"><table className="t"><thead><tr><th>Claim</th><th>What is needed</th><th>Asked by</th><th>Sent</th><th>Waiting</th><th>Balance</th></tr></thead><tbody>
               {d.waiting.rows.slice(0, 8).map((w) => <tr key={w.id}><td className="mono small">{w.claim_no || "–"}</td><td className="small">{w.reason || w.note || "–"}</td><td className="small">{w.dept_label}</td>
                 <td className="small">{w.sent ? (w.client_sent_by_name || "") + (w.client_sent_how ? " · " + w.client_sent_how : "") : <span className="badge gray">not sent yet</span>}</td>
@@ -6517,7 +6531,7 @@ function crDataset(role, rows, map, opts = {}) {
     const v = map(x);
     const rec = { _i: i, _n: v._n || 1, id: v.id || "", invoice: v.invoice || "", dos: crD(v.dos), workDate: crD(v.workDate), subDate: crD(v.subDate), paidDate: crD(v.paidDate),
       charge: v.charge == null ? null : v.charge, balance: v.balance == null ? null : v.balance, paid: v.paid == null ? null : v.paid, amount: Number(v.amount) || 0, aging: v.aging == null ? null : v.aging,
-      submitted: v.submitted == null ? null : v.submitted, comment: v.comment || "", checkNo: v.checkNo || "", open: v.open, loc: v.loc || "" };
+      submitted: v.submitted == null ? null : v.submitted, comment: v.comment || "", checkNo: v.checkNo || "", open: v.open, loc: v.loc || "", endDate: crD(v.endDate) };
     const b = CR_BK_BY[v.bucket] || null; rec.bucket = b ? b.key : ""; rec.bucketLabel = b ? b.label : ""; rec.bucketLo = b ? b.lo : 9999;
     for (const f of CR_CATS) rec[f] = v[f] == null ? "" : cats[f].add(v[f]);
     rec.payerKey = crPayerKey(v.payer);
@@ -6528,7 +6542,7 @@ function crDataset(role, rows, map, opts = {}) {
   const labels = {}; for (const f of CR_CATS) labels[f] = Object.fromEntries([...cats[f].map].map(([k, e]) => [k, e.label]));
   labels.payerKey = Object.fromEntries([...payerCnt].map(([k, m]) => [k, [...m].sort((a, b) => b[1] - a[1])[0][0]]));
   labels.bucket = Object.fromEntries(CR_BK.map(([k, l]) => [k, l]));
-  return { role, recs, labels, dateField: opts.dateField || null, extras: [], nrows: recs.length, source: opts.source || "", asOf: opts.asOf || "", derivedFrom: opts.derivedFrom || null, cells: !!opts.cells };
+  return { role, recs, labels, dateField: opts.dateField || null, extras: [], nrows: recs.length, source: opts.source || "", asOf: opts.asOf || "", derivedFrom: opts.derivedFrom || null, cells: !!opts.cells, spans: !!opts.spans, dedupe: !!opts.dedupe };
 }
 /* Brahmastra's records → Third Eye's datasets */
 function crDatasets(raw) {
@@ -6550,9 +6564,9 @@ function crDatasets(raw) {
   // waiting on the client: the desks' requests, and AR entries whose ball went to the client
   const arCa = d.worked.filter((r) => /client/i.test(r.mv || "") || /client/i.test(r.act || ""));
   out.clientAssistance = crDataset("clientAssistance", [...d.clientAssistance.map((r) => ({ ...r, _src: "desk" })), ...arCa.map((r) => ({ ...r, _src: "ar" }))], (r) => r._src === "desk"
-    ? { id: r.id, invoice: r.no, dos: r.dos, payer: r.py, amount: r.amt, balance: r.amt, bucket: r.bk, status: r.st, action: r.act, workDate: r.wd, open: r.open, dept: r.dept, comment: r.cm, loc: r.loc }
-    : { id: r.id, invoice: r.no, dos: r.dos, payer: r.py, amount: r.amt, balance: r.amt, bucket: r.bk, status: r.sub || "Information from the client", action: r.act || "Waiting on the client", workDate: r.wd, dept: "AR", workBy: r.by, loc: r.loc },
-    { dateField: "workDate" });
+    ? { id: r.id, invoice: r.no, dos: r.dos, payer: r.py, amount: r.amt, balance: r.amt, bucket: r.bk, status: r.st, action: r.act, workDate: r.wd, endDate: r.open ? "" : r.ed || r.wd, open: r.open, dept: r.dept, comment: r.cm, loc: r.loc }
+    : { id: r.id, invoice: r.no, dos: r.dos, payer: r.py, amount: r.amt, balance: r.amt, bucket: r.bk, status: r.sub || "Information from the client", action: r.act || "Waiting on the client", workDate: r.wd, endDate: r.wd, dept: "AR", workBy: r.by, loc: r.loc },
+    { dateField: "workDate", spans: true, dedupe: true });
   // eligibility checks: the EV production file uploaded for the client (Brahmastra does not do EV itself)
   if (d.ev && d.ev.length) out.ev = crDataset("ev", d.ev, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, status: r.st, action: r.act, workDate: r.wd, workBy: r.by, comment: r.cm, loc: r.loc }), { dateField: "workDate" });
   return out;
@@ -6567,13 +6581,13 @@ function crLabelOf(ds, field, key) {
 const crWeekSort = (lbl) => { const s = String(lbl).toLowerCase(); const mm = s.match(/[a-z]{3,}/); const wk = s.match(/(\d+)/); const mi = mm ? (CRM_IDX[mm[0].slice(0, 3)] ?? 50) : 50; return mi * 10 + (wk ? +wk[1] : 0); };
 function crAgg(rows, field, ds, opts = {}) {
   const measure = opts.measure || "count", m = new Map();
-  for (const r of rows) { const k = r[field] == null ? "" : String(r[field]); let e = m.get(k); if (!e) { e = { key: k, count: 0, amount: 0, lo: r.bucketLo }; m.set(k, e); } e.count += r._n || 1; e.amount += Number(r.amount) || 0; }
+  for (const r of rows) { const k = r[field] == null ? "" : String(r[field]); let e = m.get(k); if (!e) { e = { key: k, count: 0, amount: 0, lo: r.bucketLo, first: null }; m.set(k, e); } e.count += r._n || 1; e.amount += Number(r.amount) || 0; if (r.workDate && (!e.first || r.workDate < e.first)) e.first = r.workDate; }
   let items = [...m.values()].map((e) => ({ ...e, label: crLabelOf(ds, field, e.key), value: measure === "amount" ? e.amount : e.count }));
   if (!opts.keepBlank) items = items.filter((x) => x.key !== "" || items.length === 1);
   const total = crSum(items, (x) => x.value) || 1; items.forEach((x) => { x.share = x.value / total; });
   if (field === "bucket") items.sort((a, b) => a.lo - b.lo);
   else if (opts.order === "label") items.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
-  else if (opts.order === "week") items.sort((a, b) => crWeekSort(a.label) - crWeekSort(b.label));
+  else if (opts.order === "week") items.sort((a, b) => (a.first && b.first ? a.first - b.first : crWeekSort(a.label) - crWeekSort(b.label)));
   else items.sort((a, b) => b.value - a.value);
   return items;
 }
@@ -6594,23 +6608,39 @@ const crGrain = (range) => { if (!range) return "month"; const n = crDaysBetween
 const crDelta = (cur, prev) => (prev == null || cur == null ? null : { cur, prev, diff: cur - prev, pct: prev ? (cur - prev) / Math.abs(prev) : null });
 const crPctOf = (a, b) => (b ? a / b : null);
 const crListNames = (items, n = 3) => { const names = items.slice(0, n).map((x) => x.label); const more = items.length - names.length; if (names.length <= 1) return names.join("") + (more > 0 ? ` and ${more} more` : ""); if (more > 0) return names.join(", ") + ` and ${more} more`; return names.slice(0, -1).join(", ") + " and " + names[names.length - 1]; };
-const crWorkingDaysIn = (range, rows, dateField) => { if (range) return crWorkingDays(range.start, range.end); const ds = rows.map((r) => r[dateField]).filter(Boolean); if (!ds.length) return null; return crWorkingDays(new Date(Math.min(...ds)), new Date(Math.max(...ds))); };
+const crSoFar = (range) => { const t = crDay(new Date()); return range.end > t ? t : range.end; };
+const crPerDay = (n, wd) => { const v = n / wd; return v < 10 ? String(Math.round(v * 10) / 10) : crF.int(v); };
+const crWorkingDaysIn = (range, rows, dateField) => { if (range) { const e = crSoFar(range); return e < range.start ? null : crWorkingDays(range.start, e); } const ds = rows.map((r) => r[dateField]).filter(Boolean); if (!ds.length) return null; return crWorkingDays(new Date(Math.min(...ds)), new Date(Math.max(...ds))); };
 /* how Third Eye reads a row */
-const crIsClosed = (r) => { if (r.moveTo) return /close/.test(r.moveTo); if (r.pmsStatus) return /closed|paid/.test(r.pmsStatus); if (r.purviewStatus) return /paid|non collect|closed|adjust/.test(r.purviewStatus); return false; };
 const crIsRejected = (r) => /reject/.test(r.purviewStatus || "") || /reject/.test(r.pmsStatus || "") || (!r.purviewStatus && !r.pmsStatus && /reject/.test(r.status || ""));
 const crIsDenied = (r) => { if (r.purviewStatus) return /deni|denial/.test(r.purviewStatus); if (r.pmsStatus && /deni/.test(r.pmsStatus)) return true; return /deni|denial/.test(r.status || ""); };
 const crIsPaid = (r) => /paid/.test(r.purviewStatus || "") || (!r.purviewStatus && /paid/.test(r.status || ""));
 const crSubState = (r) => { const st = r.status || ""; if (/dup/.test(st)) return "duplicate"; if (r.submitted === false || /not submit|unsubmit|pending|hold/.test(st)) return "not"; if (r.submitted === true || /submit|sent|billed/.test(st) || (!st && r.submitted == null)) return "submitted"; return "other"; };
 /* the datasets a page reads; denials come from the AR entries (as Third Eye does without a denial sheet) */
 function crDerived(DS, role) {
-  if (role === "denial") { const w = DS.worked; const recs = w ? w.recs.filter(crIsDenied) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked" } : null; }
+  if (role === "denial") { const w = DS.worked; const recs = w ? w.recs.filter(crIsDenied) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked", dedupe: true } : null; }
   if (role === "rejection") { const r = DS.rejection; if (r && r.recs.length) return r; const w = DS.worked; const recs = w ? w.recs.filter(crIsRejected) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked" } : null; }
   const ds = DS[role]; return ds && ds.recs.length ? ds : null;
 }
+/* One row per claim: a desk request over an AR entry, an open request over an answered one, else the later entry. */
+function crDedupe(rows) {
+  const m = new Map(), out = [], desk = (r) => r.open === true || r.open === false;
+  for (const r of rows) {
+    const k = r.id || r.invoice; if (!k) { out.push(r); continue; }
+    const e = m.get(k);
+    if (!e || (desk(r) && !desk(e)) || (desk(r) === desk(e) && ((r.open === true && e.open !== true) || (r.open === e.open && (r.workDate || 0) >= (e.workDate || 0))))) m.set(k, r);
+  }
+  return out.concat([...m.values()]);
+}
+/* Claims, not entries: a claim worked twice in the period is one claim (its latest entry). */
+const crClaimsOf = (rows) => { const m = new Map(), out = []; for (const r of rows) { const k = r.id || r.invoice; if (!k) out.push(r); else { const e = m.get(k); if (!e || (r.workDate || 0) >= (e.workDate || 0)) m.set(k, r); } } return out.concat([...m.values()]); };
+const crIdsOf = (rows) => new Set(rows.map((r) => r.id || r.invoice || r._i));
 /* the page context: rows in the period (with the cross-filter), rows in the period before, the inventory snapshots */
 function crCtx(DS, R, pageId, sel) {
   const range = R.range, prevRange = R.compare ? crShift(range) : null, cache = {};
-  const get = (role) => { if (!cache[role]) { const ds = crDerived(DS, role); const of = (rg) => !ds ? [] : ds.dateField && rg ? ds.recs.filter((r) => crInRange(r[ds.dateField], rg)) : ds.recs.slice();
+  const get = (role) => { if (!cache[role]) { const ds = crDerived(DS, role);
+    const inR = (r, rg) => ds.spans ? !!r[ds.dateField] && r[ds.dateField] <= rg.end && (r.open === true || !r.endDate || r.endDate >= rg.start) : crInRange(r[ds.dateField], rg);
+    const of = (rg) => { const xs = !ds ? [] : ds.dateField && rg ? ds.recs.filter((r) => inR(r, rg)) : ds.recs.slice(); return ds && ds.dedupe ? crDedupe(xs) : xs; };
     cache[role] = { ds, all: of(range), prevAll: prevRange ? of(prevRange) : [] }; } return cache[role]; };
   return { pageId, sel, range, prevRange, ds: (role) => get(role).ds, rows: (role, except) => crApplySel(get(role).all, sel, except), rowsAll: (role) => get(role).all,
     prev: (role) => crApplySel(get(role).prevAll, sel, null), hasPrev: (role) => !!(prevRange && get(role).prevAll.length),
@@ -6683,19 +6713,23 @@ const crClaims = (ds, rows, role) => ({ ds, rows, cols: CR_CLAIM_COLS[role] || C
 function crInvSets(c) {
   const DS = c.DS, ds = DS.inventory, curAll = ds ? ds.recs : [], cur = crApplySel(curAll, c.sel, null);
   const prevDs = DS.inventoryPrev && DS.inventoryPrev.recs.length ? DS.inventoryPrev : null;
-  const two = !!prevDs, pw = crPrevWord(c.R);
-  const prev = crApplySel(two ? prevDs.recs : curAll, c.sel, null);
+  // Brahmastra's inventory is the open claims: with no earlier snapshot (or Compare off) there is nothing to compare with.
+  const two = !!prevDs && !!c.R.compare, pw = crPrevWord(c.R);
+  const prev = two ? crApplySel(prevDs.recs, c.sel, null) : [];
   const asOf = (x) => crF.date(crD(x.asOf));
-  return { ds, cur, curAll, prev, prevSet: prev, curSet: two ? cur : cur.filter((r) => !crIsClosed(r)), twoSnapshots: two, prevDs,
-    prevLabel: two ? `AR · ${asOf(prevDs)}` : "Inventory received", curLabel: two ? `AR · ${asOf(ds)}` : "Still open", pw,
+  return { ds, cur, curAll, prev, prevSet: prev, curSet: cur, twoSnapshots: two, prevDs, noPrev: !prevDs,
+    prevLabel: two ? `AR · ${asOf(prevDs)}` : "", curLabel: two ? `AR · ${asOf(ds)}` : "Open AR", pw,
     rebuilt: two && prevDs.source === "rebuilt" ? prevDs.asOf : null };
 }
+/* Over 90 days is a share of the money owed: credit balances are left out (the Dashboard's rule). */
+const crOwed = (set, lo = 0) => crSum(set.filter((r) => r.bucketLo >= lo), (r) => Math.max(0, Number(r.amount) || 0));
+const crOverShare = (set, lo) => { const owed = crOwed(set); return owed ? crOwed(set, lo) / owed : null; };
 function crBuildInventory(c) {
-  const R = c.R, { ds, prevSet, curSet, twoSnapshots, prevLabel, curLabel, rebuilt } = crInvSets(c);
+  const R = c.R, { ds, prevSet, curSet, twoSnapshots, prevLabel, curLabel, rebuilt, noPrev } = crInvSets(c);
+  if (!twoSnapshots) return crBuildInventoryNow(c, ds, curSet, noPrev);
   const amtPrev = crSum(prevSet, (r) => r.amount), amtCur = crSum(curSet, (r) => r.amount), nPrev = crN(prevSet), nCur = crN(curSet);
   const red = amtPrev ? 1 - amtCur / amtPrev : null;
-  const over = (set) => crSum(set.filter((r) => r.bucketLo >= 91), (r) => r.amount);
-  const o90 = amtCur ? over(curSet) / amtCur : null, o90p = amtPrev ? over(prevSet) / amtPrev : null;
+  const o90 = crOverShare(curSet, 91), o90p = crOverShare(prevSet, 91);
   const kpis = [
     crKpi(prevLabel, crF.money(amtPrev, 0), { sub: `${crF.int(nPrev)} claims` }),
     crKpi(red != null && red >= 0 ? "Reduction" : "Change", red == null ? "–" : crF.pct(Math.abs(red), 1), { sub: red == null ? "" : `${crF.money(Math.abs(amtPrev - amtCur), 0)} ${red >= 0 ? "cleared" : "added"}${nPrev !== nCur ? " · " + crPl(Math.abs(nPrev - nCur), "claim") : ""}`, accent: true }),
@@ -6720,11 +6754,27 @@ function crBuildInventory(c) {
   const bestRed = redAmt.filter((x) => x.value > 0).sort((a, b) => b.value - a.value)[0]; if (bestRed) ins.push(`The largest reduction came from the ${bestRed.label} bucket: ${crF.money(bestRed.value, 0)}${cntOf(bestRed.key) > 0 ? " (" + crPl(cntOf(bestRed.key), "claim") + ")" : ""} cleared.`);
   const worst = redAmt.filter((x) => x.value < 0).sort((a, b) => a.value - b.value)[0]; if (worst) ins.push(`The ${worst.label} bucket grew by ${crF.money(-worst.value, 0)}${cntOf(worst.key) < 0 ? " (" + crPl(-cntOf(worst.key), "claim") + ")" : ""}; these need attention before they age further.`);
   const top = bC.slice().sort((a, b) => b.value - a.value)[0]; if (top) { const pt = bP.find((x) => x.key === top.key); ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of the open balance${pt ? ` (${crF.pct(pt.share, 0)} at ${prevLabel.replace(/^AR · /, "")})` : ""}.`); }
-  const old = bC.filter((x) => x.lo >= 121), oldP = bP.filter((x) => x.lo >= 121); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the open balance is older than 120 days${oldP.length ? `, compared with ${crF.pct(crSum(oldP, (x) => x.share), 0)} before` : ""}; timely filing and appeal limits make this the priority slice.`);
+  const o120 = crOverShare(curSet, 121), o120p = crOverShare(prevSet, 121); if (o120) ins.push(`${crF.pct(o120, 0)} of the money owed is older than 120 days${o120p != null ? `, compared with ${crF.pct(o120p, 0)} before` : ""}; timely filing and appeal limits make this the priority slice.`);
   const headline = red == null ? "Inventory analysis" : twoSnapshots ? `AR ${red >= 0 ? "came down" : "went up"} ${crF.pct(Math.abs(red), 0)} in ${R.periodName}` : `${crF.pct(Math.max(0, red), 0)} of the inventory received is cleared`;
   return { title: "Inventory analysis", headline, sub: twoSnapshots ? `Open AR at ${prevLabel.replace(/^AR · /, "")} against ${curLabel.replace(/^AR · /, "")}, by age of claim` : `Inventory on file · ${R.client}`,
     note: rebuilt ? `The ${crF.date(crD(rebuilt))} inventory is rebuilt from the claims' history (Brahmastra keeps a month-end snapshot from now on).` : "",
     watermark: "INVENTORY", kpis, cards, insights: ins, slicers: ["payerKey", "bucket", "purviewStatus", "action"].filter((f) => curSet.some((r) => r[f])), claims: crClaims(ds, ds && ds.cells ? [] : curSet, "inventory"), unfiltered: true };
+}
+/* The open AR on its own: a new client (no month-end inventory before), or Compare switched off. */
+function crBuildInventoryNow(c, ds, curSet, noPrev) {
+  const R = c.R; if (!ds) return null;
+  const amt = crSum(curSet, (r) => r.amount), n = crN(curSet), o90 = crOverShare(curSet, 91), o120 = crOverShare(curSet, 121);
+  const bC = crAgg(curSet, "bucket", ds, { measure: "amount" }); crMarkSel(bC, c.sel.bucket);
+  const kpis = [crKpi("Open AR", crF.money(amt, 0), { sub: `${crF.int(n)} claims`, accent: true }),
+    crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: `${crF.money(crOwed(curSet, 91), 0)} of the money owed`, upGood: false })];
+  const cards = [{ id: "inv.bucket.now", title: "Aging of the open AR", sub: "Balance by age of claim", cols: 12, type: "col", dim: "bucket", dimLabel: "Aging bucket", items: bC, measure: "amount", measureLabel: "Amount",
+    fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 14 }];
+  const ins = [`The open AR is ${crF.money(amt, 0)} across ${crF.int(n)} claims.`];
+  ins.push(noPrev ? "There is no month-end inventory before this one to compare with: the reduction shows from the next report." : "Compare is off: this page shows the open AR only.");
+  const top = bC.slice().sort((a, b) => b.value - a.value)[0]; if (top) ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of the open balance.`);
+  if (o120) ins.push(`${crF.pct(o120, 0)} of the money owed is older than 120 days; timely filing and appeal limits make this the priority slice.`);
+  return { title: "Inventory analysis", headline: `${crF.money(amt, 0)} open across ${crF.int(n)} claims`, sub: `Open AR by age of claim · ${R.client}`, watermark: "INVENTORY", kpis, cards, insights: ins,
+    slicers: ["payerKey", "bucket", "purviewStatus", "action"].filter((f) => curSet.some((r) => r[f])), claims: crClaims(ds, ds.cells ? [] : curSet, "inventory"), unfiltered: true };
 }
 function crBuildInventory2(c) {
   const R = c.R, { ds, prevSet, curSet, twoSnapshots, curLabel } = crInvSets(c);
@@ -6762,14 +6812,15 @@ function crBuildSubmission(c) {
   const prevSub = c.hasPrev("submission") ? c.prev("submission").filter(only) : null;
   const amt = crSum(submitted, (r) => r.amount), wd = crWorkingDaysIn(c.range, submitted, ds.dateField);
   const dosList = submitted.map((r) => r.dos).filter(Boolean).sort((a, b) => a - b), oldest = dosList[0] || null, newest = dosList[dosList.length - 1] || null;
-  const refDate = c.range.end;
+  const refDate = crSoFar(c.range), refWord = refDate < c.range.end ? "today" : "at period end";
+  const lagOf = (r) => crDaysBetween(r.dos, r.subDate || refDate) - 1;
   const kpis = [
     crKpi("Claims submitted", crF.int(submitted.length), { delta: crDelta(submitted.length, prevSub ? prevSub.length : null), fmt: crF.int, accent: true }),
     crKpi("Charges submitted", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prevSub ? crSum(prevSub, (r) => r.amount) : null), fmt: crF.moneyK }),
-    crKpi("Per working day", wd ? crF.int(submitted.length / wd) : "–", { sub: wd ? `${wd} working days` : "" }),
+    crKpi("Per working day", wd ? crPerDay(submitted.length, wd) : "–", { sub: wd ? `${wd} working days${refWord === "today" ? " so far" : ""}` : "" }),
     crKpi("Average charge", submitted.length ? crF.money(amt / submitted.length, 0) : "–", { sub: "per claim" }),
-    crKpi("Oldest DOS", oldest ? crF.date(oldest) : "–", { sub: oldest ? `${crDaysBetween(oldest, refDate) - 1} days old at period end` : "", small: true }),
-    crKpi("Newest DOS", newest ? crF.date(newest) : "–", { sub: newest ? `${crDaysBetween(newest, refDate) - 1} days old at period end` : "", small: true }),
+    crKpi("Oldest DOS", oldest ? crF.date(oldest) : "–", { sub: oldest ? `${crDaysBetween(oldest, refDate) - 1} days old ${refWord}` : "", small: true }),
+    crKpi("Newest DOS", newest ? crF.date(newest) : "–", { sub: newest ? `${crDaysBetween(newest, refDate) - 1} days old ${refWord}` : "", small: true }),
   ];
   const cards = [];
   crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "submission", cols: 4, measure: "count", prev: true, maxRows: 8, rowFilter: only, sub: "Submitted claims" }), 1);
@@ -6778,9 +6829,9 @@ function crBuildSubmission(c) {
   crAddCard(cards, crCardBar(c, "carrier", "Submission mode", { role: "submission", cols: 4, measure: "amount", rowFilter: only, sub: "Charges submitted" }));
   if (notSub.length) { const reasons = crAgg(notSub, "comment", { labels: { comment: {} } }).slice(0, 5); cards.push({ id: "sub.notsub", title: "Not submitted: reasons", sub: `${crPl(notSub.length, "claim")} could not be submitted`, cols: 12, type: "table", rows: reasons.map((x) => [crTrunc(x.key || "No reason given", 120), crF.int(x.count), crF.money(x.amount, 0)]), head: ["Reason", "Claims", "Charges"] }); }
   const payers = crAgg(submitted, "payerKey", ds), top = payers[0], ins = [], pw = crPrevWord(R);
-  ins.push(`${crF.int(submitted.length)} claims worth ${crF.money(amt, 0)} were submitted in ${crRangeLabel(c.range)}${wd ? `, an average of ${crF.int(submitted.length / wd)} claims per working day` : ""}${submitted.length ? ` and ${crF.money(amt / submitted.length, 0)} per claim` : ""}.`);
+  ins.push(`${crF.int(submitted.length)} claims worth ${crF.money(amt, 0)} were submitted in ${crRangeLabel(c.range)}${wd ? `, an average of ${crPerDay(submitted.length, wd)} claims per working day` : ""}${submitted.length ? ` and ${crF.money(amt / submitted.length, 0)} per claim` : ""}.`);
   if (top) ins.push(`${top.label} received ${crF.pct(top.share, 0)} of submissions (${crF.int(top.count)} claims)${payers[1] ? `, followed by ${payers[1].label} at ${crF.pct(payers[1].share, 0)}` : ""}.`);
-  if (oldest && newest) { const lag = submitted.filter((r) => r.dos && crDaysBetween(r.dos, refDate) - 1 > 45).length; ins.push(`Service dates range from ${crF.date(oldest)} to ${crF.date(newest)}; ${lag ? `${crF.int(lag)} claims (${crF.pct(lag / submitted.length, 0)}) were over 45 days old when billed, which eats into filing limits` : "everything was billed within 45 days of service"}.`); }
+  if (oldest && newest) { const lag = submitted.filter((r) => r.dos && lagOf(r) > 45).length; ins.push(`Service dates range from ${crF.date(oldest)} to ${crF.date(newest)}; ${lag ? `${crF.int(lag)} claims (${crF.pct(lag / submitted.length, 0)}) were over 45 days old when billed, which eats into filing limits` : "everything was billed within 45 days of service"}.`); }
   if (prevSub) { const h = crHeadline(R, "Submissions", submitted.length, prevSub.length, crF.int, { plural: true }); if (h) ins.push(h + (prevSub.length ? ` Charges went from ${crF.money(crSum(prevSub, (r) => r.amount), 0)} to ${crF.money(amt, 0)}.` : "")); ins.push(...crMovers(R, submitted, prevSub, "payerKey", ds, { noun: "payer", shareOf: "submissions" })); }
   if (notSub.length) { const r0 = crAgg(notSub, "comment", { labels: { comment: {} } })[0]; ins.push(`${crF.int(notSub.length)} claims (${crF.money(crSum(notSub, (r) => r.amount), 0)}) are still not submitted${r0 && r0.key ? `; the main blocker is "${crTrunc(r0.key, 90)}"` : ""}.`); }
   if (dup.length) ins.push(`${crF.int(dup.length)} duplicate claims were identified and held back from submission.`);
@@ -6789,12 +6840,14 @@ function crBuildSubmission(c) {
 }
 function crBuildRejection(c) {
   const R = c.R, ds = c.ds("rejection"); if (!ds) return null;
-  const all = c.rows("rejection", null), subRows = c.ds("submission") ? c.rowsAll("submission").filter((r) => crSubState(r) === "submitted") : [];
-  const rate = subRows.length ? all.length / subRows.length : (c.ds("worked") ? all.length / Math.max(1, c.rowsAll("worked").length) : null);
+  const all = c.rows("rejection", null), subRows = c.ds("submission") ? c.rows("submission", null).filter((r) => crSubState(r) === "submitted") : [];
+  // A share of this period's submissions, with the same filter. Rejections of claims sent earlier can outnumber them: no rate then.
+  const base = subRows.length || (c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : 0), more = !!base && all.length > base;
+  const rate = base && !more ? all.length / base : null;
   const prev = c.hasPrev("rejection") ? c.prev("rejection") : null;
   const kpis = [
     crKpi("Rejected claims", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
-    crKpi("Rejection rate", rate == null ? "–" : crF.pct(rate, 1), { sub: subRows.length ? `of ${crF.int(subRows.length)} submitted` : c.ds("worked") ? "of worked claims" : "", upGood: false }),
+    crKpi("Rejection rate", rate == null ? "–" : crF.pct(rate, 1), { sub: more ? `more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} this period` : subRows.length ? `of ${crF.int(subRows.length)} submitted` : c.ds("worked") ? "of worked claims" : "", upGood: false }),
     crKpi("Rejected amount", crF.moneyK(crSum(all, (r) => r.amount)), { sub: crMoneySub(crSum(all, (r) => r.amount)) }),
   ];
   const cards = [];
@@ -6802,7 +6855,7 @@ function crBuildRejection(c) {
   crAddCard(cards, crCardBar(c, "status", "Rejection reasons", { role: "rejection", cols: 6, emph: true, maxRows: 10, sub: "Top 80% of rejections highlighted" }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action wise breakdown", { role: "rejection", cols: 12, maxRows: 6 }));
   const ins = [], reasons = crAgg(all, "status", ds), acts = crAgg(all, "action", ds);
-  ins.push(`${crF.int(all.length)} claims were rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : ""}.`);
+  ins.push(`${crF.int(all.length)} claims were rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} in the period (some were submitted earlier)` : ""}.`);
   if (reasons[0]) ins.push(`The leading rejection reason is ${reasons[0].label} (${crF.pct(reasons[0].share, 0)})${reasons[1] ? `, followed by ${reasons[1].label} (${crF.pct(reasons[1].share, 0)})` : ""}.`);
   if (ds.dateField) { const byDay = new Map(); for (const r of all) { const d = r[ds.dateField]; if (!d) continue; const k = crF.iso(d); let e = byDay.get(k); if (!e) { e = { d, rows: [] }; byDay.set(k, e); } e.rows.push(r); }
     const days = [...byDay.values()].sort((a, b) => b.rows.length - a.rows.length || a.d - b.d).slice(0, 3);
@@ -6815,7 +6868,8 @@ function crBuildRejection(c) {
 function crBuildPayment(c) {
   const R = c.R, ds = c.ds("payment"); if (!ds) return null;
   const all = c.rows("payment", null), posted = all.filter((r) => /posted/.test(r.status || "")), paidOf = (r) => (r.paid != null ? r.paid : r.amount) || 0;
-  const amt = crSum(posted, paidOf), charged = crSum(posted, (r) => r.charge || 0), checks = crUniq(posted.map((r) => r.checkNo).filter(Boolean)).length;
+  const withChg = posted.filter((r) => Number(r.charge) > 0);
+  const amt = crSum(posted, paidOf), charged = crSum(withChg, (r) => Number(r.charge)), paidChg = crSum(withChg, paidOf), checks = crUniq(posted.map((r) => r.checkNo).filter(Boolean)).length;
   const prev = c.hasPrev("payment") ? c.prev("payment").filter((r) => /posted/.test(r.status || "")) : null;
   const kpis = [
     crKpi("Total posted", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, paidOf) : null), fmt: crF.moneyK, accent: true }),
@@ -6823,15 +6877,15 @@ function crBuildPayment(c) {
     crKpi("Checks / EFTs", checks ? crF.int(checks) : "–"),
     crKpi("Average per line", posted.length ? crF.money(amt / posted.length, 0) : "–"),
   ];
-  if (charged) kpis.push(crKpi("Paid vs charged", crF.pct(amt / charged, 0), { sub: `${crF.money(charged, 0)} charged` }));
+  if (charged) kpis.push(crKpi("Paid vs charged", crF.pct(paidChg / charged, 0), { sub: `${crF.money(charged, 0)} charged${withChg.length < posted.length ? ` · ${crF.int(withChg.length)} of ${crF.int(posted.length)} lines` : ""}` }));
   const cards = [];
   crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "payment", cols: 5, measure: "amount", prev: true, maxRows: 9 }), 1);
   crAddCard(cards, crCardBar(c, "week", "Week wise posting", { role: "payment", cols: 4, measure: "amount", type: "col", order: "week" }));
-  const s = crCardBar(c, "status", "Payment status", { role: "payment", cols: 3, measure: "count", type: "donut", maxRows: 6 }); if (s && s.items && s.items.length > 1) { s.items = crFold(s.items, 6); s.centerValue = crF.int(all.length); s.centerLabel = "lines"; cards.push(s); }
+  const s = crCardBar(c, "status", "Payment status", { role: "payment", cols: 3, measure: "count", type: "donut", maxRows: 6 }); if (s && s.items && s.items.length > 1) { s.items = crFold(s.items, 6); s.centerValue = crF.int(all.length); s.centerLabel = "lines, any status"; cards.push(s); }
   const ins = [], payers = crAgg(posted, "payerKey", ds, { measure: "amount" });
   ins.push(`${crF.money(amt, 0)} was posted in ${crRangeLabel(c.range)} across ${crF.int(posted.length)} payment lines${checks ? ` and ${crF.int(checks)} checks or EFTs` : ""}.`);
   if (payers[0]) ins.push(`${payers[0].label} paid ${crF.pct(payers[0].share, 0)} of the total (${crF.money(payers[0].amount, 0)})${payers[1] ? `; ${payers[1].label} followed with ${crF.pct(payers[1].share, 0)}` : ""}.`);
-  if (charged) ins.push(`Posted payments equal ${crF.pct(amt / charged, 0)} of the charges on those claims.`);
+  if (charged) ins.push(`Posted payments equal ${crF.pct(paidChg / charged, 0)} of the charges on those claims${withChg.length < posted.length ? ` (the ${crF.int(withChg.length)} lines with a billed amount)` : ""}.`);
   const wk = crAgg(posted, "week", ds, { measure: "amount", order: "week" }); if (wk.length > 1) { const best = wk.slice().sort((a, b) => b.value - a.value)[0]; ins.push(`${best.label} was the strongest posting week with ${crF.money(best.value, 0)} (${crF.pct(best.share, 0)} of the ${R.range.kind === "week" ? "period" : "month"}).`); }
   const pending = all.filter((r) => !/posted/.test(r.status || "")); if (pending.length) ins.push(`${crF.int(pending.length)} lines (${crF.pct(pending.length / Math.max(1, all.length), 0)}) are not posted yet; closing them completes the posting cycle.`);
   if (prev) { const h = crHeadline(R, "Collections", amt, crSum(prev, paidOf), (v) => crF.money(v, 0), { up: "increased", down: "decreased", plural: true }); if (h) ins.push(h); ins.push(...crMovers(R, posted, prev, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "payments" })); }
@@ -6841,29 +6895,34 @@ function crBuildPayment(c) {
 }
 function crBuildAR(c) {
   const R = c.R, ds = c.ds("worked"); if (!ds) return null;
-  const all = c.rows("worked", null), prev = c.hasPrev("worked") ? c.prev("worked") : null;
-  const amt = crSum(all, (r) => r.amount), paid = all.filter(crIsPaid), den = all.filter(crIsDenied), wd = crWorkingDaysIn(c.range, all, ds.dateField);
+  const entries = c.rows("worked", null), prevE = c.hasPrev("worked") ? c.prev("worked") : null;
+  // claims, not entries: one row per claim (its latest entry); paid / denied: claims with such an entry in the period
+  const all = crClaimsOf(entries), prev = prevE ? crClaimsOf(prevE) : null;
+  const amt = crSum(all, (r) => r.amount), wd = crWorkingDaysIn(c.range, all, ds.dateField);
+  const paidIds = crIdsOf(entries.filter(crIsPaid)), denIds = crIdsOf(entries.filter(crIsDenied));
+  const paid = all.filter((r) => paidIds.has(r.id || r.invoice || r._i)), den = all.filter((r) => denIds.has(r.id || r.invoice || r._i));
+  const pPaidN = prevE ? crIdsOf(prevE.filter(crIsPaid)).size : 0, pDenN = prevE ? crIdsOf(prevE.filter(crIsDenied)).size : 0;
   const kpis = [
-    crKpi("Claims worked", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
+    crKpi("Claims worked", crF.int(all.length), { sub: entries.length !== all.length ? `${crF.int(entries.length)} entries` : "", delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
     crKpi("Amount worked", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), fmt: crF.moneyK }),
-    crKpi("Confirmed paid", crF.pct(crPctOf(paid.length, all.length), 0), { sub: `${crF.int(paid.length)} claims`, delta: prev ? crPtDelta(crPctOf(paid.length, all.length), crPctOf(prev.filter(crIsPaid).length, prev.length)) : null }),
-    crKpi("Denied", crF.pct(crPctOf(den.length, all.length), 0), { sub: `${crF.int(den.length)} claims`, upGood: false, delta: prev ? crPtDelta(crPctOf(den.length, all.length), crPctOf(prev.filter(crIsDenied).length, prev.length)) : null }),
+    crKpi("Confirmed paid", crF.pct(crPctOf(paid.length, all.length), 0), { sub: `${crF.int(paid.length)} claims`, delta: prev ? crPtDelta(crPctOf(paid.length, all.length), crPctOf(pPaidN, prev.length)) : null }),
+    crKpi("Denied", crF.pct(crPctOf(den.length, all.length), 0), { sub: `${crF.int(den.length)} claims`, upGood: false, delta: prev ? crPtDelta(crPctOf(den.length, all.length), crPctOf(pDenN, prev.length)) : null }),
   ];
-  if (wd) kpis.push(crKpi("Per working day", crF.int(all.length / wd), { sub: `${wd} working days` }));
+  if (wd) kpis.push(crKpi("Per working day", crPerDay(all.length, wd), { sub: `${wd} working days${crSoFar(c.range) < c.range.end ? " so far" : ""}` }));
   const cards = [];
   crAddCard(cards, crCardBar(c, "bucket", "Aging wise production", { role: "worked", cols: 6, type: "col", prev: true }), 1);
   crAddCard(cards, crCardBar(c, "purviewStatus", "Status wise breakdown", { role: "worked", cols: 6, measure: "amount", maxRows: 8 }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action required", { role: "worked", cols: 6, measure: "amount", maxRows: 8 }), 1);
   crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "worked", cols: 6, measure: "amount", prev: true, maxRows: 8 }), 1);
   const ins = [], pw = crPrevWord(R);
-  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were worked in ${crRangeLabel(c.range)}${wd ? ` (${crF.int(all.length / wd)} per working day)` : ""}.`);
+  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crF.int(entries.length)} entries` : ""}.`);
   const outcomes = crAgg(all, "purviewStatus", ds); if (outcomes.length) ins.push(`Outcomes: ${outcomes.slice(0, 4).map((o) => `${o.label} ${crF.pct(o.share, 0)}`).join(", ")}.`);
   const buckets = crAgg(all, "bucket", ds, { measure: "amount" }), old = buckets.filter((x) => x.lo >= 181); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the amount worked sits in claims older than 180 days; timely filing and appeal limits are the main risk there.`);
   const acts = crAgg(all, "action", ds); if (acts[0]) ins.push(`The most common action was ${acts[0].label} (${crF.pct(acts[0].share, 0)})${acts[1] ? `, then ${acts[1].label} (${crF.pct(acts[1].share, 0)})` : ""}.`);
   const sts = crAgg(all, "status", ds, { measure: "amount" }); if (sts[0]) ins.push(`By status, ${sts[0].label} carries the largest amount worked (${crF.money(sts[0].amount, 0)}, ${crF.pct(sts[0].share, 0)}).`);
   if (prev) {
     const h = crHeadline(R, "Production", all.length, prev.length, crF.int, { up: "is up", down: "is down" }); if (h) ins.push(h);
-    const pPaid = crPctOf(prev.filter(crIsPaid).length, prev.length), cPaid = crPctOf(paid.length, all.length), pDen = crPctOf(prev.filter(crIsDenied).length, prev.length), cDen = crPctOf(den.length, all.length);
+    const pPaid = crPctOf(pPaidN, prev.length), cPaid = crPctOf(paid.length, all.length), pDen = crPctOf(pDenN, prev.length), cDen = crPctOf(den.length, all.length);
     if (pPaid != null && cPaid != null) ins.push(`Confirmed paid moved from ${crF.pct(pPaid, 0)} to ${crF.pct(cPaid, 0)} of claims worked, and denied from ${crF.pct(pDen, 0)} to ${crF.pct(cDen, 0)}.`);
     ins.push(...crMovers(R, all, prev, "bucket", ds, { noun: "aging bucket", share: false })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "amount worked" }));
   }
@@ -6881,12 +6940,13 @@ function crTopDenials(reasons) {
 }
 function crBuildDenials(c) {
   const R = c.R, ds = c.ds("denial"); if (!ds) return null;
-  const all = c.rows("denial", null), workedN = c.ds("worked") ? c.rowsAll("worked").length : null, prev = c.hasPrev("denial") ? c.prev("denial") : null;
+  const all = c.rows("denial", null), workedN = c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : null, prev = c.hasPrev("denial") ? c.prev("denial") : null;
+  const prevWorkedN = c.ds("worked") && c.hasPrev("worked") ? crClaimsOf(c.prev("worked")).length : 0;
   const amt = crSum(all, (r) => r.amount), rate = workedN ? all.length / workedN : null;
   const kpis = [
     crKpi("Denied claims", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
     crKpi("Denied amount", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), upGood: false, fmt: crF.moneyK }),
-    crKpi("Denial rate", rate == null ? "–" : crF.pct(rate, 1), { sub: workedN ? `of ${crF.int(workedN)} claims worked` : "", upGood: false, delta: prev && c.hasPrev("worked") && c.prev("worked").length ? crPtDelta(rate, prev.length / c.prev("worked").length) : null }),
+    crKpi("Denial rate", rate == null ? "–" : crF.pct(rate, 1), { sub: workedN ? `of ${crF.int(workedN)} claims worked` : "", upGood: false, delta: prev && prevWorkedN ? crPtDelta(rate, prev.length / prevWorkedN) : null }),
   ];
   const reasons = crEmph80(crAgg(all, "status", ds, { measure: "amount" })); crMarkSel(reasons, c.sel.status);
   const tops = crTopDenials(reasons), cards = [];
@@ -6944,16 +7004,16 @@ function crBuildCA(c) {
 /* EV: Third Eye's EV page (verifications, insurance wise, type / status) from the uploaded EV production file */
 function crBuildEV(c) {
   const R = c.R, ds = c.ds("ev"); if (!ds) return null;
-  const all = c.rows("ev", null), prev = c.hasPrev("ev") ? c.prev("ev") : null, wd = crWorkingDays(c.range.start, c.range.end);
+  const all = c.rows("ev", null), prev = c.hasPrev("ev") ? c.prev("ev") : null, wd = crWorkingDaysIn(c.range);
   const payers = new Set(all.map((r) => r.payerKey).filter(Boolean)).size, people = new Set(all.map((r) => r.workBy).filter(Boolean)).size;
   const kpis = [crKpi("Verifications", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
-    crKpi("A working day", wd ? crF.int(all.length / wd) : "–", { sub: wd + " working days" }),
+    crKpi("A working day", wd ? crPerDay(all.length, wd) : "–", { sub: wd ? wd + " working days" + (crSoFar(c.range) < c.range.end ? " so far" : "") : "" }),
     crKpi("Insurances", crF.int(payers), { sub: "checked at least once" })];
   if (people) kpis.push(crKpi("Done by", crF.int(people), { sub: people === 1 ? "person" : "people" }));
   const cards = [];
   crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "ev", cols: 6, prev: true, maxRows: 12 }), 1);
   crAddCard(cards, crCardBar(c, "status", "Verification type / status", { role: "ev", cols: 6, type: "col" }), 1);
-  const ins = [`${crF.int(all.length)} eligibility verifications were completed in ${crRangeLabel(c.range)}${wd ? `, about ${crF.int(all.length / wd)} a working day` : ""}.`];
+  const ins = [`${crF.int(all.length)} eligibility verifications were completed in ${crRangeLabel(c.range)}${wd ? `, about ${crPerDay(all.length, wd)} a working day` : ""}.`];
   const st = crAgg(all, "status", ds); if (st[0]) ins.push(`${st[0].label} made up ${crF.pct(st[0].share, 0)} of verifications.`);
   const py = crAgg(all, "payerKey", ds); if (py[0]) ins.push(`${py[0].label} was checked most: ${crF.int(py[0].count)} verifications (${crF.pct(py[0].share, 0)}).`);
   if (prev) { const h = crHeadline(R, "Verifications", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); }
@@ -6964,29 +7024,30 @@ function crBuildEV(c) {
 function crBuildExec(c, raw) {
   const R = c.R, DS = c.DS;
   const inv = crInvSets({ ...c, sel: {} }), amtCur = crSum(inv.curSet, (r) => r.amount), amtPrev = crSum(inv.prevSet, (r) => r.amount);
-  const over = (set) => crSum(set.filter((r) => r.bucketLo >= 91), (r) => r.amount), o90 = amtCur ? over(inv.curSet) / amtCur : null, o90p = amtPrev ? over(inv.prevSet) / amtPrev : null;
+  const over = (set) => crOwed(set, 91), o90 = crOverShare(inv.curSet, 91), o90p = inv.twoSnapshots ? crOverShare(inv.prevSet, 91) : null;
   const c0 = { ...c, sel: {} }, posted = (rows) => rows.filter((r) => /posted/.test(r.status || "")), paidOf = (r) => (r.paid != null ? r.paid : r.amount) || 0;
   const pay = c0.ds("payment") ? posted(c0.rowsAll("payment")) : [], payP = c0.ds("payment") && c0.hasPrev("payment") ? posted(c0.prev("payment")) : null;
   const coll = crSum(pay, paidOf), collP = payP ? crSum(payP, paidOf) : null;
-  const wk = c0.ds("worked") ? c0.rowsAll("worked") : [], wkP = c0.hasPrev("worked") ? c0.prev("worked") : null, wd = crWorkingDays(R.range.start, R.range.end);
-  const den = wk.filter(crIsDenied), denP = wkP ? wkP.filter(crIsDenied) : null, dr = wk.length ? den.length / wk.length : null, drP = wkP && wkP.length ? denP.length / wkP.length : null;
+  const wkE = c0.ds("worked") ? c0.rowsAll("worked") : [], wkPE = c0.hasPrev("worked") ? c0.prev("worked") : null, wd = crWorkingDaysIn(R.range);
+  const wk = crClaimsOf(wkE), wkP = wkPE ? crClaimsOf(wkPE) : null;
+  const den = crClaimsOf(wkE.filter(crIsDenied)), denP = wkPE ? crClaimsOf(wkPE.filter(crIsDenied)) : null, dr = wk.length ? den.length / wk.length : null, drP = wkP && wkP.length ? denP.length / wkP.length : null;
   const subs = c0.ds("submission") ? c0.rowsAll("submission").filter((r) => crSubState(r) === "submitted") : [], rej = c0.ds("rejection") ? c0.rowsAll("rejection") : [];
   const spark = (raw.trend || []).filter((t) => t.ar != null).map((t) => t.ar);
   const kpis = [
     crKpi("AR balance", crF.money(amtCur, 0), { sub: inv.twoSnapshots ? `from ${crF.money(amtPrev, 0)}` : `${crF.int(crN(inv.curSet))} claims`, delta: inv.twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK, spark: spark.length >= 3 ? spark : null }),
     crKpi("Collected", crF.money(coll, 0), { sub: collP != null ? `from ${crF.money(collP, 0)}` : `${crF.int(pay.length)} payment lines`, delta: collP != null ? crDelta(coll, collP) : null, fmt: crF.moneyK }),
     crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: `${crF.money(over(inv.curSet), 0)} of AR`, delta: o90 != null && o90p != null ? crPtDelta(o90, o90p) : null, upGood: false }),
-    crKpi("Claims worked", crF.int(wk.length), { sub: wd ? `${crF.int(wk.length / wd)} a working day` : "", delta: wkP ? crDelta(wk.length, wkP.length) : null, fmt: crF.int }),
+    crKpi("Claims worked", crF.int(wk.length), { sub: wd ? `${crPerDay(wk.length, wd)} a working day` : "", delta: wkP ? crDelta(wk.length, wkP.length) : null, fmt: crF.int }),
     crKpi("Denial rate", dr == null ? "–" : crF.pct(dr, 1), { sub: `${crF.int(den.length)} claims`, delta: dr != null && drP != null ? crPtDelta(dr, drP) : null, upGood: false }),
-    crKpi("Claims submitted", crF.int(subs.length), { sub: subs.length ? `${crF.pct(rej.length / subs.length, 1)} rejected · ${crF.money(crSum(subs, (r) => r.amount), 0)} billed` : `${crF.int(rej.length)} rejected` }),
+    crKpi("Claims submitted", crF.int(subs.length), { sub: subs.length && rej.length <= subs.length ? `${crF.pct(rej.length / subs.length, 1)} rejected · ${crF.money(crSum(subs, (r) => r.amount), 0)} billed` : `${crF.int(rej.length)} rejected${subs.length ? " · " + crF.money(crSum(subs, (r) => r.amount), 0) + " billed" : ""}` }),
   ];
   const ins = [];
   if (inv.twoSnapshots && amtPrev) ins.push(`AR is ${amtCur <= amtPrev ? "down" : "up"} ${crF.money(Math.abs(amtPrev - amtCur), 0)} (${crF.pct(Math.abs(1 - amtCur / amtPrev), 0)}): ${crF.money(amtPrev, 0)} to ${crF.money(amtCur, 0)}.`);
   if (collP != null && collP) ins.push(`Collections ${coll >= collP ? "rose" : "fell"} ${crF.pct(Math.abs(coll / collP - 1), 0)} to ${crF.money(coll, 0)}${pay.length ? (() => { const p = crAgg(pay, "payerKey", DS.payment, { measure: "amount" })[0]; return p ? `; ${p.label} paid ${crF.pct(p.share, 0)} of it` : ""; })() : ""}.`);
   else if (coll) ins.push(`${crF.money(coll, 0)} was collected across ${crF.int(pay.length)} payment lines.`);
   if (dr != null) { const top = den.length ? crAgg(den, "status", DS.worked, { measure: "amount" })[0] : null; ins.push(`Denials were ${crF.pct(dr, 1)} of claims worked${drP != null ? ` (${crF.pct(drP, 1)} in the ${crPrevWord(R)})` : ""}${top ? `; ${top.label} is the top reason` : ""}.`); }
-  const evN = c0.ds("ev") ? c0.rowsAll("ev").length : 0; if (evN) ins.push(`${crF.int(evN)} eligibility verifications were done${wd ? `, about ${crF.int(evN / wd)} a working day` : ""}.`);
-  if (o90 != null) ins.push(`${crF.pct(o90, 0)} of the open balance is older than 90 days${o90p != null ? ` (${crF.pct(o90p, 0)} before)` : ""}.`);
+  const evN = c0.ds("ev") ? c0.rowsAll("ev").length : 0; if (evN) ins.push(`${crF.int(evN)} eligibility verifications were done${wd ? `, about ${crPerDay(evN, wd)} a working day` : ""}.`);
+  if (o90 != null) ins.push(`${crF.pct(o90, 0)} of the money owed is older than 90 days${o90p != null ? ` (${crF.pct(o90p, 0)} before)` : ""}.`);
   // what we need from the client: open requests, biggest first
   const asks = (raw.asks || []).slice(0, 4).map((a) => `${a.what} · ${crF.int(a.n)} claim${a.n === 1 ? "" : "s"} · ${crF.money(a.amt, 0)}${a.since ? " · since " + crF.dateShort(crD(a.since)) : ""}`);
   const openN = crSum(raw.asks || [], (a) => a.n), oldest = (raw.asks || []).map((a) => a.since).filter(Boolean).sort()[0];
@@ -7332,18 +7393,19 @@ function crHasPage(DS, pid) {
 /* the claims behind what the page shows (current filters), with search and CSV */
 const CR_COL_LABEL = { invoice: "Claim", dos: "DOS", bucket: "Age group", payerKey: "Payer", amount: "Amount", purviewStatus: "Status", status: "Reason / sub-status", action: "Action", workDate: "Date", workBy: "Worked by",
   subDate: "Submitted", comment: "Comment", charge: "Charged", paid: "Paid", checkNo: "Check / EFT", paidDate: "Paid on", dept: "Team" };
-function crCell(ds, r, c) {
+function crCell(ds, r, c, exact) {
   const v = r[c]; if (v == null || v === "") return "";
   if (v instanceof Date) return crF.date(v);
   if (c === "payerKey" || c === "bucket" || CR_CATS.includes(c)) return crLabelOf(ds, c, v);
-  if (c === "amount" || c === "charge" || c === "paid") return crF.money(v, 0);
+  // the screen rounds to whole dollars; the CSV keeps the cents
+  if (c === "amount" || c === "charge" || c === "paid") return exact ? (Math.round((Number(v) || 0) * 100) / 100).toFixed(2) : crF.money(v, 0);
   return String(v);
 }
 function CrClaims({ spec, ctx, me, title, onOpen }) {
   const [q, setQ] = useState("");
   if (!spec) return null;
   const rows = q ? spec.rows.filter((r) => spec.cols.some((c) => crCell(spec.ds, r, c).toLowerCase().includes(q.toLowerCase()))) : spec.rows;
-  const csv = () => downloadText(toCSV(rows, spec.cols.map((c) => ({ label: CR_COL_LABEL[c] || c, get: (r) => crCell(spec.ds, r, c) }))), (title || "claims").replace(/[\\/:*?"<>|]+/g, " ") + ".csv");
+  const csv = () => downloadText(toCSV(rows, spec.cols.map((c) => ({ label: CR_COL_LABEL[c] || c, get: (r) => crCell(spec.ds, r, c, true) }))), (title || "claims").replace(/[\\/:*?"<>|]+/g, " ") + ".csv");
   return <div className="card crx-drawer">
     <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}><div className="row" style={{ gap: 10 }}><b>Claims behind this view</b><span className="badge gray">{crF.int(rows.length)} rows · {crF.money(crSum(rows, (r) => r.amount), 0)}</span></div>
       <div className="row" style={{ gap: 8 }}><input className="input sm" style={{ width: 240 }} placeholder="Search claim, payer, status…" value={q} onChange={(e) => setQ(e.target.value)} /><button className="btn sm" onClick={csv} disabled={!rows.length}>⬇ CSV</button></div></div>
@@ -7782,7 +7844,8 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
 const DESK_SHOW = [["all", "All"], ["waiting", "Not worked yet"], ["worked", "Worked"], ["closed", "Closed"]];
 function deskStatus(r, today) {
   if (r.state === "closed") return { k: "closed", label: "Closed", tone: "green" };
-  if (r.entries) return r.kind === "skip" ? { k: "worked", label: "Skipped", tone: "gray" } : { k: "worked", label: r.state === "completed" ? "Worked, follow-up set" : "Worked", tone: "teal" };
+  if (r.entries) return { k: "worked", label: r.state === "completed" ? "Worked, follow-up set" : "Worked", tone: "teal" };
+  if (r.skips) return { k: "waiting", label: "Skipped, not worked yet", tone: "gray" };
   if (r.state === "completed" && r.follow_up_on && r.follow_up_on < today) return { k: "waiting", label: "Follow-up overdue", tone: "red" };
   if (r.state === "completed" && r.follow_up_on && r.follow_up_on > today) return { k: "later", label: "Follow-up " + fmtDate(r.follow_up_on), tone: "gray" };
   return { k: "waiting", label: "Not worked yet", tone: "amber" };
@@ -7981,16 +8044,20 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
   // KPIs furthest inside their target, which carry the score.
   const gapped = ok ? d.items.filter((i) => i.status === "miss" || i.status === "warn").map((i) => ({ i, g: kpiGap(i) })).filter((z) => z.g)
     .sort((a, b) => (a.i.status === "miss" ? 0 : 1) - (b.i.status === "miss" ? 0 : 1) || b.g.rel - a.g.rel).slice(0, 3) : [];
-  const good = ok && (d.band === "ok" || !gapped.length) ? d.items.filter((i) => i.status === "ok").map((i) => ({ i, g: kpiInside(i) })).sort((a, b) => (b.g ? b.g.rel : -1) - (a.g ? a.g.rel : -1)).slice(0, 3) : [];
-  const fixGood = ok && (d.band === "ok" || !gapped.length), fix = fixGood ? good : gapped;
+  const fixGood = ok && (d.band === "ok" || (!d.band && !gapped.length));
+  const good = fixGood ? d.items.filter((i) => i.status === "ok").map((i) => ({ i, g: kpiInside(i) })).sort((a, b) => (b.g ? b.g.rel : -1) - (a.g ? a.g.rel : -1)).slice(0, 3) : [];
+  // amber or red with nothing measurable (Not met, an SLA task): those items, missed first
+  const bad = gapped.length ? gapped : ok ? d.items.filter((i) => i.status === "miss" || i.status === "warn").sort((a, b) => (a.status === "miss" ? 0 : 1) - (b.status === "miss" ? 0 : 1)).slice(0, 3).map((i) => ({ i, g: null })) : [];
+  const fix = fixGood ? good : bad;
   const notScored = ok ? d.scopes.reduce((t, sc) => t + (sc.missing || []).length, 0) : 0;
   const tr = ok ? d.trend : [];
   const sx = (k) => (tr.length > 1 ? 14 + (k * 272) / (tr.length - 1) : 150), sy = (p) => 18 + (1 - (p == null ? 0 : p) / 100) * 46;
+  const shortLbl = (l) => (/^week of /i.test(String(l)) ? String(l).replace(/^week of /i, "").split(" ").slice(0, 2).join(" ") : String(l).slice(0, 3));
   const bandWord = { ok: "GREEN", warn: "AMBER", miss: "RED" };
   // Payment Posting TAT and Submission TAT: Brahmastra's own count of the month's hand-offs closed within TAT, next to what Drishti has
   const tatFor = (name) => (x && x.tat ? (/posting.*tat/i.test(name || "") ? x.tat.posting : /submission.*tat/i.test(name || "") ? x.tat.submission : null) : null);
   const tatNote = (i) => { const t = tatFor(i.name); if (!t || !t.due) return null; const met = /^met$/i.test(String(i.shown || "").trim());
-    return <span className="sc-bt" title={t.missed && met ? "Drishti has Met, but Brahmastra counted " + plural(t.missed, "hand-off") + " closed after the TAT this period. Click for the claims." : undefined}>Brahmastra: <b className={t.missed ? "amber-ink" : "teal-ink"}>{t.pct}%</b> within TAT ({t.met} of {t.due}){t.missed && met ? <span className="amber-ink"> · {t.missed} late</span> : null}</span>; };
+    return <span className="sc-bt" title={t.missed && met ? "Drishti has Met, but Brahmastra counted " + plural(t.missed, "hand-off") + " past the TAT this period (closed late or still open). Click for the claims." : undefined}>Brahmastra: <b className={t.missed ? "amber-ink" : "teal-ink"}>{t.pct}%</b> within TAT ({t.met} of {t.due}){t.missed && met ? <span className="amber-ink"> · {t.missed} late</span> : null}</span>; };
   return (
     <div className="stack sc2" style={{ gap: 12 }}>
       <div className="card sc-bar">
@@ -8022,9 +8089,9 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
             </div>
             <div className="sc-trend"><div className="sc-lbl">Score · {tr.length} {cur.kind === "week" ? "weeks" : cur.kind === "month" ? "months" : "periods"}</div>
               {tr.length > 1 ? <svg width="300" height="80" viewBox="0 0 300 80"><rect x="0" y="6" width="300" height={sy(90) - 6} fill="var(--sc-zone)" rx="3" /><text x="296" y="15" textAnchor="end" fontSize="9" className="teal-ink" fill="currentColor">green 90%+</text>
-                <polyline fill="none" stroke="var(--slate)" strokeWidth="2" strokeLinejoin="round" points={tr.map((p, k) => sx(k) + "," + sy(p.pct)).join(" ")} />
-                {tr.map((p, k) => <g key={p.id}><circle cx={sx(k)} cy={sy(p.pct)} r={k === tr.length - 1 ? 4.5 : 2.5} fill={k === tr.length - 1 ? (d.band ? KPI_COL[d.band] : "var(--slate)") : "var(--slate)"} /><title>{p.label}: {p.pct == null ? "–" : p.pct + "%"}</title>
-                  <text x={sx(k)} y="78" textAnchor="middle" fontSize="10" fill="currentColor" className={k === tr.length - 1 ? "" : "muted"} fontWeight={k === tr.length - 1 ? 700 : 400}>{String(p.label).slice(0, 3)}</text></g>)}</svg>
+                <polyline fill="none" stroke="var(--slate)" strokeWidth="2" strokeLinejoin="round" points={tr.map((p, k) => (p.pct == null ? null : sx(k) + "," + sy(p.pct))).filter(Boolean).join(" ")} />
+                {tr.map((p, k) => <g key={p.id}>{p.pct != null && <circle cx={sx(k)} cy={sy(p.pct)} r={k === tr.length - 1 ? 4.5 : 2.5} fill={k === tr.length - 1 ? (d.band ? KPI_COL[d.band] : "var(--slate)") : "var(--slate)"} />}<title>{p.label}: {p.pct == null ? "–" : p.pct + "%"}</title>
+                  <text x={sx(k)} y="78" textAnchor="middle" fontSize="10" fill="currentColor" className={k === tr.length - 1 ? "" : "muted"} fontWeight={k === tr.length - 1 ? 700 : 400}>{shortLbl(p.label)}</text></g>)}</svg>
                 : <div className="small muted" style={{ marginTop: 8 }}>The trend shows from the second period on.</div>}</div>
           </div>
           {fix.length > 0 && <div className={"card sc-fix glow" + (fixGood ? " good" : "")}>
@@ -8060,10 +8127,10 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
         <div className="stack" style={{ gap: 10 }}>
           <div><b className={KPI_INK[open.status] || ""} style={{ fontSize: 24 }}>{open.shown || "–"}</b> <span className="muted">· standard {open.target || "–"} · {{ ok: "on target", warn: "close", miss: "missed" }[open.status] || "info"}{(() => { const dl = kpiDelta(open); return dl ? <> · <span className={dl.good === true ? "teal-ink" : dl.good === false ? "red-ink" : ""}>{dl.txt}</span> vs {d.prev ? d.prev.label : "before"}</> : null; })()}</span></div>
           {(open.history || []).length > 1 && (() => { const hs = open.history, vals = hs.map((h) => Number(h.value)).filter((v) => isFinite(v)), mx = Math.max(...vals, 0) || 1; return (
-            <div><div className="sc-lbl">Last {hs.length} {cur && cur.kind === "week" ? "weeks" : "months"}</div><div className="sc-hist">{hs.map((h, k) => <div key={k} title={h.label + ": " + (h.shown || "–")}><span className="tiny">{h.shown || "–"}</span><i style={{ height: isFinite(Number(h.value)) ? 6 + (Number(h.value) / mx) * 46 : 3, background: h.status ? KPI_COL[h.status] : "#C9D1D9", opacity: k === hs.length - 1 ? 1 : 0.55 }} /><span className={"tiny " + (k === hs.length - 1 ? "b" : "muted")}>{String(h.label).slice(0, 3)}</span></div>)}</div></div>); })()}
+            <div><div className="sc-lbl">Last {hs.length} {cur && cur.kind === "week" ? "weeks" : "months"}</div><div className="sc-hist">{hs.map((h, k) => <div key={k} title={h.label + ": " + (h.shown || "–")}><span className="tiny">{h.shown || "–"}</span><i style={{ height: isFinite(Number(h.value)) ? 6 + (Number(h.value) / mx) * 46 : 3, background: h.status ? KPI_COL[h.status] : "#C9D1D9", opacity: k === hs.length - 1 ? 1 : 0.55 }} /><span className={"tiny " + (k === hs.length - 1 ? "b" : "muted")}>{/^week of /i.test(String(h.label)) ? String(h.label).replace(/^week of /i, "").split(" ").slice(0, 2).join(" ") : String(h.label).slice(0, 3)}</span></div>)}</div></div>); })()}
           {(() => { const t = tatFor(open.name); if (!t || !t.due) return null; const miss = ((x && x.tat && x.tat.missed) || []).filter((m) => (/posting/i.test(open.name) ? m.dept === "posting" : m.dept === "submission"));
             return <div><div className="sc-lbl">Worked out by Brahmastra · {cur ? cur.label : ""}</div><div className="cell small"><b>{t.pct}%</b> of the hand-offs due in the period were closed within the client's TAT ({t.tat} working hours, Monday to Friday): {t.met} of {t.due}{t.open ? ", " + t.open + " still open and not yet due" : ""}.
-              {miss.length ? <div style={{ marginTop: 6 }}>{plural(miss.length, "closed after the TAT")}{miss.length > 8 ? ", first 8" : ""}: {miss.slice(0, 8).map((m) => m.claim_no || "–").join(", ")}.</div> : null}
+              {miss.length ? <div style={{ marginTop: 6 }}>{plural(miss.length, "hand-off")} past the TAT (closed late or still open){miss.length > 8 ? ", first 8" : ""}: {miss.slice(0, 8).map((m) => (m.claim_no || "–") + (m.closed ? "" : " (still open)")).join(", ")}.</div> : null}
               <div className="tiny muted" style={{ marginTop: 6 }}>The month's TAT report goes to the client's SLA &amp; KPI folder in OneDrive after the month closes.</div></div></div>; })()}
           <div><div className="sc-lbl">Formula</div><div className="cell small">{open.formula || "–"}</div></div>
           <div><div className="sc-lbl">From</div><div className="cell small">{open.source}</div></div>
@@ -8103,7 +8170,7 @@ function SlaExtras({ clientId, from, to, label, go, escOnly }) {
         {e.rows.length > 0 && <div className="table-wrap" style={{ marginTop: 10 }}><table className="t"><thead><tr><th>SR No</th><th>Type</th><th>Department</th><th>Received</th><th>Error description</th><th>Error</th><th>Responding</th><th>Status</th></tr></thead>
           <tbody>{e.rows.map((r) => <tr key={r.id}><td className="mono small"><b>SR{r.sr}</b></td><td><span className={"badge " + ESC_KIND_UI[r.kind === "internal" ? "internal" : "external"].tone}>{ESC_KIND_UI[r.kind === "internal" ? "internal" : "external"].label}</span></td><td className="small">{r.dept}</td><td className="small">{fmtMDY(r.day)}</td><td className="small" style={{ maxWidth: 420 }}>{r.description}</td>
             <td className="small">{r.is_error === "Y" ? <>Y{r.error_by_name ? <div className="tiny muted">by {r.error_by_name}{r.error_dow ? ", DOW " + fmtMDY(r.error_dow) : ""}</div> : null}</> : r.is_error || "–"}</td><td className="small">{r.owner_name || "–"}</td>
-            <td>{r.status === "resolved" ? <span className="badge green">Closed {fmtMDY(r.close_on)}</span> : <span className={"badge " + (r.open_hours > 24 ? (r.delay_reason ? "amber" : "red") : "gray")}>Open · {r.open_hours} h{r.expected_on ? " · expected " + fmtMDY(r.expected_on) : r.open_hours > 24 ? " · reason needed" : ""}</span>}</td></tr>)}</tbody></table></div>}
+            <td>{r.status === "resolved" ? <span className="badge green">Closed {fmtMDY(r.close_on)}</span> : <span className={"badge " + ((r.past24 != null ? r.past24 : r.open_hours > 24) ? (r.delay_reason ? "amber" : "red") : "gray")}>Open · {r.open_hours} h{r.expected_on ? " · expected " + fmtMDY(r.expected_on) : (r.past24 != null ? r.past24 : r.open_hours > 24) ? " · reason needed" : ""}</span>}</td></tr>)}</tbody></table></div>}
       </div>
     </>
   );
@@ -8134,7 +8201,7 @@ function ReportsView({ ctx, from, to, embedded }) {
         <div className="grid g4">
           <Kpi label="Entries" value={fmtInt(rows.length)} sub={`${fmtInt(claims)} distinct claims`} tone="accent" />
           <Kpi label="Balance touched" value={fmtMoney(sum(rows.filter((r) => r.kind === "work"), (r) => r.balance))} sub="sum over worked entries" />
-          <Kpi label="Resolved now" value={fmtInt(rows.filter((r) => r.state === "closed").length)} sub="claims closed by a resolving status" tone="good" />
+          <Kpi label="Resolved now" value={fmtInt(new Set(rows.filter((r) => r.state === "closed").map((r) => r.claim_id || r.id)).size)} sub="claims now closed, each counted once" tone="good" />
           <Kpi label="Top SAAG status" value={byStatus[0] ? byStatus[0].key : "–"} sub={byStatus[0] ? fmtInt(byStatus[0].n) + " entries · " + fmtMoney(byStatus[0].amt) : ""} />
         </div>
       )}
@@ -8172,7 +8239,7 @@ function MyRechecks({ ctx, me }) {
         <tbody>{rows.map((r) => (
           <tr key={r.id} className={r.overdue ? "tat-missed" : ""}>
             <td style={{ whiteSpace: "nowrap" }}>{!r.open ? <span className="badge gray" title="The payer usually shows the result after 48 working hours">opens {fmtWhen(r.available_at)}</span>
-              : r.overdue ? <span className="badge red">{left(r.left_ms)} past TAT</span> : <span className={"badge " + (r.due_soon ? "amber" : "teal")}>{left(r.left_ms)} left</span>}<div className="tiny muted">due {fmtWhen(r.due_at)}</div></td>
+              : r.overdue ? <span className="badge red">{r.left_wh != null ? Math.round(-r.left_wh) + " working h" : left(r.left_ms)} past TAT</span> : <span className={"badge " + (r.due_soon ? "amber" : "teal")}>{r.left_wh != null ? (r.left_wh < 1 ? Math.max(1, Math.round(r.left_wh * 60)) + " min" : Math.round(r.left_wh) + " working h") : left(r.left_ms)} left</span>}<div className="tiny muted">due {fmtWhen(r.due_at)}</div></td>
             <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
             <td className="small"><span className={"badge " + (r.from_dept === "rejection" ? "red" : "blue")}>{r.from_label}</span><div className="tiny muted">{r.created_by_name} · {fmtWhen(r.created_at)}</div>{r.check_name && r.assigned_to !== me.id ? <div className="tiny muted">recheck with {r.check_name} too</div> : null}</td>
             <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setAct({ h: r, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h: r, outcome: "rejected" })}>✗ Rejected again</button></td>
@@ -8313,7 +8380,7 @@ function WorkPanel({ bundle, ctx, me, onDone, onPatient }) {
     let r;
     try { r = await rpc("queue.complete", { id: c.id, ...data, sibling_ids: [...sibs], desk: true }); }
     catch (e) { if (gone(e)) { leave(e); return; } throw e; }
-    toast((r.closed ? "Claim closed." : `Saved. Follow-up on ${fmtDate(r.follow_up_on)}.`) + (r.completed > 1 ? ` Applied to ${r.completed} claims.` : "") + handoffToast(r.handoff));
+    toast((r.closed ? "Claim closed." : r.follow_up_on ? `Saved. Follow-up on ${fmtDate(r.follow_up_on)}.` : "Saved.") + (r.completed > 1 ? ` Applied to ${r.completed} claims.` : "") + handoffToast(r.handoff));
     setVer((v) => v + 1);
     onDone(key === "next");
   };

@@ -208,8 +208,9 @@ for (let i = 0; i < 3; i++) {
   await P.call("handoffs.close", { id: hh.id, outcome: "back", reason: "Other", note: "return number " + (i + 1) + " please fix" });
   if (i < 2) await send(undefined, undefined, {}, c);
 }
-const ar = (await A("attention.list", {})).rows.find((x) => x.id === c.id);
-ok("escalated, sent by the biller", ar && ar.sent_by_id === priya.id, ar && ar.sent_by_id);
+// the third return waits under Sent back (once, not also under Flagged), sent by the AR biller
+const ar = (await A("attention.fromDesks", {})).rows.find((x) => x.claim_id === c.id);
+ok("escalated, sent by the biller", ar && ar.sent_by_id === priya.id && !(await A("attention.list", {})).rows.some((x) => x.id === c.id) && (await row("SELECT escalated FROM claims WHERE id = ?", c.id)).escalated === 1, ar && ar.sent_by_id);
 r = await T(() => A("attention.review", { id: c.id, why: "bounced 3 times", reviewed: "claim history and eob", findings: "eob was missing each time", next: "attach the eob and resend", route: "biller", sent_by: ar && ar.sent_by_id, today }));
 ok("review gives it back to the biller", r.ok && (await row("SELECT assigned_to FROM claims WHERE id = ?", c.id)).assigned_to === priya.id, r);
 const tl = await A("claims.timeline", { id: c.id });

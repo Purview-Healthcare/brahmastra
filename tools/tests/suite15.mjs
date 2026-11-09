@@ -54,7 +54,8 @@ await BE("queue.complete", { id: lk[0].id, saag, note });
 await sql("UPDATE claims SET state = 'closed', completed_at = ? WHERE id = ?", Date.now() - 60000, sun[0].id);
 // Arun's other five were allocated yesterday: left over today, two of them High
 const leftIds = sun.slice(3, 8).map((c) => c.id);
-await sql(`UPDATE claims SET assigned_at = ?, tier = 'Medium' WHERE id IN (${leftIds.map(() => "?").join(",")})`, Date.now() - 86400000, ...leftIds);
+// left over = on the list from before this shift, not worked, and not parked for a later follow-up
+await sql(`UPDATE claims SET assigned_at = ?, tier = 'Medium', follow_up_on = '' WHERE id IN (${leftIds.map(() => "?").join(",")})`, Date.now() - 86400000, ...leftIds);
 await sql(`UPDATE claims SET tier = 'High' WHERE id IN (?, ?)`, leftIds[0], leftIds[1]);
 ok("set up", true);
 

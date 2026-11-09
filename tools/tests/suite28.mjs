@@ -83,19 +83,20 @@ await sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_
 await ho("lp", lpool[0], "posting", now - 3 * 3600000);
 let inv = await at(now, () => TI("inventory.status", { client_id: sun.id, today: "2026-11-09" }));
 const pd = inv.pending;
-ok("Payment posting: 4 pending, 2 past TAT, 1 due soon, 1 within", pd.desks.posting.n === 4 && pd.desks.posting.late === 2 && pd.desks.posting.soon === 1 && pd.desks.posting.ok === 1, pd.desks.posting);
+// the task waiting on the client (c1) keeps its TAT clock running: it is one of Posting's tasks, past TAT
+ok("Payment posting: 5 pending (1 waiting on the client), 3 past TAT, 1 due soon, 1 within", pd.desks.posting.n === 5 && pd.desks.posting.late === 3 && pd.desks.posting.soon === 1 && pd.desks.posting.ok === 1, pd.desks.posting);
 ok("Submission counts its open recheck, not the one that has not opened yet", pd.desks.submission.n === 2 && pd.desks.submission.rechecks === 1 && pd.desks.submission.late === 1 && pd.desks.submission.soon === 1, pd.desks.submission);
 ok("Rejections: 1 within TAT", pd.desks.rejection.n === 1 && pd.desks.rejection.ok === 1, pd.desks.rejection);
 ok("Needs attention: flagged by billers, sent back, client requests", pd.attn.flagged.n === 1 && pd.attn.back.n === 1 && pd.attn.requests.n === 1 && pd.attn.n === 3, pd.attn);
 ok("the client request from Wednesday is past 48 working hours, the Friday send-back is not yet", pd.attn.requests.late === 1 && pd.attn.back.late === 0, pd.attn);
 ok("the client's TAT is shown (Posting 36, Submission 24, Needs attention 48)", pd.tat.posting === 36 && pd.tat.submission === 24 && pd.tat.attention === 48, pd.tat);
 const all = await at(now, () => A("inventory.status", { today: "2026-11-09" }));
-ok("everyone's view adds up both clients", all.pending.desks.posting.n === 5 && all.pending.desks.posting.late === 3, all.pending.desks.posting);
+ok("everyone's view adds up both clients", all.pending.desks.posting.n === 6 && all.pending.desks.posting.late === 4, all.pending.desks.posting);
 
 S("The bell: categories, Past TAT first");
 let nt = await at(now, () => TI("notify.list", { today: "2026-11-09" }));
 const tat = nt.items.filter((x) => x.cat === "tat");
-ok("past-TAT items for Payment posting, Submission and Needs attention on Tina's client", tat.some((x) => x.key === `tat:${sun.id}:posting` && x.n === 2) && tat.some((x) => x.key === `tat:${sun.id}:submission`) && tat.some((x) => x.key === `tat:${sun.id}:attn`), tat.map((x) => x.key + "=" + x.n));
+ok("past-TAT items for Payment posting, Submission and Needs attention on Tina's client", tat.some((x) => x.key === `tat:${sun.id}:posting` && x.n === 3) && tat.some((x) => x.key === `tat:${sun.id}:submission`) && tat.some((x) => x.key === `tat:${sun.id}:attn`), tat.map((x) => x.key + "=" + x.n));
 ok("each says the client and how long the oldest waited", tat.every((x) => /Sunrise/.test(x.text) && /working hours/.test(x.sub || "")), tat.map((x) => x.text + " | " + x.sub));
 ok("nothing from Lakeview, which is not Tina's", !nt.items.some((x) => x.key.includes(lake.id)));
 ok("due in the next 4 hours goes under Desks", nt.items.some((x) => x.cat === "desks" && x.key === `soon:${sun.id}:posting`));
@@ -103,7 +104,7 @@ ok("every item has a category", nt.items.every((x) => ["tat", "attention", "desk
 ok("claims flagged by billers are under Needs attention", nt.items.some((x) => x.key === "escalations" && x.cat === "attention"), nt.items.map((x) => x.key + ":" + x.cat));
 const ntl = await at(IST(2026, 11, 9, 20), () => TI("notify.list", { today: "2026-11-09" }));
 ok("the client escalation past 24 working hours is under Client escalations", ntl.items.some((x) => x.key === "esc_reason" && x.cat === "escalations"), ntl.items.map((x) => x.key + ":" + x.cat));
-ok("past_tat counts every item past TAT", nt.past_tat === tat.reduce((t, x) => t + x.n, 0) && nt.past_tat === 5, nt.past_tat);
+ok("past_tat counts every item past TAT", nt.past_tat === tat.reduce((t, x) => t + x.n, 0) && nt.past_tat === 6, nt.past_tat);
 const nb = await at(now, () => AR("notify.list", { today: "2026-11-09" }));
 ok("a biller gets no Past TAT reminders, only My work and Updates", !nb.items.some((x) => x.cat === "tat") && nb.items.every((x) => ["work", "updates"].includes(x.cat)), nb.items.map((x) => x.key + ":" + x.cat));
 const nl = await at(now, () => LEO("notify.list", { today: "2026-11-09" }));
@@ -111,7 +112,7 @@ ok("Leo sees Lakeview's past TAT only", nl.items.some((x) => x.key === `tat:${la
 
 S("The reminder email");
 const pv = await at(now, () => TI("tat.preview", { kind: "desks" }));
-ok("09:00: Payment posting and Submission past TAT, with the claim numbers", pv.hour === 9 && pv.mail && pv.mail.n === 3 && pv.mail.html.includes(pool[1].claim_no) && /Payment posting · TAT 36 working hours/.test(pv.mail.html), pv.mail && pv.mail.subject);
+ok("09:00: Payment posting and Submission past TAT, with the claim numbers", pv.hour === 9 && pv.mail && pv.mail.n === 4 && pv.mail.html.includes(pool[1].claim_no) && /Payment posting · TAT 36 working hours/.test(pv.mail.html), pv.mail && pv.mail.subject);
 ok("no patient names in it", ![pool[1], pool[2], pool[6]].some((c) => c.patient && pv.mail.html.includes(c.patient)));
 const pa = await at(now, () => TI("tat.preview", { kind: "ar" }));
 ok("19:00: Needs attention past 48 working hours (flagged, client request)", pa.hour === 19 && pa.mail && pa.mail.n === 2 && /Flagged by billers/.test(pa.mail.html) && /Client requests to send/.test(pa.mail.html), pa.mail && pa.mail.text);

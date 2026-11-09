@@ -108,8 +108,12 @@ ok("skip for now", r.ok, r);
 const nx = await AR("queue.next", {});
 ok("a skipped claim does not come next", !nx.claim || nx.claim.id !== c2.id, nx.claim && nx.claim.claim_no);
 // the patient's other claims
-const sib = await sql("UPDATE claims SET patient = (SELECT patient FROM claims WHERE id = ?), dos = dos WHERE id = ?", c3.id, pool[3].id);
+// the same name with another account number is another patient: not listed, and an entry cannot be copied onto it
+await sql("UPDATE claims SET patient = (SELECT patient FROM claims WHERE id = ?), account_no = 'ZZ-OTHER-1' WHERE id = ?", c3.id, pool[3].id);
 await TI("alloc.apply", { client_id: sun.id, assignments: [{ id: pool[3].id, user_id: arun.id }] }).catch(() => {});
+const bpOther = await AR("claims.byPatient", { id: c3.id });
+ok("the same name with another account number is not the same patient", !JSON.stringify(bpOther).includes(pool[3].id), bpOther.rows && bpOther.rows.length);
+const sib = await sql("UPDATE claims SET patient = (SELECT patient FROM claims WHERE id = ?), account_no = (SELECT account_no FROM claims WHERE id = ?) WHERE id = ?", c3.id, c3.id, pool[3].id);
 const bp = await AR("claims.byPatient", { id: c3.id });
 ok("the patient's other open claims are listed", JSON.stringify(bp).includes(pool[3].id), Object.keys(bp));
 r = await T(async () => AR("queue.complete", { id: c3.id, ...work(), sibling_ids: [pool[3].id] }));

@@ -45,9 +45,14 @@ ok("worked and on-desk counts are right", ha.worked === 3 && ha.on_desk === 9 &&
 ok("someone with entries is working, someone without has not started", ha.status === "working" && hc.status === "not_started", [ha.status, hc.status]);
 ok("first and last entry times are there", ha.first && ha.last && ha.first <= ha.last);
 ok("totals add up", h.totals.worked === h.rows.reduce((t, x) => t + x.worked, 0) && h.totals.on_desk === h.rows.reduce((t, x) => t + x.on_desk, 0), h.totals);
-await sql("UPDATE claims SET assigned_at = ? WHERE assigned_to = ?", Date.now() - 2 * 86400000, cara.id);
+await sql("UPDATE claims SET assigned_at = ?, follow_up_on = '' WHERE assigned_to = ?", Date.now() - 2 * 86400000, cara.id);
 h = await TI("team.huddle"); hc = h.rows.find((x) => x.id === cara.id);
 ok("claims allocated before this shift and not worked show as carried over", hc.carried === 4 && h.totals.carried >= 4, [hc.carried, h.totals.carried]);
+// a claim parked for a follow-up later is not left over
+await sql("UPDATE claims SET follow_up_on = '2099-01-01' WHERE id = ?", pool[12].id);
+h = await TI("team.huddle"); hc = h.rows.find((x) => x.id === cara.id);
+ok("a claim parked for a later follow-up is not carried over", hc.carried === 3, hc.carried);
+await sql("UPDATE claims SET follow_up_on = '' WHERE id = ?", pool[12].id);
 r = await T(async () => AR("team.huddle"));
 ok("billers cannot open it", !r.ok, r);
 r = await T(async () => LE("team.setOut", { user_id: cara.id, out: true }));

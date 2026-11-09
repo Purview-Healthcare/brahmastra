@@ -73,11 +73,19 @@ for (let i = 1; i <= 3; i++) {
   if (i < 3) { ok("return " + i + ": not escalated yet", !cl.escalated, cl.escalated); await AR("attachments.add", { claim_id: c3.id, name: "eob" + i + ".pdf", type: "application/pdf", data: pdf }); await AR("queue.open", { id: c3.id }).catch(() => {}); await toPost(c3); }
   else ok("3rd return: escalated to the AR team lead", cl.escalated === 1, cl.escalated);
 }
-ok("AR lead's Escalations list has it", (await TI("attention.list")).rows.some((x) => x.id === c3.id));
+// It shows once in the team lead's Needs attention: under Sent back while that return waits there, then under Flagged.
+{ const fd3 = await TI("attention.fromDesks"), al3 = await TI("attention.list");
+  ok("AR lead's Needs attention has it once: under Sent back while it waits", fd3.rows.some((x) => x.claim_id === c3.id) && !al3.rows.some((x) => x.id === c3.id), [fd3.rows.some((x) => x.claim_id === c3.id), al3.rows.some((x) => x.id === c3.id)]); }
 const ret = await SN("handoffs.list", { view: "assist" }); ok("desk rows show Returned 3×", ret.rows.some((h) => h.claim_id === c3.id && h.returns === 3), ret.rows.map((h) => h.returns));
 const dP2 = await PA("handoffs.dashboard", { from_ms: 0, to_ms: Date.now() + 1e7 });
 ok("why claims came back: reason counted 3", dP2.back_reasons.some((x) => x.reason === "Missing or wrong information from AR" && x.n === 3), dP2.back_reasons);
 ok("...and the biller (Arun) counted", dP2.back_billers.some((x) => x.biller === "Arun Agent" && x.n === 3), dP2.back_billers);
+{ // once a biller works it, it leaves Sent back and waits under Flagged (for the review), named as the third return
+  await sql("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES ('n-bounce-3', ?, ?, 'Arun Agent', 'work', 'worked after the third return', ?)", c3.id, (await A("claims.get", { id: c3.id })).claim.assigned_to || "", Date.now() + 1000);
+  const al4 = await TI("attention.list"), row = al4.rows.find((x) => x.id === c3.id), cnt = await TI("attention.count");
+  ok("after a biller works it, it waits under Flagged as the third return", !!row && /Returned 3 times by/.test(row.flag_label || ""), row && row.flag_label);
+  ok("...counted once on the badge", cnt.escalations >= 1 && !(await TI("attention.fromDesks")).rows.some((x) => x.claim_id === c3.id), cnt);
+  await sql("DELETE FROM notes WHERE id = 'n-bounce-3'"); }
 
 S("Rechecks due now and rejection codes");
 await toSub(c4); const h4 = await hOf(MK, c4);

@@ -519,7 +519,7 @@ sent it (with the client's TAT).
 
 **Sent back to AR.** Need assistance from AR goes straight to the biller, first on their list with a notice, and also lands in the client's AR team leads' (and managers') **Needs attention →
 Sent back by Posting / Submission**: when, who sent it, the department, the reason and comment, the biller, and how many
-times the claim has come back. It counts on the Needs attention badge, turns red after a working day, and leaves the
+times the claim has come back. It counts on the Needs attention badge, turns red after 48 working hours, and leaves the
 list once a biller saves an entry on the claim.
 
 ### Escalation tracker (Work → Escalation tracker)
@@ -575,7 +575,7 @@ names and counts only. Brahmastra reads it with the hourly roster sync; until it
 
 **Client requests.** Need assistance from client lands in the client's AR team lead's **Needs attention →
 Client requests**: they send it to the client and mark it **Sent** (email, client portal, call, fax; optional
-comment). Unsent requests count in the Needs attention badge and turn red after a working day. The department
+comment). Unsent requests count in the Needs attention badge and turn red after 48 working hours. The department
 sees who sent it and when; if the client has not answered 3 working days after sending, the claim comes back to
 their Open list as **Chase the client**.
 

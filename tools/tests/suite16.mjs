@@ -63,7 +63,8 @@ for (let i = 0; i < 20; i++) await sql("UPDATE notes SET created_at = ? WHERE cl
 await sql("INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,?,?,?,?)", U("Arun Agent").id, tue, "out", "Half day", "Tina Lead", Date.now());
 // Arun's other 10 were allocated on Monday and are still not worked; 3 of them High
 const rest = pool.slice(20, 30).map((c) => c.id);
-await sql(`UPDATE claims SET assigned_at = ?, tier = 'Medium' WHERE id IN (${rest.map(() => "?").join(",")})`, at(mon, 9), ...rest);
+// left over: on the list from before this shift and not parked for a later follow-up
+await sql(`UPDATE claims SET assigned_at = ?, tier = 'Medium', follow_up_on = '' WHERE id IN (${rest.map(() => "?").join(",")})`, at(mon, 9), ...rest);
 await sql(`UPDATE claims SET tier = 'High' WHERE id IN (?, ?, ?)`, rest[0], rest[1], rest[2]);
 ok("set up", true);
 
@@ -78,7 +79,7 @@ const ar = row("Arun Agent");
 ok("Arun: 2 full days and 1 half day", ar.days_full === 2 && ar.days_half === 1 && ar.days_out === 0, ar);
 ok("Arun: target 35 + 35 + 17.5 = 88 (rounded)", ar.target === 88, ar.target);
 // Attainment counts the finished days (Monday full, Tuesday half): 14 of 52.5 = 27%; Wednesday (today) is shown apart
-ok("Arun: 20 entries; attainment on the finished days 14 of 52.5 = 27%", ar.worked === 20 && ar.attain_basis === "done" && ar.worked_done === 14 && ar.target_done === 52.5 && ar.attain === 27, { w: ar.worked, b: ar.attain_basis, wd: ar.worked_done, td: ar.target_done, a: ar.attain });
+ok("Arun: 20 entries; attainment on the finished days 14 of 52.5 = 26.7%", ar.worked === 20 && ar.attain_basis === "done" && ar.worked_done === 14 && ar.target_done === 52.5 && ar.attain === 26.7, { w: ar.worked, b: ar.attain_basis, wd: ar.worked_done, td: ar.target_done, a: ar.attain });
 ok("Arun: today's 6 entries apart, against today's 35", ar.worked_today === 6 && ar.target_today === 35, { wt: ar.worked_today, tt: ar.target_today });
 ok("Arun: floor time needed 8 h + 8 h + 4 h = 20 h", ar.floor_needed_min === 20 * 60, ar.floor_needed_min);
 ok("Arun: 10 left over, 3 of them high priority", ar.left === 10 && ar.left_high === 3 && ar.left_other === 7, { left: ar.left, high: ar.left_high, other: ar.left_other });
@@ -97,9 +98,9 @@ const sg = r.suggestions;
 const has = (list, who, re) => list.some((x) => x.who === who && re.test(x.seen + " " + x.do));
 ok("Do today: Gita is past her ramp-up date", has(sg.today, "Gita Agent", /was due in production/), sg.today);
 ok("Do today: Arun has 3 high priority claims left over", has(sg.today, "Arun Agent", /3 high priority/), sg.today);
-ok("Do today: Arun's attainment is very low (up to yesterday)", has(sg.today, "Arun Agent", /Attainment 27% \(14 of 53 claims up to yesterday\)/), sg.today);
+ok("Do today: Arun's attainment is very low (up to yesterday)", has(sg.today, "Arun Agent", /Attainment 26.7% \(14 of 53 claims up to yesterday\)/), sg.today);
 { const t1 = await VP("team.status", { from: wed, to: wed, today: wed, tz_offset_min: 0 }), a1 = t1.rows.find((x) => x.name === "Arun Agent");
-  ok("only today picked: attainment is today's (6 of 35 = 17%)", a1.attain_basis === "today" && a1.attain === 17 && t1.totals.attain_basis === "today", { b: a1.attain_basis, a: a1.attain });
+  ok("only today picked: attainment is today's (6 of 35 = 17.1%)", a1.attain_basis === "today" && a1.attain === 17.1 && t1.totals.attain_basis === "today", { b: a1.attain_basis, a: a1.attain });
   ok("only today picked: performance waits for the day to finish", a1.perf === "pending", a1.perf);
   ok("only today picked: no attainment pointer while the day is under way", !has(t1.suggestions.today, "Arun Agent", /Attainment/) && !has(t1.suggestions.week, "Arun Agent", /Attainment/), t1.suggestions); }
 { await sql("INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,?,?,?,?)", U("Arun Agent").id, wed, "out", "Sick", "Tina Lead", Date.now());

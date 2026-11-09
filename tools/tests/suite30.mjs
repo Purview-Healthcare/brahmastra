@@ -98,7 +98,10 @@ for (const [c, d] of [[p1, 10], [p2, 12], [p3, 14]]) { await NT(c.id, 40, "Claim
 await NT(p4.id, 3, "Claim In Process", "Claim Under Review", "Need to Resubmit");
 const tp = await AR("claims.tips", { id: p4.id, action: "Need to Resubmit", today });
 ok("after Need to Resubmit this payer usually pays in 12 days (from 3 claims; the one denied again after it does not count)", tp.pay_days === 12 && tp.pay_n === 3, { d: tp.pay_days, n: tp.pay_n });
-ok("a follow-up date 12 days ahead is suggested", tp.follow_up === new Date(Date.parse(today + "T00:00:00Z") + 12 * 86400000).toISOString().slice(0, 10) || tp.follow_up === new Date(Date.now() + 12 * 86400000 + 330 * 60000).toISOString().slice(0, 10), tp.follow_up);
+// 12 days ahead, moved to the Monday when it falls on a weekend (the server also skips Shastra holidays)
+const wkday = (iso) => { let d = iso; for (let i = 0; i < 4; i++) { const w = new Date(d + "T12:00:00Z").getUTCDay(); if (w !== 0 && w !== 6) break; d = new Date(Date.parse(d + "T00:00:00Z") + 86400000).toISOString().slice(0, 10); } return d; };
+ok("a follow-up date 12 days ahead is suggested (a working day)", [new Date(Date.parse(today + "T00:00:00Z") + 12 * 86400000).toISOString().slice(0, 10), new Date(Date.now() + 12 * 86400000 + 330 * 60000).toISOString().slice(0, 10)].map(wkday).includes(tp.follow_up)
+  && ![0, 6].includes(new Date(tp.follow_up + "T12:00:00Z").getUTCDay()), tp.follow_up);
 const td = await AR("claims.tips", { id: w.id, status: "Claim Denied", sub_status: REASON, today });
 ok("for Claim Denied · this reason, what led to payment: Need to Correct & Resubmit", td.worked[0] && td.worked[0].action === "Need to Correct & Resubmit" && td.worked[0].paid === 2, td.worked);
 const few = await AR("claims.tips", { id: p4.id, action: "Need to Appeal", today });
