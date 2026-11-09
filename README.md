@@ -362,7 +362,8 @@ and Team status.
 Every client has a profile: the **scope of work** Purview does (AR follow-up, Payment posting, Submission,
 Rejections), its **locations**, a daily **target** for each part of the scope, the **production file** (Brahmastra
 keeps it, or the client's own workbook), and the **responsible person** for each part, with an optional backup
-(Submission also names who rechecks a submitted claim after 48 hours).
+(Submission also names who rechecks a submitted claim, and when: 48 working hours after submitting unless the client
+needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything above 48 is saved as 48).
 
 - **A new client needs all of it.** Manage › Clients & locations › Add client opens the setup; it cannot be
   created until each part is filled in. Older clients show **Profile incomplete** with what is missing (and
@@ -524,8 +525,9 @@ lead) or **Need assistance from client** (stays In process under Waiting on clie
 the 24-hour clock keeps running, and **Client answered** puts it back in the open
 list). Every choice takes a comment, required except on Completed and Client
 answered. Posting complete closes the claim as Payment posted. Submission complete
-sends it back to the biller with a 15-day follow-up and always opens a **recheck 48
-working hours later** (to the follow-up person on the client, or whoever submitted):
+sends it back to the biller with a 15-day follow-up and always opens a **recheck after the client's recheck time**
+(48 working hours unless the client needs it sooner; never later than 48) for the follow-up person on the client, or
+whoever submitted:
 **Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
 
 **Filters.** Every lead and team member on Payment posting and Submission can narrow the list to one **client**

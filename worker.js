@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.97.0";
+const VERSION = "2.98.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -218,7 +218,7 @@ const EXTRA_COLUMNS = {
     // The client's logo for the client report (a small image as a data URL; never sent with the client list).
     ["logo", "TEXT NOT NULL DEFAULT ''"],
     // Payment posting and Submission TAT for this client, in working hours (set on the client profile; 24 when not set).
-    ["posting_tat_hours", "INTEGER"], ["submission_tat_hours", "INTEGER"]],
+    ["posting_tat_hours", "INTEGER"], ["submission_tat_hours", "INTEGER"], ["subcheck_hours", "INTEGER"]],
   batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
   users: [["failed_logins", "INTEGER NOT NULL DEFAULT 0"], ["locked_at", "INTEGER"], ["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
@@ -2641,11 +2641,14 @@ async function checkProfile(env, p, { isNew, locations }) {
     if (v < 1 || v > 240) miss.push(`the ${SERVICE_NAME[k]} TAT in working hours (1 to 240)`); else cols[k + "_tat_hours"] = v;
   }
   if (scope.includes("submission")) {
+    // when the recheck opens: 48 working hours after submitting unless the client needs it sooner (never later than 48)
+    const sh = p.tat && p.tat.subcheck != null && p.tat.subcheck !== "" ? Math.round(num(p.tat.subcheck, 0)) : SUBCHECK_HOURS;
+    if (sh < 1) miss.push("when the recheck opens, in working hours (1 to 48)"); else cols.subcheck_hours = Math.min(SUBCHECK_HOURS, sh);
     const sc = resp.subcheck || {};
     if (sc.mode === "biller") { cols.submission_check_mode = "biller"; cols.submission_check_person = null; }
     else if (sc.mode === "person" && sc.lead) { cols.submission_check_mode = "person"; cols.submission_check_person = str(sc.lead, 60); ids.push(cols.submission_check_person); }
     else miss.push("who rechecks submitted claims after 48 hours");
-  } else { cols.submission_check_mode = ""; cols.submission_check_person = null; }
+  } else { cols.submission_check_mode = ""; cols.submission_check_person = null; cols.subcheck_hours = null; }
   const want = ids.filter(Boolean);
   if (want.length) { const ok = new Set((await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${want.map(() => "?").join(",")})`, ...want)).map((r) => r.id)); if (want.some((i) => !ok.has(i))) miss.push("only people who are active"); }
   if (miss.length) throw bad(`To ${isNew ? "create" : "save"} this client, add ${andList(miss)}.`);
@@ -2660,14 +2663,15 @@ async function describeProfile(env, c) {
     const who = c[m] === "person" && c[l] ? names.get(c[l]) + (c[b] ? " (backup " + names.get(c[b]) + ")" : "") : c[m] === "client" ? "client does it" : c[m] === "biller" ? "biller does it" : "not set";
     out.push(`${label}: ${scope.includes(s) ? "in scope" + (targets[s] ? ", target " + targets[s] + " a day" : "") + ", " : scope.length ? "not in scope, " : ""}${who}`);
   }
-  out.push("Submission follow-up: " + (c.submission_check_mode === "person" ? names.get(c.submission_check_person) || "someone" : c.submission_check_mode === "biller" ? "the biller who sent it" : "not set"));
+  out.push("Submission follow-up: " + (c.submission_check_mode === "person" ? names.get(c.submission_check_person) || "someone" : c.submission_check_mode === "biller" ? "the biller who sent it" : "not set")
+    + (scope.includes("submission") ? ", recheck " + subcheckHours(c) + " working hours after submitting" : ""));
   return out;
 }
 const diffLines = (before, after) => after.map((x, i) => (x !== before[i] ? x + (before[i] ? "  (was: " + before[i].replace(/^[^:]+: /, "") + ")" : "") : null)).filter(Boolean);
 /* Tell people when they are made responsible for a client (or taken off it): a line in their bell for two
    weeks, and an email when one is set up. */
 const RESP_LABEL = { ar_lead: "AR follow-up person (accountable)", ar_backup: "AR follow-up backup", posting_lead: "Payment posting person", posting_backup: "Payment posting backup",
-  submission_lead: "Submission person", submission_backup: "Submission backup", submission_check_person: "Submission follow-up person (48-hour recheck)", rejection_lead: "Rejections person", rejection_backup: "Rejections backup" };
+  submission_lead: "Submission person", submission_backup: "Submission backup", submission_check_person: "Submission follow-up person (the recheck after submitting)", rejection_lead: "Rejections person", rejection_backup: "Rejections backup" };
 async function noticeResponsibility(env, actor, client, before, after) {
   const on = (row, m, l) => (row && row[m] === "person" && row[l]) || null;
   const added = [], removed = [];
@@ -3038,8 +3042,10 @@ async function rerouteHandoffs(env, userId) {
   if (stmts.length) await batchAll(env, stmts, 40);
   return stmts.length;
 }
-// After a claim is submitted, the follow-up check (accepted or rejected?) opens this many working hours later.
+// After a claim is submitted, the follow-up check (accepted or rejected?) opens this many working hours later: 48, or sooner
+// when the client needs it (a supervisor sets it on the client profile). Never later than 48: anything more is 48.
 const SUBCHECK_HOURS = 48;
+const subcheckHours = (cl) => { const v = Math.round(Number(cl && cl.subcheck_hours)); return v >= 1 && v <= SUBCHECK_HOURS ? v : SUBCHECK_HOURS; };
 // A claim waiting on the client comes back to the open list as "Chase the client" after 3 working days.
 const CHASE_HOURS = 72;
 // Hand-offs with this many hours or less left are flagged at the top and to the team lead.
@@ -6567,12 +6573,12 @@ const OPS = {
         // the follow-up person set on the client, the biller when the client says so, otherwise whoever submitted it.
         const fu = workingDayOnOrAfter(addDays(today, 15));
         stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
-        const cl = await one(env, "SELECT submission_check_mode, submission_check_person, submission_tat_hours FROM clients WHERE id = ?", h.client_id);
+        const cl = await one(env, "SELECT submission_check_mode, submission_check_person, submission_tat_hours, subcheck_hours FROM clients WHERE id = ?", h.client_id);
         // "The biller" is the AR biller of the claim (biller_id): on a Rejections hand-off created_by is whoever rejected the last recheck.
         const checker = cl && cl.submission_check_mode === "person" && cl.submission_check_person ? await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", cl.submission_check_person) : null;
         const who = (checker && checker.id) || (cl && cl.submission_check_mode === "biller" && (h.biller_id || h.created_by || c.assigned_to || c.last_worked_by)) || user.id;
         if (who) {
-          const avail = addWorkingHours(now, SUBCHECK_HOURS), due = addWorkingHours(avail, tatHours(cl, "submission"));
+          const avail = addWorkingHours(now, subcheckHours(cl)), due = addWorkingHours(avail, tatHours(cl, "submission"));
           stmts.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, available_at, lead_id, assigned_to, assigned_at, biller_id, from_dept) VALUES (?,?,?,'subcheck','assigned',?,?,?,?,?,?,?,?,?,?,?)`)
             .bind(uuid(), c.id, h.client_id, now, user.id, user.name, "Submitted " + (proof.ref || ""), due, avail, who, who, now, h.biller_id || h.created_by || c.assigned_to || c.last_worked_by || null, h.dept));
           const wn = await one(env, "SELECT name FROM users WHERE id = ?", who);

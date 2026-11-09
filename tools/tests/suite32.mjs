@@ -273,6 +273,30 @@ S("A part of the scope of work always has a responsible person");
   ok("a part that is not in the scope can be unset", (await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "" }))).ok);
   await sql("UPDATE clients SET scope_json = ? WHERE id = ?", was, sun.id); }
 
+S("The recheck after submitting: 48 working hours, sooner when the client needs it, never later");
+{ const prof = (sub) => ({ scope: ["ar", "submission"], targets: { ar: 40 }, tat: { submission: 24, ...(sub == null ? {} : { subcheck: sub }) },
+    resp: { ar: { lead: U("Tina Lead").id }, submission: { lead: U("Quin Submit").id }, subcheck: { mode: "biller" } } });
+  const mk = async (name, sub) => { await A("clients.save", { name, locations: ["Main"], profile: prof(sub) }); return (await row("SELECT subcheck_hours FROM clients WHERE name = ?", name)).subcheck_hours; };
+  const a = await mk("Recheck Clinic A", 24), b = await mk("Recheck Clinic B", 72), c0 = await mk("Recheck Clinic C", null);
+  ok("a client's recheck time: 24 is kept, 72 is saved as 48, none given is 48", a === 24 && b === 48 && c0 === 48, [a, b, c0]);
+  const r0 = await T(() => A("clients.save", { name: "Recheck Clinic D", locations: ["Main"], profile: prof(0) }));
+  ok("...and 0 is refused", !r0.ok && /recheck opens/.test(r0.e || ""), r0.e);
+  // the recheck opens after the client's own time: sooner at 24 than at the usual 48
+  const recheckAt = async (id, hours) => {
+    await sql("UPDATE clients SET subcheck_hours = ? WHERE id = ?", hours, sun.id);
+    await sql("UPDATE claims SET state = 'assigned', assigned_to = ?, first_up = 0, follow_up_on = '' WHERE id = ?", arun, id);
+    await AR("queue.open", { id });
+    await AR("queue.complete", { id, desk: true, saag: { status: "Claim Denied", sub_status: "Coding Error", action: "Need to Resubmit", bucket: "Purview", effective: "" }, note: nt, today });
+    const h = await row("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'submission' AND status IN ('pending','assigned')", id);
+    await QU("handoffs.close", { id: h.id, outcome: "complete", proof: { date: today, ref: "BATCH-" + hours } });
+    return (await row("SELECT available_at FROM handoffs WHERE claim_id = ? AND dept = 'subcheck'", id)).available_at;
+  };
+  const at24 = await recheckAt(ids[31], 24), at48 = await recheckAt(ids[32], null);
+  ok("a client with 24 working hours gets its recheck sooner than one with the usual 48", at24 && at48 && at24 < at48 && at24 > Date.now(), [at24, at48]);
+  const card = (await A("clients.list")).clients.find((x) => x.name === "Recheck Clinic A");
+  ok("the client card carries the recheck time (24 for that client)", card && card.subcheck_hours === 24, card && card.subcheck_hours);
+  await sql("UPDATE clients SET subcheck_hours = NULL WHERE id = ?", sun.id); }
+
 S("Production rows for Third Eye");
 await sql("UPDATE claims SET dos = ?, age_days = 3, created_at = ? WHERE id = ?", dosAgo(120), Date.now() - 50 * d, ids[19]);
 await sql("INSERT INTO notes (id, claim_id, user_id, user_name, kind, status, sub_status, action, comment, created_at) VALUES ('pr-1', ?, ?, 'Arun Agent', 'work', 'Claim In Process', '', 'INFORM', 'worked', ?)", ids[19], arun, Date.now() - 2 * d);
