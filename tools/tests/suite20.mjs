@@ -115,7 +115,9 @@ ok("closing needs the root cause", !r.ok && /root cause/i.test(r.e), r);
 for (const [k, w] of [["is_error", /Y or N/], ["corrective", /corrective/], ["preventive", /preventive/], ["close_on", /close date/]]) { r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close, [k]: "" })); ok("closing needs " + k, !r.ok && w.test(r.e), r); }
 r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close, close_on: "2026-11-01" })); ok("the close date cannot be before the received date", !r.ok && /between/.test(r.e), r);
 S("Open past 24 hours");
-await sql("UPDATE escalations SET created_at = ? WHERE client_id = ?", Date.now() - 5 * 86400000, sun.id);
+// logged at 09:30 IST on the received day (Nov 4), not "five days ago": five days before a run on Nov 9 after 19:00 IST fell
+// late on Nov 4 itself, and the hours to close came out under the check below
+await sql("UPDATE escalations SET created_at = ? WHERE client_id = ?", Date.parse("2026-11-04T09:30:00+05:30"), sun.id);
 L = await TI("escalations.list", { client_id: sun.id, status: "open" });
 ok("both are flagged: reason needed", L.rows.every((x) => x.needs_reason && x.can_reason) && L.stats.needs_reason === 2, L.stats);
 const SL = await SM("escalations.list", { client_id: sun.id, status: "open" });
