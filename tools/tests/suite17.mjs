@@ -212,7 +212,11 @@ S("Where the claims open at the period before went, and a DOS in the future");
 { const D = (d) => Date.parse(d + "T12:00:00+05:30");
   const moveOf = async () => { const mv = (await TI("creport.get", OCT)).data.movement || []; return (k) => (mv.find((x) => x.k === k) || { n: 0 }).n; };
   const before = await moveOf();
-  const pick = (await rows("SELECT id FROM claims WHERE client_id = ? AND state IN ('open','assigned','completed') ORDER BY id LIMIT 6", sunrise.id)).map((x) => x.id);
+  // claims with no history of their own (the sample data gives some claims state changes and hand-offs in October, which would
+  // rightly make their latest step something else): the steps below are then the only ones they have
+  const pick = (await rows(`SELECT id FROM claims c WHERE client_id = ? AND state IN ('open','assigned','completed')
+      AND NOT EXISTS (SELECT 1 FROM claim_events e WHERE e.claim_id = c.id) AND NOT EXISTS (SELECT 1 FROM handoffs h WHERE h.claim_id = c.id) ORDER BY id LIMIT 6`, sunrise.id)).map((x) => x.id);
+  ok("six claims with no history of their own to move", pick.length === 6, pick.length);
   const [a, b, cc, d, e, f] = pick;
   await sql(`UPDATE claims SET created_at = ? WHERE id IN (${pick.map(() => "?").join(",")})`, D("2026-08-01"), ...pick);
   const ev = (id, at, from, to) => sql("INSERT INTO claim_events (id, claim_id, at, kind, data_json) VALUES (?,?,?,?,?)", "mv-" + id + at, id, at, "state", JSON.stringify({ changes: { state: [from, to] } }));
