@@ -147,6 +147,9 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
   S("Claims: Turning 90 in the age box");
   await step("turn90-filter", async () => {
     await open("#/claims"); await t(1500);
+    // the step before leaves Claims on its Entries tab: back to the claim list
+    const tabClaims = p.locator(".main .seg2 button", { hasText: /^Claims$/ });
+    if (await tabClaims.count()) { await tabClaims.first().click(); await t(1500); }
     const ctl = p.locator('.main .combo-ctl', { hasText: "Any age" }).first();
     await ctl.click(); await t(400);
     const opts = await p.locator(".combo-item").allInnerTexts();
