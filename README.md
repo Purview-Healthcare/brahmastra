@@ -1019,7 +1019,9 @@ Production Conso layout (the team's consolidation columns, one row per entry);
 note. **Team** shows claims worked per person per day. **Claims** exports the
 filtered claim list in the Production layout too, one row per claim with its
 last SAAG entry (blank work columns for claims nobody worked), or Brahmastra's
-own columns.
+own columns. The Claims page's age box also has **Turning 90 in 7 days** and **Turning 90 in 14 days** (open claims
+77 to 90 days old by date of service, the same list as the Dashboard's Turning 90 card), so they can be picked with
+any other filter, selected and assigned, or downloaded.
 
 ## Limits and notes
 

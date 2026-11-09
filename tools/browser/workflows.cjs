@@ -144,6 +144,24 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("and Brahmastra's columns with the SAAG fields and the note", /status/i.test(body.split("\n")[0]) && body.includes("Policy Active"), body.split("\n")[0].slice(0, 200));
   });
 
+  S("Claims: Turning 90 in the age box");
+  await step("turn90-filter", async () => {
+    await open("#/claims"); await t(1500);
+    const ctl = p.locator('.main .combo-ctl', { hasText: "Any age" }).first();
+    await ctl.click(); await t(400);
+    const opts = await p.locator(".combo-item").allInnerTexts();
+    ok("the age box offers Turning 90 in 7 days and in 14 days, before the age groups", opts.includes("Turning 90 in 7 days") && opts.includes("Turning 90 in 14 days") && opts.indexOf("Turning 90 in 14 days") < opts.findIndex((x) => /days$/.test(x) && !/^Turning/.test(x)), opts);
+    await p.locator('.combo-item:has-text("Turning 90 in 7 days")').first().click(); await t(2000);
+    const want = await rpc("claims.list", { turning90: 7, state: "workable", page_size: 1 });
+    const shown = ((await p.innerText(".main")).match(/([\d,]+) claims · /) || [])[1];
+    ok("picking it lists exactly the claims turning 90 in 7 days (the Dashboard card's list)", shown != null && Number(shown.replace(/,/g, "")) === want.total, [shown, want.total]);
+    const back = p.locator('.main .combo-ctl', { hasText: "Turning 90 in 7 days" }).first();
+    await back.click(); await t(300); await p.locator('.combo-item:has-text("Any age")').first().click(); await t(1500);
+    const all = await rpc("claims.list", { state: "workable", page_size: 1 });
+    const shown2 = ((await p.innerText(".main")).match(/([\d,]+) claims · /) || [])[1];
+    ok("Any age shows every claim again", shown2 != null && Number(shown2.replace(/,/g, "")) === all.total, [shown2, all.total]);
+  });
+
   S("Dashboard");
   await step("dashboard", async () => {
     // Live status: its own tab, right after Sasha's Third Eye
