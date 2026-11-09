@@ -172,6 +172,8 @@ ok("inventory: the 31-60 bucket cleared the most, 0-30 grew", inv.insights.some(
 ok("inventory: unworked claims count as Not worked yet in the status mix", DS.inventory.labels.purviewStatus["not worked yet"] === "Not worked yet");
 const inv2 = app.crBuildInventory2(ctxOf("inventory2"));
 ok("breakdown: the payers holding 80% of the balance (Pareto)", inv2.cards[0].items[0].label === "Aetna" && inv2.cards[0].items.filter((x) => x.emph).length === 2, inv2.cards[0].items.map((x) => [x.label, x.emph]));
+{ const top = inv2.cards[0].items.filter((x) => x.emph), pct = Math.round(top.reduce((a, x) => a + x.share, 0) * 100);
+  ok("...and the insight gives the share they really hold (" + pct + "%), not the 80% line", pct >= 80 && inv2.insights.some((x) => x.includes("hold " + pct + "% of the open balance")), inv2.insights[0]); }
 const sel = { payerKey: new Set(["medicare"]) };
 const invF = app.crBuildInventory2(ctxOf("inventory2", sel));
 ok("click to filter: only Medicare's balance is left on the page", invF.kpis[0].value === "$300", invF.kpis[0]);
