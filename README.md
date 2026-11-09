@@ -190,7 +190,7 @@ greyed out in the list and stays out of the PDF.
 
 | Page | From |
 |---|---|
-| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service in seven groups: 0-30 ... 181-360 and 360 plus) |
+| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, and Future DOS for a date of service typed in the future), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
 | AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet* |
 | Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof) |
 | Client assistance | requests sent to the client, with their reason and whether they were answered |

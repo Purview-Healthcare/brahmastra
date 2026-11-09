@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.93.0";
+const VERSION = "2.94.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -2052,6 +2052,45 @@ async function removeLeftovers(env) {
 }
 /* The client report's inventory at a day: live claims when the day is today (or later), else the snapshot kept that day
    (or up to 3 days before), else rebuilt from the claims' history: on file by that day and not closed or excluded yet then. */
+/* Where the claims open at the end of the period before went during this one (Client 360's inventory page), each claim once,
+   by its latest step. Purview's workflow: AR's part is done when AR closes a claim (paid, adjusted, written off, closed in a
+   file) or sends it for posting; Posting completing it closes it (then only QA is left). A claim sent to Submission is never
+   closed: it is pending with the desk, then comes back to AR for its follow-up (15 days or a month), the 48-hour recheck and
+   rejections. Excluded: taken off the inventory. Back on a biller's list counts as nothing. */
+const CR_MOVES = [["ar_close", "AR close"], ["pending_posting", "AR close · sent to Posting"], ["posting_close", "Posting close"], ["pending_submission", "Pending Submission"],
+  ["submission_close", "Submission close · AR follow-up"], ["excluded", "Excluded"]];
+async function crMovement(env, clientId, loc, t0, t1) {
+  if (!(t1 > t0)) return [];
+  const lw = loc ? " AND c.location_id = ?" : "", la = loc ? [loc] : [];
+  const evs = await all(env, `SELECT e.claim_id, e.at, json_extract(e.data_json, '$.changes.state[1]') AS to_state FROM claim_events e JOIN claims c ON c.id = e.claim_id
+      WHERE c.client_id = ?${lw} AND c.created_at <= ? AND e.at > ? AND e.at <= ? AND json_extract(e.data_json, '$.changes.state[1]') IS NOT NULL LIMIT 60000`, clientId, ...la, t0, t0, t1);
+  const hos = await all(env, `SELECT h.claim_id, h.dept, h.status, h.created_at, h.done_at FROM handoffs h JOIN claims c ON c.id = h.claim_id
+      WHERE h.client_id = ?${lw} AND c.created_at <= ? AND h.dept IN ('posting','submission','rejection')
+        AND ((h.created_at > ? AND h.created_at <= ?) OR (h.done_at > ? AND h.done_at <= ?)) LIMIT 60000`, clientId, ...la, t0, t0, t1, t0, t1);
+  // each claim's latest step in a list of events and hand-offs: a category, or null (back in AR)
+  const steps = (evRows, hoRows, lo, hi) => {
+    const last = new Map(), put = (id, at, k) => { const x = last.get(id); if (!x || at >= x.at) last.set(id, { at, k }); };
+    for (const e of evRows) if (e.at > lo && e.at <= hi && e.to_state !== "in_process") put(e.claim_id, e.at, e.to_state === "closed" ? "ar_close" : e.to_state === "excluded" ? "excluded" : null);
+    for (const h of hoRows) {
+      const desk = h.dept === "posting" ? "posting" : "submission";
+      if (h.created_at > lo && h.created_at <= hi) put(h.claim_id, h.created_at, "pending_" + desk);
+      if (h.done_at && h.done_at > lo && h.done_at <= hi) put(h.claim_id, h.done_at, h.status === "complete" ? desk + "_close" : null);
+    }
+    return last;
+  };
+  const last = steps(evs, hos, t0, t1);
+  // only the claims that were in the open AR at the end of the period before: their latest step until then left them in AR
+  const outAtStart = new Set();
+  for (const part of chunks([...last.keys()], 80)) {
+    const q = part.map(() => "?").join(",");
+    const ev0 = await all(env, `SELECT claim_id, at, json_extract(data_json, '$.changes.state[1]') AS to_state FROM claim_events WHERE claim_id IN (${q}) AND at <= ? AND json_extract(data_json, '$.changes.state[1]') IS NOT NULL`, ...part, t0);
+    const ho0 = await all(env, `SELECT claim_id, dept, status, created_at, done_at FROM handoffs WHERE claim_id IN (${q}) AND dept IN ('posting','submission','rejection') AND created_at <= ?`, ...part, t0);
+    for (const [id, x] of steps(ev0, ho0, -1, t0)) if (x.k && x.k !== "submission_close") outAtStart.add(id);
+  }
+  const ids = [...last.entries()].filter(([id, x]) => x.k && !outAtStart.has(id)).map(([id]) => id), bal = new Map();
+  for (const part of chunks(ids, 80)) (await all(env, `SELECT id, balance FROM claims WHERE id IN (${part.map(() => "?").join(",")})`, ...part)).forEach((r) => bal.set(r.id, Number(r.balance) || 0));
+  return CR_MOVES.map(([k, label]) => { const xs = ids.filter((id) => last.get(id).k === k); return { k, label, n: xs.length, amt: Math.round(xs.reduce((t, id) => t + (bal.get(id) || 0), 0) * 100) / 100 }; });
+}
 async function crInventory(env, clientId, loc, day, today) {
   const lw = loc ? " AND c.location_id = ?" : "", la = loc ? [loc] : [];
   if (day >= today) {
@@ -2433,10 +2472,10 @@ async function snapshotClients(env) {
    pruned except month ends and Sundays (week ends). */
 // the age groups Purview uses: one top group, 360 plus (the AR production file's groups too)
 const CR_BUCKETS = [[30, "0-30"], [60, "31-60"], [90, "61-90"], [120, "91-120"], [180, "121-180"], [360, "181-360"], [Infinity, "360+"]];
-const crBucket = (age) => (age == null || !isFinite(age) ? "" : CR_BUCKETS.find(([hi]) => age <= hi)[1]);
+const crBucket = (age) => (age == null || !isFinite(age) ? "" : age < 0 ? "future" : CR_BUCKETS.find(([hi]) => age <= hi)[1]);
 function crAge(dos, ageDays, dayISO) {
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(dos || ""));
-  if (m) return Math.max(0, Math.round((Date.parse(dayISO + "T00:00:00Z") - Date.parse(m[1] + "T00:00:00Z")) / 86400000));
+  if (m) return Math.round((Date.parse(dayISO + "T00:00:00Z") - Date.parse(m[1] + "T00:00:00Z")) / 86400000);   // below 0: a DOS in the future
   return ageDays == null ? null : Number(ageDays);
 }
 function crCells(rows, dayISO) {
@@ -4675,7 +4714,7 @@ const OPS = {
     const HO_STATE = { complete: "Done", pending: "Pending", assigned: "Being worked", client: "Waiting on the client", back: "Back with AR", assistance: "Back with AR", rejected: "Sent back" };
     const weekOf = (d) => { const x = new Date(d + "T12:00:00Z"); return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][x.getUTCMonth()] + " week " + Math.ceil(x.getUTCDate() / 7); };
     const data = {
-      inventory: invNow, inventoryPrev: invPrev,
+      inventory: invNow, inventoryPrev: invPrev, movement: await crMovement(env, clientId, loc, t1(pto), Math.min(t1(to), now)),
       worked: notes.map((n) => { const wd = istISO(n.created_at); return { id: n.claim_id, no: no(n), dos: n.dos || "", py: label(n.payer), chg: n.billed == null ? null : Number(n.billed), amt: Number(n.balance) || 0,
         bk: crBucket(crAge(n.dos, n.age_days, wd)), st: label(n.st), sub: label(n.sub), act: label(n.act), mv: label(n.mv), wd, by: label(n.user_name), loc: n.loc }; }),
       payment: posts.map((h) => { const pr = jsonObj(h.proof_json), done = h.status === "complete", d = istISO(done ? h.done_at : h.created_at);

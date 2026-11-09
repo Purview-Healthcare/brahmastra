@@ -50,7 +50,7 @@ S("The inventory at the period end: live, a kept snapshot, or rebuilt");
 r = await TI("creport.get", { ...OCT, from: "2026-11-01", to: "2026-11-30", prev_from: "2026-10-01", prev_to: "2026-10-31", period_key: "month:2026-11" });
 ok("this month's inventory is live: every workable claim", r.data.inventory.source === "live" && r.data.inventory.rows.length === workable.length, { src: r.data.inventory.source, n: r.data.inventory.rows.length, want: workable.length });
 const bal = workable.reduce((a, c) => a + (Number(c.balance) || 0), 0);
-ok("live rows carry the age group from the date of service", r.data.inventory.rows.every((x) => ["0-30", "31-60", "61-90", "91-120", "121-180", "181-360", "360+", ""].includes(x.bk)));
+ok("live rows carry the age group from the date of service", r.data.inventory.rows.every((x) => ["future", "0-30", "31-60", "61-90", "91-120", "121-180", "181-360", "360+", ""].includes(x.bk)));
 const today = r.today;
 let snap = (await rows("SELECT * FROM inv_snapshots WHERE client_id = ? AND day = ?", sunrise.id, today))[0];
 ok("opening it keeps today's snapshot (cells by location, age, payer, status, action)", !!snap, today);
@@ -167,7 +167,7 @@ const DS = app.crDatasets(raw);
 const R = { range: { start: new Date(2026, 9, 1), end: new Date(2026, 9, 31), kind: "month" }, compare: true, client: "Sunrise Eye Care", periodName: "October", cardMeasure: {} };
 const ctxOf = (pid, sel) => app.crCtx(DS, R, pid, sel || {});
 const inv = app.crBuildInventory(ctxOf("inventory"));
-ok("inventory: reduction 30% (1,000 to 700), 3 claims fewer", inv.kpis[1].value === "30.0%" && /\$300 cleared · 3 claims/.test(inv.kpis[1].sub) && inv.headline === "AR came down 30% in October", { k: inv.kpis[1], h: inv.headline });
+ok("inventory: reduction 30% (1,000 to 700), 3 claims fewer", inv.kpis[1].value === "30.0%" && /\$300 off the open AR · 3 claims/.test(inv.kpis[1].sub) && inv.headline === "AR came down 30% in October", { k: inv.kpis[1], h: inv.headline });
 ok("inventory: the 31-60 bucket cleared the most, 0-30 grew", inv.insights.some((x) => /largest reduction came from the 31 to 60 days bucket: \$600/.test(x)) && inv.insights.some((x) => /0 to 30 days bucket grew by \$300/.test(x)), inv.insights);
 ok("inventory: unworked claims count as Not worked yet in the status mix", DS.inventory.labels.purviewStatus["not worked yet"] === "Not worked yet");
 const inv2 = app.crBuildInventory2(ctxOf("inventory2"));
@@ -205,6 +205,28 @@ const evp = app.crBuildEV(app.crCtx(DSE, R, "ev", {}));
 ok("EV page: 6 verifications in October, up from 3, Active coverage the largest group", evp.kpis[0].value === "6" && evp.headline === "6 eligibility verifications" && evp.insights.some((x) => /Active coverage made up 67%/.test(x)) && evp.insights.some((x) => /3 to 6/.test(x)), { k: evp.kpis.map((k) => k.value), i: evp.insights });
 ok("EV page: by insurance and by verification type / status", evp.cards.length === 2 && evp.cards[0].title === "Insurance wise breakdown", evp.cards.map((c) => c.title));
 ok("no EV file, no EV page", app.crHasPage(app.crDatasets({ ...raw, data: { ...raw.data, ev: [] } }), "ev") === false && app.crHasPage(DSE, "ev") === true);
+
+S("Where the claims open at the period before went, and a DOS in the future");
+{ const D = (d) => Date.parse(d + "T12:00:00+05:30");
+  const moveOf = async () => { const mv = (await TI("creport.get", OCT)).data.movement || []; return (k) => (mv.find((x) => x.k === k) || { n: 0 }).n; };
+  const before = await moveOf();
+  const pick = (await rows("SELECT id FROM claims WHERE client_id = ? AND state IN ('open','assigned','completed') ORDER BY id LIMIT 6", sunrise.id)).map((x) => x.id);
+  const [a, b, cc, d, e, f] = pick;
+  await sql(`UPDATE claims SET created_at = ? WHERE id IN (${pick.map(() => "?").join(",")})`, D("2026-08-01"), ...pick);
+  const ev = (id, at, from, to) => sql("INSERT INTO claim_events (id, claim_id, at, kind, data_json) VALUES (?,?,?,?,?)", "mv-" + id + at, id, at, "state", JSON.stringify({ changes: { state: [from, to] } }));
+  const ho = (id, dept, status, created, done) => sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, done_at) VALUES (?,?,?,?,?,?,?,?)", "mvh-" + id + created, id, sunrise.id, dept, status, created, created + 86400000, done || null);
+  await ev(a, D("2026-10-10"), "assigned", "closed");                        // closed by AR
+  await ho(b, "posting", "complete", D("2026-10-12"), D("2026-10-14"));      // the payment posted
+  await ho(cc, "submission", "pending", D("2026-10-15"));                    // still with Submission
+  await ho(d, "submission", "complete", D("2026-10-16"), D("2026-10-18"));   // submitted, back with AR
+  await ho(e, "posting", "complete", D("2026-09-20"), D("2026-10-05"));      // at Posting before 30 Sep: not open AR then, not counted
+  const after = await moveOf(), up = (k) => after(k) - before(k);
+  ok("each claim once, by its latest step: AR close, Posting close, Submission close, Pending Submission", up("ar_close") === 1 && up("posting_close") === 1 && up("submission_close") === 1 && up("pending_submission") === 1 && up("pending_posting") === 0,
+    ["ar_close", "posting_close", "submission_close", "pending_submission", "pending_posting"].map((k) => k + " " + up(k)));
+  await sql("UPDATE claims SET dos = ? WHERE id = ?", "2099-01-01", f);
+  const live = (await TI("creport.get", { ...OCT, from: "2026-11-01", to: "2026-11-30", prev_from: "2026-10-01", prev_to: "2026-10-31", period_key: "month:2026-11" })).data.inventory.rows.find((x) => x.id === f);
+  ok("a date of service in the future is its own age group: Future DOS", live && live.bk === "future", live && live.bk);
+}
 
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
