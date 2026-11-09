@@ -156,6 +156,15 @@ S("Monday digest: the header and the SLA report card");
   ok("and the team lead's name", cd && cd.tls.includes("Tina Lead"), cd && cd.tls);
 }
 
+// A Quality score is always a percent: 18 typed without the % sign is 18% (red), not 1800% (green); "96.5" is 96.5% (amber)
+{ const lake = DR_CLIENTS.find((c) => c.id === "d-lake"), oct = lake.periods[0];
+  oct.scopes.ar.crit.quality = cell(18); oct.scopes.submission.crit.quality = cell("96.5"); await fresh();
+  const lk = (await A("clients.list")).clients.find((c) => /Lakeview/.test(c.name));
+  const sc = await A("sla.scorecard", { client_id: lk.id, ...TODAY });
+  const q = sc.items.filter((x) => x.key === "quality");
+  ok("Quality 18 (no % sign) is 18%, red", q.some((x) => x.scope_key === "ar" && x.shown === "18%" && x.status === "miss"), q.map((x) => [x.scope_key, x.shown, x.status]));
+  ok("Quality \"96.5\" is 96.5%, amber against 99%... and the other KPIs keep Drishti's reading", q.some((x) => x.scope_key === "submission" && x.shown === "96.5%") && sc.items.some((x) => x.key === "collectionRate" && x.shown === "70%"), q.map((x) => [x.scope_key, x.shown, x.status])); }
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

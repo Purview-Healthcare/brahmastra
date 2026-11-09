@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.90.0";
+const VERSION = "2.91.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1270,10 +1270,16 @@ const drIsNum = (v) => typeof v === "number" && !isNaN(v);
 const drHasVal = (crit, cell) => !!cell && !(cell.value == null || cell.value === "" || (typeof cell.value === "number" && isNaN(cell.value)));
 /* A number Drishti sent as text ("0.10", "91%", "$1,200") is read as the number, so it is scored like any other; "91%" on a
    percent KPI is 0.91. Text that is not a number stays as typed (and is not scored). */
+/* A Quality score is always a percent: 18 (a number, or the text "18") is 18%, not 1800%. 0.95 and "95%" are 95% as before.
+   Other KPIs keep Drishti's reading (1.05 can be 105% production; 1.5 can be a 1.5% denial rate). */
+const drQualityPct = (crit) => !!crit && crit.key === "quality" && drFmt(crit) === "percent";
 const drCell = (crit, cell) => {
-  if (typeof cell.value !== "string" || ["status", "yesno", "text"].includes(crit.type)) return cell;
+  if (!cell || ["status", "yesno", "text"].includes(crit.type)) return cell;
+  if (typeof cell.value === "number") return drQualityPct(crit) && cell.value > 1 ? { ...cell, value: cell.value / 100 } : cell;
+  if (typeof cell.value !== "string") return cell;
   const x = drNum(cell.value); if (x == null) return cell;
-  return { ...cell, value: /%\s*$/.test(cell.value) && drFmt(crit) === "percent" ? x / 100 : x };
+  const pctSign = /%\s*$/.test(cell.value) && drFmt(crit) === "percent";
+  return { ...cell, value: pctSign || (drQualityPct(crit) && x > 1) ? x / 100 : x };
 };
 const drBand = (pct) => (pct == null ? null : pct >= 90 ? "ok" : pct >= 80 ? "warn" : "miss");
 const drFmt = (crit) => crit.fmt || (crit.rule && crit.rule.fmt) || (crit.type === "count" ? "count" : "percent");
