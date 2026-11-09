@@ -233,11 +233,11 @@ ok("their open claims go back to the pool", held > 0 && (await row("SELECT COUNT
 
 S("Escalation tracker SR numbers");
 const owner = users.find((u) => u.role === "supervisor");
-const esc = (i) => T(() => A("escalations.save", { kind: "external", client_id: lake.id, day: today, dept: "Account Receivable", raised_who: "Clinic manager", reported_to: "Team lead", description: "Wrong follow-up on claim " + i, owner_id: owner.id }));
+const esc = (i) => T(() => A("escalations.save", { location_id: "all", channels: ["Email"], comment: "Logged for the test from the email", email_subject: "Follow-up " + i, kind: "external", client_id: lake.id, day: today, dept: "Account Receivable", raised_who: "Clinic manager", reported_to: "Team lead", description: "Wrong follow-up on claim " + i, owner_id: owner.id }));
 const three = await Promise.all([esc(1), esc(2), esc(3)]);
 const srs = three.map((x) => x.ok && x.r.sr).sort();
 ok("three at once get three numbers", three.every((x) => x.ok) && new Set(srs).size === 3, three.map((x) => x.ok ? x.r.sr : x.e));
-r = await T(() => A("escalations.save", { kind: "external", client_id: lake.id, day: "2026-02-30", dept: "Account Receivable", raised_who: "Clinic manager", reported_to: "Team lead", description: "An impossible date here", owner_id: owner.id }));
+r = await T(() => A("escalations.save", { location_id: "all", channels: ["Email"], comment: "Logged for the test from the email", email_subject: "A date", kind: "external", client_id: lake.id, day: "2026-02-30", dept: "Account Receivable", raised_who: "Clinic manager", reported_to: "Team lead", description: "An impossible date here", owner_id: owner.id }));
 ok("an impossible date is refused", !r.ok && /real date|received date/.test(r.e), r);
 
 S("Deleting a client takes everything under it");

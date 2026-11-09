@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.91.0";
+const VERSION = "2.92.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -511,7 +511,10 @@ async function recordWorkbookStatus(env, targetId, status) {
 const ESC_HEADER = ["SR No", "Department", "Client Name", "Received (mm/dd/yy)", "Raised by", "Reported to Purview", "Responding person Purview", "Email Subject",
   "Error description", "Error (Y/N)", "Comment", "Root Cause", "Corrective Action", "Preventive Action", "Status (Open/Closed)", "Close date (mm/dd/yy)",
   "Working hours to close", "Reason still open (after 24 h)", "Expected close date", "Reason given by", "Logged by", "Escalation type", "Error by", "DOW of error (mm/dd/yy)",
-  "Location", "Month", "Channels Used (Email/Teams/Call)", "Review Date (mm/dd/yy)", "Review Result", "Rework Completed (Yes/No)"];
+  "Location", "Month", "Channels Used (Email/Teams/Call)", "Review Date (mm/dd/yy)", "Review Result", "Rework Completed (Yes/No)",
+  "Logged on (IST)", "Last updated by", "Last updated on (IST)"];
+// a moment as "mm/dd/yy hh:mm" in Indian time
+const istStamp = (ms) => { if (!ms) return ""; const d = istDate(ms), p = (n) => String(n).padStart(2, "0"); return `${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())}/${String(d.getUTCFullYear()).slice(2)} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; };
 const ESC_DATE_COLS = new Set([3, 15, 18, 23, 27]);
 const ESC_CHANNELS = ["Email", "Teams", "Call"];
 const ESC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -539,7 +542,8 @@ const escRow = (e, client) => ["SR" + e.sr, e.dept, client || e.client_name || "
   e.description, e.is_error, e.comment, e.rca, e.corrective, e.preventive, ESC_STATUS[e.status] || e.status, excelSerial(e.close_on),
   escHours(e) == null ? "" : escHours(e), e.delay_reason, excelSerial(e.expected_on), e.delay_by_name, e.created_by_name,
   ESC_KINDS[escKind(e)], e.is_error === "Y" ? e.error_by_name || "" : "", e.is_error === "Y" ? excelSerial(e.error_dow) : "",
-  e.location_name || "", /^\d{4}-\d{2}/.test(e.day || "") ? ESC_MONTHS[+e.day.slice(5, 7) - 1] || "" : "", e.channels || "", excelSerial(e.review_on), escReviewResult(e), e.rework || ""];
+  e.location_name || "", /^\d{4}-\d{2}/.test(e.day || "") ? ESC_MONTHS[+e.day.slice(5, 7) - 1] || "" : "", e.channels || "", excelSerial(e.review_on), escReviewResult(e), e.rework || "",
+  istStamp(e.created_at), e.updated_by_name || e.created_by_name || "", istStamp(e.updated_at || e.created_at)];
 // the dates show as mm/dd/yy in Excel
 const escFormats = (n) => [ESC_HEADER.map(() => "General"), ...Array.from({ length: n }, () => ESC_HEADER.map((h, i) => (ESC_DATE_COLS.has(i) ? "mm/dd/yy" : "General")))];
 async function escalationFile(env, tok, clientId) {
@@ -6853,6 +6857,11 @@ const OPS = {
     const reportedTo = str(payload.reported_to, 120).trim(); if (!reportedTo) throw bad(kind === "internal" ? "Who was it reported to?" : "Who was it reported to at Purview?");
     const description = str(payload.description, 2000).trim();
     if (description.length < 8) throw bad("Write the error description, a sentence at least.");
+    // every field is filled: the subject (a short title when it did not come by email) and a comment too
+    const subject = str(payload.email_subject, 300).trim();
+    if (subject.length < 3) throw bad("Write the email subject (or a short title if it did not come by email).");
+    const comment = str(payload.comment, 2000).trim();
+    if (comment.length < 3) throw bad("Write a comment, a few words at least.");
     const status = payload.status === "resolved" || payload.status === "closed" ? "resolved" : "open";
     const isError = ["Y", "N"].includes(payload.is_error) ? payload.is_error : "";
     // our error: who made it, and the DOW (the date the work with the error was done)
@@ -6880,20 +6889,26 @@ const OPS = {
     if (payload.owner_id) owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60));
     if (!owner) throw bad("Pick the responding person at Purview.");
     // location (one of this client's), the channels it came through, the review date and whether the rework is done
-    const locId = str(payload.location_id, 60);
-    const loc = locId ? await one(env, "SELECT id, name FROM locations WHERE id = ? AND client_id = ?", locId, c.id) : null;
-    if (locId && !loc) throw bad("Pick one of this client's locations.");
-    const chosen = (Array.isArray(payload.channels) ? payload.channels : String(payload.channels || "").split(/[,;]+/)).map((x) => String(x || "").trim().toLowerCase());
+    // an update that does not send the location keeps the one saved
+    const locId = payload.location_id != null && payload.location_id !== "" ? str(payload.location_id, 60) : ex ? (ex.location_id || (ex.location_name === "All locations" ? "all" : "")) : "";
+    if (!locId) throw bad("Pick the location (or All locations).");
+    const loc = locId === "all" ? null : await one(env, "SELECT id, name FROM locations WHERE id = ? AND client_id = ?", locId, c.id);
+    if (locId !== "all" && !loc) throw bad("Pick one of this client's locations (or All locations).");
+    const chosen = (Array.isArray(payload.channels) ? payload.channels : String(payload.channels != null ? payload.channels : ex ? ex.channels || "" : "").split(/[,;]+/)).map((x) => String(x || "").trim().toLowerCase());
     const channels = ESC_CHANNELS.filter((k) => chosen.includes(k.toLowerCase())).join(", ");
+    if (!channels) throw bad("Pick the channels used: Email, Teams or Call.");
     const reviewOn = isoDate(payload.review_on) || "";
     if (String(payload.review_on || "").trim() && !reviewOn) throw bad("The review date is not a date.");
     if (reviewOn && !realDay(reviewOn)) throw bad("The review date is not a real date.");
     if (reviewOn && (reviewOn < day || reviewOn > today)) throw bad("The review date must be between the received date and today.");
     const rework = ["Yes", "No"].includes(payload.rework) ? payload.rework : "";
-    const vals = { day, dept, raised_who: raisedBy, reported_to: reportedTo, email_subject: str(payload.email_subject, 300).trim(), owner_id: owner.id, owner_name: owner.name, description,
-      is_error: isError, comment: str(payload.comment, 2000).trim(), status, rca, corrective, preventive, close_on: closeOn, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null,
+    // to close it, the review is done: the review date and whether the rework is completed
+    if (status === "resolved" && !reviewOn) throw bad("To close it, pick the review date.");
+    if (status === "resolved" && !rework) throw bad("To close it, say whether the rework is completed: Yes or No.");
+    const vals = { day, dept, raised_who: raisedBy, reported_to: reportedTo, email_subject: subject, owner_id: owner.id, owner_name: owner.name, description,
+      is_error: isError, comment, status, rca, corrective, preventive, close_on: closeOn, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null,
       kind, error_by_id: errBy ? errBy.id : null, error_by_name: errBy ? errBy.name : "", error_dow: dow,
-      location_id: loc ? loc.id : null, location_name: loc ? loc.name : "", channels, review_on: reviewOn, rework };
+      location_id: loc ? loc.id : null, location_name: loc ? loc.name : "All locations", channels, review_on: reviewOn, rework };
     const cols = Object.keys(vals);
     let sr;
     if (ex) {

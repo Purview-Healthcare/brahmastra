@@ -75,8 +75,8 @@ const folder = (clientName) => { const root = child("root", "Brahmastra Clients"
 const runJob = async (at) => { const real = Date.now; if (at) Date.now = () => at; try { const ps = []; await rig.worker.default.scheduled({ cron: "17 * * * *" }, { ...rig.backend.env, ...rig.liveEnv, DB: rig.backend.env.DB }, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { Date.now = real; } };
 
 
-const base = { kind: "external", day: "2026-11-04", dept: "Submission", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Rejections again", description: "Claims rejected twice for the same modifier" };
-const close = { status: "resolved", is_error: "Y", rca: "Modifier 25 missing in the charge template", corrective: "Modifier 25 added to the charge template", preventive: "Template checked every Monday", close_on: "2026-11-05" };
+const base = { location_id: "all", channels: ["Email"], comment: "Logged for the test from the email", kind: "external", day: "2026-11-04", dept: "Submission", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Rejections again", description: "Claims rejected twice for the same modifier" };
+const close = { review_on: "2026-11-05", rework: "Yes", status: "resolved", is_error: "Y", rca: "Modifier 25 missing in the charge template", corrective: "Modifier 25 added to the charge template", preventive: "Template checked every Monday", close_on: "2026-11-05" };
 base.owner_id = U("Tina Lead").id;
 // our error: who made it and the DOW (the date the work was done)
 close.error_by_id = U("Arun Agent").id; close.error_dow = "2026-11-03";
@@ -98,6 +98,13 @@ S("Checks");
 r = await T(() => TI("escalations.save", { ...base, dept: "Nope", client_id: sun.id })); ok("department must be one of the list", !r.ok && /department/i.test(r.e), r);
 r = await T(() => TI("escalations.save", { ...base, description: "x", client_id: sun.id })); ok("description is needed", !r.ok && /description/i.test(r.e), r);
 r = await T(() => TI("escalations.save", { ...base, reported_to: "", client_id: sun.id })); ok("reported to Purview is needed", !r.ok && /reported/i.test(r.e), r);
+// nothing is left blank: the location, the channels, the subject (or a title) and a comment when logging
+r = await T(() => TI("escalations.save", { ...base, location_id: "", client_id: sun.id })); ok("the location is needed (or All locations)", !r.ok && /location/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, channels: [], client_id: sun.id })); ok("the channels used are needed", !r.ok && /channels/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, email_subject: "", client_id: sun.id })); ok("the email subject (or a short title) is needed", !r.ok && /subject/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, comment: "", client_id: sun.id })); ok("a comment is needed", !r.ok && /comment/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, ...close, review_on: "", client_id: sun.id })); ok("to close: the review date is needed", !r.ok && /review date/i.test(r.e), r);
+r = await T(() => TI("escalations.save", { ...base, ...close, rework: "", client_id: sun.id })); ok("to close: rework completed (Yes / No) is needed", !r.ok && /rework/i.test(r.e), r);
 r = await T(() => TI("escalations.save", { ...base, owner_id: "", client_id: sun.id })); ok("the responding person is needed", !r.ok && /responding/i.test(r.e), r);
 r = await T(() => TI("escalations.save", { ...base, day: "", client_id: sun.id })); ok("date is needed", !r.ok && /date/i.test(r.e), r);
 let L = await TI("escalations.list", { client_id: sun.id, status: "all" });
@@ -153,7 +160,8 @@ S("The client's OneDrive file");
 const f = folder(sun.name), file = f.f && child(f.f.id, "Escalation Tracker - " + sun.name + ".xlsx");
 ok("one workbook in the client's folder: Escalation Tracker - <Client>.xlsx", !!file, [...OD.items.values()].map((x) => pathOf(x.id)));
 const rows = file ? OD.rows.get(file.id) : [];
-ok("the six new columns are at the end of the file", rows[0] && rows[0].slice(24).join("|") === "Location|Month|Channels Used (Email/Teams/Call)|Review Date (mm/dd/yy)|Review Result|Rework Completed (Yes/No)", rows[0] && rows[0].slice(24));
+ok("the six new columns, then who logged it and the last change, are at the end of the file", rows[0] && rows[0].slice(24).join("|") === "Location|Month|Channels Used (Email/Teams/Call)|Review Date (mm/dd/yy)|Review Result|Rework Completed (Yes/No)|Logged on (IST)|Last updated by|Last updated on (IST)", rows[0] && rows[0].slice(24));
+ok("...filled on every row: logged on and last updated", rows.slice(1).every((x) => /^\d\d\/\d\d\/\d\d \d\d:\d\d$/.test(x[30]) && x[31] && /^\d\d\/\d\d\/\d\d \d\d:\d\d$/.test(x[32])), rows.slice(1).map((x) => x.slice(30)));
 ok("SR1: Nov and Error; SR2: its location, Email, Call, the review date as an Excel date, No error, Yes", rows[1] && rows[1][25] === "Nov" && rows[1][28] === "Error" && rows[2] && rows[2][24] && rows[2][26] === "Email, Call" && rows[2][27] === 46331 && rows[2][28] === "No error" && rows[2][29] === "Yes", rows.slice(1).map((x) => x.slice(24)));
 ok("header is the supervisors' format", rows[0] && rows[0].slice(0, 16).join("|") === "SR No|Department|Client Name|Received (mm/dd/yy)|Raised by|Reported to Purview|Responding person Purview|Email Subject|Error description|Error (Y/N)|Comment|Root Cause|Corrective Action|Preventive Action|Status (Open/Closed)|Close date (mm/dd/yy)", rows[0]);
 ok("one row per escalation, the same row updated, not added again", rows.length === 3 && rows[1][0] === "SR1" && rows[2][0] === "SR2", rows.map((x) => x[0]));

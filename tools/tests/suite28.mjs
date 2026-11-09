@@ -53,7 +53,7 @@ ok("Monday 11:00 is 49 working hours: past", al.rows.find((r) => r.id === pool[0
 ok("the Needs attention count agrees", (await at(IST(2026, 11, 9, 11), () => TI("attention.count", {}))).overdue >= 1 && (await at(IST(2026, 11, 9, 9), () => TI("attention.count", {}))).overdue === 0);
 
 S("Escalation tracker: the reason is due after 24 working hours");
-const e = await A("escalations.save", { kind: "external", client_id: sun.id, day: "2026-11-06", dept: "Account Receivable", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Posting delay", description: "Payment not posted", owner_id: U("Tina Lead").id, status: "open" });
+const e = await A("escalations.save", { location_id: "all", channels: ["Email"], comment: "Logged for the test from the email", kind: "external", client_id: sun.id, day: "2026-11-06", dept: "Account Receivable", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Posting delay", description: "Payment not posted", owner_id: U("Tina Lead").id, status: "open" });
 await sql("UPDATE escalations SET created_at = ? WHERE client_id = ?", IST(2026, 11, 6, 18), sun.id);
 let ec = await at(IST(2026, 11, 9, 10), () => TI("escalations.count", {}));
 ok("logged Friday 18:00, Monday 10:00 is 16 working hours: no reason asked yet", ec.needs_reason === 0, ec);

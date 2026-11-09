@@ -68,7 +68,7 @@ const sun = (await A("clients.list")).clients.find((c) => /Sunrise/.test(c.name)
 const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const daysBefore = (iso, n) => new Date(Date.parse(iso + "T12:00:00Z") - n * 86400000).toISOString().slice(0, 10);
 const mdy = (iso) => iso.slice(5, 7) + "/" + iso.slice(8, 10) + "/" + iso.slice(0, 4);
-const base = { client_id: sun.id, day: today, dept: "Payment Posting", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Payment for Jane Roe not posted", description: "Payment for patient Jane Roe was posted to the wrong claim", owner_id: U("Tina Lead").id };
+const base = { location_id: "all", channels: ["Email"], comment: "Logged for the test from the email", client_id: sun.id, day: today, dept: "Payment Posting", raised_who: "Office manager", reported_to: "Tina Lead", email_subject: "Payment for Jane Roe not posted", description: "Payment for patient Jane Roe was posted to the wrong claim", owner_id: U("Tina Lead").id };
 const tinaNotices = async () => (await rows("SELECT text FROM user_notices WHERE user_id = ? AND view = 'escalations' ORDER BY at", U("Tina Lead").id)).map((x) => x.text);
 
 S("The type comes first");
@@ -80,7 +80,7 @@ r = await T(() => SM("escalations.save", { ...base, kind: "constructor" }));
 ok("not a crafted value either", !r.ok && /type first/i.test(r.e), r);
 r = await T(() => SM("escalations.save", { ...base, kind: "external" }));
 ok("the SME logs an external one: SR1", r.ok && r.r.sr === 1, r);
-r = await T(() => SM("escalations.save", { ...base, kind: "internal", raised_who: "QA team", reported_to: "Tina Lead", email_subject: "", description: "QA found the wrong adjustment code used on three claims" }));
+r = await T(() => SM("escalations.save", { ...base, kind: "internal", raised_who: "QA team", reported_to: "Tina Lead", email_subject: "QA sampling", description: "QA found the wrong adjustment code used on three claims" }));
 ok("and an internal one: SR2 (one register, one SR count)", r.ok && r.r.sr === 2, r);
 r = await T(() => SM("escalations.save", { ...base, kind: "internal", raised_who: "" }));
 ok("an internal one asks who raised it at Purview", !r.ok && /at Purview/.test(r.e), r);
@@ -164,7 +164,7 @@ const cf = child(child("root", "Brahmastra Clients") ? child("root", "Brahmastra
 const main = cf && child(cf.id, "Escalation Tracker - " + sun.name + ".xlsx");
 const mr = main ? OD.rows.get(main.id) : [];
 ok("the client's tracker file has all four, with the type and error columns after the first ones, then location to rework", mr.length === 5 && mr[0].slice(21, 24).join("|") === "Escalation type|Error by|DOW of error (mm/dd/yy)"
-  && mr[0].slice(-6).join("|") === "Location|Month|Channels Used (Email/Teams/Call)|Review Date (mm/dd/yy)|Review Result|Rework Completed (Yes/No)", mr[0] && mr[0].slice(21));
+  && mr[0].slice(24, 30).join("|") === "Location|Month|Channels Used (Email/Teams/Call)|Review Date (mm/dd/yy)|Review Result|Rework Completed (Yes/No)" && mr[0].slice(30).join("|") === "Logged on (IST)|Last updated by|Last updated on (IST)", mr[0] && mr[0].slice(21));
 const m1 = mr.find((x) => x[0] === "SR1"), m2 = mr.find((x) => x[0] === "SR2");
 ok("SR1: External, made by Arun Agent, the DOW as an Excel date; SR2: Internal", m1 && m1[21] === "External" && m1[22] === "Arun Agent" && typeof m1[23] === "number" && m2 && m2[21] === "Internal", [m1 && m1.slice(-3), m2 && m2.slice(-3)]);
 ok("the first columns stay where Drishti reads them", mr[0].slice(0, 4).join("|") === "SR No|Department|Client Name|Received (mm/dd/yy)");
