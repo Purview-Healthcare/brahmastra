@@ -29,7 +29,7 @@ const A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo"
 await A("roster.syncShastra");
 const users = (await A("users.list")).users; const U = (n) => users.find((u) => u.name === n);
 const firstIn = async (name, email) => { await as(null)("auth.firstPassword", { user_id: U(name).id, passHash: await sha("pw-" + email) }); return as((await login(email, "pw-" + email)).token); };
-const TI = await firstIn("Tina Lead", "tina@purview-healthcare.com"), AR = await firstIn("Arun Agent", "arun@purview-healthcare.com"), QU = await firstIn("Quin Submit", "quin@purview-healthcare.com");
+const TI = await firstIn("Tina Lead", "tina@purview-healthcare.com"), AR = await firstIn("Arun Agent", "arun@purview-healthcare.com"), QU = await firstIn("Quin Submit", "quin@purview-healthcare.com"), PI = await firstIn("Pia Poster", "pia@purview-healthcare.com");
 const clients = (await A("clients.list")).clients, sun = clients.find((c) => /Sunrise/.test(c.name));
 const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const dosAgo = (n) => new Date(Date.parse(today + "T12:00:00Z") - n * 86400000).toISOString().slice(0, 10);
@@ -197,6 +197,47 @@ await TI("inventory.upload", { client_id: sun.id, kind: "worked", file_name: "re
 const rc2 = await row("SELECT priority, priority_reason, last_worked_on, follow_up_on FROM claims WHERE id = ?", rc.id);
 ok("a claim on a biller's list keeps the priority it was allocated with (TFL points included)", rc2.priority === 177.1 && /TFL/.test(rc2.priority_reason), rc2);
 ok("an older worked file moves neither the last worked date nor the follow-up back", rc2.last_worked_on === today && rc2.follow_up_on === dosAgo(-30), rc2);
+
+S("Purview's workflow: posting closes the claim for AR; submission does not");
+{ const pdf = "JVBERi0xLjQKJSVFT0YK";
+  const wid = ids[25], sid = ids[26];
+  await sql("UPDATE claims SET state = 'assigned', assigned_to = ?, first_up = 0, follow_up_on = '' WHERE id IN (?, ?)", arun, wid, sid);
+  await AR("attachments.add", { claim_id: wid, name: "eob.pdf", type: "application/pdf", data: pdf });
+  const ob = await AR("queue.open", { id: wid });
+  ok("the work form knows this client has a Posting and a Submission person, and no Rejections person", ob.claim.desk_posting === true && ob.claim.desk_submission === true && ob.claim.desk_rejection === false, [ob.claim.desk_posting, ob.claim.desk_submission, ob.claim.desk_rejection]);
+  const sp = await AR("queue.complete", { id: wid, desk: true, saag: { status: "Claim Paid", sub_status: "EOB Available", action: "Need to Post/Posting Correction", bucket: "Payer", effective: "Pending-Collectible Insurance" }, note: nt, today });
+  let c = await row("SELECT state, last_effective, last_bucket FROM claims WHERE id = ?", wid);
+  ok("sent for posting: AR closed (AR Closed-Pending Posting, bucket Closed), with Posting now", sp.closed && c.last_effective === "AR Closed-Pending Posting" && c.last_bucket === "Closed" && c.state === "in_process" && /EFFECTIVE: AR Closed-Pending Posting/.test(sp.comment), [sp.closed, c]);
+  const hp = await row("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'posting' AND status IN ('pending','assigned')", wid);
+  await PI("handoffs.close", { id: hp.id, outcome: "complete", proof: { date: today, ref: "EFT-77", amount: 120 } });
+  c = await row("SELECT state, last_effective, last_bucket FROM claims WHERE id = ?", wid);
+  ok("posted: Posting Closed, the claim closed", c.state === "closed" && c.last_effective === "Posting Closed" && c.last_bucket === "Closed", c);
+  ok("...and the biller who worked it can still open it", (await T(() => AR("claims.get", { id: wid }))).ok);
+  await AR("queue.open", { id: sid });
+  const ss = await AR("queue.complete", { id: sid, desk: true, saag: { status: "Claim Denied", sub_status: "Coding Error", action: "Need to Resubmit", bucket: "Payer", effective: "Pending-Purview internal review" }, note: nt, today });
+  c = await row("SELECT state, last_effective, last_bucket FROM claims WHERE id = ?", sid);
+  ok("sent for submission: not closed (Pending-Submission, bucket Purview), with Submission now", !ss.closed && c.last_effective === "Pending-Submission" && c.last_bucket === "Purview" && c.state === "in_process", [ss.closed, c]);
+  const hs = await row("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'submission' AND status IN ('pending','assigned')", sid);
+  await QU("handoffs.close", { id: hs.id, outcome: "complete", proof: { date: today, ref: "BATCH-77" } });
+  c = await row("SELECT state, last_effective, last_bucket, follow_up_on FROM claims WHERE id = ?", sid);
+  ok("submitted: back with AR for its follow-up (with the payer, Pending-Collectible Insurance)", c.state === "completed" && c.last_effective === "Pending-Collectible Insurance" && c.last_bucket === "Payer" && c.follow_up_on > today, c);
+  // a claim taken back to a biller while Posting still had it: posting it does not mark the biller's claim closed
+  const gid = ids[27];
+  await sql("UPDATE claims SET state = 'assigned', assigned_to = ?, first_up = 0, follow_up_on = '' WHERE id = ?", arun, gid);
+  await AR("attachments.add", { claim_id: gid, name: "eob.pdf", type: "application/pdf", data: pdf });
+  await AR("queue.open", { id: gid });
+  await AR("queue.complete", { id: gid, desk: true, saag: { status: "Claim Paid", sub_status: "EOB Available", action: "Need to Post/Posting Correction", bucket: "Payer", effective: "" }, note: nt, today });
+  await sql("UPDATE claims SET state = 'assigned', last_effective = 'Pending-Collectible Insurance', last_bucket = 'Payer' WHERE id = ?", gid);
+  const hg = await row("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'posting' AND status IN ('pending','assigned')", gid);
+  await PI("handoffs.close", { id: hg.id, outcome: "complete", proof: { date: today, ref: "EFT-78", amount: 40 } });
+  c = await row("SELECT state, last_effective, last_bucket FROM claims WHERE id = ?", gid);
+  ok("...a claim back with a biller keeps its own SAAG when Posting finishes", c.state === "assigned" && c.last_effective === "Pending-Collectible Insurance" && c.last_bucket === "Payer", c);
+  // a rejected claim at a client with a Rejections person goes there first: the form knows it too
+  await sql("UPDATE clients SET rejection_mode = 'person', rejection_lead = ? WHERE id = ?", U("Quin Submit").id, sun.id);
+  await sql("UPDATE claims SET state = 'assigned', assigned_to = ?, first_up = 0, follow_up_on = '' WHERE id = ?", arun, ids[28]);
+  const rb = await AR("queue.open", { id: ids[28] });
+  ok("...and a Rejections person shows on the work form when one is set", rb.claim.desk_rejection === true, rb.claim.desk_rejection);
+  await sql("UPDATE clients SET rejection_mode = '', rejection_lead = NULL WHERE id = ?", sun.id); }
 
 S("Production rows for Third Eye");
 await sql("UPDATE claims SET dos = ?, age_days = 3, created_at = ? WHERE id = ?", dosAgo(120), Date.now() - 50 * d, ids[19]);

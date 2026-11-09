@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.94.0";
+const VERSION = "2.95.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1433,8 +1433,15 @@ async function drTickMonthEnd(env, summaries) {
    format, with the individual fields kept in fields_json for the screens. */
 const NOTE_SOURCES = ["Call", "Portal", "IVR", "EOB/ERA", "Email", "Clearinghouse", "Client", "Other"];
 const BUCKETS4 = ["Payer", "Client", "Closed", "Purview"];
-const CLOSED_EFFECTIVE = /^(processing-closed|payment-cash in bank)$/i;
-const EFFECTIVE_DAYS = { "Pending-Collectible Insurance": 30, "Pending-Client Assistance": 14, "Pending-Collectible Patient": 30, "Pending-Purview internal review": 7 };
+const CLOSED_EFFECTIVE = /^(processing-closed|payment-cash in bank|ar closed-pending posting|posting closed)$/i;
+const EFFECTIVE_DAYS = { "Pending-Collectible Insurance": 30, "Pending-Client Assistance": 14, "Pending-Collectible Patient": 30, "Pending-Purview internal review": 7, "Pending-Submission": 15 };
+/* Purview's workflow for the actions that go to a desk. Sending a claim for posting closes it for AR (AR's part is done;
+   Posting closes it when the payment is posted, then only QA is left). Sending it for submission does not close it: it is
+   pending with Submission, then comes back to AR for its follow-up (15 days or a month), the 48-hour recheck and rejections.
+   The page uses the same rule (ROUTED_EFFECTIVE in app.jsx). */
+const ROUTED_EFFECTIVE = (action) => /^Need to Post\/Posting Correction$/i.test(action || "") ? "AR Closed-Pending Posting"
+  : /^(Need to Resubmit|Need to Submit Paper Claim|Correction, Resubmission & Reprocessing)$/i.test(action || "") ? "Pending-Submission" : "";
+const ROUTED_BUCKET = { "AR Closed-Pending Posting": "Closed", "Pending-Submission": "Purview" };
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const mmdd = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}` : (iso || ""));
 const FINDINGS_MAX = 4000;
@@ -1490,6 +1497,8 @@ function validateWork(payload) {
   const s = payload.saag || {};
   const saag = { status: str(s.status, 60).trim(), sub_status: str(s.sub_status, 160).trim(), action: str(s.action, 160).trim(), bucket: str(s.bucket, 20).trim(), effective: str(s.effective, 80).trim() };
   if (!saag.status || !saag.sub_status || !saag.action) throw bad("Pick the SAAG status, sub-status and action.");
+  // an action that goes to Posting or Submission takes the workflow's effective status and bucket
+  const routed = ROUTED_EFFECTIVE(saag.action); if (routed) { saag.effective = routed; saag.bucket = ROUTED_BUCKET[routed]; }
   if (!BUCKETS4.includes(saag.bucket)) throw bad("Pick a bucket: Payer, Client, Closed or Purview.");
   const f = payload.note || {};
   if (!commentOk(f.findings)) throw bad("Write what you found (RCA / findings), a few words at least.");
@@ -6529,12 +6538,12 @@ const OPS = {
       guard = env.DB.prepare(`UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, JSON.stringify(proof), note, h.id);
       if (h.dept === "posting") {
         // Payment posted: the work is done, so the claim closes for AR (posting QA audits it later).
-        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'posted', state = CASE WHEN state = 'in_process' THEN 'closed' ELSE state END, state_reason = CASE WHEN state = 'in_process' THEN 'Payment posted' ELSE state_reason END, updated_at = ? WHERE id = ?").bind(now, c.id));
+        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'posted', last_effective = CASE WHEN state IN ('in_process','closed') THEN 'Posting Closed' ELSE last_effective END, last_bucket = CASE WHEN state IN ('in_process','closed') THEN 'Closed' ELSE last_bucket END, state = CASE WHEN state = 'in_process' THEN 'closed' ELSE state END, state_reason = CASE WHEN state = 'in_process' THEN 'Payment posted' ELSE state_reason END, updated_at = ? WHERE id = ?").bind(now, c.id));
       } else if (h.dept === "submission" || h.dept === "rejection") {
         // Submitted: back to the biller with a 15-day follow-up, and always a check after 48 working hours (accepted, or rejected?):
         // the follow-up person set on the client, the biller when the client says so, otherwise whoever submitted it.
         const fu = workingDayOnOrAfter(addDays(today, 15));
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
         const cl = await one(env, "SELECT submission_check_mode, submission_check_person, submission_tat_hours FROM clients WHERE id = ?", h.client_id);
         // "The biller" is the AR biller of the claim (biller_id): on a Rejections hand-off created_by is whoever rejected the last recheck.
         const checker = cl && cl.submission_check_mode === "person" && cl.submission_check_person ? await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", cl.submission_check_person) : null;
@@ -7281,7 +7290,11 @@ async function claimBundle(env, user, c) {
   const role = await handoffRole(env, user, c.id);
   const limits = payerKey(c.payer) ? await one(env, "SELECT tfl_days, afl_days, note, updated_at, updated_by_name FROM payer_limits WHERE client_id = ? AND payer_key = ?", c.client_id, payerKey(c.payer)) : null;
   const attachments = files.map((a) => ({ ...a, deletable: leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
-  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null }, notes: shaped, attachments, siblings,
+  // whether this client has an active Posting / Submission / Rejections person (the same rule as queue.complete): a claim sent
+  // there leaves AR with no follow-up date until the desk is done
+  const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")} FROM clients WHERE id = ?`, c.client_id);
+  const [dp, ds, dr] = await Promise.all(["posting", "submission", "rejection"].map((d) => deskPeople(env, dc, d)));
+  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr }, notes: shaped, attachments, siblings,
     handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role, payer_limits: limits || null };
 }
 

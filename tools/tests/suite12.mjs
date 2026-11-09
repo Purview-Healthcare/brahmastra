@@ -85,7 +85,10 @@ r = await T(async () => AR("queue.complete", { id: pool[6].id, saag: { ...work()
 ok("an appeal SAAG action still needs the document", !r.ok && /document|attach/i.test(r.e || ""), r);
 r = await T(async () => AR("queue.complete", { id: c1.id, ...work(), escalate: true }));
 ok("a complete entry saves, with a follow-up date", r.ok && r.r.follow_up_on > today, r);
-ok("Effective Matrix 'Pending-Collectible Insurance' sets 30 days", r.ok && (Date.parse(r.r.follow_up_on) - Date.parse(today)) / 86400000 === 30, r.r && r.r.follow_up_on);
+// Purview's workflow: a correction / resubmission is Pending-Submission (not closed); with no Submission person on this
+// client it stays with AR, follow-up in 15 days (on a working day)
+{ const plusW = (n) => { let d = new Date(Date.parse(today + "T12:00:00Z") + n * 86400000); while ([0, 6].includes(d.getUTCDay())) d = new Date(d.getTime() + 86400000); return d.toISOString().slice(0, 10); };
+  ok("a resubmission is Pending-Submission: follow-up in 15 days, on a working day", r.ok && r.r.follow_up_on === plusW(15) && /EFFECTIVE: Pending-Submission/.test(r.r.comment), r.r && [r.r.follow_up_on, plusW(15)]); }
 ok("the flagged claim is in the team lead's Needs attention", (await TI("attention.list", {})).rows.some((x) => x.id === c1.id));
 ok("and the claim's history shows the entry", (await AR("claims.timeline", { id: c1.id })).items.some((x) => x.kind === "work" || x.type === "work" || /worked/i.test(JSON.stringify(x))));
 const mine = await AR("history.mine", { from_ms: Date.now() - 3600000, to_ms: Date.now() + 60000 });

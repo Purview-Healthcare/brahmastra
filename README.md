@@ -482,6 +482,21 @@ paper claims to Submission; a **Claim Rejected** entry, or a rejected recheck, t
 client's **Rejections** person first (top of their list), else Submission. While it is
 there the claim is **In process** for AR (own dashboard card, off the biller's list).
 
+**Purview's workflow in the SAAG entry.** These actions set the effective status and the bucket
+themselves (the bucket is locked on the work form, with a "Workflow:" hint):
+
+| Action | Effective | Bucket | What happens |
+|---|---|---|---|
+| Need to Post / Posting Correction | AR Closed-Pending Posting | Closed | AR's part is done: the claim goes to Posting with no follow-up date |
+| Posting marks it Completed | Posting Closed | Closed | The claim closes; only QA is left (a separate workflow, not started yet) |
+| Need to Resubmit, Need to Submit Paper Claim, Correction, Resubmission & Reprocessing | Pending-Submission | Purview | Not closed: it goes to Submission (or Rejections first for a rejected claim) |
+| Submission marks it Completed | Pending-Collectible Insurance | Payer | Back with the biller: follow-up in 15 days, the 48-hour recheck, any rejection |
+
+When the client has no active Posting person, a posting entry still closes the claim for AR (the form says
+to ask the team lead to set one). When it has no active Submission person, the claim stays on the biller's
+list with a 15-day follow-up. A claim taken back to a biller while a desk still had it keeps the biller's
+own SAAG when the desk finishes.
+
 Each hand-off has 24 working hours (a TAT tag and bar; red once past). The department
 has four choices: **Completed** (with proof), **Pending** (still theirs; the comment
 shows on the row and the clock keeps running), **Need assistance from AR** (back on
