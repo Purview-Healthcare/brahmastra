@@ -190,7 +190,7 @@ greyed out in the list and stays out of the PDF.
 
 | Page | From |
 |---|---|
-| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service in Third Eye's seven groups: 0-30 ... 366+) |
+| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service in seven groups: 0-30 ... 181-360 and 360 plus) |
 | AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet* |
 | Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof) |
 | Client assistance | requests sent to the client, with their reason and whether they were answered |

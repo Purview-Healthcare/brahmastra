@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.92.0";
+const VERSION = "2.93.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -2431,7 +2431,8 @@ async function snapshotClients(env) {
 /* The client report's month against month needs the inventory as it stood at each period end: kept here as cells (location,
    age group, payer, status, PMS status, action: claims and balance). The last write of the day wins. Days older than 45 are
    pruned except month ends and Sundays (week ends). */
-const CR_BUCKETS = [[30, "0-30"], [60, "31-60"], [90, "61-90"], [120, "91-120"], [180, "121-180"], [365, "181-365"], [Infinity, "366+"]];
+// the age groups Purview uses: one top group, 360 plus (the AR production file's groups too)
+const CR_BUCKETS = [[30, "0-30"], [60, "31-60"], [90, "61-90"], [120, "91-120"], [180, "121-180"], [360, "181-360"], [Infinity, "360+"]];
 const crBucket = (age) => (age == null || !isFinite(age) ? "" : CR_BUCKETS.find(([hi]) => age <= hi)[1]);
 function crAge(dos, ageDays, dayISO) {
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(dos || ""));

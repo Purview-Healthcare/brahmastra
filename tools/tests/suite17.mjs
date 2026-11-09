@@ -50,7 +50,7 @@ S("The inventory at the period end: live, a kept snapshot, or rebuilt");
 r = await TI("creport.get", { ...OCT, from: "2026-11-01", to: "2026-11-30", prev_from: "2026-10-01", prev_to: "2026-10-31", period_key: "month:2026-11" });
 ok("this month's inventory is live: every workable claim", r.data.inventory.source === "live" && r.data.inventory.rows.length === workable.length, { src: r.data.inventory.source, n: r.data.inventory.rows.length, want: workable.length });
 const bal = workable.reduce((a, c) => a + (Number(c.balance) || 0), 0);
-ok("live rows carry the age group from the date of service", r.data.inventory.rows.every((x) => ["0-30", "31-60", "61-90", "91-120", "121-180", "181-365", "366+", ""].includes(x.bk)));
+ok("live rows carry the age group from the date of service", r.data.inventory.rows.every((x) => ["0-30", "31-60", "61-90", "91-120", "121-180", "181-360", "360+", ""].includes(x.bk)));
 const today = r.today;
 let snap = (await rows("SELECT * FROM inv_snapshots WHERE client_id = ? AND day = ?", sunrise.id, today))[0];
 ok("opening it keeps today's snapshot (cells by location, age, payer, status, action)", !!snap, today);
