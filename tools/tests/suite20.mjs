@@ -137,6 +137,15 @@ L = await TI("escalations.list", { client_id: sun.id, status: "open" });
 ok("past the expected date it turns red again and the lead can give a new date", L.rows.find((x) => x.sr === 1).past_expected && L.rows.find((x) => x.sr === 1).can_reason, L.rows);
 r = await T(() => SM("escalations.save", { ...sr1, id: sr1.id, ...close }));
 ok("the SME closes it with error Y/N, root cause, corrective and preventive action and the close date", r.ok, r);
+// location, channels used, review date and rework completed (the review result is the Error Y/N answer; the month comes from the received date)
+{ const sunLoc = ((await A("clients.list")).clients.find((c) => c.id === sun.id).locations || [])[0], lakeLoc = ((await A("clients.list")).clients.find((c) => c.id === lake.id).locations || [])[0];
+  const sr2 = (await TI("escalations.list", { client_id: sun.id, status: "all" })).rows.find((x) => x.sr === 2);
+  const more = { ...base, dept: "Payment Posting", client_id: sun.id, id: sr2.id, location_id: sunLoc && sunLoc.id, channels: ["Call", "Email", "Fax"], review_on: "2026-11-05", rework: "Yes", is_error: "N" };
+  let rr = await T(() => TI("escalations.save", { ...more, location_id: lakeLoc && lakeLoc.id })); ok("the location must be one of the client's", !rr.ok && /location/i.test(rr.e), rr);
+  rr = await T(() => TI("escalations.save", { ...more, review_on: "2026-11-01" })); ok("the review date cannot be before the received date", !rr.ok && /review date/i.test(rr.e), rr);
+  rr = await T(() => TI("escalations.save", more)); ok("location, channels, review date and rework are saved", rr.ok, rr);
+  const x = (await TI("escalations.list", { client_id: sun.id, status: "all" })).rows.find((y) => y.sr === 2);
+  ok("...and listed: Email, Call (no Fax), the location, Nov, No error, rework Yes", x && x.channels === "Email, Call" && x.location_name === (sunLoc && sunLoc.name) && x.month === "Nov" && x.review_result === "No error" && x.review_on === "2026-11-05" && x.rework === "Yes", x); }
 L = await TI("escalations.list", { client_id: sun.id, status: "resolved" });
 ok("closed, with the close date and hours", L.rows.length === 1 && L.rows[0].close_on === "2026-11-05" && L.rows[0].status_label === "Closed" && L.rows[0].hours >= 29, L.rows);
 await sleep(800);
@@ -144,6 +153,8 @@ S("The client's OneDrive file");
 const f = folder(sun.name), file = f.f && child(f.f.id, "Escalation Tracker - " + sun.name + ".xlsx");
 ok("one workbook in the client's folder: Escalation Tracker - <Client>.xlsx", !!file, [...OD.items.values()].map((x) => pathOf(x.id)));
 const rows = file ? OD.rows.get(file.id) : [];
+ok("the six new columns are at the end of the file", rows[0] && rows[0].slice(24).join("|") === "Location|Month|Channels Used (Email/Teams/Call)|Review Date (mm/dd/yy)|Review Result|Rework Completed (Yes/No)", rows[0] && rows[0].slice(24));
+ok("SR1: Nov and Error; SR2: its location, Email, Call, the review date as an Excel date, No error, Yes", rows[1] && rows[1][25] === "Nov" && rows[1][28] === "Error" && rows[2] && rows[2][24] && rows[2][26] === "Email, Call" && rows[2][27] === 46331 && rows[2][28] === "No error" && rows[2][29] === "Yes", rows.slice(1).map((x) => x.slice(24)));
 ok("header is the supervisors' format", rows[0] && rows[0].slice(0, 16).join("|") === "SR No|Department|Client Name|Received (mm/dd/yy)|Raised by|Reported to Purview|Responding person Purview|Email Subject|Error description|Error (Y/N)|Comment|Root Cause|Corrective Action|Preventive Action|Status (Open/Closed)|Close date (mm/dd/yy)", rows[0]);
 ok("one row per escalation, the same row updated, not added again", rows.length === 3 && rows[1][0] === "SR1" && rows[2][0] === "SR2", rows.map((x) => x[0]));
 ok("SR1's row: received and close dates as Excel dates, Y, root cause, corrective, preventive, Closed", rows[1][2] === sun.name && rows[1][3] === 46330 && rows[1][9] === "Y" && /missing/.test(rows[1][11]) && /added/.test(rows[1][12]) && /Monday/.test(rows[1][13]) && rows[1][14] === "Closed" && rows[1][15] === 46331 && /charge template/.test(rows[1][17]), rows[1]);

@@ -163,7 +163,8 @@ ok("the month's SLA copy (what Drishti counts) has the external ones only", sr.l
 const cf = child(child("root", "Brahmastra Clients") ? child("root", "Brahmastra Clients").id : "", sun.name);
 const main = cf && child(cf.id, "Escalation Tracker - " + sun.name + ".xlsx");
 const mr = main ? OD.rows.get(main.id) : [];
-ok("the client's tracker file has all four, with the new columns at the end", mr.length === 5 && mr[0].slice(-3).join("|") === "Escalation type|Error by|DOW of error (mm/dd/yy)", mr[0] && mr[0].slice(-3));
+ok("the client's tracker file has all four, with the type and error columns after the first ones, then location to rework", mr.length === 5 && mr[0].slice(21, 24).join("|") === "Escalation type|Error by|DOW of error (mm/dd/yy)"
+  && mr[0].slice(-6).join("|") === "Location|Month|Channels Used (Email/Teams/Call)|Review Date (mm/dd/yy)|Review Result|Rework Completed (Yes/No)", mr[0] && mr[0].slice(21));
 const m1 = mr.find((x) => x[0] === "SR1"), m2 = mr.find((x) => x[0] === "SR2");
 ok("SR1: External, made by Arun Agent, the DOW as an Excel date; SR2: Internal", m1 && m1[21] === "External" && m1[22] === "Arun Agent" && typeof m1[23] === "number" && m2 && m2[21] === "Internal", [m1 && m1.slice(-3), m2 && m2.slice(-3)]);
 ok("the first columns stay where Drishti reads them", mr[0].slice(0, 4).join("|") === "SR No|Department|Client Name|Received (mm/dd/yy)");

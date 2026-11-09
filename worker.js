@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.89.0";
+const VERSION = "2.90.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -196,7 +196,8 @@ const EXTRA_COLUMNS = {
   // a comment, corrective and preventive action (with the root cause in rca) and the close date.
   escalations: [["reported_to", "TEXT NOT NULL DEFAULT ''"], ["email_subject", "TEXT NOT NULL DEFAULT ''"], ["is_error", "TEXT NOT NULL DEFAULT ''"], ["comment", "TEXT NOT NULL DEFAULT ''"],
     ["corrective", "TEXT NOT NULL DEFAULT ''"], ["preventive", "TEXT NOT NULL DEFAULT ''"], ["close_on", "TEXT NOT NULL DEFAULT ''"],
-    ["kind", "TEXT NOT NULL DEFAULT 'external'"], ["error_by_id", "TEXT"], ["error_by_name", "TEXT NOT NULL DEFAULT ''"], ["error_dow", "TEXT NOT NULL DEFAULT ''"]],
+    ["kind", "TEXT NOT NULL DEFAULT 'external'"], ["error_by_id", "TEXT"], ["error_by_name", "TEXT NOT NULL DEFAULT ''"], ["error_dow", "TEXT NOT NULL DEFAULT ''"],
+    ["location_id", "TEXT"], ["location_name", "TEXT NOT NULL DEFAULT ''"], ["channels", "TEXT NOT NULL DEFAULT ''"], ["review_on", "TEXT NOT NULL DEFAULT ''"], ["rework", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
     ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -509,8 +510,13 @@ async function recordWorkbookStatus(env, targetId, status) {
    The first four columns (SR No, Department, Description, Date) are the ones Drishti counts for the Escalations KPI. */
 const ESC_HEADER = ["SR No", "Department", "Client Name", "Received (mm/dd/yy)", "Raised by", "Reported to Purview", "Responding person Purview", "Email Subject",
   "Error description", "Error (Y/N)", "Comment", "Root Cause", "Corrective Action", "Preventive Action", "Status (Open/Closed)", "Close date (mm/dd/yy)",
-  "Working hours to close", "Reason still open (after 24 h)", "Expected close date", "Reason given by", "Logged by", "Escalation type", "Error by", "DOW of error (mm/dd/yy)"];
-const ESC_DATE_COLS = new Set([3, 15, 18, 23]);
+  "Working hours to close", "Reason still open (after 24 h)", "Expected close date", "Reason given by", "Logged by", "Escalation type", "Error by", "DOW of error (mm/dd/yy)",
+  "Location", "Month", "Channels Used (Email/Teams/Call)", "Review Date (mm/dd/yy)", "Review Result", "Rework Completed (Yes/No)"];
+const ESC_DATE_COLS = new Set([3, 15, 18, 23, 27]);
+const ESC_CHANNELS = ["Email", "Teams", "Call"];
+const ESC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// the review result is the Error (Y/N) answer: Y is an error on our side, N is not
+const escReviewResult = (e) => (e.is_error === "Y" ? "Error" : e.is_error === "N" ? "No error" : "");
 const ESC_TEMPLATE_B64 = "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";
 const ESC_DEPTS = ["Account Receivable", "Submission", "Payment Posting", "Benefit Verification", "PCC", "Credentialing", "Other"];
 const ESC_STATUS = { open: "Open", progress: "Open", resolved: "Closed" };
@@ -532,7 +538,8 @@ const escHours = (e) => {
 const escRow = (e, client) => ["SR" + e.sr, e.dept, client || e.client_name || "", excelSerial(e.day), e.raised_who, e.reported_to, e.owner_name, e.email_subject,
   e.description, e.is_error, e.comment, e.rca, e.corrective, e.preventive, ESC_STATUS[e.status] || e.status, excelSerial(e.close_on),
   escHours(e) == null ? "" : escHours(e), e.delay_reason, excelSerial(e.expected_on), e.delay_by_name, e.created_by_name,
-  ESC_KINDS[escKind(e)], e.is_error === "Y" ? e.error_by_name || "" : "", e.is_error === "Y" ? excelSerial(e.error_dow) : ""];
+  ESC_KINDS[escKind(e)], e.is_error === "Y" ? e.error_by_name || "" : "", e.is_error === "Y" ? excelSerial(e.error_dow) : "",
+  e.location_name || "", /^\d{4}-\d{2}/.test(e.day || "") ? ESC_MONTHS[+e.day.slice(5, 7) - 1] || "" : "", e.channels || "", excelSerial(e.review_on), escReviewResult(e), e.rework || ""];
 // the dates show as mm/dd/yy in Excel
 const escFormats = (n) => [ESC_HEADER.map(() => "General"), ...Array.from({ length: n }, () => ESC_HEADER.map((h, i) => (ESC_DATE_COLS.has(i) ? "mm/dd/yy" : "General")))];
 async function escalationFile(env, tok, clientId) {
@@ -6790,7 +6797,8 @@ const OPS = {
     const isTL = !isSME(user);
     const out = rows.map((e) => {
       const open = e.status !== "resolved", past = open && escPast(e.created_at, now);
-      return { ...e, kind: escKind(e), kind_label: ESC_KINDS[escKind(e)], status_label: ESC_STATUS[e.status] || e.status, hours: escHours(e), open_hours: open ? Math.floor(workingHoursBetween(e.created_at, now)) : null, past_24: past,
+      return { ...e, kind: escKind(e), kind_label: ESC_KINDS[escKind(e)], status_label: ESC_STATUS[e.status] || e.status, hours: escHours(e), review_result: escReviewResult(e),
+        month: /^\d{4}-\d{2}/.test(e.day || "") ? ESC_MONTHS[+e.day.slice(5, 7) - 1] || "" : "", open_hours: open ? Math.floor(workingHoursBetween(e.created_at, now)) : null, past_24: past,
         needs_reason: past && !e.delay_reason, past_expected: open && !!e.expected_on && e.expected_on < today,
         can_edit: canEditClient(user, e.client_id), can_reason: isTL && canEditClient(user, e.client_id) && past };
     });
@@ -6815,7 +6823,7 @@ const OPS = {
     }
     const people = (await all(env, "SELECT id, name, designation, source FROM users WHERE active = 1 AND role IN ('supervisor','admin') ORDER BY name"))
       .map((u) => ({ id: u.id, name: u.name, tag: isSME(u) ? "SME" : /manager|vice|director|head/i.test(u.designation || "") ? (u.designation || "") : "TL" }));
-    return { rows: shown, stats, file, sla_file: slaFile, sla, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, kinds: ESC_KINDS, can_reason: isTL };
+    return { rows: shown, stats, file, sla_file: slaFile, sla, onedrive: !env.DEMO && !!env.MS_CLIENT_SECRET, people, depts: ESC_DEPTS, kinds: ESC_KINDS, channels: ESC_CHANNELS, can_reason: isTL };
   },
   "escalations.save": async ({ env, user, payload, ctx }) => {
     const id = str(payload.id, 60), now = Date.now();
@@ -6865,9 +6873,21 @@ const OPS = {
     let owner = null;
     if (payload.owner_id) owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60));
     if (!owner) throw bad("Pick the responding person at Purview.");
+    // location (one of this client's), the channels it came through, the review date and whether the rework is done
+    const locId = str(payload.location_id, 60);
+    const loc = locId ? await one(env, "SELECT id, name FROM locations WHERE id = ? AND client_id = ?", locId, c.id) : null;
+    if (locId && !loc) throw bad("Pick one of this client's locations.");
+    const chosen = (Array.isArray(payload.channels) ? payload.channels : String(payload.channels || "").split(/[,;]+/)).map((x) => String(x || "").trim().toLowerCase());
+    const channels = ESC_CHANNELS.filter((k) => chosen.includes(k.toLowerCase())).join(", ");
+    const reviewOn = isoDate(payload.review_on) || "";
+    if (String(payload.review_on || "").trim() && !reviewOn) throw bad("The review date is not a date.");
+    if (reviewOn && !realDay(reviewOn)) throw bad("The review date is not a real date.");
+    if (reviewOn && (reviewOn < day || reviewOn > today)) throw bad("The review date must be between the received date and today.");
+    const rework = ["Yes", "No"].includes(payload.rework) ? payload.rework : "";
     const vals = { day, dept, raised_who: raisedBy, reported_to: reportedTo, email_subject: str(payload.email_subject, 300).trim(), owner_id: owner.id, owner_name: owner.name, description,
       is_error: isError, comment: str(payload.comment, 2000).trim(), status, rca, corrective, preventive, close_on: closeOn, resolved_at: status === "resolved" ? ((ex && ex.resolved_at) || now) : null,
-      kind, error_by_id: errBy ? errBy.id : null, error_by_name: errBy ? errBy.name : "", error_dow: dow };
+      kind, error_by_id: errBy ? errBy.id : null, error_by_name: errBy ? errBy.name : "", error_dow: dow,
+      location_id: loc ? loc.id : null, location_name: loc ? loc.name : "", channels, review_on: reviewOn, rework };
     const cols = Object.keys(vals);
     let sr;
     if (ex) {

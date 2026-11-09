@@ -528,7 +528,10 @@ Client escalations, one register per client. **SMEs and above** log and update t
 supervisors' format: Department, Client Name, Received date, Raised by, Reported to Purview, Responding person Purview,
 Email Subject, Error description, Error (Y/N), Comment, Root Cause, Corrective Action, Preventive Action, Status
 (Open / Closed) and Close date. The SR No is given by itself per client (SR1, SR2...). To close one: Error (Y/N), root
-cause, corrective and preventive action, and a close date between the received date and today.
+cause, corrective and preventive action, and a close date between the received date and today. Also kept (optional):
+the client's Location, the Channels used (Email, Teams, Call), the Review date (between the received date and today) and
+Rework completed (Yes / No). Reviewed by is the Reported to / Responding person; the Review result is the Error (Y/N)
+answer (Error / No error); the Month comes from the received date.
 
 **Open over 24 hours** (from when it was logged): the row turns red with *reason needed*, the bell asks the team lead,
 and the hourly job sends the client's team leads one notice and email. The **team lead** (not the SME) gives the reason
@@ -536,8 +539,9 @@ and the expected close date; if that date passes with the escalation still open,
 
 **OneDrive:** one workbook per client, `Brahmastra Clients › <Client> › Escalation Tracker - <Client>.xlsx`, rewritten
 from the register on every change (so an update or a resolution changes the same row). The columns follow the
-supervisors' format above (dates as mm/dd/yy), then hours to close, the 24-hour reason and expected date, and who logged
-it. Drishti counts the rows by the Department column for the Escalations KPI. Needs `MS_CLIENT_SECRET` on the
+supervisors' format above (dates as mm/dd/yy), then hours to close, the 24-hour reason and expected date, who logged
+it, the type, error by and DOW, and at the end Location, Month, Channels Used, Review Date, Review Result and Rework
+Completed (the CSV has the same columns). Drishti counts the rows by the Department column for the Escalations KPI. Needs `MS_CLIENT_SECRET` on the
 server like the Production files; until then entries are kept in Brahmastra and the whole register goes to the file
 with the first change after it is set.
 
