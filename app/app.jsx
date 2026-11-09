@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.110.0";
+const APP_VERSION = "2.111.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -156,8 +156,10 @@ function fmtDate(iso) { if (!iso) return "–"; const [y, m, d] = String(iso).sp
 function fmtWhen(ms) { if (!ms) return "–"; const d = new Date(Number(ms)); return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
 function dayBounds(iso) { const [y, m, d] = iso.split("-").map(Number); return [new Date(y, m - 1, d, 0, 0, 0, 0).getTime(), new Date(y, m - 1, d, 23, 59, 59, 999).getTime()]; }
 function addDaysISO(iso, n) { const [y, m, d] = iso.split("-").map(Number); return isoOf(new Date(y, m - 1, d + n)); }
-/* A follow-up on a Saturday or Sunday moves to the Monday (the server also skips Shastra holidays). */
-function weekdayOnOrAfter(iso) { let d = iso; for (let i = 0; i < 3; i++) { const [y, m, dd] = d.split("-").map(Number); const w = new Date(y, m - 1, dd).getDay(); if (w !== 0 && w !== 6) break; d = addDaysISO(d, 1); } return d; }
+/* A follow-up on a Saturday, Sunday or Shastra holiday moves to the next working day, as the server does when it saves.
+   The coming holidays arrive with auth.me. */
+let APP_HOLIDAYS = new Set();
+function weekdayOnOrAfter(iso) { let d = iso; for (let i = 0; i < 15; i++) { const [y, m, dd] = d.split("-").map(Number); const w = new Date(y, m - 1, dd).getDay(); if (w !== 0 && w !== 6 && !APP_HOLIDAYS.has(d)) break; d = addDaysISO(d, 1); } return d; }
 function daysBetween(fromISO, toISO) { const [y1, m1, d1] = fromISO.split("-").map(Number); const [y2, m2, d2] = toISO.split("-").map(Number); return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000); }
 async function sha256Hex(s) { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s))); return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 function randomPassword() { const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"; const a = new Uint8Array(10); crypto.getRandomValues(a); return "pv-" + [...a].map((x) => chars[x % chars.length]).join(""); }
@@ -409,7 +411,7 @@ function turn90Of(c, today) {
   return age >= 77 && age <= 90 ? { age, left: 91 - age } : null;
 }
 const Turn90Badge = ({ c }) => { const t = turn90Of(c); return t ? <span className={"badge " + (t.left <= 7 ? "red" : "amber")} style={{ marginLeft: 4 }} title={"Turns 90 in " + t.left + (t.left === 1 ? " day" : " days") + ": it moves up the list so it is worked first"}>90 in {t.left}d</span> : null; };
-/* The AR follow-up that comes back once Submission submits a claim (15 days later), before or after its 48-hour recheck. */
+/* The AR follow-up that comes back once Submission submits a claim (15 days later), before or after its recheck. */
 const afterSubmission = (c) => !!c && c.state === "completed" && /^(submitted|submission_accepted)$/.test(c.handoff_status || "");
 function scoreClaim(c, today) {
   const age = c.age_days;
@@ -766,7 +768,7 @@ const ClassBadge = ({ cls }) => <span className={"badge " + (CLASS_TONE[cls] || 
 /* The shared posting / submission status: the same badge for the TL, the biller and the department. */
 const HANDOFF_META = { with_posting: ["purple", "In process · Payment Posting"], posted: ["green", "Payment posted"], posting_assist: ["red", "Posting needs assistance from AR"],
   posting_back: ["amber", "Posting needs assistance from AR"], posting_client: ["amber", "Posting needs assistance from client"],
-  with_submission: ["blue", "In process · Submission"], submitted: ["green", "Submitted · recheck in 48 h"], submission_assist: ["red", "Submission needs assistance from AR"],
+  with_submission: ["blue", "In process · Submission"], submitted: ["green", "Submitted · recheck to come"], submission_assist: ["red", "Submission needs assistance from AR"],
   submission_back: ["amber", "Submission needs assistance from AR"], submission_client: ["amber", "Submission needs assistance from client"],
   submission_accepted: ["green", "Submission accepted · final check done"], submission_rejected: ["red", "Submission rejected"],
   with_rejection: ["red", "In process · Rejections"], rejection_assist: ["red", "Rejections needs assistance from AR"], rejection_back: ["amber", "Rejections needs assistance from AR"], rejection_client: ["amber", "Rejections needs assistance from client"] };
@@ -1335,6 +1337,9 @@ function deskOf(me, ho) {
   if (me.role === "supervisor" || dd.desk) return dd.desk;   // a Payment posting / Submission person or team lead
   if (!ho || !ho.depts || !ho.depts.length) return null;
   const d = new Set(ho.depts);
+  // the recheck after submitting is often done by the AR biller who sent the claim: rechecks alone do not make a desk
+  // (the server treats someone with no department as AR, so they keep My day and see the recheck under Posting & submission)
+  if ([...d].every((x) => x === "subcheck")) return null;
   if (d.has("posting") && !d.has("submission") && !d.has("subcheck")) return "posting";
   if (!d.has("posting")) return "submission";
   return "both";
@@ -1680,7 +1685,7 @@ function PatientModal({ id, ctx, me, onClose, onOpenClaim }) {
   const rows = q.data ? q.data.rows : [];
   const open = rows.filter((r) => ["open", "assigned", "in_progress", "completed"].includes(r.state));
   return (
-    <Modal title={q.data ? q.data.patient || "Patient" : "Patient"} sub={q.data ? `${q.data.account_no ? "Account " + q.data.account_no + " · " : ""}${fmtInt(open.length)} open claims · ${fmtMoney(sum(open, (r) => r.balance))} · one call can cover them all` : ""} onClose={onClose} wide>
+    <Modal title={q.data ? q.data.patient || "Patient" : "Patient"} sub={q.data ? `${q.data.account_no ? "Account " + q.data.account_no + " · " : ""}${plural(open.length, "open claim")} · ${fmtMoney(sum(open, (r) => r.balance))} · one call can cover them all` : ""} onClose={onClose} wide>
       <ErrorBox error={q.error} />
       {!q.data && !q.error && <Spinner />}
       {q.data && (
@@ -3563,11 +3568,11 @@ function HoldModal({ row, reasons, maxDays, onClose, onDone }) {
   );
 }
 function AttentionView(props) {
-  const counts = useRpc("attention.count", {}, []);
   const [tab, setTab] = useState(() => (props.params && props.params.tab) || "esc");
-  const c = counts.data || {};
-  // one client for every list here, and the TAT reminders on top: past 48 working hours, due soon, on hold (no separate Past TAT page)
+  // one client for every list here (the tab counts too), and the TAT reminders on top: past 48 working hours, due soon, on hold
   const [clientId, setClientId] = useState((props.params && props.params.client_id) || "");
+  const counts = useRpc("attention.count", { client_id: clientId || undefined }, [clientId]);
+  const c = counts.data || {};
   const [pick, setPick] = useState((props.params && ["late", "held"].includes(props.params.pick) && props.params.pick) || "");
   const [ver, setVer] = useState(0);
   const [hold, setHold] = useState(null);
@@ -3607,9 +3612,11 @@ function AttentionView(props) {
    ones past the TAT, stay first). kind is how the TAT reminders know the row: "flag" (a flagged claim) or "handoff". */
 const attnRows = (rows, kind, { clientId, pick, tat }) => {
   const st = (r) => ((tat && tat.of(kind, r.id)) || {}).state;
-  return rows.filter((r) => (!clientId || r.client_id === clientId) && (!pick || st(r) === pick)).map((r, i) => [r, i])
-    .sort((a, b) => ((st(a[0]) === "held") - (st(b[0]) === "held")) || a[1] - b[1]).map(([r]) => r);
+  return rows.filter((r) => (!clientId || r.client_id === clientId) && (!pick || st(r) === pick)).map((r, i) => [{ ...r, held: st(r) === "held" }, i])
+    .sort((a, b) => (a[0].held - b[0].held) || a[1] - b[1]).map(([r]) => r);
 };
+/* What an empty list says when a card on top is picked. */
+const attnEmpty = (pick, what, normal) => (pick === "late" ? "Nothing " + what + " is past the 48 working hours." : pick === "held" ? "Nothing " + what + " is on hold." : normal);
 const attnHold = (kind, r, { tat, onHold, onTat }) => { const x = tat && tat.of(kind, r.id); if (!x) return null;
   return <HoldCell hold={x.state === "held" ? { ...x.hold, active: true } : x.hold_past ? { ...x.hold_past, active: false } : null} late={x.state === "late"} canHold={x.can_hold} onChanged={onTat} onHold={() => onHold(x)} />; };
 /* Repeat denials: the same claim denied again for the same reason (still being worked), and the payer and reason on 3 or more
@@ -3926,14 +3933,14 @@ function FromDesksView({ ctx, me, refreshAttention, clientId, pick, tat, onHold,
   const rows = attnRows(q.data ? q.data.rows : [], "handoff", { clientId, pick, tat });
   return (
     <>
-      {rows.some((r) => r.late) && <div className="alert err"><b>{rows.filter((r) => r.late).length} waiting more than 48 working hours</b> since the department sent them back (at the top). Make sure the biller picks them up.</div>}
+      {rows.some((r) => r.late && !r.held) && <div className="alert err"><b>{rows.filter((r) => r.late && !r.held).length} waiting more than 48 working hours</b> since the department sent them back (at the top). Make sure the biller picks them up.</div>}
       <div className="card tight">
         <ErrorBox error={q.error} />
         {q.loading && !q.data && <Spinner />}
         <div className="table-wrap"><table className="t"><thead><tr><th>Sent back</th><th>Department</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Why AR is needed</th><th>Biller</th><th></th></tr></thead>
           <tbody>{rows.map((r) => (
-            <tr key={r.id} className={r.late ? "tat-missed" : ""}>
-              <td className="small">{r.late ? <span className="badge red">{fmtWhen(r.done_at)}</span> : fmtWhen(r.done_at)}<div className="tiny muted">by {r.done_by_name || "the department"}</div>{attnHold("handoff", r, { tat, onHold, onTat })}</td>
+            <tr key={r.id} className={r.late && !r.held ? "tat-missed" : ""}>
+              <td className="small">{r.late && !r.held ? <span className="badge red">{fmtWhen(r.done_at)}</span> : fmtWhen(r.done_at)}<div className="tiny muted">by {r.done_by_name || "the department"}</div>{attnHold("handoff", r, { tat, onHold, onTat })}</td>
               <td><span className={"badge " + (r.dept === "posting" ? "purple" : r.dept === "rejection" ? "red" : "blue")}>{r.dept_label}</span>{r.returns >= 2 && <div><span className={"badge " + (r.returns >= 3 ? "red" : "amber")} style={{ marginTop: 3 }}>Returned {r.returns}×</span></div>}</td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td>
               <td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td>
@@ -3941,7 +3948,7 @@ function FromDesksView({ ctx, me, refreshAttention, clientId, pick, tat, onHold,
               <td className="small">{r.biller_name || <span className="muted">not on a desk</span>}</td>
               <td className="r" style={{ whiteSpace: "nowrap" }}>{r.reviewed && <span className="badge green" title={"Reviewed by " + r.reviewed_by_name}>Reviewed</span>} <button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.dept_label + " sent it back: " + (r.reason || "need assistance from AR"), review_context: r.note })}>Review</button></td>
             </tr>))}
-            {q.data && !rows.length && <tr><td colSpan={8}><Empty>Nothing sent back by Posting, Submission or Rejections is waiting on AR.</Empty></td></tr>}</tbody></table></div>
+            {q.data && !rows.length && <tr><td colSpan={8}><Empty>{attnEmpty(pick, "sent back", "Nothing sent back by Posting, Submission or Rejections is waiting on AR.")}</Empty></td></tr>}</tbody></table></div>
       </div>
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => { setOpen(null); q.reload(); }} onChanged={() => q.reload()} />}
       {review && <ReviewModal row={review} people={q.data ? q.data.people : []} onClose={() => setReview(null)} onDone={() => { setReview(null); q.reload(); refreshAttention && refreshAttention(); }} />}
@@ -3955,7 +3962,7 @@ function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, o
   const [sent, setSent] = useState(null);
   const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
-  const all = attnRows(q.data ? q.data.rows : [], "handoff", { clientId, pick, tat }), lateN = all.filter((r) => r.late).length;
+  const all = attnRows(q.data ? q.data.rows : [], "handoff", { clientId, pick, tat }), lateN = all.filter((r) => r.late && !r.held).length;
   const rows = all.filter((r) => (show === "to_send" ? !r.client_sent_at : r.client_sent_at));
   const save = async () => {
     setBusy(true);
@@ -3975,8 +3982,8 @@ function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, o
         {q.loading && !q.data && <Spinner />}
         <div className="table-wrap"><table className="t"><thead><tr><th>Asked</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Department</th><th>What is needed from the client</th><th>{show === "sent" ? "Sent" : "Biller"}</th><th></th></tr></thead>
           <tbody>{rows.map((r) => (
-            <tr key={r.id} className={r.late ? "tat-missed" : ""}>
-              <td className="small">{r.late ? <span className="badge red">not sent · {fmtWhen(r.asked_at)}</span> : fmtWhen(r.asked_at)}<div className="tiny muted">by {r.asked_by || "the department"}</div>{attnHold("handoff", r, { tat, onHold, onTat })}</td>
+            <tr key={r.id} className={r.late && !r.held ? "tat-missed" : ""}>
+              <td className="small">{r.late && !r.held ? <span className="badge red">not sent · {fmtWhen(r.asked_at)}</span> : fmtWhen(r.asked_at)}<div className="tiny muted">by {r.asked_by || "the department"}</div>{attnHold("handoff", r, { tat, onHold, onTat })}</td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td>
               <td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td>
               <td><span className={"badge " + (r.dept === "posting" ? "purple" : r.dept === "rejection" ? "red" : "blue")}>{r.dept_label}</span></td>
@@ -3984,7 +3991,7 @@ function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, o
               <td className="small">{show === "sent" ? <>{r.client_sent_by_name}<div className="tiny muted">{fmtWhen(r.client_sent_at)} · {r.client_sent_how}</div>{r.chase ? <span className="badge amber">chase the client</span> : <div className="tiny muted">chase {fmtWhen(r.chase_at)}</div>}</> : r.biller_name || "–"}</td>
               <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button>{!r.client_sent_at && <> <button className="btn sm primary" onClick={() => setSent({ row: r, how: "Email", note: "" })}>Mark sent to client</button></>}</td>
             </tr>))}
-            {q.data && !rows.length && <tr><td colSpan={8}><Empty>{show === "to_send" ? "Nothing to send. Requests arrive here when Posting, Submission or Rejections mark a claim Need client assistance." : "Nothing waiting on a client."}</Empty></td></tr>}</tbody></table></div>
+            {q.data && !rows.length && <tr><td colSpan={8}><Empty>{attnEmpty(pick, "here", show === "to_send" ? "Nothing to send. Requests arrive here when Posting, Submission or Rejections mark a claim Need client assistance." : "Nothing waiting on a client.")}</Empty></td></tr>}</tbody></table></div>
       </div>
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
       {sent && (
@@ -4054,7 +4061,7 @@ function EscalationsView({ ctx, me, refreshAttention, clientId, pick, tat, onHol
   const [answer, setAnswer] = useState(null);
   const [review, setReview] = useState(null);
   const [busy, setBusy] = useState(false);
-  const rows = attnRows(q.data ? q.data.rows : [], "flag", { clientId, pick, tat }), late = rows.filter((r) => r.overdue).length;
+  const rows = attnRows(q.data ? q.data.rows : [], "flag", { clientId, pick, tat }), late = rows.filter((r) => r.overdue && !r.held).length;
   const send = async () => {
     setBusy(true);
     try { const r = await rpc("attention.answer", { id: answer.row.id, comment: answer.text, send_back: answer.back }); toast(r.sent_back ? "Answered and back on " + (answer.row.assigned_name || "the biller") + "'s list today." : "Answered."); setAnswer(null); q.reload(); refreshAttention && refreshAttention(); }
@@ -4070,14 +4077,14 @@ function EscalationsView({ ctx, me, refreshAttention, clientId, pick, tat, onHol
         {q.loading && !q.data && <Spinner />}
         <div className="table-wrap"><table className="t"><thead><tr><th>Waiting</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Payer</th><th className="r">Balance</th><th>Biller</th><th>Last entry</th><th></th></tr></thead>
           <tbody>{rows.map((r) => (
-            <tr key={r.id} className={r.overdue ? "tat-missed" : ""}>
-              <td>{r.overdue ? <span className="badge red">TAT missed · {fmtWait(r.waiting_ms)}</span> : <span className={"badge " + (r.waiting_ms > (q.data.tat_hours - 8) * 3600000 ? "amber" : "gray")}>{fmtWait(r.waiting_ms)}</span>}<div className="tiny muted">since {fmtWhen(r.escalated_at)}</div>{attnHold("flag", r, { tat, onHold, onTat })}</td>
+            <tr key={r.id} className={r.overdue && !r.held ? "tat-missed" : ""}>
+              <td>{r.overdue && !r.held ? <span className="badge red">TAT missed · {fmtWait(r.waiting_ms)}</span> : <span className={"badge " + (r.waiting_ms > (q.data.tat_hours - 8) * 3600000 ? "amber" : "gray")}>{fmtWait(r.waiting_ms)}</span>}<div className="tiny muted">since {fmtWhen(r.escalated_at)}</div>{attnHold("flag", r, { tat, onHold, onTat })}</td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td className="small">{r.escalated_by_name || r.assigned_name || "–"}{r.flag_label && <div className="tiny amber-ink">{r.flag_label}</div>}</td>
               <td className="small" style={{ maxWidth: 340 }}>{r.last_status_code ? <b>{r.last_status_code}{r.last_sub_status ? " › " + r.last_sub_status : ""}</b> : null}<div className="tiny" style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{r.last_note}</div></td>
               <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.flag_label ? r.flag_label + " (Need assistance from AR)" : "Escalated by " + (r.sent_by_name || "the biller") + (r.last_status_code ? " (" + r.last_status_code + (r.last_sub_status ? " › " + r.last_sub_status : "") + ")" : ""), review_context: r.last_note })}>Review</button></td>
             </tr>))}
-            {q.data && !rows.length && <tr><td colSpan={9}><Empty>Nothing escalated. Billers flag a claim for their team lead from the work form.</Empty></td></tr>}</tbody></table></div>
+            {q.data && !rows.length && <tr><td colSpan={9}><Empty>{attnEmpty(pick, "flagged", "Nothing flagged. Billers flag a claim for their team lead from the work form.")}</Empty></td></tr>}</tbody></table></div>
       </div>
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
       {review && <ReviewModal row={review} people={q.data ? q.data.people : []} onClose={() => setReview(null)} onDone={() => { setReview(null); q.reload(); refreshAttention && refreshAttention(); }} />}
@@ -4284,7 +4291,7 @@ function HistEvent({ it, onEdit, onFile }) {
     case "handoff_assigned": dot = D("#EEE7FB", "👤"); title = (DEPT_NAME[it.data && it.data.dept] || "Hand-off") + " assigned to " + (it.text || "someone") + who; break;
     case "handoff_done": { const pr = (it.data && it.data.proof) || {}; const posting = it.data && it.data.dept === "posting";
       dot = D("#E3FBEF", "✓"); title = (posting ? "Payment posted" : it.data && it.data.dept === "subcheck" ? "Submission accepted by the payer" : it.data && it.data.dept === "rejection" ? "Corrected and resubmitted (Rejections)" : "Submitted") + who; body = <><div className="x">{pr.ref ? <>{posting ? "Check / EFT " : "Batch / claim ID "}<b>{pr.ref}</b></> : null}{pr.code ? (pr.ref ? " · " : "") + "Rejection: " + pr.code : ""}{pr.date ? (pr.ref || pr.code ? " · " : "") + (it.data && it.data.dept === "subcheck" ? "accepted " : "") + fmtDate(pr.date) : ""}{pr.amount != null ? " · " + fmtMoney(pr.amount, 2) : ""}{pr.mode ? " · " + pr.mode : ""}{it.data.note ? "\n" + it.data.note : ""}</div>{pr.files && pr.files.length ? <div className="m">📎 proof: {pr.files.join(", ")}</div> : null}<div className="m">{it.data.within_tat ? "within TAT" : "after the TAT"}</div></>; break; }
-    case "handoff_check": dot = D("#E0F7F4", "⏱"); title = "48-hour recheck set for " + (it.text || "someone") + who; body = it.data && it.data.available_at ? <div className="m">check from {fmtWhen(it.data.available_at)} · due {fmtWhen(it.data.due_at)}</div> : null; break;
+    case "handoff_check": dot = D("#E0F7F4", "⏱"); title = "Recheck set for " + (it.text || "someone") + who; body = it.data && it.data.available_at ? <div className="m">check from {fmtWhen(it.data.available_at)} · due {fmtWhen(it.data.due_at)}</div> : null; break;
     case "handoff_rejected": dot = D("#FDEAEA", "✗"); title = "Submission rejected" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.resent ? "sent to " + (it.data.to === "Rejections" ? "the Rejections person (first priority)" : "the Submission team") + " to correct and resubmit" : "back on the biller's list"}</div></>; break;
     case "handoff_back": dot = D("#FFF3D6", "↩"); title = (it.text || "The department") + " needs assistance from AR" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">on the biller's list today{it.data && it.data.within_tat === false ? " · after the TAT" : ""}{it.data && it.data.returns ? " · returned " + it.data.returns + "×" : ""}{it.data && it.data.bounced ? " · escalated to the team lead" : ""}</div></>; break;
     case "handoff_client_sent": dot = D("#E4EEFA", "✉"); title = "Sent to the client for " + (it.text || "the department") + who; body = <><div className="x"><b>{it.data && it.data.how}</b>{it.data && it.data.reason ? " · " + it.data.reason : ""}{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">chased in 3 working days if the client has not answered</div></>; break;
@@ -4391,7 +4398,7 @@ function ResponsibilityRow({ c, dept, ctx, onSaved, me, readOnly }) {
   const opts = people.map((u) => ({ id: u.id, label: u.name + (me && u.id === me.id ? " (me)" : ""), sub: [u.designation, u.department, suggested.includes(u) ? "suggested" : ""].filter(Boolean).join(" · ") }));
   const nameOf = (id) => (ctx.users.find((u) => u.id === id) || {}).name || (c.resp_names && (id === lead ? c.resp_names[lc] : bc ? c.resp_names[bc] : "")) || "someone";
   const modeLabel = (m) => (check && m === "biller" ? "The biller who sent it" : check && m === "person" ? "A person (supervisor, biller or me)" : MODE_LABEL[m]);
-  // in the scope of work: someone must be responsible (the 48-hour recheck may also be the biller who sent it)
+  // in the scope of work: someone must be responsible (the recheck after submitting may also be the biller who sent it)
   const scope = c.scope_of_work || [], needed = check ? scope.includes("submission") : scope.includes(dept);
   const modes = needed ? (check ? ["person", "biller"] : ["person"]) : ["person", "biller", "client", ""];
   const save = async () => { setBusy(true); try { await rpc("clients.saveResponsibility", { client_id: c.id, dept, ...d }); toast(DEPT_NAME[dept] + " responsibility saved."); setOpen(false); onSaved && onSaved(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
@@ -4532,7 +4539,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
   const [files, setFiles] = useState([]);
   const posting = h.dept === "posting", check = h.dept === "subcheck";
   const ok = outcome === "complete" ? p.date && (check || p.ref.trim()) && (h.dept !== "rejection" || p.code) : outcome === "resume" || outcome === "inprocess" ? true : outcome === "pending" ? note.trim().length >= 8 : outcome === "other" ? reason.trim().length >= 3 && note.trim().length >= 8 : reason && note.trim().length >= 8;
-  const done = { complete: check ? "Completed: accepted by the payer, final check done." : posting ? "Completed: payment posted." : "Completed: submitted, back to the biller with a 15-day follow-up; recheck in 48 working hours.", rejected: "Rejected: sent to the Rejections person (or the Submission team) to correct and resubmit.",
+  const done = { complete: check ? "Completed: accepted by the payer, final check done." : posting ? "Completed: payment posted." : "Completed: submitted, back to the biller with a 15-day follow-up; recheck in " + (h.recheck_hours || 48) + " working hours.", rejected: "Rejected: sent to the Rejections person (or the Submission team) to correct and resubmit.",
     assistance: "Sent to AR for assistance.", back: "Sent to AR for assistance: on the biller's list today with your comment.", client: "Sent to the team lead to ask the client.", resume: "Back in your open list, same due time.", pending: "Pending: comment saved.", inprocess: "In process: saved.", other: "Other: saved with your reason." };
   const go = async () => {
     setBusy(true); setErr(null);
@@ -4631,8 +4638,9 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const [clientId, setClientId] = useState((params && params.client_id) || "");
   const [dr, setDr] = useState(() => ({ ...newRange("all"), key: "all" }));
   const span = rangeSpan(dr);
-  const q = useRpc("handoffs.list", { dept: dept || undefined, view, client_id: clientId || undefined, from_ms: span ? dayBounds(span[0])[0] : undefined, to_ms: span ? dayBounds(span[1])[1] : undefined, hide_client: hideClient || undefined },
-    [dept, view, clientId, span && span[0], span && span[1], hideClient]);
+  // a picked card asks the server for exactly what it counts (Past TAT includes the late ones waiting on the client)
+  const q = useRpc("handoffs.list", { dept: dept || undefined, view: pick || view, client_id: clientId || undefined, from_ms: span ? dayBounds(span[0])[0] : undefined, to_ms: span ? dayBounds(span[1])[1] : undefined, hide_client: hideClient || undefined },
+    [dept, view, pick, clientId, span && span[0], span && span[1], hideClient]);
   // A new hand-off (the desk count changed): the list refreshes by itself.
   const deskN = handoffs ? handoffs.n : null, firstN = useRef(true);
   useEffect(() => { if (firstN.current) { firstN.current = false; return; } q.reload(); }, [deskN]);
@@ -4644,7 +4652,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const st = (q.data && q.data.stats) || {};
   const sort = useTableSort("due_at", "asc");
   // past TAT first (the earliest due), the ones on hold after the rest
-  const shown = sort.sortRows(rows, { due_at: (h) => (["pending", "assigned"].includes(h.status) ? (h.hold && h.hold.active ? 9e15 + h.due_at : h.due_at) : h.done_at) });
+  const shown = sort.sortRows(rows, { due_at: (h) => (["pending", "assigned", "client"].includes(h.status) ? (h.hold && h.hold.active ? 9e15 + h.due_at : h.due_at) : h.done_at) });
   const pickCard = (k) => { setView("open"); setPick(pick === k ? "" : k); };
   const changed = () => { q.reload(); refreshHandoffs && refreshHandoffs(); };
   const assign = async (h, uid) => { if (!uid) return; setBusy(true); try { await rpc("handoffs.assign", { id: h.id, user_id: uid }); toast("Assigned."); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
@@ -4990,7 +4998,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
         <div className="row" style={{ gap: 18, alignItems: "flex-end", flexWrap: "wrap" }}>
           {!closed && !toDesk && <Field label="Follow-up date" hint={autoFollow ? `Auto ${fmtDate(autoFollow)} from the effective matrix${EFFECTIVE_DAYS[saag.effective] ? ` (${EFFECTIVE_DAYS[saag.effective]} days)` : ""}. Change it if the payer gave a date.` : "set once you pick the action"}><input className="input" type="date" style={{ width: 190 }} value={fu} min={today} onChange={(e) => setFollowUp(e.target.value)} /></Field>}
           {saag.effective === "AR Closed-Pending Posting" ? <div className="alert info"><b>AR closed, posting pending.</b> {claim.desk_posting ? "It goes to Posting and leaves your list; Posting closes it when the payment is posted (then only QA is left)." : "This client's profile has no active Posting person yet: the claim closes for AR, ask your team lead to set one so the payment gets posted."}</div>
-            : saag.effective === "Pending-Submission" ? <div className="alert info"><b>Pending submission, not closed.</b> {subDesk ? `It goes to ${subDesk}; once it is submitted it comes back to AR for its follow-up (15 days), with the 48-hour recheck and any rejection.` : "This client's profile has no active Submission person yet: it stays on your list with a follow-up in 15 days."}</div>
+            : saag.effective === "Pending-Submission" ? <div className="alert info"><b>Pending submission, not closed.</b> {subDesk ? `It goes to ${subDesk}; once it is submitted it comes back to AR for its follow-up (15 days), with the recheck ${claim.recheck_hours || 48} working hours after submitting and any rejection.` : "This client's profile has no active Submission person yet: it stays on your list with a follow-up in 15 days."}</div>
             : closed && saag.status && <div className="alert info">This entry closes the claim: it leaves the desk and the follow-up list.</div>}
           {!compact && <label className="check" style={{ paddingBottom: 8 }}><input type="checkbox" checked={escalate} onChange={(e) => setEscalate(e.target.checked)} /> Flag for my team lead (escalate)</label>}
           <span style={{ flex: 1 }} />{extraActions}
@@ -5955,7 +5963,7 @@ function InventoryStatusTab(props) {
           <div className="row between" style={{ marginTop: 14, flexWrap: "wrap" }}><div><span className="inv-lbl">Where the inventory stands</span> <span className="small muted">· {plural(INV_STAGES.reduce((t, [k]) => t + d.stages[k].n, 0), "open claim")} (at a desk or waiting on the client included) · {fmtK(INV_STAGES.reduce((t, [k]) => t + d.stages[k].bal, 0))}</span></div>
             <span className="small muted">Closed this month: <b className="teal-ink">{plural(d.closed.n, "claim")} · {fmtK(d.closed.bal)}</b></span></div>
           <InvStrip stages={d.stages} />
-          <div className="inv-legend">{INV_STAGES.map(([k, l, c]) => <button type="button" key={k} style={{ borderColor: c }} onClick={() => k === "open" ? go("allocate", clientId ? { clientId } : {}) : go("claims", { clientId, stage: k, state: "" })}>
+          <div className="inv-legend">{INV_STAGES.map(([k, l, c]) => <button type="button" key={k} style={{ borderColor: c }} onClick={() => go("claims", { clientId, stage: k, state: "" })}>
             <b>{fmtInt(d.stages[k].n)}</b><span>{l}</span><small>{fmtK(d.stages[k].bal)}{stageSub(k) ? " · " + stageSub(k) : ""}</small></button>)}</div>
         </>}
       </div>
@@ -6864,15 +6872,17 @@ function crBuildInventory2(c) {
   const amtCur = crSum(curSet, (r) => r.amount);
   const payerItems = crEmph80(crAgg(curSet, "payerKey", ds, { measure: "amount" })); crMarkSel(payerItems, c.sel.payerKey);
   const n80 = payerItems.filter((x) => x.emph).length;
+  // the real share the highlighted payers hold (the Pareto stops at the first payer that reaches 80%, so it is often a little more)
+  const share80 = crF.pct(crSum(payerItems.filter((x) => x.emph), (x) => x.share), 0);
   const statusField = curSet.some((r) => r.purviewStatus) ? "purviewStatus" : curSet.some((r) => r.pmsStatus) ? "pmsStatus" : "status";
   const stAll = crAgg(curSet, statusField, ds, { measure: "amount" }), stItems = crFold(stAll, 6); crMarkSel(stItems, c.sel[statusField]);
   const actItems = crAgg(curSet, "action", ds, { measure: "amount" }); crMarkSel(actItems, c.sel.action);
-  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: `${crF.int(crN(curSet))} claims`, accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold 80% of the balance` : "" })];
+  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: `${crF.int(crN(curSet))} claims`, accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold ${share80} of the balance` : "" })];
   if (payerItems[0]) kpis.push(crKpi("Largest payer", crF.pct(payerItems[0].share, 0), { sub: payerItems[0].label }));
   if (stAll[0]) kpis.push(crKpi("Top status", crF.pct(stAll[0].share, 0), { sub: stAll[0].label }));
   const cards = [
     { id: "inv2.payer", title: "Insurance wise Pareto", sub: "Payers holding the top 80% of the balance are highlighted", cols: 6, type: "hbar", dim: "payerKey", dimLabel: "Payer", items: payerItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, emphasis: true, maxRows: 7,
-      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} payers</b> hold 80% of the balance: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
+      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} payers</b> hold ${share80} of the balance: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
     { id: "inv2.status", title: "Inventory status mix", sub: crDimLabel(ds, statusField), cols: 6, type: "donut", dim: statusField, items: stItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, centerValue: crF.moneyK(amtCur), centerLabel: "open" },
   ];
   if (actItems.length > 1) cards.push({ id: "inv2.action", title: "Action wise breakdown", sub: "Balance by action taken", cols: 12, type: "hbar", dim: "action", dimLabel: "Action", items: actItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 5 });
@@ -7018,7 +7028,7 @@ function crTopDenials(reasons) {
   // the 80% rule with a sanity cap: more than 6 reasons to reach 80% shows the top 5, fewer than 3 shows the top 3
   const n80 = reasons.filter((x) => x.emph).length;
   if (reasons.length <= 3) return { rows: reasons.slice(), basis: reasons.length ? `all ${reasons.length} denial reason${reasons.length === 1 ? "" : "s"}` : "no denials", label: `Top ${reasons.length}` };
-  if (n80 >= 3 && n80 <= 6) return { rows: reasons.filter((x) => x.emph), basis: `the ${n80} reasons that make up 80% of denied dollars`, label: "Top 80%" };
+  if (n80 >= 3 && n80 <= 6) return { rows: reasons.filter((x) => x.emph), basis: `the ${n80} reasons that together reach 80% of denied dollars`, label: "Top 80%" };
   if (n80 < 3) return { rows: reasons.slice(0, 3), basis: `the top 3 denial reasons (80% of denied dollars is reached with ${n80 === 1 ? "one reason" : "two reasons"}, so the next ones are included)`, label: "Top 3" };
   return { rows: reasons.slice(0, 5), basis: `the top 5 denial reasons (reaching 80% of denied dollars would need ${n80} reasons)`, label: "Top 5" };
 }
@@ -7041,7 +7051,7 @@ function crBuildDenials(c) {
   const ins = [];
   ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were denied in ${crRangeLabel(c.range)}${rate != null ? `, ${crF.pct(rate, 1)} of the claims worked` : ""}.`);
   if (reasons[0]) ins.push(`${reasons[0].label} is the biggest denial reason at ${crF.money(reasons[0].amount, 0)} (${crF.pct(reasons[0].share, 0)} of denied dollars, ${crF.int(reasons[0].count)} claims).`);
-  if (tops.rows.length) ins.push(`${tops.label === "Top 80%" ? `${tops.rows.length} reasons explain 80% of the denied amount` : `The ${tops.label.toLowerCase()} reasons cover ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount`}: ${crListNames(tops.rows, 5)}. The RCA page covers each of them.`);
+  if (tops.rows.length) ins.push(`${tops.label === "Top 80%" ? `${tops.rows.length} reasons explain ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount` : `The ${tops.label.toLowerCase()} reasons cover ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount`}: ${crListNames(tops.rows, 5)}. The RCA page covers each of them.`);
   const payers = crAgg(all, "payerKey", ds, { measure: "amount" }); if (payers[0]) ins.push(`${payers[0].label} accounts for ${crF.pct(payers[0].share, 0)} of denied dollars.`);
   const acts = crAgg(all, "action", ds), appeal = acts.filter((x) => /appeal|recon|reprocess|corrected|rebill/.test(x.key)); if (appeal.length) ins.push(`${crF.pct(crSum(appeal, (x) => x.share), 0)} of denials have already been challenged (${crListNames(appeal, 3)}).`);
   const adj = acts.filter((x) => /adjust|write ?off/.test(x.key)); if (adj.length) ins.push(`${crF.pct(crSum(adj, (x) => x.share), 0)} were sent for adjustment as non collectible.`);
@@ -8582,7 +8592,7 @@ function App() {
     window.scrollTo(0, 0);
   }, []);
   useEffect(() => {
-    (async () => { if (!TOKEN) { setMe(null); return; } try { const r = await rpc("auth.me"); setMe(r.user); } catch (e) { setMe(null); } })();
+    (async () => { if (!TOKEN) { setMe(null); return; } try { const r = await rpc("auth.me"); if (Array.isArray(r.holidays)) APP_HOLIDAYS = new Set(r.holidays); setMe(r.user); } catch (e) { setMe(null); } })();
     const h = () => setMe(null);
     const hh = () => { const h = navFromHistory(); if (h) setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
     window.addEventListener("brahmastra:signedout", h);
@@ -8640,7 +8650,7 @@ function App() {
   const signOut = async () => { try { await rpc("auth.logout"); } catch (e) {} try { localStorage.removeItem(DRISHTI_TOKEN_KEY); } catch (e) {} setToken(null); setMe(null); setCtx({ clients: [], codes: [], users: [], loaded: false }); setPal(false); setPalClaim(null); setPalCoach(null); };
   const idleLeft = useIdleSignOut(!!me, signOut);
   if (me === undefined) return <div className="login"><Spinner label="Starting…" /></div>;
-  if (!me) return <><LoginScreen onSignedIn={(u) => { setMe(u); go(u.role === "supervisor" ? "dashboard" : "queue"); }} /><Toaster /></>;
+  if (!me) return <><LoginScreen onSignedIn={(u) => { setMe(u); rpc("auth.me").then((r) => { if (r && Array.isArray(r.holidays)) APP_HOLIDAYS = new Set(r.holidays); }).catch(() => {}); go(u.role === "supervisor" ? "dashboard" : "queue"); }} /><Toaster /></>;
   if (me.must_change) return (
     <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );

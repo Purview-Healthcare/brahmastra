@@ -325,6 +325,25 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("with no edit buttons", !(await p.locator('.main button:has-text("Edit profile")').count()));
   });
 
+  S("A biller with no department who does the recheck keeps My day");
+  await step("recheck-biller", async () => {
+    // made-up: Cara's account has no department (added by hand) and she holds the recheck of a claim she sent to Submission
+    // ("the biller who sent it" on the client): she stays an AR biller, with the recheck under Posting & submission
+    await p.evaluate(async (x) => {
+      const r = await window.__rpc("claims.list", { client_id: x.sun, state: "open", page_size: 1 });
+      const now = Date.now();
+      await window.__sql("UPDATE users SET department = '', departments_also = '' WHERE id = ?", x.caraId);
+      await window.__sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, assigned_to, available_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "wf-recheck-1", r.rows[0].id, x.sun, "subcheck", "pending", now - 3 * 86400000, now + 86400000, x.caraId, x.caraId, now - 3600000);
+      await window.__flush();
+    }, tok);
+    await as("cara");
+    const navs = await p.$$eval(".nav > button, .nav > .nav-group > button", (b) => b.map((x) => x.innerText.replace(/\s+/g, " ").trim()));
+    ok("she keeps My day, and the recheck is under Posting & submission (no Submission desk)", navs.some((x) => /^My day/.test(x)) && navs.some((x) => /^Posting & submission/.test(x)) && !navs.some((x) => /^Submission\b/.test(x)), navs);
+    await open("#/handoffs"); await t(1500);
+    ok("the recheck is listed there", /Submission follow-up|Recheck/i.test(await p.innerText(".main")), (await p.innerText(".main")).slice(0, 300));
+  });
+
   S("Feedback");
   await step("feedback", async () => {
     await as("arun");

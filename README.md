@@ -424,7 +424,8 @@ requests waiting on the client); who worked how much; and the denials worked. Cl
 no patient names, claim or account numbers.
 
 - **SLA › Monday digest** lists every span the person is on (the VP and admins all of them) with its clients and
-  who gets it, when it last went, any that did not arrive and why, **Preview this week's** and **Email me a copy**.
+  who gets it, when it last went, any that did not arrive and why, **Preview this week's** and **Email me a copy**
+  (a team lead's preview and copy hold only their own clients, the same as their Monday email).
   Admins and the VP also get **Send this week's now** (only to people who have not had it this week; noted in the
   audit trail).
 - **Settings › Email**: anyone can turn their digest off (or on again).
@@ -509,9 +510,9 @@ A claim AR closed itself (not posted) stays with its own people.
 
 **Past TAT, inside the tabs (no separate page).** Each tab shows its own reminders: **Posting & submission** has
 cards for Open, Past TAT, On hold, Done, Within TAT and Waiting on client (a card filters the list; the client
-filter and the dates narrow the cards too), and **Needs attention** has one client filter for all its lists and
-cards for Past 48 working hours, Due in the next 4 hours and On hold. Claims past their TAT are at the top of each
-list; one on hold goes after the rest. **Hide claims waiting on the client** takes those out of Open and of the Past
+filter and the dates narrow the cards too), and **Needs attention** has one client filter for all its lists, its tab
+counts and its cards for Past 48 working hours, Due in the next 4 hours and On hold. Claims past their TAT are at the
+top of each list; one on hold goes after the rest and is no longer counted or shown in red as past the TAT. **Hide claims waiting on the client** takes those out of Open and of the Past
 TAT count. A team lead with edit access to the client clicks **Can't close yet** on a row past its TAT (why, and the
 expected close date, up to 30 days): no reminders for it until that date, then it is back, marked as past the
 expected date; **Clear hold** undoes it. The bell, the red bar on other pages, the Dashboard's pending card and the

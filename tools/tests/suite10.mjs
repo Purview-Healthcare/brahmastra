@@ -142,6 +142,20 @@ ok("later runs that Monday send nothing more", mails.length === n1, mails.length
 mails.length = 0; await runJob(nextMon + 86400000 + 9 * 3600000);
 ok("nothing on Tuesday", mails.length === 0);
 
+S("A team lead's preview and copy: their own clients only");
+// a second team lead under Joseph, on Willow: Joseph's span now has Sunrise and Willow, and Tina is only on Sunrise
+feed.push(P({ emp_id: "T4", name: "Tom Lead", position: "Team Lead", project: "Willow Pediatrics", reports_to: "Joseph Manager", email: "tom@purview-healthcare.com" }));
+await A("roster.syncShastra");
+const joW = span(await SA("digest.spans"), /^Joseph Manager's clients$/);
+ok("Joseph's span now has Sunrise and Willow", joW && joW.clients.map((c) => c.id).sort().join() === [sun.id, willow.id].sort().join(), joW && joW.clients.map((c) => c.name));
+const pj = await JO("digest.preview", { span: joW.key });
+ok("the manager's preview has both clients", pj.html.includes(sun.name) && pj.html.includes(willow.name));
+const pt = await TI("digest.preview", { span: joW.key });
+ok("the team lead's preview has only their own client, like their Monday email", pt.html.includes(sun.name) && !pt.html.includes(willow.name) && !pt.text.includes(willow.name));
+mails.length = 0;
+await TI("digest.sendMe", { span: joW.key });
+ok("and so does the copy they email themselves", mails.length === 1 && mails[0].html.includes(sun.name) && !mails[0].html.includes(willow.name), mails.map((m) => m.to));
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

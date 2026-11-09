@@ -76,6 +76,7 @@ const ho = async (dept, created, due, extra = {}) => { const c = next(); const i
 S("1. Company holidays from Shastra: the TAT clock skips them");
 const hs = (await rows("SELECT value_json FROM settings WHERE key = 'holidays'"))[0];
 ok("the roster sync brought the holidays", hs && /Diwali/.test(hs.value_json), hs);
+{ const me = await TI("auth.me"); ok("auth.me brings the coming holidays, so the work form's follow-up date skips them before saving", Array.isArray(me.holidays) && me.holidays.includes("2026-12-25"), me.holidays); }
 // flagged Thursday 10:00; Monday Nov 9 is Diwali: Tuesday 09:00 is 47 working hours, Tuesday 11:00 is 49
 const flag = next();
 await sql("UPDATE claims SET escalated = 1, escalated_at = ?, escalated_by = ?, assigned_to = ?, state = 'completed' WHERE id = ?", IST(2026, 11, 5, 10), U("Arun Agent").id, U("Arun Agent").id, flag.id);
@@ -115,12 +116,37 @@ tl = await at(now, () => TI("tat.list", {}));
 ok("held: off Past TAT, on the On hold list with the reason", tl.late.filter((x) => x.client_id === sun.id).length === 1 && tl.held.length === 2 && tl.held.some((x) => x.hold.reason === "Waiting on the payer" && x.hold.note === "Reprocessing takes 2 days"), { late: tl.late.length, held: tl.held.map((x) => x.hold.reason) });
 let nt = await at(now, () => TI("notify.list", { today: "2026-11-11" }));
 ok("the bell and the red bar count only the one not on hold", nt.past_tat === 1, nt.past_tat);
+{ // Needs attention counts: the held flag is not "over 48 working hours"; the page's Client filter narrows the tab counts
+  const ac = await at(now, () => TI("attention.count", {}));
+  ok("the Needs attention count leaves the held flag out of 'over 48 working hours'", ac.escalations >= 1 && ac.overdue === 0, ac);
+  const oc = (await rows("SELECT id, client_id, state FROM claims WHERE client_id <> ? AND escalated = 0 AND state = 'open' LIMIT 1", sun.id))[0];
+  await sql("UPDATE claims SET escalated = 1, escalated_at = ?, state = 'completed' WHERE id = ?", now - 3600000, oc.id);
+  const al = (await at(now, () => A("attention.list", {}))).rows, byC = {};
+  for (const x of al) byC[x.client_id] = (byC[x.client_id] || 0) + 1;
+  const per = {}; for (const cid of Object.keys(byC)) per[cid] = (await at(now, () => A("attention.count", { client_id: cid }))).escalations;
+  ok("with the Client filter, each client's tab count is that client's flagged claims only", Object.keys(byC).length >= 2 && Object.keys(byC).every((cid) => per[cid] === byC[cid])
+    && (await at(now, () => A("attention.count", {}))).escalations === al.length, { byC, per });
+  await sql("UPDATE claims SET escalated = 0, escalated_at = NULL, state = ? WHERE id = ?", oc.state, oc.id); }
 // no separate Past TAT page: the Posting & submission tab shows the hold on the row, and its cards count it as On hold
 const hl = await at(now, () => TI("handoffs.list", { client_id: sun.id, view: "open" }));
 const hr1 = hl.rows.find((x) => x.id === late1.id), hr2 = hl.rows.find((x) => x.id === late2.id);
 ok("in Posting & submission the held claim is On hold with its reason, not past TAT; the other one is past TAT", hr1 && hr1.hold && hr1.hold.active && hr1.hold.reason === "Waiting on the payer" && !hr1.overdue && hr1.can_hold
   && hr2 && hr2.overdue && !hr2.hold && hl.stats.held_n === 1 && hl.stats.overdue === hl.rows.filter((x) => x.overdue).length && hl.hold_reasons.includes("Waiting on the payer"), [hr1 && hr1.hold, hr2 && hr2.overdue, hl.stats.held_n, hl.stats.overdue]);
 ok("...and a biller cannot hold it (the row says so)", !(await at(now, () => AR("handoffs.list", { view: "open" }))).rows.some((x) => x.can_hold));
+{ // the cards list exactly what they count: one more claim, waiting on the client, past its TAT, not yet time to chase
+  const wc = await ho("posting", IST(2026, 11, 5, 12), IST(2026, 11, 6, 12), { status: "client" });
+  await sql("UPDATE handoffs SET paused_at = ?, client_sent_at = ?, chase_at = ? WHERE id = ?", IST(2026, 11, 9, 10), IST(2026, 11, 9, 11), IST(2026, 11, 12, 11), wc.id);
+  const L = (view, extra = {}) => at(now, () => TI("handoffs.list", { client_id: sun.id, view, ...extra }));
+  const op = await L("open"), lt = await L("late"), hd = await L("held");
+  ok("Past TAT lists exactly what its card counts, the late claim waiting on the client included", lt.rows.length === op.stats.overdue && lt.rows.some((x) => x.id === wc.id) && lt.rows.every((x) => x.overdue), [lt.rows.length, op.stats.overdue]);
+  ok("On hold lists exactly what its card counts", hd.rows.length === op.stats.held_n && hd.rows.every((x) => x.hold && x.hold.active), [hd.rows.length, op.stats.held_n]);
+  ok("Open counts what Open lists (not the one waiting on the client before its chase date)", op.rows.length === op.stats.open_n && !op.rows.some((x) => x.id === wc.id), [op.rows.length, op.stats.open_n]);
+  const hc = await L("late", { hide_client: true }), oh = await L("open", { hide_client: true });
+  ok("Hide claims waiting on the client takes it out of the Past TAT list and count alike", !hc.rows.some((x) => x.id === wc.id) && hc.rows.length === oh.stats.overdue, [hc.rows.length, oh.stats.overdue]);
+  await sql("UPDATE handoffs SET chase_at = ? WHERE id = ?", IST(2026, 11, 10, 11), wc.id);
+  const op2 = await L("open");
+  ok("once it is time to chase the client it is on Open and in the Open count", op2.rows.some((x) => x.id === wc.id && x.chase) && op2.rows.length === op2.stats.open_n, [op2.rows.length, op2.stats.open_n]);
+  await sql("DELETE FROM handoffs WHERE id = ?", wc.id); await sql("UPDATE claims SET state = 'open' WHERE id = ?", wc.claim.id); }
 { const hc = await at(now, () => TI("handoffs.count", {}));
   const all1 = (await rows("SELECT COUNT(*) AS n FROM handoffs WHERE status IN ('pending','assigned','client') AND due_at < ? AND (lead_id = ? OR backup_id = ? OR assigned_to = ?)", now, U("Tina Lead").id, U("Tina Lead").id, U("Tina Lead").id))[0];
   ok("the red bar on other pages counts the held one out too (Tina leads every hand-off here)", all1.n >= 2 && hc.overdue === all1.n - 1, [hc.overdue, all1.n]); }

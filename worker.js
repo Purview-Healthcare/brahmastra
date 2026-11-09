@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.98.0";
+const VERSION = "2.99.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -3426,7 +3426,9 @@ const OPS = {
     return openSession(env, u, "password");
   },
   "auth.logout": async ({ env, token }) => { if (token) await run(env, "DELETE FROM sessions WHERE token = ?", token); return { ok: true }; },
-  "auth.me": async ({ user }) => ({ user: { ...user, scope_view_only: undefined, resp_clients: [...(user.resp_clients || [])] } }),
+  // with the coming Shastra holidays, so the work form's follow-up date skips them before saving too (the server always does)
+  "auth.me": async ({ user }) => { const from = istISO(Date.now() - 86400000);
+    return { user: { ...user, scope_view_only: undefined, resp_clients: [...(user.resp_clients || [])] }, holidays: [...HOLIDAYS].filter((d) => d >= from).sort().slice(0, 60) }; },
   "auth.deleteMyAccount": async ({ env, user, payload }) => {
     throw denied("Accounts are removed by the admin only.");
     if (str(payload.confirm, 200).trim().toLowerCase() !== String(user.email || "").toLowerCase()) throw bad("Type your email address exactly to confirm.");
@@ -4398,7 +4400,10 @@ const OPS = {
   "digest.preview": async ({ env, user, payload }) => {
     const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
     if (!s || !spanVisible(user, s)) throw denied("That digest is not one of yours.");
-    return spanMail(env, s, digestWeek(Date.now()));
+    // the same clients as this person's Monday email: a team lead sees only their own clients of the span
+    const su = spanFor(user, s);
+    if (!su.clients.length) throw bad("None of this digest's clients are yours.");
+    return spanMail(env, su, digestWeek(Date.now()));
   },
   /* The full digest as a landscape dashboard (the email's "Open the full digest" button): every client's card with its SLA
      score, Billable and Assign FTE, AR, escalations and what pulls it down, for this week or one of the 8 before. */
@@ -4426,7 +4431,9 @@ const OPS = {
     const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
     if (!s || !spanVisible(user, s)) throw denied("That digest is not one of yours.");
     if (!user.email || !/@/.test(user.email)) throw bad("Your account has no email address.");
-    const m = await spanMail(env, s, digestWeek(Date.now()));
+    const su = spanFor(user, s);
+    if (!su.clients.length) throw bad("None of this digest's clients are yours.");
+    const m = await spanMail(env, su, digestWeek(Date.now()));
     await sendEmail(env, { to: user.email, subject: "[Copy] " + m.subject, text: m.text, html: m.html });
     return { ok: true, to: user.email };
   },
@@ -6376,10 +6383,15 @@ const OPS = {
     // open: on the clock · mine: given to me · client: waiting on the client (the clock keeps running) · done: completed or rejected · assist: returned to AR
     // hide_client: Open without the claims waiting on the client (and the Past TAT count without them too)
     const hideClient = !!payload.hide_client && view !== "client";
+    // the cards on top list exactly what they count: late = past the TAT and not on hold (waiting on the client included,
+    // the clock keeps running, unless hidden); held = on hold (Can't close yet) until its expected close date
+    const today = istISO(now), onDesk = hideClient ? "'pending','assigned'" : "'pending','assigned','client'";
+    const heldSql = `EXISTS (SELECT 1 FROM tat_holds th WHERE th.kind = 'handoff' AND th.ref_id = h.id AND th.cleared_at IS NULL AND th.until >= '${today}')`;
     const vw = view === "mine" ? " AND h.status IN ('pending','assigned') AND h.assigned_to = ?" : view === "client" ? " AND h.status = 'client'" : view === "done" ? " AND h.status IN ('complete','rejected') AND h.done_at > ?"
-      : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : hideClient ? " AND h.status IN ('pending','assigned')" : " AND (h.status IN ('pending','assigned') OR (h.status = 'client' AND h.chase_at <= ?))";
-    const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : view === "client" || hideClient ? [] : [now];
-    const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name, cl.posting_tat_hours AS cl_posting_tat, cl.submission_tat_hours AS cl_submission_tat,
+      : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : view === "late" ? ` AND h.status IN (${onDesk}) AND h.due_at < ? AND NOT ${heldSql}`
+      : view === "held" ? ` AND h.status IN ('pending','assigned','client') AND ${heldSql}` : hideClient ? " AND h.status IN ('pending','assigned')" : " AND (h.status IN ('pending','assigned') OR (h.status = 'client' AND h.chase_at <= ?))";
+    const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : view === "late" ? [now] : view === "client" || view === "held" || hideClient ? [] : [now];
+    const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name, cl.posting_tat_hours AS cl_posting_tat, cl.submission_tat_hours AS cl_submission_tat, cl.subcheck_hours AS cl_subcheck_hours,
         (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns,
         a.name AS assigned_name, l.name AS lead_name, b.name AS backup_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations lo ON lo.id = c.location_id
@@ -6392,7 +6404,7 @@ const OPS = {
         used_pct: Math.max(0, Math.min(100, Math.round(100 * workingHoursBetween(st0, now) / Math.max(0.1, workingHoursBetween(st0, h.due_at))))) }; };
     // "Can't close yet": a task on hold (until its expected close date) is off Past TAT and the reminders; a team lead with edit
     // access to the client holds it or clears the hold, here in the tab
-    const today = istISO(now), hm = new Map();
+    const hm = new Map();
     for (const part of chunks(rows.map((r) => r.id), 80)) for (const x of await all(env, `SELECT id, ref_id, reason, note, until, by_name FROM tat_holds WHERE kind = 'handoff' AND cleared_at IS NULL AND ref_id IN (${part.map(() => "?").join(",")}) ORDER BY at`, ...part)) hm.set(x.ref_id, x);
     const out = rows.map((h) => { const open = ["pending", "assigned", "client"].includes(h.status), ho = open ? hm.get(h.id) : null, held = !!ho && ho.until >= today; return { ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: open && now > h.due_at && !held,
       ...(open ? whLeft(h) : {}),
@@ -6401,12 +6413,13 @@ const OPS = {
       due_soon: open && !held && now <= h.due_at && h.due_at <= soonCut && !(h.dept === "subcheck" && h.available_at && now < h.available_at),
       chase: h.status === "client" && !!h.chase_at && now >= h.chase_at,
       can_assign: user.is_admin || h.lead_id === user.id || h.backup_id === user.id, can_close: user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id,
-      tat_hours: tatHours({ posting_tat_hours: h.cl_posting_tat, submission_tat_hours: h.cl_submission_tat }, h.dept), cl_posting_tat: undefined, cl_submission_tat: undefined }; });
+      tat_hours: tatHours({ posting_tat_hours: h.cl_posting_tat, submission_tat_hours: h.cl_submission_tat }, h.dept), recheck_hours: subcheckHours({ subcheck_hours: h.cl_subcheck_hours }),
+      cl_posting_tat: undefined, cl_submission_tat: undefined, cl_subcheck_hours: undefined }; });
     // The TAT shown on top: the clients' own (one number when they all agree), else each row carries its own.
     const tats = new Set(out.map((r) => r.tat_hours));
     if (!out.length && cid) { const cl = await one(env, "SELECT posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", cid); if (cl) tats.add(tatHours(cl, dept || "submission")); }
-    const heldSql = `EXISTS (SELECT 1 FROM tat_holds th WHERE th.kind = 'handoff' AND th.ref_id = h.id AND th.cleared_at IS NULL AND th.until >= '${today}')`;
-    const st = await one(env, `SELECT SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_n, SUM(CASE WHEN h.status IN (${hideClient ? "'pending','assigned'" : "'pending','assigned','client'"}) AND h.due_at < ? AND NOT ${heldSql} THEN 1 ELSE 0 END) AS overdue,
+    // Open counts what the Open list shows: on the desk, plus the ones waiting on the client once it is time to chase them
+    const st = await one(env, `SELECT SUM(CASE WHEN h.status IN ('pending','assigned')${hideClient ? "" : ` OR (h.status = 'client' AND h.chase_at <= ${now})`} THEN 1 ELSE 0 END) AS open_n, SUM(CASE WHEN h.status IN (${onDesk}) AND h.due_at < ? AND NOT ${heldSql} THEN 1 ELSE 0 END) AS overdue,
         SUM(CASE WHEN h.status IN ('pending','assigned','client') AND ${heldSql} THEN 1 ELSE 0 END) AS held_n,
         SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_n, SUM(CASE WHEN h.dept = 'rejection' AND h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS rejection_n,
         SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at >= ${now} AND h.due_at <= ${addWorkingHours(now, DUE_SOON_HOURS)} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ${now}) AND NOT ${heldSql} THEN 1 ELSE 0 END) AS due_soon_n,
@@ -7035,12 +7048,17 @@ const OPS = {
     const reason = isSME(user) ? 0 : rows.filter((e) => escPast(e.created_at, now) && !e.delay_reason && leadFor(user, e.client_id)).length;
     return { open: rows.length, needs_reason: reason, past_expected: rows.filter((e) => e.expected_on && e.expected_on < today).length };
   },
-  "attention.count": async ({ env, user }) => {
-    const cr = await one(env, `SELECT COUNT(*) AS n FROM handoffs WHERE status = 'client' AND client_sent_at IS NULL${scopeSql(user, "client_id")}`, ...scopeArgs(user));
-    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND escalated_at < ? THEN 1 ELSE 0 END) AS overdue FROM claims WHERE escalated = 1 AND state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("claims")}${scopeSql(user, "client_id")}`, subWorkingHours(Date.now(), ATTN_TAT_HOURS), ...scopeArgs(user));
+  /* The Needs attention counts (the tabs, the bell, the menu badge), for one client when the page's Client filter asks.
+     A flag on hold (Can't close yet, date not passed) is not counted as over the 48 working hours, the same as the TAT board. */
+  "attention.count": async ({ env, user, payload }) => {
+    const cid = payload && payload.client_id ? str(payload.client_id, 60) : "", one1 = (col) => (cid ? ` AND ${col} = ?` : ""), cargs = cid ? [cid] : [];
+    const now = Date.now(), flagHeld = `EXISTS (SELECT 1 FROM tat_holds t WHERE t.kind = 'flag' AND t.ref_id = claims.id AND t.cleared_at IS NULL AND t.until >= ? AND (t.since IS NULL OR t.since = claims.escalated_at))`;
+    const cr = await one(env, `SELECT COUNT(*) AS n FROM handoffs WHERE status = 'client' AND client_sent_at IS NULL${one1("client_id")}${scopeSql(user, "client_id")}`, ...cargs, ...scopeArgs(user));
+    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN escalated_at IS NOT NULL AND escalated_at < ? AND NOT ${flagHeld} THEN 1 ELSE 0 END) AS overdue FROM claims WHERE escalated = 1 AND state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("claims")}${one1("client_id")}${scopeSql(user, "client_id")}`,
+      subWorkingHours(now, ATTN_TAT_HOURS), istISO(now), ...cargs, ...scopeArgs(user));
     const mine = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state IN ('assigned','in_progress')", user.id);
     const fd = await one(env, `SELECT COUNT(*) AS n FROM handoffs h WHERE h.status IN ('assistance','back') AND h.done_at > ? AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)
-      AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at)${scopeSql(user, "h.client_id")}`, Date.now() - 30 * 86400000, ...scopeArgs(user));
+      AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at)${one1("h.client_id")}${scopeSql(user, "h.client_id")}`, now - 30 * 86400000, ...cargs, ...scopeArgs(user));
     return { n: ((r && r.n) || 0) + ((cr && cr.n) || 0) + ((fd && fd.n) || 0), escalations: (r && r.n) || 0, client_to_send: (cr && cr.n) || 0, from_desks: (fd && fd.n) || 0, overdue: (r && r.overdue) || 0, my_desk: (mine && mine.n) || 0 };
   },
   /* Supervisor review of anything in Needs attention (a biller's escalation, or a claim a department sent back): four notes
@@ -7322,9 +7340,9 @@ async function claimBundle(env, user, c, opts = {}) {
   const attachments = files.map((a) => ({ ...a, deletable: leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
   // whether this client has an active Posting / Submission / Rejections person (the same rule as queue.complete): a claim sent
   // there leaves AR with no follow-up date until the desk is done
-  const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")} FROM clients WHERE id = ?`, c.client_id);
+  const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")}, subcheck_hours FROM clients WHERE id = ?`, c.client_id);
   const [dp, ds, dr] = await Promise.all(["posting", "submission", "rejection"].map((d) => deskPeople(env, dc, d)));
-  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr, locked, view_only: !!opts.viewOnly }, notes: shaped, attachments, siblings,
+  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr, recheck_hours: subcheckHours(dc), locked, view_only: !!opts.viewOnly }, notes: shaped, attachments, siblings,
     handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role, payer_limits: limits || null };
 }
 
