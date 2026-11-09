@@ -131,7 +131,7 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   switched off).
 - The top bar stays one row: SLA (Drishti and the scorecard, first so it is one
   click away all day), Sasha's Third Eye, Live status, Dashboard and Claims sit
-  in front, the rest is grouped under **Work** (Needs attention, Past TAT, Posting & submission,
+  in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
   Inventory & allocation, Escalation tracker, RACI tracker) and **Manage** (Team, Note templates, Clients &
   locations, SAAG reference, TFL / AFL, Roster for admins, Audit trail for admins and the VP). Client 360 is not on
   the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count shows on the
@@ -505,6 +505,16 @@ own SAAG when the desk finishes.
 "posted · closed". Someone it is not with sees it read only: no entry, no note, no team lead actions, not the
 patient's other claims. Its notes are **locked** for everyone, the biller who wrote them and team leads included.
 A claim AR closed itself (not posted) stays with its own people.
+
+**Past TAT, inside the tabs (no separate page).** Each tab shows its own reminders: **Posting & submission** has
+cards for Open, Past TAT, On hold, Done, Within TAT and Waiting on client (a card filters the list; the client
+filter and the dates narrow the cards too), and **Needs attention** has one client filter for all its lists and
+cards for Past 48 working hours, Due in the next 4 hours and On hold. Claims past their TAT are at the top of each
+list; one on hold goes after the rest. **Hide claims waiting on the client** takes those out of Open and of the Past
+TAT count. A team lead with edit access to the client clicks **Can't close yet** on a row past its TAT (why, and the
+expected close date, up to 30 days): no reminders for it until that date, then it is back, marked as past the
+expected date; **Clear hold** undoes it. The bell, the red bar on other pages, the Dashboard's pending card and the
+09:00 / 19:00 IST reminder emails open these tabs.
 
 Each hand-off has 24 working hours (a TAT tag and bar; red once past). The department
 has four choices: **Completed** (with proof), **Pending** (still theirs; the comment

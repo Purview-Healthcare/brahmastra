@@ -115,6 +115,15 @@ tl = await at(now, () => TI("tat.list", {}));
 ok("held: off Past TAT, on the On hold list with the reason", tl.late.filter((x) => x.client_id === sun.id).length === 1 && tl.held.length === 2 && tl.held.some((x) => x.hold.reason === "Waiting on the payer" && x.hold.note === "Reprocessing takes 2 days"), { late: tl.late.length, held: tl.held.map((x) => x.hold.reason) });
 let nt = await at(now, () => TI("notify.list", { today: "2026-11-11" }));
 ok("the bell and the red bar count only the one not on hold", nt.past_tat === 1, nt.past_tat);
+// no separate Past TAT page: the Posting & submission tab shows the hold on the row, and its cards count it as On hold
+const hl = await at(now, () => TI("handoffs.list", { client_id: sun.id, view: "open" }));
+const hr1 = hl.rows.find((x) => x.id === late1.id), hr2 = hl.rows.find((x) => x.id === late2.id);
+ok("in Posting & submission the held claim is On hold with its reason, not past TAT; the other one is past TAT", hr1 && hr1.hold && hr1.hold.active && hr1.hold.reason === "Waiting on the payer" && !hr1.overdue && hr1.can_hold
+  && hr2 && hr2.overdue && !hr2.hold && hl.stats.held_n === 1 && hl.stats.overdue === hl.rows.filter((x) => x.overdue).length && hl.hold_reasons.includes("Waiting on the payer"), [hr1 && hr1.hold, hr2 && hr2.overdue, hl.stats.held_n, hl.stats.overdue]);
+ok("...and a biller cannot hold it (the row says so)", !(await at(now, () => AR("handoffs.list", { view: "open" }))).rows.some((x) => x.can_hold));
+{ const hc = await at(now, () => TI("handoffs.count", {}));
+  const all1 = (await rows("SELECT COUNT(*) AS n FROM handoffs WHERE status IN ('pending','assigned','client') AND due_at < ? AND (lead_id = ? OR backup_id = ? OR assigned_to = ?)", now, U("Tina Lead").id, U("Tina Lead").id, U("Tina Lead").id))[0];
+  ok("the red bar on other pages counts the held one out too (Tina leads every hand-off here)", all1.n >= 2 && hc.overdue === all1.n - 1, [hc.overdue, all1.n]); }
 const pv = await at(now, () => TI("tat.preview", { kind: "desks" }));
 ok("the 09:00 email leaves out the held one", pv.mail && pv.mail.n === 1 && !pv.mail.html.includes(late1.claim.claim_no) && pv.mail.html.includes(late2.claim.claim_no));
 const inv2 = await at(now, () => TI("inventory.status", { client_id: sun.id, today: "2026-11-11" }));
@@ -138,6 +147,11 @@ r = await T(() => at(now, () => TI("tat.unhold", { id: held.hold.id })));
 ok("clearing the hold puts it back on the reminders", r.ok && (await at(now, () => TI("tat.list", {}))).late.some((x) => x.ref_id === late1.id));
 r = await T(() => at(now, () => TI("tat.unhold", { id: held.hold.id })));
 ok("clearing twice says it is already cleared", !r.ok && r.status === 404, r);
+// claims waiting on the client can be left out of Open (and out of the Past TAT count)
+await sql("UPDATE handoffs SET status = 'client', paused_at = ?, chase_at = ? WHERE id = ?", now - 7200000, now - 3600000, late2.id);
+const withC = await at(now, () => TI("handoffs.list", { client_id: sun.id, view: "open" })), noC = await at(now, () => TI("handoffs.list", { client_id: sun.id, view: "open", hide_client: true }));
+ok("Hide claims waiting on the client: they leave Open and the Past TAT count", withC.rows.some((x) => x.id === late2.id) && !noC.rows.some((x) => x.id === late2.id) && noC.stats.overdue === withC.stats.overdue - 1, [withC.stats.overdue, noC.stats.overdue]);
+await sql("UPDATE handoffs SET status = 'pending', paused_at = NULL, chase_at = NULL WHERE id = ?", late2.id);
 r = await T(() => at(now, () => TI("tat.hold", { kind: "handoff", id: "nope", reason: "Waiting on the payer", until: "2026-11-13" })));
 ok("an unknown task is a 404", !r.ok && r.status === 404, r);
 

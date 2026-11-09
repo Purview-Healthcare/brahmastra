@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.96.0";
+const VERSION = "2.97.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -4306,14 +4306,14 @@ const OPS = {
         const t = tb.get(c.id); if (!t) continue;
         for (const [k, label] of TAT_DEPTS) {
           const b = t.desks[k], what = (n) => `${n} ${label} ${n === 1 ? "claim" : "claims"}`;
-          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${tatHours(c, k)} h)`, view: "tat", params: { client_id: c.id } }); pastTat += b.late; }
+          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${tatHours(c, k)} h)`, view: "handoffs", params: { client_id: c.id, dept: k } }); pastTat += b.late; }
           if (b.soon) items.push({ key: `soon:${c.id}:${k}`, cat: "desks", tone: "amber", n: b.soon, text: `${what(b.soon)} due in the next ${DUE_SOON_HOURS} hours · ${c.name}`, sub: "Still within TAT", view: "handoffs", params: { client_id: c.id } });
         }
         const a = t.attn;
         if (a.late) {
           const one = { flagged: ["flagged by a biller", "flagged by billers"], back: ["sent back by Posting / Submission", "sent back by Posting / Submission"], requests: ["client request to send", "client requests to send"] };
           const parts = ATTN_PARTS.filter(([p]) => a[p].late).map(([p]) => a[p].late + " " + one[p][a[p].late === 1 ? 0 : 1]);
-          items.push({ key: `tat:${c.id}:attn`, cat: "tat", tone: "red", n: a.late, text: `${a.late} Needs attention ${a.late === 1 ? "item" : "items"} past ${ATTN_TAT_HOURS} working hours · ${c.name}`, sub: parts.join(" · ") + ` · oldest ${a.oldest_late_h} working hours`, view: "tat", params: { client_id: c.id } });
+          items.push({ key: `tat:${c.id}:attn`, cat: "tat", tone: "red", n: a.late, text: `${a.late} Needs attention ${a.late === 1 ? "item" : "items"} past ${ATTN_TAT_HOURS} working hours · ${c.name}`, sub: parts.join(" · ") + ` · oldest ${a.oldest_late_h} working hours`, view: "attention", params: { client_id: c.id, tab: { flagged: "esc", back: "desks", requests: "client" }[(ATTN_PARTS.find(([p]) => a[p].late) || ["flagged"])[0]] } });
           pastTat += a.late;
         }
       }
@@ -6368,9 +6368,11 @@ const OPS = {
     const now = Date.now(), month = now - 30 * 86400000;
     const view = str(payload.view, 20) || "open";
     // open: on the clock · mine: given to me · client: waiting on the client (the clock keeps running) · done: completed or rejected · assist: returned to AR
+    // hide_client: Open without the claims waiting on the client (and the Past TAT count without them too)
+    const hideClient = !!payload.hide_client && view !== "client";
     const vw = view === "mine" ? " AND h.status IN ('pending','assigned') AND h.assigned_to = ?" : view === "client" ? " AND h.status = 'client'" : view === "done" ? " AND h.status IN ('complete','rejected') AND h.done_at > ?"
-      : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : " AND (h.status IN ('pending','assigned') OR (h.status = 'client' AND h.chase_at <= ?))";
-    const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : view === "client" ? [] : [now];
+      : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : hideClient ? " AND h.status IN ('pending','assigned')" : " AND (h.status IN ('pending','assigned') OR (h.status = 'client' AND h.chase_at <= ?))";
+    const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : view === "client" || hideClient ? [] : [now];
     const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name, cl.posting_tat_hours AS cl_posting_tat, cl.submission_tat_hours AS cl_submission_tat,
         (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns,
         a.name AS assigned_name, l.name AS lead_name, b.name AS backup_name
@@ -6382,23 +6384,31 @@ const OPS = {
     const whLeft = (h) => { const st0 = h.dept === "subcheck" && h.available_at ? h.available_at : h.created_at;
       return { left_wh: Math.round((now <= h.due_at ? workingHoursBetween(now, h.due_at) : -workingHoursBetween(h.due_at, now)) * 10) / 10,
         used_pct: Math.max(0, Math.min(100, Math.round(100 * workingHoursBetween(st0, now) / Math.max(0.1, workingHoursBetween(st0, h.due_at))))) }; };
-    const out = rows.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned", "client"].includes(h.status) && now > h.due_at,
-      ...(["pending", "assigned", "client"].includes(h.status) ? whLeft(h) : {}),
-      due_soon: ["pending", "assigned", "client"].includes(h.status) && now <= h.due_at && h.due_at <= soonCut && !(h.dept === "subcheck" && h.available_at && now < h.available_at),
+    // "Can't close yet": a task on hold (until its expected close date) is off Past TAT and the reminders; a team lead with edit
+    // access to the client holds it or clears the hold, here in the tab
+    const today = istISO(now), hm = new Map();
+    for (const part of chunks(rows.map((r) => r.id), 80)) for (const x of await all(env, `SELECT id, ref_id, reason, note, until, by_name FROM tat_holds WHERE kind = 'handoff' AND cleared_at IS NULL AND ref_id IN (${part.map(() => "?").join(",")}) ORDER BY at`, ...part)) hm.set(x.ref_id, x);
+    const out = rows.map((h) => { const open = ["pending", "assigned", "client"].includes(h.status), ho = open ? hm.get(h.id) : null, held = !!ho && ho.until >= today; return { ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: open && now > h.due_at && !held,
+      ...(open ? whLeft(h) : {}),
+      hold: ho ? { id: ho.id, reason: ho.reason, note: ho.note || "", until: ho.until, by: ho.by_name || "", active: held } : null,
+      can_hold: user.role === "supervisor" && canEditClient(user, h.client_id),
+      due_soon: open && !held && now <= h.due_at && h.due_at <= soonCut && !(h.dept === "subcheck" && h.available_at && now < h.available_at),
       chase: h.status === "client" && !!h.chase_at && now >= h.chase_at,
       can_assign: user.is_admin || h.lead_id === user.id || h.backup_id === user.id, can_close: user.is_admin || h.lead_id === user.id || h.backup_id === user.id || h.assigned_to === user.id,
-      tat_hours: tatHours({ posting_tat_hours: h.cl_posting_tat, submission_tat_hours: h.cl_submission_tat }, h.dept), cl_posting_tat: undefined, cl_submission_tat: undefined }));
+      tat_hours: tatHours({ posting_tat_hours: h.cl_posting_tat, submission_tat_hours: h.cl_submission_tat }, h.dept), cl_posting_tat: undefined, cl_submission_tat: undefined }; });
     // The TAT shown on top: the clients' own (one number when they all agree), else each row carries its own.
     const tats = new Set(out.map((r) => r.tat_hours));
     if (!out.length && cid) { const cl = await one(env, "SELECT posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", cid); if (cl) tats.add(tatHours(cl, dept || "submission")); }
-    const st = await one(env, `SELECT SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_n, SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue,
+    const heldSql = `EXISTS (SELECT 1 FROM tat_holds th WHERE th.kind = 'handoff' AND th.ref_id = h.id AND th.cleared_at IS NULL AND th.until >= '${today}')`;
+    const st = await one(env, `SELECT SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_n, SUM(CASE WHEN h.status IN (${hideClient ? "'pending','assigned'" : "'pending','assigned','client'"}) AND h.due_at < ? AND NOT ${heldSql} THEN 1 ELSE 0 END) AS overdue,
+        SUM(CASE WHEN h.status IN ('pending','assigned','client') AND ${heldSql} THEN 1 ELSE 0 END) AS held_n,
         SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_n, SUM(CASE WHEN h.dept = 'rejection' AND h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS rejection_n,
-        SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at >= ${now} AND h.due_at <= ${addWorkingHours(now, DUE_SOON_HOURS)} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ${now}) THEN 1 ELSE 0 END) AS due_soon_n,
+        SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at >= ${now} AND h.due_at <= ${addWorkingHours(now, DUE_SOON_HOURS)} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ${now}) AND NOT ${heldSql} THEN 1 ELSE 0 END) AS due_soon_n,
         SUM(CASE WHEN h.dept = 'subcheck' AND h.status IN ('pending','assigned') AND COALESCE(h.available_at, 0) <= ${now} THEN 1 ELSE 0 END) AS recheck_now_n,
         SUM(CASE WHEN h.status = 'client' AND h.chase_at <= ${now} THEN 1 ELSE 0 END) AS chase_n,
         SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS done_n, SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS assist_n FROM handoffs h WHERE ${base}`, now, month, month, month, ...bargs);
-    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {} };
+    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {}, hold_reasons: TAT_HOLD_REASONS };
   },
   /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
   /* The Payment posting / Submission dashboard: what came in, what was done and how fast, by client, person and day. */
@@ -6477,7 +6487,9 @@ const OPS = {
   },
   "handoffs.count": async ({ env, user }) => {
     const nowc = Date.now();
-    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN due_at < ? THEN 1 ELSE 0 END) AS overdue, SUM(CASE WHEN due_at >= ? AND due_at <= ? AND NOT (dept = 'subcheck' AND COALESCE(available_at, 0) > ?) THEN 1 ELSE 0 END) AS due_soon
+    // a task on hold (Can't close yet, until its expected close date) is neither past TAT nor due soon here
+    const held = `EXISTS (SELECT 1 FROM tat_holds th WHERE th.kind = 'handoff' AND th.ref_id = handoffs.id AND th.cleared_at IS NULL AND th.until >= '${istISO(nowc)}')`;
+    const r = await one(env, `SELECT COUNT(*) AS n, SUM(CASE WHEN due_at < ? AND NOT ${held} THEN 1 ELSE 0 END) AS overdue, SUM(CASE WHEN due_at >= ? AND due_at <= ? AND NOT (dept = 'subcheck' AND COALESCE(available_at, 0) > ?) AND NOT ${held} THEN 1 ELSE 0 END) AS due_soon
       FROM handoffs WHERE status IN ('pending','assigned','client') AND (lead_id = ? OR backup_id = ? OR assigned_to = ?) AND NOT (dept = 'subcheck' AND COALESCE(available_at, 0) > ?)
         AND claim_id IN (SELECT id FROM claims)`, nowc, nowc, addWorkingHours(nowc, DUE_SOON_HOURS), nowc, user.id, user.id, user.id, nowc);
     const any = await one(env, "SELECT 1 AS x FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ? LIMIT 1", user.id, user.id, user.id);

@@ -98,6 +98,9 @@ let nt = await at(now, () => TI("notify.list", { today: "2026-11-09" }));
 const tat = nt.items.filter((x) => x.cat === "tat");
 ok("past-TAT items for Payment posting, Submission and Needs attention on Tina's client", tat.some((x) => x.key === `tat:${sun.id}:posting` && x.n === 3) && tat.some((x) => x.key === `tat:${sun.id}:submission`) && tat.some((x) => x.key === `tat:${sun.id}:attn`), tat.map((x) => x.key + "=" + x.n));
 ok("each says the client and how long the oldest waited", tat.every((x) => /Sunrise/.test(x.text) && /working hours/.test(x.sub || "")), tat.map((x) => x.text + " | " + x.sub));
+{ const p0 = tat.find((x) => x.key === `tat:${sun.id}:posting`), a0 = tat.find((x) => x.key === `tat:${sun.id}:attn`);
+  ok("each opens its own tab (no separate Past TAT page): Posting & submission for that desk, Needs attention for the rest", p0 && p0.view === "handoffs" && p0.params.dept === "posting" && p0.params.client_id === sun.id
+    && a0 && a0.view === "attention" && ["esc", "desks", "client"].includes(a0.params.tab) && a0.params.client_id === sun.id, [p0 && p0.view, p0 && p0.params, a0 && a0.view, a0 && a0.params]); }
 ok("nothing from Lakeview, which is not Tina's", !nt.items.some((x) => x.key.includes(lake.id)));
 ok("due in the next 4 hours goes under Desks", nt.items.some((x) => x.cat === "desks" && x.key === `soon:${sun.id}:posting`));
 ok("every item has a category", nt.items.every((x) => ["tat", "attention", "desks", "escalations", "team", "setup", "work", "updates"].includes(x.cat)), nt.items.filter((x) => !x.cat).map((x) => x.key));

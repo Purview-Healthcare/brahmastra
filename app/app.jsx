@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.107.0";
+const APP_VERSION = "2.108.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -751,8 +751,8 @@ function Confirm({ title, text, confirmLabel = "Confirm", danger, onYes, onNo, b
 const Field = ({ label, children, hint, style }) => (
   <label className="field" style={style}><span>{label}</span>{children}{hint && <span className="tiny muted" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{hint}</span>}</label>
 );
-const Kpi = ({ label, value, sub, tone, onClick }) => (
-  <div className={"kpi" + (tone ? " " + tone : "")} onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}>
+const Kpi = ({ label, value, sub, tone, onClick, on, title }) => (
+  <div className={"kpi" + (tone ? " " + tone : "") + (on ? " on" : "")} onClick={onClick} title={title} role={onClick ? "button" : undefined} style={onClick ? { cursor: "pointer" } : undefined}>
     <div className="l">{label}</div><div className="v">{value}</div>{sub && <div className="s">{sub}</div>}
   </div>
 );
@@ -1344,7 +1344,7 @@ const navFor = (me, ho, fb, at) => {
   const inbox = fb && fb.reader ? [["feedback", "Feedback inbox"]] : [];
   const desk = deskOf(me, ho);
   // Posting and Submission work only on what is handed to them: no AR screens (SAAG, inventory, allocation, attention, TFL)
-  if (desk && me.role === "supervisor") return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["tat", "Past TAT"], ["claims", "Claims"], ["escalations", "Escalation tracker"],
+  if (desk && me.role === "supervisor") return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"], ["escalations", "Escalation tracker"],
     { g: "Manage", items: [["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ...inbox] }];
   const respNav = (me.resp_clients || []).length ? [["claims", "Claims"]] : [];
   if (desk) return [["handoffs", DESK[desk].tab], ["history", "My work"], ...respNav, ["clients", "My clients"], ...inbox];
@@ -1354,7 +1354,7 @@ const navFor = (me, ho, fb, at) => {
   }
   // Team today is part of the Dashboard now; Claims (the inventory list) has its own tab; Needs attention sits under Work
   // and its count also shows on the Dashboard tab.
-  const work = [["attention", "Needs attention"], ["tat", "Past TAT"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["escalations", "Escalation tracker"], ["raci", "RACI tracker"], ...(at && at.my_desk > 0 ? [["mydesk", "My desk"]] : [])];
+  const work = [["attention", "Needs attention"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["escalations", "Escalation tracker"], ["raci", "RACI tracker"], ...(at && at.my_desk > 0 ? [["mydesk", "My desk"]] : [])];
   // Client 360 is not on the menu: it opens from Dashboard › Client 360 report and from a client's name or link
   const manage = [["team", "Team"], ["templates", "Note templates"], ["clients", "Clients & locations"], ["saag", "SAAG reference"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : []), ...(me.is_admin || me.access_all ? [["audit", "Audit trail"]] : []), ...inbox];
   return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["live", "Live status"], ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }];
@@ -1622,9 +1622,10 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
       {me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention" && view !== "handoffs" && view !== "tat" && (() => {
         // every task past its TAT on this person's clients: Payment posting, Submission, Rejections and Needs attention
         const by = {}; for (const x of (notify.items || []).filter((i) => i.cat === "tat")) { const k = x.key.split(":").pop(); by[k] = (by[k] || 0) + (x.n || 0); }
-        const parts = [["posting", "at Payment posting"], ["submission", "at Submission"], ["rejection", "at Rejections"], ["attn", "in Needs attention over 48 working hours"]].filter(([k]) => by[k]).map(([k, l]) => by[k] + " " + l);
-        return <div className="tat-bar" role="button" tabIndex={0} onClick={() => onGo("tat")} onKeyDown={(e) => { if (e.key === "Enter") onGo("tat"); }}>
-          ⏰ {plural(notify.past_tat, "task is", "tasks are")} past {notify.past_tat === 1 ? "its" : "their"} TAT on your clients: {parts.join(", ")}. Every supervisor, SME and above on these clients is reminded until {notify.past_tat === 1 ? "it is" : "they are"} closed. <u>Show them</u></div>;
+        const parts = [["posting", "at Payment posting"], ["submission", "at Submission"], ["rejection", "at Rejections"], ["attn", "in Needs attention over 48 working hours"]].filter(([k]) => by[k]);
+        const goPart = (k) => (k === "attn" ? onGo("attention", { pick: "late" }) : onGo("handoffs", { dept: k, pick: "late" }));
+        return <div className="tat-bar">
+          ⏰ {plural(notify.past_tat, "task is", "tasks are")} past {notify.past_tat === 1 ? "its" : "their"} TAT on your clients: {parts.map(([k, l], i) => <span key={k}>{i ? ", " : ""}<u role="button" tabIndex={0} style={{ cursor: "pointer" }} onClick={() => goPart(k)} onKeyDown={(e) => { if (e.key === "Enter") goPart(k); }}>{by[k] + " " + l}</u></span>)}. They are at the top of each list; every supervisor, SME and above on these clients is reminded until {notify.past_tat === 1 ? "it is" : "they are"} closed.</div>;
       })()}
       {handoffs && handoffs.overdue > 0 && view !== "handoffs" && !(me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention") && (
         <div className="tat-bar" onClick={() => setView("handoffs")}>⚠ {handoffs.overdue} posting / submission hand-off{handoffs.overdue > 1 ? "s are" : " is"} past the TAT. Open Posting &amp; submission to complete {handoffs.overdue > 1 ? "them" : "it"} or ask for assistance.</div>
@@ -3535,47 +3536,7 @@ function LimitsView({ ctx }) {
   );
 }
 /* Needs attention: escalations from billers, and the client requests the team lead must send to the client. */
-/* Past TAT: everything past its TAT on your clients (Payment posting, Submission, Rejections and Needs attention), what is due in
-   the next hours, and what is on hold. "Can't close yet" takes the reason and the expected close date: no reminders for that task
-   until the date. Every TAT counts Monday to Friday and skips the Shastra holidays. */
-function TatView({ ctx, me, params }) {
-  const [clientId, setClientId] = useState((params && params.client_id) || "");
-  const [tab, setTab] = useState((params && ["late", "soon", "held"].includes(params.tab) && params.tab) || "late");
-  const q = useRpc("tat.list", { client_id: clientId || undefined }, [clientId]);
-  const [hold, setHold] = useState(null);
-  const [open, setOpen] = useState(null);
-  const d = q.data, rows = d ? d[tab] || [] : [], soonH = d ? d.due_soon_hours : 4;
-  const unhold = async (r) => { try { await rpc("tat.unhold", { id: r.hold.id }); toast("Hold cleared: it is back on the reminders."); q.reload(); } catch (e) { toast(e.message, "err"); } };
-  return (
-    <div className="stack">
-      <div className="row between" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
-        <div style={{ maxWidth: 900 }}><h1>Past TAT</h1><div className="sub">Tasks past their TAT on your clients, what is due in the next {soonH} hours, and what is on hold with a reason. Every TAT counts Monday to Friday and skips the Shastra holidays.
-          Reminders go to every supervisor, SME and above on the client (Payment posting, Submission and Rejections at 09:00 IST; Needs attention at 19:00 IST) until the task is closed or on hold.</div></div>
-        <div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div>
-      </div>
-      <div className="seg2" style={{ alignSelf: "flex-start" }}>{[["late", "Past TAT", "red"], ["soon", "Due in the next " + soonH + " hours", "amber"], ["held", "On hold", "amber"]].map(([k, l, tone]) =>
-        <button key={k} type="button" className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}{d && d[k].length ? <span className={"badge " + tone} style={{ marginLeft: 6 }}>{d[k].length}</span> : null}</button>)}</div>
-      {q.error ? <ErrorBox error={q.error} /> : !d ? <div className="card"><Spinner label="Loading…" /></div> : !rows.length ? <div className="card"><Empty>{tab === "late" ? "Nothing is past its TAT on your clients." : tab === "soon" ? "Nothing is due in the next " + soonH + " hours." : "Nothing is on hold."}</Empty></div> :
-        <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Task</th><th>Claim #</th><th>From</th><th className="r">Waiting</th><th>{tab === "late" ? "Over the TAT" : tab === "soon" ? "Time left" : "On hold"}</th><th>With</th><th></th></tr></thead>
-          <tbody>{rows.map((r) => <tr key={r.ref_kind + ":" + r.ref_id} className={tab === "late" ? "tat-missed" : ""}>
-            <td className="small">{r.client_name}</td>
-            <td className="small"><b>{r.type}</b><div className="tiny muted">TAT {r.tat} working hours</div></td>
-            <td className="mono small">{r.claim_no || "–"}</td>
-            <td className="small">{r.by || "–"}<div className="tiny muted">{fmtWhen(r.at)}</div></td>
-            <td className="num">{r.waited_h} h</td>
-            <td className="small">{tab === "late" ? <span className="badge red">{r.over_h} h over</span> : tab === "soon" ? <span className="badge amber">{r.left_h} h left</span>
-              : <><span className="badge amber">until {fmtMDY(r.hold.until)}</span><div className="tiny muted">{r.hold.reason}{r.hold.note ? ": " + r.hold.note : ""} · {r.hold.by}</div></>}
-              {tab === "late" && r.hold_past ? <div className="tiny red-ink">Expected {fmtMDY(r.hold_past.until)} ({r.hold_past.reason.toLowerCase()}): the date has passed</div> : null}</td>
-            <td className="small">{r.with || "–"}</td>
-            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button>{" "}
-              {r.can_hold && (tab === "held" ? <button className="btn sm" onClick={() => unhold(r)}>Clear the hold</button> : <button className="btn sm primary" onClick={() => setHold(r)}>Can't close yet</button>)}</td>
-          </tr>)}</tbody></table></div></div>}
-      {hold && <HoldModal row={hold} reasons={d.reasons} maxDays={d.max_days} onClose={() => setHold(null)} onDone={() => { setHold(null); q.reload(); }} />}
-      {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => { setOpen(null); q.reload(); }} onChanged={() => q.reload()} />}
-    </div>
-  );
-}
-/* "Can't close yet": why, and by when it will be closed. Until that date the task is off the Past TAT reminders. */
+/* "Can't close yet": why, and by when it will be closed. Until that date the task is off the Past TAT reminders and counts. */
 function HoldModal({ row, reasons, maxDays, onClose, onDone }) {
   const [f, setF] = useState({ reason: "", note: "", until: "" });
   const [busy, setBusy] = useState(false), [err, setErr] = useState(null);
@@ -3583,7 +3544,7 @@ function HoldModal({ row, reasons, maxDays, onClose, onDone }) {
   const ok = f.reason && f.until && f.until >= today && f.until <= max && (f.reason !== "Other" || f.note.trim().length >= 3);
   const save = async () => { setBusy(true); setErr(null); try { await rpc("tat.hold", { kind: row.ref_kind, id: row.ref_id, reason: f.reason, note: f.note.trim(), until: f.until }); toast("On hold until " + fmtMDY(f.until) + ": no reminders for it until then."); onDone(); } catch (e) { setErr(e.message); } setBusy(false); };
   return (
-    <Modal title={"Can't close yet · " + (row.claim_no || row.type)} sub={row.client_name + " · " + row.type + " · " + (row.over_h ? row.over_h + " h over the TAT" : "within the TAT")} onClose={onClose} narrow>
+    <Modal title={"Can't close yet · " + (row.claim_no || row.type)} sub={[row.client_name, row.type, row.over_h ? row.over_h + " h over the TAT" : row.late ? "past the TAT" : "within the TAT"].filter(Boolean).join(" · ")} onClose={onClose} narrow>
       <div className="stack" style={{ gap: 10 }}>
         <Field label="Why it cannot be closed yet"><select className="input" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}><option value="">Pick a reason…</option>{reasons.map((x) => <option key={x} value={x}>{x}</option>)}</select></Field>
         <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 60 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. Payer said the reprocessing takes 5 working days; call back on the date" /></Field>
@@ -3599,20 +3560,55 @@ function AttentionView(props) {
   const counts = useRpc("attention.count", {}, []);
   const [tab, setTab] = useState(() => (props.params && props.params.tab) || "esc");
   const c = counts.data || {};
+  // one client for every list here, and the TAT reminders on top: past 48 working hours, due soon, on hold (no separate Past TAT page)
+  const [clientId, setClientId] = useState((props.params && props.params.client_id) || "");
+  const [pick, setPick] = useState((props.params && ["late", "held"].includes(props.params.pick) && props.params.pick) || "");
+  const [ver, setVer] = useState(0);
+  const [hold, setHold] = useState(null);
+  const sup = props.me.role === "supervisor";
+  const tq = useRpc("tat.list", { client_id: clientId || undefined }, [clientId, ver], sup);
+  const tat = useMemo(() => { const m = new Map(), n = { late: [], soon: [], held: [] }, d = tq.data || {};
+    for (const k of ["late", "soon", "held"]) for (const x of (d[k] || []).filter((y) => y.group === "ar")) { m.set(x.ref_kind + ":" + x.ref_id, { ...x, state: k }); n[k].push(x); }
+    return { n, of: (kind, id) => m.get(kind + ":" + id) }; }, [tq.data]);
+  const reload = () => { setVer((v) => v + 1); counts.reload(); props.refreshAttention && props.refreshAttention(); };
+  const PART = { flagged: "flagged", back: "sent back", requests: "client request" };
+  const byPart = (xs) => ["flagged", "back", "requests"].map((p) => [p, xs.filter((x) => x.part === p).length]).filter(([, k]) => k).map(([p, k]) => k + " " + PART[p] + (k > 1 && p === "requests" ? "s" : "")).join(" · ");
+  const sub = { ...props, clientId, pick, tat, onHold: (x) => setHold(x), onTat: reload };
   return (
     <div className="stack">
       <div className="row between" style={{ alignItems: "flex-end" }}>
         <div><h1>Needs attention</h1><div className="sub">{tab === "denials" ? "Claims denied again for the same reason, and the payer and reason seen on 3 or more claims in 30 days, with what led to payment before. From the team's own SAAG entries." : tab === "esc" ? "Claims your billers flagged for their team lead, on your projects, oldest first. Client escalations are logged in the Escalation tracker." : tab === "desks" ? "Claims Payment posting, Submission or Rejections sent back to AR with Need assistance from AR. They are already first on the biller's list with a notice; review one to give it to another biller or return it to the department. They leave this list once a biller saves an entry on the claim." : "Claims Posting, Submission or Rejections need the client for. Sending them to the client is the team lead's job; mark each one Sent."}</div></div>
         <div className="seg2">{[["esc", "Flagged by billers", c.escalations], ["desks", "Sent back by Posting / Submission", c.from_desks], ["client", "Client requests", c.client_to_send], ["denials", "Repeat denials", 0]].map(([k, l, n]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}{n ? <span className="badge amber" style={{ marginLeft: 6 }}>{n}</span> : null}</button>)}</div>
       </div>
-      {tab === "denials" ? <RepeatDenialsView {...props} /> : tab === "esc" ? <EscalationsView {...props} /> : tab === "desks" ? <FromDesksView {...props} /> : <ClientRequestsView {...props} onChanged={() => { counts.reload(); props.refreshAttention && props.refreshAttention(); }} />}
+      <div className="row" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 240 }}><ClientPicker ctx={props.ctx} clientId={clientId} setClientId={setClientId} allowAll /></div>
+        {pick && tab !== "denials" && <><span className="badge ink" style={{ marginBottom: 8 }}>{pick === "late" ? "Past 48 working hours only" : "On hold only"}</span><button className="btn sm link" style={{ marginBottom: 6 }} onClick={() => setPick("")}>Show all</button></>}
+      </div>
+      {sup && tab !== "denials" && tq.data && <>
+        <div className="grid g3">
+          <Kpi label="Past 48 working hours" value={fmtInt(tat.n.late.length)} tone={tat.n.late.length ? "bad" : ""} sub={tat.n.late.length ? byPart(tat.n.late) + " · at the top of each list" : "none"} onClick={() => setPick(pick === "late" ? "" : "late")} on={pick === "late"} title="Show only the ones past the TAT" />
+          <Kpi label={"Due in the next " + (tq.data.due_soon_hours || 4) + " hours"} value={fmtInt(tat.n.soon.length)} tone={tat.n.soon.length ? "warn" : ""} sub={tat.n.soon.length ? byPart(tat.n.soon) : "still within the TAT"} />
+          <Kpi label="On hold" value={fmtInt(tat.n.held.length)} tone={tat.n.held.length ? "warn" : ""} sub="can't close yet, reason given" onClick={() => setPick(pick === "held" ? "" : "held")} on={pick === "held"} title="Show only the ones on hold" />
+        </div>
+        {tat.n.late.length > 0 && <div className="tiny muted">Every supervisor, SME and above on the client gets a reminder at 19:00 IST until each is closed or put on hold (Can't close yet, in the row).</div>}
+      </>}
+      {tab === "denials" ? <RepeatDenialsView {...sub} /> : tab === "esc" ? <EscalationsView {...sub} /> : tab === "desks" ? <FromDesksView {...sub} /> : <ClientRequestsView {...sub} onChanged={reload} />}
+      {hold && <HoldModal row={hold} reasons={(tq.data && tq.data.reasons) || []} maxDays={(tq.data && tq.data.max_days) || 30} onClose={() => setHold(null)} onDone={() => { setHold(null); reload(); }} />}
     </div>
   );
 }
+/* The rows of a Needs attention list: one client, a card picked on top, and the ones on hold after the rest (the oldest, so the
+   ones past the TAT, stay first). kind is how the TAT reminders know the row: "flag" (a flagged claim) or "handoff". */
+const attnRows = (rows, kind, { clientId, pick, tat }) => {
+  const st = (r) => ((tat && tat.of(kind, r.id)) || {}).state;
+  return rows.filter((r) => (!clientId || r.client_id === clientId) && (!pick || st(r) === pick)).map((r, i) => [r, i])
+    .sort((a, b) => ((st(a[0]) === "held") - (st(b[0]) === "held")) || a[1] - b[1]).map(([r]) => r);
+};
+const attnHold = (kind, r, { tat, onHold, onTat }) => { const x = tat && tat.of(kind, r.id); if (!x) return null;
+  return <HoldCell hold={x.state === "held" ? { ...x.hold, active: true } : x.hold_past ? { ...x.hold_past, active: false } : null} late={x.state === "late"} canHold={x.can_hold} onChanged={onTat} onHold={() => onHold(x)} />; };
 /* Repeat denials: the same claim denied again for the same reason (still being worked), and the payer and reason on 3 or more
    claims in 30 days (fix it at the source: a setup, a code, a payer rule), each with what led to payment before. */
-function RepeatDenialsView({ ctx, me }) {
-  const [clientId, setClientId] = useState("");
+function RepeatDenialsView({ ctx, me, clientId }) {
   const q = useRpc("denials.repeats", { client_id: clientId || undefined }, [clientId]);
   const [open, setOpen] = useState(null);
   const d = q.data;
@@ -3620,7 +3616,6 @@ function RepeatDenialsView({ ctx, me }) {
     : <span className="tiny muted">Nothing has led to payment for this reason yet: a team lead decides the next step.</span>;
   return (
     <div className="stack">
-      <div style={{ maxWidth: 320 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div>
       {q.error ? <ErrorBox error={q.error} /> : !d ? <div className="card"><Spinner label="Loading…" /></div> : <>
         <div className="card tight"><div className="row between" style={{ padding: "12px 14px 0" }}><h3 style={{ margin: 0 }}>Denied again for the same reason <span className="badge amber" style={{ marginLeft: 6 }}>{d.claims.length}</span></h3><span className="tiny muted">still being worked · last 12 months</span></div>
           {!d.claims.length ? <Empty>No claim has been denied twice for the same reason.</Empty> : <div className="table-wrap" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Client</th><th>Claim #</th><th>Payer</th><th>Reason</th><th className="r">Times</th><th>Last denied</th><th>Last action</th><th>What worked before</th><th>Biller</th><th></th></tr></thead>
@@ -3918,21 +3913,21 @@ function DigestDashboard({ params, go }) {
 }
 /* Sent back by Posting / Submission / Rejections with "Need assistance from AR": the AR team lead sees what came back, why, and
    whether the biller has picked it up. A row leaves once AR saves a work entry on the claim. */
-function FromDesksView({ ctx, me, refreshAttention }) {
+function FromDesksView({ ctx, me, refreshAttention, clientId, pick, tat, onHold, onTat }) {
   const q = useRpc("attention.fromDesks", {}, []);
   const [open, setOpen] = useState(null);
   const [review, setReview] = useState(null);
-  const rows = q.data ? q.data.rows : [];
+  const rows = attnRows(q.data ? q.data.rows : [], "handoff", { clientId, pick, tat });
   return (
     <>
-      {rows.some((r) => r.late) && <div className="alert err"><b>{rows.filter((r) => r.late).length} waiting more than 48 working hours</b> since the department sent them back. Make sure the biller picks them up.</div>}
+      {rows.some((r) => r.late) && <div className="alert err"><b>{rows.filter((r) => r.late).length} waiting more than 48 working hours</b> since the department sent them back (at the top). Make sure the biller picks them up.</div>}
       <div className="card tight">
         <ErrorBox error={q.error} />
         {q.loading && !q.data && <Spinner />}
         <div className="table-wrap"><table className="t"><thead><tr><th>Sent back</th><th>Department</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Why AR is needed</th><th>Biller</th><th></th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className={r.late ? "tat-missed" : ""}>
-              <td className="small">{r.late ? <span className="badge red">{fmtWhen(r.done_at)}</span> : fmtWhen(r.done_at)}<div className="tiny muted">by {r.done_by_name || "the department"}</div></td>
+              <td className="small">{r.late ? <span className="badge red">{fmtWhen(r.done_at)}</span> : fmtWhen(r.done_at)}<div className="tiny muted">by {r.done_by_name || "the department"}</div>{attnHold("handoff", r, { tat, onHold, onTat })}</td>
               <td><span className={"badge " + (r.dept === "posting" ? "purple" : r.dept === "rejection" ? "red" : "blue")}>{r.dept_label}</span>{r.returns >= 2 && <div><span className={"badge " + (r.returns >= 3 ? "red" : "amber")} style={{ marginTop: 3 }}>Returned {r.returns}×</span></div>}</td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td>
               <td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td>
@@ -3948,14 +3943,13 @@ function FromDesksView({ ctx, me, refreshAttention }) {
   );
 }
 const SENT_HOW_UI = ["Email", "Client portal", "Call", "Fax", "Other"];
-function ClientRequestsView({ ctx, me, onChanged, params }) {
+function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, onTat }) {
   const q = useRpc("attention.clientRequests", {}, []);
   const [show, setShow] = useState("to_send");
-  const [only, setOnly] = useState((params && params.client_id) || "");
   const [sent, setSent] = useState(null);
   const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
-  const all = q.data ? q.data.rows.filter((r) => !only || r.client_id === only) : [];
+  const all = attnRows(q.data ? q.data.rows : [], "handoff", { clientId, pick, tat }), lateN = all.filter((r) => r.late).length;
   const rows = all.filter((r) => (show === "to_send" ? !r.client_sent_at : r.client_sent_at));
   const save = async () => {
     setBusy(true);
@@ -3965,8 +3959,7 @@ function ClientRequestsView({ ctx, me, onChanged, params }) {
   };
   return (
     <>
-      {only && <div className="row" style={{ gap: 6 }}><label className="check small"><input type="checkbox" checked onChange={() => setOnly("")} /> Only {(ctx.clients.find((c) => c.id === only) || {}).name || "one client"}</label></div>}
-      {q.data && q.data.late > 0 && <div className="alert err"><b>{q.data.late} not sent within 48 working hours.</b> Send these to the client first.</div>}
+      {lateN > 0 && <div className="alert err"><b>{lateN} not sent within 48 working hours.</b> They are at the top: send these to the client first.</div>}
       <div className="row between">
         <div className="seg2">{[["to_send", "To send", all.filter((r) => !r.client_sent_at).length], ["sent", "Sent, waiting for the client", all.filter((r) => r.client_sent_at).length]].map(([k, l, n]) => <button key={k} className={show === k ? "on" : ""} onClick={() => setShow(k)}>{l} {n}</button>)}</div>
         <div className="small muted">The TAT keeps running; the department chases the client 3 working days after it is sent.</div>
@@ -3977,7 +3970,7 @@ function ClientRequestsView({ ctx, me, onChanged, params }) {
         <div className="table-wrap"><table className="t"><thead><tr><th>Asked</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Department</th><th>What is needed from the client</th><th>{show === "sent" ? "Sent" : "Biller"}</th><th></th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className={r.late ? "tat-missed" : ""}>
-              <td className="small">{r.late ? <span className="badge red">not sent · {fmtWhen(r.asked_at)}</span> : fmtWhen(r.asked_at)}<div className="tiny muted">by {r.asked_by || "the department"}</div></td>
+              <td className="small">{r.late ? <span className="badge red">not sent · {fmtWhen(r.asked_at)}</span> : fmtWhen(r.asked_at)}<div className="tiny muted">by {r.asked_by || "the department"}</div>{attnHold("handoff", r, { tat, onHold, onTat })}</td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td>
               <td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td>
               <td><span className={"badge " + (r.dept === "posting" ? "purple" : r.dept === "rejection" ? "red" : "blue")}>{r.dept_label}</span></td>
@@ -4049,13 +4042,13 @@ function ReviewModal({ row, people, onClose, onDone }) {
     </Modal>
   );
 }
-function EscalationsView({ ctx, me, refreshAttention }) {
+function EscalationsView({ ctx, me, refreshAttention, clientId, pick, tat, onHold, onTat }) {
   const q = useRpc("attention.list", {}, []);
   const [open, setOpen] = useState(null);
   const [answer, setAnswer] = useState(null);
   const [review, setReview] = useState(null);
   const [busy, setBusy] = useState(false);
-  const rows = q.data ? q.data.rows : [];
+  const rows = attnRows(q.data ? q.data.rows : [], "flag", { clientId, pick, tat }), late = rows.filter((r) => r.overdue).length;
   const send = async () => {
     setBusy(true);
     try { const r = await rpc("attention.answer", { id: answer.row.id, comment: answer.text, send_back: answer.back }); toast(r.sent_back ? "Answered and back on " + (answer.row.assigned_name || "the biller") + "'s list today." : "Answered."); setAnswer(null); q.reload(); refreshAttention && refreshAttention(); }
@@ -4065,14 +4058,14 @@ function EscalationsView({ ctx, me, refreshAttention }) {
   return (
     <>
       <div><div className="sub">Review within {q.data ? q.data.tat_hours : 48} working hours (Monday to Friday): write why it came, what you reviewed, your findings and the next action, then give it to the biller who sent it, another biller, or back to the department; after that they turn red and a reminder stays at the top of every screen until they are answered.</div></div>
-      {q.data && q.data.overdue > 0 && <div className="alert err"><b>{q.data.overdue} past the {q.data.tat_hours}-hour TAT.</b> Answer these first.</div>}
+      {late > 0 && <div className="alert err"><b>{late} past the {q.data.tat_hours}-hour TAT.</b> They are at the top: answer these first.</div>}
       <div className="card tight">
         <ErrorBox error={q.error} />
         {q.loading && !q.data && <Spinner />}
         <div className="table-wrap"><table className="t"><thead><tr><th>Waiting</th><th>Claim #</th><th>Patient</th><th>Client</th><th>Payer</th><th className="r">Balance</th><th>Biller</th><th>Last entry</th><th></th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className={r.overdue ? "tat-missed" : ""}>
-              <td>{r.overdue ? <span className="badge red">TAT missed · {fmtWait(r.waiting_ms)}</span> : <span className={"badge " + (r.waiting_ms > (q.data.tat_hours - 8) * 3600000 ? "amber" : "gray")}>{fmtWait(r.waiting_ms)}</span>}<div className="tiny muted">since {fmtWhen(r.escalated_at)}</div></td>
+              <td>{r.overdue ? <span className="badge red">TAT missed · {fmtWait(r.waiting_ms)}</span> : <span className={"badge " + (r.waiting_ms > (q.data.tat_hours - 8) * 3600000 ? "amber" : "gray")}>{fmtWait(r.waiting_ms)}</span>}<div className="tiny muted">since {fmtWhen(r.escalated_at)}</div>{attnHold("flag", r, { tat, onHold, onTat })}</td>
               <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td className="small">{r.escalated_by_name || r.assigned_name || "–"}{r.flag_label && <div className="tiny amber-ink">{r.flag_label}</div>}</td>
               <td className="small" style={{ maxWidth: 340 }}>{r.last_status_code ? <b>{r.last_status_code}{r.last_sub_status ? " › " + r.last_sub_status : ""}</b> : null}<div className="tiny" style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{r.last_note}</div></td>
@@ -4609,28 +4602,44 @@ const DESK_TEXT = {
   posting: ["Payment posting", "Claims billers send you to post (their SAAG action Need to Post or Posting Correction). Post each one, then mark it Complete with the check / EFT details, or ask for assistance."],
   submission: ["Submission", "Claims billers send you to submit (resubmissions, corrected and paper claims). Submit each one, then mark it Complete with the batch / claim ID, or ask for assistance."],
 };
+/* A task's "Can't close yet" in a list: on hold until a date with the reason (a team lead can clear it), the button when it is
+   past its TAT, or a red line when the expected close date has passed. */
+function HoldCell({ hold, late, canHold, onHold, onChanged }) {
+  const clear = async () => { try { await rpc("tat.unhold", { id: hold.id }); toast("Hold cleared: it is back on the reminders."); onChanged && onChanged(); } catch (e) { toast(e.message, "err"); } };
+  if (hold && hold.active) return <div className="tiny" style={{ marginTop: 3, maxWidth: 240 }}><span className="badge amber">On hold until {fmtMDY(hold.until)}</span> <span className="muted">{hold.reason}{hold.note ? ": " + hold.note : ""}{hold.by ? " · " + hold.by : ""}</span>
+    {canHold && <> <button type="button" className="btn link tiny" style={{ padding: 0 }} onClick={clear}>Clear hold</button></>}</div>;
+  return <>{hold && !hold.active && <div className="tiny red-ink" style={{ marginTop: 3, maxWidth: 240 }}>Expected {fmtMDY(hold.until)} ({String(hold.reason || "").toLowerCase()}): the date has passed</div>}
+    {late && canHold && <div><button type="button" className="btn link tiny" style={{ padding: 0, marginTop: 3 }} onClick={onHold} title="Why it cannot be closed yet, and by when: no reminders for it until then">Can't close yet</button></div>}</>;
+}
 function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const desk = deskOf(me, handoffs);
   const hd = (handoffs && handoffs.depts) || [];
   const mine = desk === "submission" && (hd.includes("subcheck") || hd.includes("rejection")) ? ["submission", ...hd.filter((x) => x === "subcheck" || x === "rejection")] : null;
   const [dept, setDept] = useState((params && ["posting", "submission", "rejection"].includes(params.dept) && params.dept) || (desk === "posting" ? "posting" : desk === "submission" && !mine ? "submission" : ""));
   const [view, setView] = useState("open");
+  // a card picked on top (Past TAT, On hold) narrows the list; claims waiting on the client can be left out
+  const [pick, setPick] = useState((params && ["late", "held"].includes(params.pick) && params.pick) || "");
+  const [hideClient, setHideClient] = useState(false);
+  const [hold, setHold] = useState(null);
   // which client, and when the claim was sent to the desk (the same day the AR biller worked it)
   const [clientId, setClientId] = useState((params && params.client_id) || "");
   const [dr, setDr] = useState(() => ({ ...newRange("all"), key: "all" }));
   const span = rangeSpan(dr);
-  const q = useRpc("handoffs.list", { dept: dept || undefined, view, client_id: clientId || undefined, from_ms: span ? dayBounds(span[0])[0] : undefined, to_ms: span ? dayBounds(span[1])[1] : undefined },
-    [dept, view, clientId, span && span[0], span && span[1]]);
+  const q = useRpc("handoffs.list", { dept: dept || undefined, view, client_id: clientId || undefined, from_ms: span ? dayBounds(span[0])[0] : undefined, to_ms: span ? dayBounds(span[1])[1] : undefined, hide_client: hideClient || undefined },
+    [dept, view, clientId, span && span[0], span && span[1], hideClient]);
   // A new hand-off (the desk count changed): the list refreshes by itself.
   const deskN = handoffs ? handoffs.n : null, firstN = useRef(true);
   useEffect(() => { if (firstN.current) { firstN.current = false; return; } q.reload(); }, [deskN]);
   const [open, setOpen] = useState(null);
   const [act, setAct] = useState(null);
   const [busy, setBusy] = useState(false);
-  const rows = q.data ? q.data.rows : [];
+  const all0 = q.data ? q.data.rows : [];
+  const rows = pick === "late" ? all0.filter((h) => h.overdue) : pick === "held" ? all0.filter((h) => h.hold && h.hold.active) : all0;
   const st = (q.data && q.data.stats) || {};
   const sort = useTableSort("due_at", "asc");
-  const shown = sort.sortRows(rows, { due_at: (h) => (["pending", "assigned"].includes(h.status) ? h.due_at : h.done_at) });
+  // past TAT first (the earliest due), the ones on hold after the rest
+  const shown = sort.sortRows(rows, { due_at: (h) => (["pending", "assigned"].includes(h.status) ? (h.hold && h.hold.active ? 9e15 + h.due_at : h.due_at) : h.done_at) });
+  const pickCard = (k) => { setView("open"); setPick(pick === k ? "" : k); };
   const changed = () => { q.reload(); refreshHandoffs && refreshHandoffs(); };
   const assign = async (h, uid) => { if (!uid) return; setBusy(true); try { await rpc("handoffs.assign", { id: h.id, user_id: uid }); toast("Assigned."); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const team = (d) => ctx.users.filter((u) => u.active && (d === "posting" ? /posting/i : /submission/i).test(u.department || ""));
@@ -4638,22 +4647,26 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   return (
     <div className="stack">
       {desk ? <div><h1>{DESK_TEXT[desk][0]}</h1><div className="sub">{DESK_TEXT[desk][1]} Each client's TAT (working hours) is set on its profile.</div></div> : <div><h1>Payment posting & submission</h1><div className="sub">Claims sent by billers through their SAAG action (Need to Post / Posting Correction → Payment Posting; resubmission and paper claims → Submission). Each client's TAT (working hours, set on its profile) to complete each one or ask for assistance; Saturday, Sunday and Shastra holidays do not count.</div></div>}
-      <div className="grid g5">
-        <Kpi label="Open" value={fmtInt(st.open_n || 0)} sub={st.rejection_n ? st.rejection_n + " rejection" + (st.rejection_n === 1 ? "" : "s") + " first" : "within each client's TAT"} tone="accent" />
-        <Kpi label="Past TAT" value={fmtInt(st.overdue || 0)} tone={st.overdue ? "bad" : ""} sub="answer these first" />
-        <Kpi label="Done · 30 days" value={fmtInt(st.done_n || 0)} tone="good" />
+      <div className="grid g6">
+        <Kpi label="Open" value={fmtInt(st.open_n || 0)} sub={st.rejection_n ? st.rejection_n + " rejection" + (st.rejection_n === 1 ? "" : "s") + " first" : "within each client's TAT"} tone="accent" onClick={() => { setView("open"); setPick(""); }} on={view === "open" && !pick} />
+        <Kpi label="Past TAT" value={fmtInt(st.overdue || 0)} tone={st.overdue ? "bad" : ""} sub={st.overdue ? "at the top of Open: answer these first" : "none"} onClick={() => pickCard("late")} on={pick === "late"} title="Show only the claims past their TAT" />
+        <Kpi label="On hold" value={fmtInt(st.held_n || 0)} tone={st.held_n ? "warn" : ""} sub="can't close yet, reason given" onClick={() => pickCard("held")} on={pick === "held"} title="Show only the claims on hold" />
+        <Kpi label="Done · 30 days" value={fmtInt(st.done_n || 0)} tone="good" onClick={() => { setView("done"); setPick(""); }} on={view === "done"} />
         <Kpi label="Within TAT" value={met == null ? "–" : met + "%"} sub="of those done in 30 days" />
-        <Kpi label="Waiting on client" value={fmtInt(st.client_n || 0)} sub="TAT clock still running" tone={st.client_n ? "warn" : ""} />
+        <Kpi label="Waiting on client" value={fmtInt(st.client_n || 0)} sub="TAT clock still running" tone={st.client_n ? "warn" : ""} onClick={() => { setView("client"); setPick(""); }} on={view === "client"} />
       </div>
+      {st.overdue > 0 && pick !== "late" && <div className="alert err row between"><span><b>⏰ {plural(st.overdue, "claim is", "claims are")} past the TAT:</b> at the top of Open.{me.role === "supervisor" ? " Every supervisor, SME and above on the client gets a reminder at 09:00 IST until each is closed or put on hold (Can't close yet)." : " Complete them or ask for assistance."}</span><button className="btn sm" onClick={() => pickCard("late")}>Show only these</button></div>}
+      {pick && <div className="row" style={{ gap: 8, alignItems: "center" }}><span className="badge ink">{pick === "late" ? "Past TAT only" : "On hold only"}</span><button className="btn sm link" onClick={() => setPick("")}>Show all</button></div>}
       <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
         {!desk || desk === "both" ? <div className="row" style={{ gap: 5 }}>{[["", "Both"], ["posting", "Payment posting"], ["submission", "Submission"]].map(([k, l]) => <button key={k} className={"chip " + (dept === k ? "on" : "")} onClick={() => setDept(k)}>{l}</button>)}</div>
           : mine ? <div className="row" style={{ gap: 5 }}>{[["", "All mine"], ...mine.map((k) => [k, DEPT_NAME[k]])].map(([k, l]) => <button key={k} className={"chip " + (dept === k ? "on" : "")} onClick={() => setDept(k)}>{l}</button>)}</div> : <span />}
-        <div className="row" style={{ gap: 5 }}>{[["open", "Open"], ["mine", "Assigned to me"], ["client", "Waiting on client" + (st.client_n ? " " + st.client_n : "")], ["done", "Completed"], ["assist", "Assistance from AR"]].map(([k, l]) => <button key={k} className={"chip " + (view === k ? "on" : "")} onClick={() => setView(k)}>{l}</button>)}</div>
+        <div className="row" style={{ gap: 5 }}>{[["open", "Open"], ["mine", "Assigned to me"], ["client", "Waiting on client" + (st.client_n ? " " + st.client_n : "")], ["done", "Completed"], ["assist", "Assistance from AR"]].map(([k, l]) => <button key={k} className={"chip " + (view === k ? "on" : "")} onClick={() => { setView(k); setPick(""); }}>{l}</button>)}</div>
       </div>
       <div className="row desk-filters" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
         <div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div>
         <DateRange value={dr} onChange={setDr} allowAll label="Sent to the desk" />
-        {(clientId || span) && <button className="btn sm link" onClick={() => { setClientId(""); setDr({ ...newRange("all"), key: "all" }); }}>Clear filters</button>}
+        {view !== "client" && <label className="check small" style={{ paddingBottom: 8 }} title="Claims waiting on the client come back on Open when it is time to chase the client"><input type="checkbox" checked={hideClient} onChange={(e) => setHideClient(e.target.checked)} /> Hide claims waiting on the client</label>}
+        {(clientId || span || hideClient) && <button className="btn sm link" onClick={() => { setClientId(""); setDr({ ...newRange("all"), key: "all" }); setHideClient(false); }}>Clear filters</button>}
         <span className="tiny muted" style={{ marginLeft: "auto", maxWidth: 300 }}>The date a claim was sent here is the day the AR biller saved the entry that sent it. The counts above follow these filters.</span>
       </div>
       {(st.recheck_now_n > 0 || st.due_soon_n > 0 || st.chase_n > 0) && <div className="row" style={{ gap: 8 }}>
@@ -4667,7 +4680,8 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
         <div className="table-wrap"><table className="t"><thead><tr>{sort.Th("due_at", view === "open" || view === "mine" ? "TAT" : view === "client" ? "Waiting since" : "Done")}{sort.Th("dept", "Department")}{sort.Th("claim_no", "Claim #")}{sort.Th("patient", "Patient")}{sort.Th("client_name", "Client")}{sort.Th("payer", "Payer")}{sort.Th("balance", "Balance", "r")}{sort.Th("created_by_name", "Sent by")}{sort.Th("assigned_name", "Assigned to")}<th></th></tr></thead>
           <tbody>{shown.map((h) => { const isOpen = ["pending", "assigned", "client"].includes(h.status); return (
             <tr key={h.id} className={h.overdue ? "tat-missed" : ""}>
-              <td style={{ minWidth: 190 }}>{isOpen ? <TatTag h={h} /> : <><span className={"badge " + (h.status === "complete" ? "green" : h.status === "back" ? "amber" : "red")}>{h.status === "complete" ? (h.dept === "posting" ? "completed · posted" : h.dept === "subcheck" ? "completed · accepted" : "completed · submitted") : h.status === "rejected" ? "rejected" : "assistance from AR"}</span><div className="tiny muted">{fmtWhen(h.done_at)}{h.done_at && h.due_at ? (h.done_at <= h.due_at ? " · within TAT" : " · after TAT") : ""}</div></>}</td>
+              <td style={{ minWidth: 190 }}>{isOpen ? <><TatTag h={h} /><HoldCell hold={h.hold} late={h.overdue} canHold={h.can_hold} onChanged={changed}
+                onHold={() => setHold({ ref_kind: "handoff", ref_id: h.id, claim_no: h.claim_no, client_name: h.client_name, type: DEPT_NAME[h.dept], late: true })} /></> : <><span className={"badge " + (h.status === "complete" ? "green" : h.status === "back" ? "amber" : "red")}>{h.status === "complete" ? (h.dept === "posting" ? "completed · posted" : h.dept === "subcheck" ? "completed · accepted" : "completed · submitted") : h.status === "rejected" ? "rejected" : "assistance from AR"}</span><div className="tiny muted">{fmtWhen(h.done_at)}{h.done_at && h.due_at ? (h.done_at <= h.due_at ? " · within TAT" : " · after TAT") : ""}</div></>}</td>
               <td><span className={"badge " + (h.dept === "posting" ? "purple" : h.dept === "subcheck" ? "teal" : h.dept === "rejection" ? "red" : "blue")}>{DEPT_NAME[h.dept]}</span>{h.dept === "rejection" && isOpen ? <div className="tiny b" style={{ color: "var(--red-ink)" }}>first priority</div> : h.dept === "submission" && /^Rejected/.test(h.saag_action) ? <div className="tiny" style={{ color: "var(--red-ink)" }}>resubmit</div> : null}
                 {h.returns > 0 && <div><span className={"badge " + (h.returns >= 3 ? "red" : "amber")} style={{ marginTop: 3 }} title="Times this claim came back to AR from Posting, Submission or Rejections">Returned {h.returns}×</span></div>}
                 {h.status === "client" && <div className="tiny" style={{ marginTop: 3, maxWidth: 230 }}>{h.client_sent_at ? <span className="muted">Sent to client by {h.client_sent_by_name} · {fmtWhen(h.client_sent_at)} · {h.client_sent_how}</span> : <span style={{ color: "var(--amber-ink)" }}>Not sent to the client yet (AR team lead)</span>}</div>}
@@ -4685,6 +4699,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
             {q.data && !rows.length && <tr><td colSpan={10}><Empty>{view === "open" ? "Nothing waiting. Claims arrive here when a biller saves a posting or submission action on a client that has a person set for it (Clients & locations)." : "Nothing here."}</Empty></td></tr>}</tbody></table></div>
       </div>
       {act && <HandoffCloseModal act={act} onClose={() => setAct(null)} onDone={() => { setAct(null); changed(); }} />}
+      {hold && <HoldModal row={hold} reasons={(q.data && q.data.hold_reasons) || []} maxDays={30} onClose={() => setHold(null)} onDone={() => { setHold(null); changed(); }} />}
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={changed} />}
     </div>
   );
@@ -5880,12 +5895,12 @@ function PendingCard({ p, clientId, go }) {
   const desk = (k, title, color) => { const b = p.desks[k]; return { k, title, color, n: b.n, bal: b.bal, rows: [["Within TAT", b.ok, b.ok ? "g" : ""], ["Due in the next " + p.due_soon_hours + " hours", b.soon, b.soon ? "a" : ""], ...(b.hold ? [["On hold, reason given", b.hold, "a", "held"]] : []), ["Past TAT", b.late, b.late ? "r" : "g", "late"]],
     extra: k === "submission" && b.rechecks ? "includes " + plural(b.rechecks, "recheck") : "", tat: tatTxt(k === "posting" ? p.tat.posting : p.tat.submission),
     badge: b.late ? ["red", b.late + " past TAT"] : b.soon ? ["amber", b.soon + " due soon"] : b.n ? ["green", "all within TAT"] : ["gray", "nothing pending"],
-    open: () => go("handoffs", { client_id: clientId || undefined, dept: k }) }; };
+    open: (pick) => go("handoffs", { client_id: clientId || undefined, dept: k, ...(pick ? { pick } : {}) }) }; };
   const a = p.attn;
   const boxes = [desk("posting", "Payment posting", "#2563EB"), desk("submission", "Submission", "#7C5CFF"), desk("rejection", "Rejections", "#E5484D"),
     { k: "attn", title: "Needs attention", color: "#F5A623", n: a.n, rows: [["Flagged by billers", a.flagged.n, ""], ["Sent back by Posting / Submission", a.back.n, ""], ["Client requests to send", a.requests.n, ""], ...(a.hold ? [["On hold, reason given", a.hold, "a", "held"]] : []), ["Past " + p.tat.attention + " h", a.late, a.late ? "r" : "g", "late"]],
       tat: p.tat.attention + " working hours", badge: a.late ? ["red", a.late + " past " + p.tat.attention + " h"] : a.soon ? ["amber", a.soon + " due soon"] : a.n ? ["green", "all within TAT"] : ["gray", "nothing waiting"],
-      open: () => go("attention") }];
+      open: (pick) => go("attention", { client_id: clientId || undefined, ...(pick ? { pick } : {}) }) }];
   const seg = (b) => { const t = Math.max(1, b.n), x = b.k === "attn" ? [[a.n - a.late - a.soon - a.hold, "var(--sc-g)"], [a.soon + a.hold, "var(--sc-a)"], [a.late, "var(--sc-r)"]] : [[p.desks[b.k].ok, "var(--sc-g)"], [p.desks[b.k].soon + p.desks[b.k].hold, "var(--sc-a)"], [p.desks[b.k].late, "var(--sc-r)"]];
     return <div className="pend-bar">{b.n ? x.filter(([v]) => v > 0).map(([v, c], i) => <i key={i} style={{ width: (v / t * 100) + "%", background: c }} />) : null}</div>; };
   return (
@@ -5897,7 +5912,7 @@ function PendingCard({ p, clientId, go }) {
           <div className="row between" style={{ gap: 6 }}><b>{b.title}</b><span className={"badge " + b.badge[0]}>{b.badge[1]}</span></div>
           <div className="pend-n">{fmtInt(b.n)}<small>{b.k === "attn" ? "waiting for a team lead" : "pending · " + fmtK(b.bal)}</small></div>
           {seg(b)}
-          <table className="pend-t"><tbody>{b.rows.map(([l, v, tone, link]) => <tr key={l} className={link && v ? "click" : ""} onClick={link && v ? () => go("tat", { client_id: clientId || undefined, tab: link }) : undefined} title={link && v ? "Open Past TAT" : undefined}>
+          <table className="pend-t"><tbody>{b.rows.map(([l, v, tone, link]) => <tr key={l} className={link && v ? "click" : ""} onClick={link && v ? () => b.open(link) : undefined} title={link && v ? "Show them" : undefined}>
             <td>{link && v ? <u>{l}</u> : l}</td><td className={tone === "r" ? "red-ink" : tone === "a" ? "amber-ink" : tone === "g" ? "teal-ink" : ""}>{fmtInt(v)}</td></tr>)}</tbody></table>
           <div className="tiny muted" style={{ margin: "4px 0 8px" }}>TAT: {b.tat}{b.extra ? " · " + b.extra : ""}</div>
           <button type="button" className={"btn sm" + (b.badge[0] === "red" ? " primary" : "")} onClick={b.open}>Open {b.title === "Needs attention" ? "Needs attention" : b.title}</button>
@@ -8624,7 +8639,9 @@ function App() {
     <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
   const allowed = [...navItems(navFor(me, handoffs, fb, attention)).map((x) => x[0]), "settings", ...(me.role === "supervisor" ? ["digest", "client"] : []), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
-  const view = allowed.includes(nav.view) ? nav.view : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
+  // an old Past TAT link (#/tat) opens Posting & submission, where the reminders are now (Needs attention when that tab is not there)
+  const asked = nav.view === "tat" ? (allowed.includes("handoffs") ? "handoffs" : "attention") : nav.view;
+  const view = allowed.includes(asked) ? asked : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
   // A page this person cannot open (or a name that is not a page) shows their start page, and the address says so too.
   if (nav.view && nav.view !== view && ctx.loaded && handoffs !== null) { try { if ((location.hash || "").replace(/^#\/?/, "").split("?")[0] === nav.view) history.replaceState(null, "", "#/" + view); } catch (e) {} }
   const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb };
@@ -8633,7 +8650,6 @@ function App() {
     : view === "portfolio" && me.role === "supervisor" ? <DashboardHub {...props} params={{ ...(props.params || {}), tab: "inventory" }} />
     : (view === "live" || view === "teamtoday") && me.role === "supervisor" ? <LiveStatusView {...props} />
     : view === "attention" ? <AttentionView {...props} />
-    : view === "tat" && me.role === "supervisor" ? <TatView {...props} />
     : view === "digest" ? <DigestDashboard {...props} />
     : view === "escalations" && me.role === "supervisor" ? <EscalationTrackerView {...props} />
     : view === "inventory" || view === "allocate" ? <InventoryView {...props} initialTab={view === "allocate" ? "allocate" : undefined} />
