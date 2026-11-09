@@ -190,9 +190,16 @@ await ho("posting", N(2, 11), N(3, 11), { status: "complete", done: N(4, 11) });
 await ho("submission", N(2, 9), N(3, 9), { status: "complete", done: N(2, 15) });
 await ho("submission", N(2, 10), N(3, 10), { status: "back", done: N(3, 9) });
 await ho("rejection", N(2, 11), N(3, 11), { status: "complete", done: N(3, 10) });
+// every hand-off to Submission counts, the same claim sent again included; the recheck after submitting does not, even late
+const sub1 = await ho("submission", N(5, 9), N(6, 9), { status: "complete", done: N(5, 15) });
+await sql(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by_name, due_at, lead_id, done_at, done_by_name) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+  "resub-1", sub1.claim.id, sun.id, "submission", "complete", N(9, 9), "Arun Agent", N(10, 9), U("Tina Lead").id, N(9, 12), "");
+await sql(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by_name, due_at, available_at, lead_id, done_at, done_by_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+  "recheck-1", sub1.claim.id, sun.id, "subcheck", "complete", N(5, 15), "Arun Agent", N(10, 15), N(9, 15), U("Arun Agent").id, N(12, 10), "");
 const ex = await at(IST(2026, 11, 20, 12), () => TI("sla.extras", { client_id: sun.id, from: "2026-11-01", to: "2026-11-30", today: "2026-11-20" }));
 ok("Payment posting: closed after the TAT and still open past it both count as missed", ex.tat.posting.due === 5 && ex.tat.posting.met === 2 && ex.tat.posting.missed === 3, ex.tat.posting);
-ok("Submission counts Rejections too (they resubmit to the Submission TAT)", ex.tat.submission.due === 3 && ex.tat.submission.met === 3 && ex.tat.submission.pct === 100, ex.tat.submission);
+ok("Submission counts Rejections too (they resubmit to the Submission TAT)", ex.tat.submission.due === 5 && ex.tat.submission.met === 5 && ex.tat.submission.pct === 100, ex.tat.submission);
+ok("every time a claim goes to Submission counts (a resubmission of the same claim too); the late recheck after submitting does not", ex.tat.submission.due === 5 && !ex.tat.missed.some((m) => m.dept === "submission"), ex.tat.missed);
 ok("each part has its TAT and the missed claims are listed", ex.tat.posting.tat === 24 && ex.tat.missed.some((m) => m.dept === "posting" && m.closed), ex.tat.missed.slice(0, 2));
 // December 1: the November TAT report goes to the SLA & KPI folder under each team lead, once
 const p0 = OD.patches;
@@ -200,7 +207,7 @@ await runJob(IST(2026, 12, 1, 10));
 const file = [...OD.items.values()].find((x) => x.kind === "file" && /^TAT Report - Sunrise Eye Care - Nov 2026\.xlsx$/.test(x.name));
 ok("the TAT report is in Brahmastra Reports / Tina Lead / Sunrise Eye Care / SLA & KPI", file && /Brahmastra Reports\/Tina Lead\/Sunrise Eye Care\/SLA & KPI/.test(pathOf(file.id)), file && pathOf(file.id));
 const sheet = file ? OD.rows.get(file.id) : [];
-ok("a header and one row per hand-off due in November, Within TAT Yes / No", sheet[0] && sheet[0][0] === "Claim #" && sheet[0][5] === "Within TAT" && sheet.length - 1 === 8 && sheet.some((x) => x[5] === "No") && sheet.some((x) => x[5] === "Yes"), sheet.slice(0, 3));
+ok("a header and one row per hand-off due in November, Within TAT Yes / No", sheet[0] && sheet[0][0] === "Claim #" && sheet[0][5] === "Within TAT" && sheet.length - 1 === 10 && !sheet.some((x) => /recheck/i.test(String(x[1]))) && sheet.some((x) => x[5] === "No") && sheet.some((x) => x[5] === "Yes"), sheet.slice(0, 3));
 ok("no patient names in it", !sheet.some((x) => pool.some((c) => c.patient && x.includes(c.patient))));
 const p1 = OD.patches;
 await runJob(IST(2026, 12, 1, 11));

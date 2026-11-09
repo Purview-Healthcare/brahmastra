@@ -538,7 +538,10 @@ Monday" and "what reached us on Monday". The counts at the top follow the filter
 
 **Each client's TAT.** The person setting up the client sets the Payment posting TAT and the Submission TAT in
 working hours (Saturday and Sunday not counted; 24 to start). Rejections and the recheck after a resubmission use the
-Submission TAT. Only AR has a daily target; Payment posting, Submission and Rejections work to the TAT.
+Submission TAT. Only AR has a daily target; Payment posting, Submission and Rejections work to the TAT. The month's
+**Submission TAT %** (SLA scorecard, Monday digest, the TAT report in OneDrive) counts every time a claim is sent to
+Submission, a first submission or a resubmission, and the Rejections tasks; the recheck after submitting is not counted
+(the biller checks the payer has the claim; it still has its own reminders).
 
 **Desk choices.** Completed, In process (comment optional), Pending (with a comment), Need assistance from AR, Need
 assistance from client, and Other (with a reason and a comment). In process, Pending and Other keep the claim open

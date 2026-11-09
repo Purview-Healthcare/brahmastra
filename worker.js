@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.99.0";
+const VERSION = "2.100.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -622,13 +622,14 @@ async function tatReportRows(env, clientId, ym) {
   const cl = await one(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", clientId); if (!cl) return { cl: null, rows: [] };
   const from = istDayStart(ym + "-01"), to = istDayStart(nextMonthISO(ym) + "-01") - 1, now = Date.now();
   const t = (ms) => { if (!ms) return ""; const d = new Date(ms + IST_MIN * 60000); return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
-  // rechecks (Submission's follow-up) count under Submission, from when they opened
-  const rows = (await all(env, `SELECT h.dept, h.status, CASE WHEN h.dept = 'subcheck' AND h.available_at IS NOT NULL THEN h.available_at ELSE h.created_at END AS created_at, h.due_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
-      WHERE h.client_id = ? AND h.dept IN ('posting','submission','rejection','subcheck') AND h.due_at BETWEEN ? AND ? ORDER BY h.due_at LIMIT 20000`, clientId, from, to)).map((h) => {
+  // every hand-off to Payment posting, Submission (each time a claim is sent, a resubmission too) and Rejections; the recheck
+  // after submitting is the biller checking the payer has it, not Submission's work, so it is left out (as in tatStats)
+  const rows = (await all(env, `SELECT h.dept, h.status, h.created_at, h.due_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
+      WHERE h.client_id = ? AND h.dept IN ('posting','submission','rejection') AND h.due_at BETWEEN ? AND ? ORDER BY h.due_at LIMIT 20000`, clientId, from, to)).map((h) => {
     // waiting on the client keeps the clock running: still open (the README, and missedByClient, count it so)
     const open = HO_OPEN.includes(h.status), closed = open ? null : h.closed_at;
     const within = closed != null ? (closed <= h.due_at ? "Yes" : "No") : h.due_at < now ? "No" : "Open";
-    return [h.claim_no || "", h.dept === "subcheck" ? "Submission · recheck" : DEPT_LABEL[h.dept] || h.dept, t(h.created_at), t(h.due_at), t(closed), within, closed != null ? Math.round(workingHoursBetween(h.created_at, closed) * 10) / 10 : "",
+    return [h.claim_no || "", DEPT_LABEL[h.dept] || h.dept, t(h.created_at), t(h.due_at), t(closed), within, closed != null ? Math.round(workingHoursBetween(h.created_at, closed) * 10) / 10 : "",
       Math.round(workingHoursBetween(h.created_at, h.due_at))];
   });
   return { cl, rows };
@@ -861,7 +862,9 @@ function sumTat(boards) {
   return o;
 }
 /* How much was closed within TAT in a window (the month on the SLA scorecard, last week in the Monday digest): the tasks that
-   fell due in it. Payment posting; Submission (Rejections resubmit to the Submission TAT); Needs attention (48 working hours).
+   fell due in it. Payment posting; Submission: every time a claim is sent to it (a first submission or a resubmission, each
+   counts) and Rejections (they resubmit to the Submission TAT), but not the recheck after submitting (the biller checking
+   the payer has the claim); Needs attention (48 working hours).
    Closed after the due time, or still open past it, is missed; still open and not yet due is left out. */
 async function tatStats(env, clientIds, from, to, now = Date.now()) {
   const ids = [...new Set(clientIds || [])].filter(Boolean);
@@ -877,7 +880,7 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
   };
   for (const h of await all(env, `SELECT h.client_id, h.dept, h.status, h.due_at, h.created_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no, COALESCE(NULLIF(h.done_by_name, ''), u.name) AS who
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
-      WHERE h.dept IN ('posting','submission','rejection','subcheck') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, lim)) {
+      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, lim)) {
     const o = out.get(h.client_id); if (!o) continue;
     const k = h.dept === "posting" ? "posting" : "submission", open = HO_OPEN.includes(h.status);
     tally(o[k], h.due_at, open ? null : h.closed_at, h.who || "", () => o.missed_list.push({ dept: k, claim_no: h.claim_no || "", sent: h.created_at, due: h.due_at, closed: open ? null : h.closed_at, who: h.who || "" }));
