@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.100.0";
+const VERSION = "2.101.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -128,6 +128,23 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS digest_runs (week TEXT NOT NULL, client_id TEXT NOT NULL, at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, by_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id))`,
   `CREATE TABLE IF NOT EXISTS tat_holds (id TEXT PRIMARY KEY, kind TEXT NOT NULL, ref_id TEXT NOT NULL, client_id TEXT NOT NULL, claim_id TEXT, since INTEGER, reason TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', until TEXT NOT NULL, by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, cleared_at INTEGER, cleared_by_name TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_tat_holds_ref ON tat_holds (kind, ref_id, cleared_at)`,
+  // Team tasks: a team lead's task for people on their team, each person's share, every update, and the files (data in attachment_parts)
+  `CREATE TABLE IF NOT EXISTS team_tasks (id TEXT PRIMARY KEY, client_id TEXT, scope TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
+     tat_hours REAL NOT NULL DEFAULT 24, due_at INTEGER NOT NULL, count_total INTEGER NOT NULL DEFAULT 0, created_by TEXT NOT NULL, created_by_name TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+     status TEXT NOT NULL DEFAULT 'open', closed_at INTEGER, closed_by_name TEXT NOT NULL DEFAULT '', hold_reason TEXT NOT NULL DEFAULT '', hold_note TEXT NOT NULL DEFAULT '', hold_until TEXT,
+     hold_by_name TEXT NOT NULL DEFAULT '', lead_seen_at INTEGER, updated_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_tasks_status ON team_tasks (status, due_at)`,
+  `CREATE TABLE IF NOT EXISTS team_task_people (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, user_id TEXT NOT NULL, share INTEGER NOT NULL DEFAULT 0, done_n INTEGER NOT NULL DEFAULT 0,
+     status TEXT NOT NULL DEFAULT 'new', updated_at INTEGER, completed_at INTEGER, seen_at INTEGER, reminded_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_task_people_user ON team_task_people (user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_task_people_task ON team_task_people (task_id)`,
+  `CREATE TABLE IF NOT EXISTS team_task_updates (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, person_id TEXT, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
+     done_n INTEGER, delta INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_task_updates_task ON team_task_updates (task_id, at)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_task_updates_user ON team_task_updates (user_id, at)`,
+  `CREATE TABLE IF NOT EXISTS team_task_files (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, update_id TEXT, name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0,
+     parts INTEGER NOT NULL DEFAULT 0, user_id TEXT, user_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_task_files_task ON team_task_files (task_id)`,
   `CREATE TABLE IF NOT EXISTS tat_mail_log (day TEXT NOT NULL, kind TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', items INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, kind, user_id))`,
   `CREATE TABLE IF NOT EXISTS digest_log (week TEXT NOT NULL, client_id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, ok INTEGER NOT NULL DEFAULT 1, error TEXT NOT NULL DEFAULT '', PRIMARY KEY (week, client_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS attendance (user_id TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'out', reason TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (user_id, day))`,
@@ -778,6 +795,94 @@ const ATTN_PARTS = [["flagged", "Flagged by billers"], ["back", "Sent back by Po
 /* "Can't close yet": a team lead gives the reason and the expected close date; until that date the task is on hold (amber), off
    the Past TAT reminders. Once the date passes it is back, marked as past the expected date. */
 const TAT_HOLD_REASONS = ["Waiting on the payer", "Waiting on the client", "Waiting on a portal or the clearinghouse", "Waiting on another department", "Needs a manager's decision", "Other"];
+/* ---------------------------------------------------------------- team tasks
+   Needs attention › Team tasks: a team lead (SME and above) gives a task to one or more people on their team: the client (or
+   none, an internal task), the scope, what to do, how many items, the TAT (24 or 72 working hours, another number of working
+   hours, or a date) and files or screenshots. Each person gets their share with a notice; it shows on their My day and in My
+   tasks. They update the count (In progress, Completed, Need help) with a comment and files, and the team lead gets a notice.
+   Items done count toward the person's count on Dashboard › Team status. Emails carry no task text (only client, scope,
+   counts and dates). */
+const TASK_SCOPES = ["AR follow-up", "Payment posting", "Submission", "Rejections", "Eligibility (EV)", "Other"];
+const TASK_SOURCES = ["Client", "Manager", "Internal"];
+const TASK_MAX_FILES = 6;
+const TASK_DESC_MAX = 4000, TASK_COMMENT_MAX = 2000;
+// A team lead sees the tasks they gave and, with edit access to the client, the ones on their clients; admins and the VP all.
+const taskLeadSees = (user, t) => !!user && user.role === "supervisor" && (t.created_by === user.id || !!user.is_admin || !!user.access_all || (!!t.client_id && leadFor(user, t.client_id)));
+// "Nov 10, 7:00 AM" in IST, the way the page shows times
+const istWhen = (ms) => { const d = new Date(ms + IST_MIN * 60000), h = d.getUTCHours(); return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) + ", " + ((h % 12) || 12) + ":" + String(d.getUTCMinutes()).padStart(2, "0") + " " + (h < 12 ? "AM" : "PM"); };
+/* The due time from the TAT picked: 24 or 72 working hours, any other number of working hours (1 to 480), or a date (the end of
+   that day, IST). Working hours are Monday to Friday, Shastra holidays left out, the same clock as every other TAT. */
+function taskDueFrom(now, tat) {
+  const t = tat && typeof tat === "object" ? tat : {};
+  if (t.kind === "date") {
+    const d = isoDate(t.date); if (!d) throw bad("Pick the date it is due.");
+    const today = istISO(now); if (d < today) throw bad("The due date is in the past: pick today or later.");
+    if (d > istISO(now + 60 * 86400000)) throw bad("The due date can be at most 60 days ahead.");
+    const due = istDayEnd(d); if (due <= now) throw bad("Pick a due date later today or after.");
+    return { tat_hours: Math.max(0.1, Math.round(workingHoursBetween(now, due) * 10) / 10), due_at: due };
+  }
+  const h = t.kind === "72" ? 72 : t.kind === "24" ? 24 : Math.round(num(t.hours, 0) * 10) / 10;
+  if (!(h >= 1 && h <= 480)) throw bad("Write the TAT in working hours: 1 to 480.");
+  return { tat_hours: h, due_at: addWorkingHours(now, h) };
+}
+/* Files given with a task or an update: checked like a claim's attachments (8 MB each, a safe type to open or a plain download). */
+function taskFilesIn(list) {
+  const xs = Array.isArray(list) ? list : [];
+  if (xs.length > TASK_MAX_FILES) throw bad("Up to " + TASK_MAX_FILES + " files at a time.");
+  return xs.map((f) => {
+    const name = str(f && f.name, 200).replace(/[\\/\u0000-\u001f]/g, "_").trim(); if (!name) throw bad("A file has no name.");
+    const data = String((f && f.data) || ""); if (!data || !/^[A-Za-z0-9+/]+=*$/.test(data)) throw bad("A file could not be read. Try adding it again.");
+    const size = Math.floor(data.length * 3 / 4) - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);
+    if (size > ATTACH_MAX_BYTES) throw bad("Files can be up to " + ATTACH_MAX_BYTES / 1048576 + " MB.");
+    const type0 = str(f && f.type, 120).trim().toLowerCase();
+    const type = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain|text\/csv|application\/(vnd\.[a-z0-9.+-]+|msword|zip)|message\/rfc822)$/.test(type0) ? type0 : "application/octet-stream";
+    return { name, type, size, data };
+  });
+}
+async function saveTaskFiles(env, taskId, updateId, files, user, now) {
+  for (const f of files) {
+    const id = uuid(), parts = [];
+    for (let i = 0; i < f.data.length; i += ATTACH_PART_CHARS) parts.push(f.data.slice(i, i + ATTACH_PART_CHARS));
+    for (let i = 0; i < parts.length; i++) await run(env, "INSERT INTO attachment_parts (attachment_id, seq, data) VALUES (?,?,?)", id, i, parts[i]);
+    await run(env, "INSERT INTO team_task_files (id, task_id, update_id, name, type, size, parts, user_id, user_name, at) VALUES (?,?,?,?,?,?,?,?,?,?)", id, taskId, updateId || null, f.name, f.type, f.size, parts.length, user.id, user.name || "", now);
+  }
+}
+/* The rows a list shows: each task with its people (share, done, status), its files, how much is done, and its TAT state. */
+async function shapeTasks(env, tasks, now) {
+  if (!tasks.length) return [];
+  const ids = tasks.map((t) => t.id), people = new Map(), files = new Map(), last = new Map();
+  for (const part of chunks(ids, 80)) {
+    const q = part.map(() => "?").join(",");
+    for (const p of await all(env, `SELECT p.*, u.name AS name FROM team_task_people p LEFT JOIN users u ON u.id = p.user_id WHERE p.task_id IN (${q}) ORDER BY u.name`, ...part)) {
+      if (!people.has(p.task_id)) people.set(p.task_id, []);
+      people.get(p.task_id).push({ id: p.id, user_id: p.user_id, name: p.name || "Someone", share: p.share, done: p.done_n, status: p.status, updated_at: p.updated_at || null, completed_at: p.completed_at || null, seen: !!p.seen_at });
+    }
+    // the files given with the task (the ones added with an update show in its history)
+    for (const f of await all(env, `SELECT task_id, COUNT(*) AS n FROM team_task_files WHERE task_id IN (${q}) AND update_id IS NULL GROUP BY task_id`, ...part)) files.set(f.task_id, f.n);
+    for (const u of await all(env, `SELECT task_id, user_name, done_n, status, comment, at, kind FROM team_task_updates WHERE task_id IN (${q}) AND kind = 'update' ORDER BY at`, ...part)) last.set(u.task_id, u);
+  }
+  const today = istISO(now), soon = addWorkingHours(now, DUE_SOON_HOURS);
+  return tasks.map((t) => {
+    const ps = people.get(t.id) || [], open = t.status === "open", held = open && !!t.hold_until && t.hold_until >= today;
+    const done = ps.reduce((a, p) => a + (p.done || 0), 0), late = open && !held && now > t.due_at;
+    const lu = last.get(t.id) || null;
+    return { id: t.id, client_id: t.client_id || null, client_name: t.client_name || "", scope: t.scope, title: t.title, description: t.description, source: t.source,
+      tat_hours: t.tat_hours, due_at: t.due_at, created_at: t.created_at, created_by: t.created_by, created_by_name: t.created_by_name, count: t.count_total, done,
+      status: t.status, closed_at: t.closed_at || null, closed_by_name: t.closed_by_name || "", within_tat: t.closed_at ? t.closed_at <= t.due_at : null,
+      hold: t.hold_until ? { reason: t.hold_reason, note: t.hold_note, until: t.hold_until, by: t.hold_by_name, active: held } : null,
+      late, held, due_soon: open && !held && !late && t.due_at <= soon, help: open && ps.some((p) => p.status === "help"),
+      left_wh: open ? Math.round((now <= t.due_at ? workingHoursBetween(now, t.due_at) : -workingHoursBetween(t.due_at, now)) * 10) / 10 : null,
+      used_pct: open ? Math.max(0, Math.min(100, Math.round(100 * workingHoursBetween(t.created_at, now) / Math.max(0.1, workingHoursBetween(t.created_at, t.due_at))))) : 100,
+      files: files.get(t.id) || 0, people: ps, last_update: lu ? { by: lu.user_name, done: lu.done_n, status: lu.status, comment: lu.comment, at: lu.at } : null,
+      unseen_update: !!lu && (!t.lead_seen_at || lu.at > t.lead_seen_at), updated_at: t.updated_at };
+  });
+}
+async function taskForLead(env, user, id) {
+  const t = await one(env, "SELECT * FROM team_tasks WHERE id = ?", str(id, 60));
+  if (!t) throw notFound("That task was not found.");
+  if (!taskLeadSees(user, t)) throw denied("This task is not one of yours.");
+  return t;
+}
 function blankTat() {
   const d = () => ({ n: 0, bal: 0, ok: 0, soon: 0, late: 0, hold: 0, rechecks: 0, oldest_late_h: 0 });
   return { desks: { posting: d(), submission: d(), rejection: d() }, attn: { flagged: { n: 0, late: 0 }, back: { n: 0, late: 0 }, requests: { n: 0, late: 0 }, n: 0, soon: 0, late: 0, hold: 0, oldest_late_h: 0 }, late: [], soon: [], held: [] };
@@ -1041,8 +1146,22 @@ function tatMailDue(now) {
   for (const [k, m] of Object.entries(TAT_MAIL)) if (h >= m.hour && h < m.hour + 3) return k;
   return null;
 }
-/* One person's reminder: their clients' items past TAT of this kind, grouped by client and type. null when nothing is late. */
-function tatMailFor(u, kind, clients, board, now, appUrl = "") {
+/* The team tasks past the TAT (not on hold), for the 19:00 email of the team lead who gave each: client, scope, counts, due time and
+   who has it. Never the task's name or description. */
+async function lateTeamTasks(env, now) {
+  const today = istISO(now);
+  const ts = (await all(env, "SELECT t.id, t.client_id, t.scope, t.created_by, t.due_at, t.hold_until, t.count_total, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE t.status = 'open' AND t.due_at < ? LIMIT 2000", now))
+    .filter((t) => !(t.hold_until && t.hold_until >= today));
+  const people = new Map();
+  for (const part of chunks(ts.map((t) => t.id), 80)) for (const p of await all(env, `SELECT p.task_id, p.done_n, u.name FROM team_task_people p LEFT JOIN users u ON u.id = p.user_id WHERE p.task_id IN (${part.map(() => "?").join(",")})`, ...part)) {
+    if (!people.has(p.task_id)) people.set(p.task_id, []); people.get(p.task_id).push(p);
+  }
+  return ts.map((t) => { const ps = people.get(t.id) || []; return { created_by: t.created_by, client_name: t.client_name || "Internal", scope: t.scope, count: t.count_total, done: ps.reduce((a, p) => a + (p.done_n || 0), 0),
+    due_at: t.due_at, over_h: Math.max(1, Math.ceil(workingHoursBetween(t.due_at, now))), with: ps.map((p) => p.name || "someone").join(", ") }; });
+}
+/* One person's reminder: their clients' items past TAT of this kind, grouped by client and type, and at 19:00 the team tasks
+   they gave that are past the TAT. null when nothing is late. */
+function tatMailFor(u, kind, clients, board, now, appUrl = "", tasks = []) {
   const groups = [];
   for (const c of clients) {
     if (!onClient(u, c.id)) continue;
@@ -1052,8 +1171,9 @@ function tatMailFor(u, kind, clients, board, now, appUrl = "") {
     if (kind === "desks") for (const [k, label] of TAT_DEPTS) { const xs = late.filter((x) => x.dept === k); if (xs.length) groups.push({ c, label, tat: tatHours(c, k), xs }); }
     else for (const [p, label] of ATTN_PARTS) { const xs = late.filter((x) => x.part === p); if (xs.length) groups.push({ c, label: "Needs attention · " + label, tat: ATTN_TAT_HOURS, xs }); }
   }
-  if (!groups.length) return null;
-  const n = groups.reduce((t, g) => t + g.xs.length, 0);
+  const tks = kind === "ar" ? (tasks || []) : [];
+  if (!groups.length && !tks.length) return null;
+  const n = groups.reduce((t, g) => t + g.xs.length, 0) + tks.length;
   const when = new Date(now + IST_MIN * 60000), dt = when.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) + ", " + String(when.getUTCHours()).padStart(2, "0") + ":" + String(when.getUTCMinutes()).padStart(2, "0") + " IST";
   const subject = `${n} ${n === 1 ? "task" : "tasks"} past TAT on your clients · ${TAT_MAIL[kind].title} · ${dt}`;
   const fmtAt = (ms) => { const d = new Date(ms + IST_MIN * 60000); return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) + ", " + String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
@@ -1068,9 +1188,14 @@ function tatMailFor(u, kind, clients, board, now, appUrl = "") {
 <div style="padding:16px 22px">` + groups.map((g) => `<div style="font-weight:700;font-size:13px;margin-top:10px">${htmlEsc(g.c.name)} · ${htmlEsc(g.label)} · TAT ${g.tat} working hours</div>
 <table style="width:100%;border-collapse:collapse;margin:6px 0 10px"><tr><th style="${th}">Claim #</th><th style="${th}">${kind === "desks" ? "Sent" : "What"}</th><th style="${th}">Waiting</th>${kind === "desks" ? `<th style="${th}">With</th>` : ""}</tr>` +
     g.xs.map((x) => `<tr><td style="${td};white-space:nowrap">${htmlEsc(x.claim_no || "–")}</td><td style="${td}">${htmlEsc(who(x))}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${x.waited_h} h</b> (${x.over_h} h over)</td>${kind === "desks" ? `<td style="${td}">${htmlEsc(x.with || "–")}</td>` : ""}</tr>`).join("") + "</table>").join("") +
+    (tks.length ? `<div style="font-weight:700;font-size:13px;margin-top:10px">Team tasks you gave · past the TAT</div>
+<table style="width:100%;border-collapse:collapse;margin:6px 0 10px"><tr><th style="${th}">Client · scope</th><th style="${th}">Done</th><th style="${th}">Due</th><th style="${th}">With</th></tr>` +
+      tks.map((x) => `<tr><td style="${td}">${htmlEsc(x.client_name)} · ${htmlEsc(x.scope)}</td><td style="${td};white-space:nowrap">${x.done} of ${x.count}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${htmlEsc(fmtAt(x.due_at))}</b> (${x.over_h} h over)</td><td style="${td}">${htmlEsc(x.with)}</td></tr>`).join("") + `</table>` : "") +
     (link ? `<p style="margin:16px 0 4px"><a href="${htmlEsc(link)}" style="display:inline-block;background:#17b39a;color:#ffffff;border-radius:7px;padding:9px 16px;font-weight:700;text-decoration:none">Open Brahmastra</a></p>` : "") +
     `<p style="font-size:12px;color:#627079;margin-top:14px">Working hours: Monday to Friday, Shastra holidays left out. Claim numbers only: no patient details and no note text. You get this because you are a supervisor, SME or above on these clients.</p></div></div>`;
-  const text = `${n} ${n === 1 ? "task is" : "tasks are"} past TAT (${TAT_MAIL[kind].title}).\n\n` + groups.map((g) => `${g.c.name} · ${g.label} · TAT ${g.tat} working hours\n` + g.xs.map((x) => `  ${x.claim_no || "–"} · ${who(x)} · waiting ${x.waited_h} h (${x.over_h} h over)${x.with ? " · with " + x.with : ""}`).join("\n")).join("\n\n") + (link ? "\n\nOpen Brahmastra: " + link : "") + "\n\nWorking hours: Monday to Friday.";
+  const text = `${n} ${n === 1 ? "task is" : "tasks are"} past TAT (${TAT_MAIL[kind].title}).\n\n` + groups.map((g) => `${g.c.name} · ${g.label} · TAT ${g.tat} working hours\n` + g.xs.map((x) => `  ${x.claim_no || "–"} · ${who(x)} · waiting ${x.waited_h} h (${x.over_h} h over)${x.with ? " · with " + x.with : ""}`).join("\n")).join("\n\n")
+    + (tks.length ? (groups.length ? "\n\n" : "") + "Team tasks you gave · past the TAT\n" + tks.map((x) => `  ${x.client_name} · ${x.scope} · ${x.done} of ${x.count} done · due ${fmtAt(x.due_at)} (${x.over_h} h over) · with ${x.with}`).join("\n") : "")
+    + (link ? "\n\nOpen Brahmastra: " + link : "") + "\n\nWorking hours: Monday to Friday.";
   return { subject, html, text, n };
 }
 async function sendTatReminders(env, { now = Date.now(), kind = null } = {}) {
@@ -1079,9 +1204,10 @@ async function sendTatReminders(env, { now = Date.now(), kind = null } = {}) {
   const day = istISO(now);
   const clients = await all(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE active = 1 ORDER BY name");
   const board = await tatBoard(env, clients.map((c) => c.id), now);
+  const lateTasks = kind === "ar" ? await lateTeamTasks(env, now) : [];
   let sent = 0, failed = 0, people = 0;
   for (const u of await digestPeople(env)) {
-    const mail = tatMailFor(u, kind, clients, board, now, env.APP_URL);
+    const mail = tatMailFor(u, kind, clients, board, now, env.APP_URL, lateTasks.filter((t) => t.created_by === u.id));
     if (!mail) continue;
     people++;
     // claim the send first (ok = 2), so two runs at once never both send it; a claim left by a run that died is taken over after 30 minutes
@@ -2774,7 +2900,11 @@ function teamSuggestions(rows) {
   const nDays = (n) => n + (n === 1 ? " day" : " days");
   const hm = (m) => { m = Math.round(m || 0); const h = Math.floor(m / 60), mm = m % 60; return h ? h + " h" + (mm ? " " + String(mm).padStart(2, "0") + " m" : "") : mm + " m"; };
   const floorSeen = (r) => `On the floor ${hm(r.on_floor_done_min)} of ${hm(r.floor_needed_done_min)} needed up to yesterday (short ${hm(r.floor_short_min)})`;
-  const attainSeen = (r) => r.attain_basis === "done" ? `Attainment ${r.attain}% (${r.worked_done} of ${Math.round(r.target_done)} claims up to yesterday)` : `Attainment ${r.attain}% today (${r.worked_today} of ${Math.round(r.target_today)} claims)`;
+  // claims worked and team task items done both count toward the attainment
+  const what = (claims, items) => (items ? `${claims} claims + ${items} task items` : "claims");
+  const attainSeen = (r) => r.attain_basis === "done"
+    ? `Attainment ${r.attain}% (${r.count_done != null ? r.count_done : r.worked_done} of ${Math.round(r.target_done)}${r.task_items_done ? "" : " claims"} up to yesterday${r.task_items_done ? ": " + what(r.worked_done, r.task_items_done) : ""})`
+    : `Attainment ${r.attain}% today (${r.count_today != null ? r.count_today : r.worked_today} of ${Math.round(r.target_today)}${r.task_items_today ? ": " + what(r.worked_today, r.task_items_today) : " claims"})`;
   for (const r of rows) {
     const away = r.out_today === "out";
     if (r.esc_n) {
@@ -3923,7 +4053,7 @@ const OPS = {
     const ovIds = people.filter((u) => overnightShift(u.shift)).map((u) => u.id), ovs = ovIds.length ? ovIds.map(() => "?").join(",") : "NULL";
     // escalations where the person is named as who made the error (our error), received in these dates
     const ew = f.clientIds ? ` AND e.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "";
-    const [work, closed, att, notes, desk, outNow, escs] = await Promise.all([
+    const [work, closed, att, notes, desk, outNow, escs, tasksDone, tasksClosed] = await Promise.all([
       // a person's entries on every client: picking a client or a team lead shows who is on it, never cuts their own attainment
       // (the entries on the picked client are counted beside); an overnight shift's entries after midnight go to the day it began
       all(env, `SELECT user_id, COUNT(*) AS worked, SUM(bday < ?) AS worked_done, COUNT(DISTINCT bday) AS days_worked, SUM(here) AS worked_here FROM (
@@ -3937,7 +4067,15 @@ const OPS = {
       all(env, `SELECT user_id, reason FROM attendance WHERE status = 'out' AND day = ? AND user_id IN (${qs})`, today, ...ids),
       all(env, `SELECT e.id, e.error_by_id AS user_id, e.sr, e.client_id, cl.name AS client_name, e.kind, e.dept, e.day, e.error_dow, e.status FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
         WHERE e.is_error = 'Y' AND e.error_by_id IN (${qs}) AND e.day BETWEEN ? AND ?${ew} ORDER BY e.day DESC, e.sr DESC`, ...ids, from, to, ...ca),
+      // team tasks: the items each person marked done in these dates (what each update added), on the day the update was made
+      // (an overnight shift's after midnight to the day it began); they count toward the person's count beside the claims
+      all(env, `SELECT user_id, SUM(delta) AS items, SUM(CASE WHEN bday < ? THEN delta ELSE 0 END) AS items_done, COUNT(DISTINCT task_id) AS tasks FROM (
+          SELECT u.user_id, u.delta, u.task_id, date((u.at / 1000) + ? - CASE WHEN u.user_id IN (${ovs}) THEN ? ELSE 0 END, 'unixepoch') AS bday
+          FROM team_task_updates u WHERE u.kind = 'update' AND u.at BETWEEN ? AND ? AND u.user_id IN (${qs}))
+        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, today, off * 60, ...ovIds, OVERNIGHT_SPILL_H * 3600, start, end + OVERNIGHT_SPILL_H * 3600000, ...ids, from, to),
+      all(env, `SELECT user_id, COUNT(*) AS n FROM team_task_people WHERE status = 'completed' AND completed_at BETWEEN ? AND ? AND user_id IN (${qs}) GROUP BY user_id`, start, end, ...ids),
     ]);
+    const tkd = new Map(tasksDone.map((x) => [x.user_id, x])), tkc = new Map(tasksClosed.map((x) => [x.user_id, x.n]));
     const escBy = new Map(); for (const e of escs) { if (!escBy.has(e.user_id)) escBy.set(e.user_id, []); escBy.get(e.user_id).push({ id: e.id, sr: e.sr, client_id: e.client_id, client_name: e.client_name || "",
       kind: escKind(e), dept: e.dept, day: e.day, dow: e.error_dow || "", status: e.status === "resolved" ? "Closed" : "Open" }); }
     const outToday = new Map(outNow.map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
@@ -3970,11 +4108,14 @@ const OPS = {
       const target = Math.round(shares * cap);
       const inShastra = fl.state === "ok" && !!fd && fd.size > 0;
       const worked = w.worked || 0, workedDone = w.worked_done || 0, workedToday = worked - workedDone;
+      // team task items count toward the person's count (and so their attainment), next to the claims they worked
+      const tk = tkd.get(u.id) || {}, taskItems = Math.max(0, tk.items || 0), taskDone = Math.max(0, Math.min(taskItems, tk.items_done || 0)), taskToday = taskItems - taskDone;
+      const countDone = workedDone + taskDone, countToday = workedToday + taskToday;
       // Attainment on the days already finished (up to yesterday), so a day still under way does not make everyone look behind;
       // with only today in the dates, today against today's target.
       const basis = tDone > 0 ? "done" : "today";
       // one decimal, judged on the figure shown (89.7% is below a 90% mark, not "90%")
-      const attain = basis === "done" ? Math.round(workedDone / tDone * 1000) / 10 : tToday ? Math.round(workedToday / tToday * 1000) / 10 : null;
+      const attain = basis === "done" ? Math.round(countDone / tDone * 1000) / 10 : tToday ? Math.round(countToday / tToday * 1000) / 10 : null;
       // ramp-up: Training and OJT are due in production 6 weeks (4 training + 2 OJT) from their start (the start date kept here,
       // otherwise the date of joining); an end date kept here is the date agreed instead (an extension or an earlier move)
       const startD = n.start_date || u.doj || "";
@@ -3991,6 +4132,8 @@ const OPS = {
         days_full: full, days_half: half, days_out: out, days_unplanned: unplanned, days_worked: w.days_worked || 0, worked, closed: cl.get(u.id) || 0, target, attain, attain_basis: basis,
         worked_here: f.narrow ? w.worked_here || 0 : null,
         worked_done: workedDone, target_done: Math.round(tDone * 10) / 10, worked_today: workedToday, target_today: tToday,
+        task_items: taskItems, task_items_done: taskDone, task_items_today: taskToday, tasks_worked: tk.tasks || 0, tasks_completed: tkc.get(u.id) || 0,
+        count: worked + taskItems, count_done: countDone, count_today: countToday,
         // floor time: 8 h a working day, 4 h a half day; met or short on the finished days (a day under way is not judged)
         floor_needed_min: needAll, floor_needed_done_min: needDone,
         on_floor_min: inShastra ? onAll : null, on_floor_done_min: inShastra ? onDone : null,
@@ -4000,7 +4143,7 @@ const OPS = {
         floor_short_min: inShastra && needDone > onDone ? needDone - onDone : 0,
         left: mine.length, left_high: leftHigh, left_other: mine.length - leftHigh, ramp,
         // judged against the production mark: production only, on finished days; Training and OJT are in ramp-up
-        perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? (worked > 0 ? "notarget" : "none") : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
+        perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? (worked + taskItems > 0 ? "notarget" : "none") : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
         out_today: outToday.get(u.id) || "",
         escalations: escBy.get(u.id) || [], esc_n: (escBy.get(u.id) || []).length,
         esc_ext: (escBy.get(u.id) || []).filter((e) => e.kind === "external").length, esc_int: (escBy.get(u.id) || []).filter((e) => e.kind === "internal").length,
@@ -4008,9 +4151,9 @@ const OPS = {
     }).sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.name.localeCompare(b.name));
     const sum = (k, rs = rows) => rs.reduce((t, r) => t + (r[k] || 0), 0);
     const byStatus = [...new Set(rows.map((r) => r.status))].map((st) => { const rs = rows.filter((r) => r.status === st), wkd = sum("worked", rs), tg = sum("target", rs), dw = sum("days_worked", rs);
-      const wd = sum("worked_done", rs), td = sum("target_done", rs), wt = sum("worked_today", rs), tt = sum("target_today", rs);
+      const wd = sum("count_done", rs), td = sum("target_done", rs), wt = sum("count_today", rs), tt = sum("target_today", rs);
       // claims and target on the same days as the attainment: the finished days, or today when only today is picked
-      return { status: st, people: rs.length, worked: td > 0 ? wd : wt, target: td > 0 ? Math.round(td) : tt, all_worked: wkd, all_target: tg,
+      return { status: st, people: rs.length, worked: td > 0 ? wd : wt, target: td > 0 ? Math.round(td) : tt, all_worked: wkd, all_target: tg, task_items: sum("task_items", rs),
         attain: td > 0 ? Math.round(wd / td * 1000) / 10 : tt ? Math.round(wt / tt * 1000) / 10 : null, per_day: dw ? Math.round(wkd / dw * 10) / 10 : null }; })
       .sort((a, b) => b.people - a.people);
     // roster checks: what would make these figures wrong
@@ -4032,9 +4175,10 @@ const OPS = {
       on_floor_min: rows.some((r) => r.on_floor_min != null) ? sum("on_floor_min") : null, idle_min: rows.some((r) => r.idle_min != null) ? sum("idle_min") : null,
       break_min: rows.some((r) => r.break_min != null) ? sum("break_min") : null, break_over_days: sum("break_over_days"),
       floor_judged: rows.filter((r) => r.floor === "met" || r.floor === "short").length, floor_met: rows.filter((r) => r.floor === "met").length,
-      esc: sum("esc_n"), esc_ext: sum("esc_ext"), esc_int: sum("esc_int"), esc_people: rows.filter((r) => r.esc_n).length };
+      esc: sum("esc_n"), esc_ext: sum("esc_ext"), esc_int: sum("esc_int"), esc_people: rows.filter((r) => r.esc_n).length,
+      task_items: sum("task_items"), tasks_completed: sum("tasks_completed"), count_done: sum("count_done"), count_today: sum("count_today") };
     totals.attain_basis = totals.target_done > 0 ? "done" : "today";
-    totals.attain = totals.attain_basis === "done" ? Math.round(totals.worked_done / totals.target_done * 1000) / 10 : totals.target_today ? Math.round(totals.worked_today / totals.target_today * 1000) / 10 : null;
+    totals.attain = totals.attain_basis === "done" ? Math.round(totals.count_done / totals.target_done * 1000) / 10 : totals.target_today ? Math.round(totals.count_today / totals.target_today * 1000) / 10 : null;
     return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals, by_status: byStatus, checks, perf_mark: PERF_MARK, ramp_weeks: RAMP_WEEKS,
       suggestions: teamSuggestions(rows), floor_source: fl.state, floor_error: fl.error || "", floor_at: fl.at || null };
   },
@@ -4295,7 +4439,8 @@ const OPS = {
     const kind = payload.kind === "ar" ? "ar" : "desks", now = Date.now();
     const clients = await all(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE active = 1 ORDER BY name");
     const board = await tatBoard(env, clients.filter((c) => onClient(user, c.id)).map((c) => c.id), now);
-    const mail = tatMailFor(user, kind, clients, board, now, env.APP_URL);
+    const tasks = kind === "ar" ? (await lateTeamTasks(env, now)).filter((t) => t.created_by === user.id) : [];
+    const mail = tatMailFor(user, kind, clients, board, now, env.APP_URL, tasks);
     const log = await all(env, "SELECT day, kind, at, ok, error, items FROM tat_mail_log WHERE user_id = ? ORDER BY at DESC LIMIT 10", user.id);
     return { kind, hour: TAT_MAIL[kind].hour, mail, log };
   },
@@ -4370,6 +4515,41 @@ const OPS = {
       add("answers", "amber", (a && a.n) || 0, plural((a && a.n) || 0, "escalation was", "escalations were") + " answered by your team lead in the last 3 days", "queue");
       const b = await one(env, "SELECT COUNT(*) AS n FROM handoffs WHERE COALESCE(biller_id, created_by) = ? AND status = 'back' AND dept <> 'subcheck' AND done_at > ?", user.id, since);
       add("back", "amber", (b && b.n) || 0, plural((b && b.n) || 0, "hand-off was", "hand-offs were") + " sent back to you by posting / submission in the last 3 days", "queue");
+    }
+    // team tasks: given to this person (new, a reminder, past the TAT); for a team lead, the tasks they see (updates on the ones
+    // they gave since they last opened them, someone asking for help, the ones past the TAT)
+    const todayIst = istISO(now);
+    for (const r of await all(env, `SELECT p.id, p.share, p.done_n, p.seen_at, p.reminded_at, t.id AS task_id, t.title, t.due_at, t.hold_until, t.created_by_name, cl.name AS client_name
+        FROM team_task_people p JOIN team_tasks t ON t.id = p.task_id LEFT JOIN clients cl ON cl.id = t.client_id WHERE p.user_id = ? AND t.status = 'open' AND p.status <> 'completed' ORDER BY t.due_at LIMIT 50`, user.id)) {
+      const held = !!r.hold_until && r.hold_until >= todayIst, sub = `${r.client_name || "Internal"} · ${r.done_n} of ${plural(r.share, "item", "items")} done · due ${istWhen(r.due_at)}`;
+      if (!r.seen_at) items.push({ key: "task_new:" + r.id, cat: "tasks", tone: "info", n: 1, text: `New task from ${r.created_by_name}: ${r.title}`, sub, view: "mytasks", params: { id: r.task_id } });
+      else if (r.reminded_at && r.reminded_at > r.seen_at) items.push({ key: "task_remind:" + r.id + ":" + r.reminded_at, cat: "tasks", tone: "amber", n: 1, text: `Reminder from ${r.created_by_name}: ${r.title}`, sub, view: "mytasks", params: { id: r.task_id } });
+      if (!held && now > r.due_at) items.push({ key: "task_late:" + r.id, cat: "tasks", tone: "red", n: 1, text: `A task is past the TAT: ${r.title}`, sub, view: "mytasks", params: { id: r.task_id } });
+    }
+    if (user.role === "supervisor") {
+      // the open tasks, and the ones everyone completed in the last 3 days (the last update closed them: the team lead still hears of it)
+      const seen3 = (await all(env, "SELECT t.id, t.title, t.client_id, t.created_by, t.due_at, t.hold_until, t.lead_seen_at, t.status, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE t.status = 'open' OR (t.status = 'done' AND t.closed_at > ?) ORDER BY t.due_at LIMIT 2000", now - 3 * 86400000))
+        .filter((t) => taskLeadSees(user, t));
+      const lt = seen3.filter((t) => t.status === "open");
+      const byId = new Map(seen3.map((t) => [t.id, t]));
+      for (const part of chunks(seen3.map((t) => t.id), 80)) {
+        const q = part.map(() => "?").join(",");
+        // someone asking for help stays on the bell until they update again
+        for (const h of await all(env, `SELECT p.id, p.done_n, p.share, p.updated_at, p.task_id, u.name FROM team_task_people p LEFT JOIN users u ON u.id = p.user_id WHERE p.task_id IN (${q}) AND p.status = 'help'`, ...part).then((xs) => xs.filter((x) => byId.get(x.task_id).status === "open"))) {
+          const t = byId.get(h.task_id);
+          items.push({ key: "task_help:" + h.id + ":" + (h.updated_at || 0), cat: "tasks", tone: "amber", n: 1, text: `${h.name || "Someone"} needs your help on a task`, sub: `${t.title} · ${h.done_n} of ${h.share} done · ${t.client_name || "Internal"}`, view: "attention", params: { tab: "tasks", task: t.id } });
+        }
+        // the latest update on each task this team lead gave, since they last opened it
+        const mineIds = part.filter((id) => byId.get(id).created_by === user.id);
+        if (mineIds.length) {
+          const last = new Map();
+          for (const u of await all(env, `SELECT u.task_id, u.user_name, u.done_n, u.status, u.at, p.share FROM team_task_updates u LEFT JOIN team_task_people p ON p.id = u.person_id WHERE u.task_id IN (${mineIds.map(() => "?").join(",")}) AND u.kind = 'update' ORDER BY u.at`, ...mineIds)) last.set(u.task_id, u);
+          for (const id of mineIds) { const t = byId.get(id), u = last.get(id); if (!u || u.status === "help" || (t.lead_seen_at && u.at <= t.lead_seen_at)) continue;
+            items.push({ key: "task_upd:" + id + ":" + u.at, cat: "tasks", tone: "info", n: 1, text: `${u.user_name} ${u.status === "completed" ? "completed" : "updated"} a task: ${u.done_n} of ${u.share} done`, sub: `${t.title} · ${t.client_name || "Internal"}${t.status === "done" ? " · everyone has completed: the task is done" : ""}`, view: "attention", params: { tab: "tasks", task: id } }); }
+        }
+      }
+      const lateT = lt.filter((t) => !(t.hold_until && t.hold_until >= todayIst) && now > t.due_at);
+      if (lateT.length) items.push({ key: "tasks_late", cat: "tasks", tone: "red", n: lateT.length, text: plural(lateT.length, "team task is", "team tasks are") + " past the TAT", sub: lateT.slice(0, 2).map((t) => t.title).join(" · ") + (lateT.length > 2 ? " …" : ""), view: "attention", params: { tab: "tasks", pick: "late" } });
     }
     const fb = await OPS["feedback.count"]({ env, user });
     add("feedback", "info", fb.n, plural(fb.n, "new feedback item", "new feedback items"), "feedback");
@@ -7051,6 +7231,236 @@ const OPS = {
     const reason = isSME(user) ? 0 : rows.filter((e) => escPast(e.created_at, now) && !e.delay_reason && leadFor(user, e.client_id)).length;
     return { open: rows.length, needs_reason: reason, past_expected: rows.filter((e) => e.expected_on && e.expected_on < today).length };
   },
+  /* ---- Team tasks (Needs attention › Team tasks; My tasks for the people given them) ---- */
+  "tasks.count": async ({ env, user }) => {
+    const now = Date.now(), today = istISO(now), week = now - 7 * 86400000;
+    const mine = await all(env, `SELECT p.seen_at, t.due_at, t.hold_until FROM team_task_people p JOIN team_tasks t ON t.id = p.task_id WHERE p.user_id = ? AND t.status = 'open' AND p.status <> 'completed'`, user.id);
+    const recent = await one(env, `SELECT COUNT(*) AS n FROM team_task_people p JOIN team_tasks t ON t.id = p.task_id WHERE p.user_id = ? AND (p.completed_at > ? OR t.closed_at > ?)`, user.id, week, week);
+    const held = (r) => !!r.hold_until && r.hold_until >= today;
+    return { open: mine.length, late: mine.filter((r) => r.due_at < now && !held(r)).length, unseen: mine.filter((r) => !r.seen_at).length, any: mine.length + ((recent && recent.n) || 0) };
+  },
+  "tasks.list": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor") throw denied("Team tasks are for team leads and above.");
+    const now = Date.now(), week = now - 7 * 86400000, view = ["open", "done", "all"].includes(payload.view) ? payload.view : "open", cid = payload.client_id ? str(payload.client_id, 60) : "";
+    const rows = (await all(env, `SELECT t.*, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE (t.status = 'open' OR t.closed_at > ?)${cid ? " AND t.client_id = ?" : ""} ORDER BY t.due_at LIMIT 2000`, now - 30 * 86400000, ...(cid ? [cid] : [])))
+      .filter((t) => taskLeadSees(user, t));
+    const shaped = await shapeTasks(env, rows, now);
+    const open = shaped.filter((t) => t.status === "open"), done = shaped.filter((t) => t.status !== "open"), done7 = done.filter((t) => t.closed_at > week);
+    const stats = { open: open.length, items_left: open.reduce((a, t) => a + Math.max(0, t.count - t.done), 0), people: new Set(open.flatMap((t) => t.people.filter((p) => p.status !== "completed").map((p) => p.user_id))).size,
+      due_soon: open.filter((t) => t.due_soon).length, late: open.filter((t) => t.late).length, held: open.filter((t) => t.held).length, help: open.filter((t) => t.help).length,
+      done_7: done7.length, done_7_in_tat: done7.filter((t) => t.within_tat).length, done: done.length };
+    // past the TAT first (the earliest due), then by due time; the ones on hold after the rest; done: the latest first
+    const list = view === "open" ? open : view === "done" ? done : shaped;
+    list.sort((a, b) => (a.status !== "open") - (b.status !== "open") || (a.held - b.held) || (b.late - a.late) || (a.status === "open" ? a.due_at - b.due_at : b.closed_at - a.closed_at));
+    return { rows: list, stats, scopes: TASK_SCOPES, sources: TASK_SOURCES, hold_reasons: TAT_HOLD_REASONS, due_soon_hours: DUE_SOON_HOURS };
+  },
+  /* The people a team lead can give a task to: their team (as on Team), active. */
+  "tasks.people": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor") throw denied("Team tasks are for team leads and above.");
+    const cid = payload.client_id ? str(payload.client_id, 60) : "";
+    let users = (await visibleUsers(env, user)).filter((u) => u.active && u.id !== user.id);
+    // with a client picked, the people on it first
+    const onIt = new Set(); if (cid) { const c = await one(env, "SELECT team_json FROM clients WHERE id = ?", cid); if (c) parseTeam(c.team_json).forEach((id) => onIt.add(id)); }
+    users = users.map((u) => ({ id: u.id, name: u.name || u.email, role: u.role, designation: u.designation || "", department: u.department || "", on_client: onIt.has(u.id) }))
+      .sort((a, b) => (b.on_client - a.on_client) || (a.role === "user" ? 0 : 1) - (b.role === "user" ? 0 : 1) || a.name.localeCompare(b.name));
+    return { people: users };
+  },
+  "tasks.create": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor") throw denied("Team tasks are given by team leads and above.");
+    const now = Date.now(), cid = payload.client_id ? str(payload.client_id, 60) : "";
+    if (cid) { const c = await one(env, "SELECT id FROM clients WHERE id = ?", cid); if (!c) throw bad("That client was not found."); if (!inScope(user, cid)) throw outOfScope(); }
+    const scope = TASK_SCOPES.includes(payload.scope) ? payload.scope : ""; if (!scope) throw bad("Pick the scope.");
+    const title = String(payload.title == null ? "" : payload.title).trim(); if (title.length < 3) throw bad("Write what the task is, a few words."); if (title.length > 160) throw bad("Keep the task name under 160 characters; the rest goes in the description.");
+    const description = String(payload.description == null ? "" : payload.description).trim(); if (description.length > TASK_DESC_MAX) throw bad("The description can be up to 4,000 characters.");
+    const source = TASK_SOURCES.includes(payload.source) ? payload.source : "";
+    const due = taskDueFrom(now, payload.tat);
+    const count = Math.round(num(payload.count, 0)); if (!(count >= 1 && count <= 100000)) throw bad("Write how many items the task has: 1 or more.");
+    const people = Array.isArray(payload.people) ? payload.people : [];
+    if (!people.length) throw bad("Pick who does it.");
+    if (people.length > 25) throw bad("Up to 25 people on one task.");
+    const team = new Map((await visibleUsers(env, user)).filter((u) => u.active).map((u) => [u.id, u]));
+    const seen = new Set(), list = [];
+    for (const p of people) {
+      const id = str(p && p.user_id, 60), u = team.get(id);
+      if (!u) throw bad("Only people on your team can be given a task.");
+      if (seen.has(id)) throw bad((u.name || "Someone") + " is picked twice."); seen.add(id);
+      const share = Math.round(num(p && p.share, -1)); if (!(share >= 1)) throw bad("Each person needs a share of at least 1 (or take them off the task).");
+      list.push({ u, share });
+    }
+    const sum = list.reduce((t, x) => t + x.share, 0);
+    if (sum !== count) throw bad(`The shares add up to ${sum}, not ${count}: change a share or the count.`);
+    const files = taskFilesIn(payload.files);
+    const id = uuid(), shares = list.map((x) => (x.u.name || "Someone") + " " + x.share).join(", ");
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO team_tasks (id, client_id, scope, title, description, source, tat_hours, due_at, count_total, created_by, created_by_name, created_at, status, lead_seen_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',?,?)`).bind(id, cid || null, scope, title, description, source, due.tat_hours, due.due_at, count, user.id, user.name || "", now, now, now),
+      ...list.map((x) => env.DB.prepare("INSERT INTO team_task_people (id, task_id, user_id, share, done_n, status) VALUES (?,?,?,?,0,'new')").bind(uuid(), id, x.u.id, x.share)),
+      env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'created',?,?)").bind(uuid(), id, user.id, user.name || "", `Gave it to ${shares}, TAT ${due.tat_hours} working hours.`, now),
+    ]);
+    await saveTaskFiles(env, id, null, files, user, now);
+    await audit(env, user, "task.create", cid || null, `${scope} · ${count} items · ${shares} · due ${istWhen(due.due_at)}`);
+    return { task: { id, due_at: due.due_at, tat_hours: due.tat_hours } };
+  },
+  "tasks.get": async ({ env, user, payload }) => {
+    const now = Date.now();
+    const t = await one(env, "SELECT t.*, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE t.id = ?", str(payload.id, 60));
+    if (!t) throw notFound("That task was not found.");
+    const lead = taskLeadSees(user, t), mine = await one(env, "SELECT * FROM team_task_people WHERE task_id = ? AND user_id = ?", t.id, user.id);
+    if (!lead && !mine) throw denied("This task is not yours.");
+    const [task] = await shapeTasks(env, [t], now);
+    let updates = await all(env, "SELECT id, person_id, user_id, user_name, kind, done_n, delta, status, comment, at FROM team_task_updates WHERE task_id = ? ORDER BY at", t.id);
+    let files = await all(env, "SELECT id, update_id, name, type, size, user_name, at FROM team_task_files WHERE task_id = ? ORDER BY at", t.id);
+    if (!lead) {
+      // the person given the task: the task, their own share, their own updates and the team lead's steps (reminders, holds)
+      updates = updates.filter((u) => u.kind !== "update" || u.person_id === mine.id);
+      const own = new Set(updates.map((u) => u.id)); files = files.filter((f) => !f.update_id || own.has(f.update_id));
+      task.people = task.people.filter((p) => p.id === mine.id);
+    }
+    if (mine && (!mine.seen_at || (mine.reminded_at && mine.reminded_at > mine.seen_at))) await run(env, "UPDATE team_task_people SET seen_at = ? WHERE id = ?", now, mine.id);
+    if (lead && t.created_by === user.id) await run(env, "UPDATE team_tasks SET lead_seen_at = ? WHERE id = ?", now, t.id);
+    return { task, updates, files, me: mine ? { person_id: mine.id, share: mine.share, done: mine.done_n, status: mine.status } : null, can_lead: lead, hold_reasons: TAT_HOLD_REASONS };
+  },
+  "tasks.mine": async ({ env, user }) => {
+    const now = Date.now(), week = now - 7 * 86400000, today = istISO(now), dayEnd = istDayEnd(today);
+    const rows = await all(env, `SELECT p.id AS person_id, p.share, p.done_n, p.status AS my_status, p.updated_at AS my_updated_at, p.completed_at AS my_completed_at, p.seen_at, p.reminded_at, t.*, cl.name AS client_name
+      FROM team_task_people p JOIN team_tasks t ON t.id = p.task_id LEFT JOIN clients cl ON cl.id = t.client_id
+      WHERE p.user_id = ? AND ((t.status = 'open' AND p.status <> 'completed') OR p.completed_at > ? OR t.closed_at > ?) ORDER BY t.due_at LIMIT 500`, user.id, week, week);
+    const files = new Map();
+    for (const part of chunks(rows.map((r) => r.id), 80)) for (const f of await all(env, `SELECT task_id, COUNT(*) AS n FROM team_task_files WHERE task_id IN (${part.map(() => "?").join(",")}) AND update_id IS NULL GROUP BY task_id`, ...part)) files.set(f.task_id, f.n);
+    const out = rows.map((r) => {
+      const todo = r.status === "open" && r.my_status !== "completed", held = todo && !!r.hold_until && r.hold_until >= today, late = todo && !held && now > r.due_at;
+      const doneAt = r.my_completed_at || r.closed_at || null;
+      return { person_id: r.person_id, task_id: r.id, title: r.title, description: r.description, scope: r.scope, client_id: r.client_id || null, client_name: r.client_name || "", source: r.source,
+        from: r.created_by_name, given_at: r.created_at, due_at: r.due_at, tat_hours: r.tat_hours, share: r.share, done: r.done_n, status: r.my_status, todo, late, held,
+        hold: held ? { reason: r.hold_reason, until: r.hold_until } : null, due_today: todo && !late && r.due_at <= dayEnd, due_soon: todo && !held && !late && r.due_at <= addWorkingHours(now, DUE_SOON_HOURS),
+        left_wh: todo ? Math.round((now <= r.due_at ? workingHoursBetween(now, r.due_at) : -workingHoursBetween(r.due_at, now)) * 10) / 10 : null,
+        used_pct: todo ? Math.max(0, Math.min(100, Math.round(100 * workingHoursBetween(r.created_at, now) / Math.max(0.1, workingHoursBetween(r.created_at, r.due_at))))) : 100,
+        updated_at: r.my_updated_at || null, done_at: todo ? null : doneAt, within_tat: todo ? null : !!doneAt && doneAt <= r.due_at, closed_by_lead: r.status !== "open" && r.my_status !== "completed",
+        new: todo && !r.seen_at, reminded: todo && !!r.reminded_at && (!r.seen_at || r.reminded_at > r.seen_at), files: files.get(r.id) || 0 };
+    }).sort((a, b) => (b.todo - a.todo) || (a.held - b.held) || (b.late - a.late) || (a.todo ? a.due_at - b.due_at : (b.done_at || 0) - (a.done_at || 0)));
+    const todo = out.filter((x) => x.todo), done7 = out.filter((x) => !x.todo);
+    return { rows: out, stats: { todo: todo.length, items_left: todo.reduce((a, x) => a + Math.max(0, x.share - x.done), 0), due_today: todo.filter((x) => x.due_today).length, late: todo.filter((x) => x.late).length,
+      done_7: done7.length, done_7_in_tat: done7.filter((x) => x.within_tat).length } };
+  },
+  /* The person given the task: how many are done, In progress / Completed / Need help, a comment and files. The team lead gets a
+     notice. When everyone on it has completed their share, the task is done. */
+  "tasks.update": async ({ env, user, payload }) => {
+    const p = await one(env, "SELECT * FROM team_task_people WHERE id = ?", str(payload.person_id, 60));
+    if (!p || p.user_id !== user.id) throw denied("This task is not yours.");
+    const t = await one(env, "SELECT * FROM team_tasks WHERE id = ?", p.task_id);
+    if (!t || t.status !== "open") throw bad("This task is closed: nothing more to update.");
+    if (p.status === "completed") throw bad("You marked this task completed. Ask your team lead if it needs more.");
+    const done = Math.round(num(payload.done, -1)); if (!(done >= 0 && done <= p.share)) throw bad(`Write how many are done: 0 to ${p.share}.`);
+    const status = ["in_progress", "completed", "help"].includes(payload.status) ? payload.status : ""; if (!status) throw bad("Pick In progress, Completed or Need help.");
+    const comment = String(payload.comment == null ? "" : payload.comment).trim(); if (comment.length > TASK_COMMENT_MAX) throw bad("The comment can be up to 2,000 characters.");
+    if (status === "help" && comment.length < 3) throw bad("Write what you need help with.");
+    if (status === "completed" && done < p.share && comment.length < 3) throw bad(`Completed with ${done} of ${p.share} done: write why the rest is not done.`);
+    if (status === "in_progress" && done === p.done_n && comment.length < 3) throw bad("Change the count or write a comment.");
+    const files = taskFilesIn(payload.files);
+    const now = Date.now(), uid = uuid();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE team_task_people SET done_n = ?, status = ?, updated_at = ?, completed_at = ?, seen_at = COALESCE(seen_at, ?) WHERE id = ?").bind(done, status, now, status === "completed" ? now : null, now, p.id),
+      env.DB.prepare("INSERT INTO team_task_updates (id, task_id, person_id, user_id, user_name, kind, done_n, delta, status, comment, at) VALUES (?,?,?,?,?,'update',?,?,?,?,?)").bind(uid, t.id, p.id, user.id, user.name || "", done, done - p.done_n, status, comment, now),
+      env.DB.prepare("UPDATE team_tasks SET updated_at = ? WHERE id = ?").bind(now, t.id),
+    ]);
+    await saveTaskFiles(env, t.id, uid, files, user, now);
+    const left = await one(env, "SELECT COUNT(*) AS n FROM team_task_people WHERE task_id = ? AND status <> 'completed'", t.id);
+    const closed = !(left && left.n);
+    if (closed) await run(env, "UPDATE team_tasks SET status = 'done', closed_at = ?, closed_by_name = ?, updated_at = ? WHERE id = ? AND status = 'open'", now, "everyone completed their share", now, t.id);
+    return { ok: true, closed, within_tat: now <= t.due_at };
+  },
+  "tasks.remind": async ({ env, user, payload }) => {
+    const t = await taskForLead(env, user, payload.id);
+    if (t.status !== "open") throw bad("This task is closed.");
+    const now = Date.now(), only = payload.person_id ? str(payload.person_id, 60) : "";
+    const r = await run(env, `UPDATE team_task_people SET reminded_at = ? WHERE task_id = ? AND status <> 'completed'${only ? " AND id = ?" : ""}`, now, t.id, ...(only ? [only] : []));
+    const n = changesOf(r); if (!n) throw bad("Everyone on it has completed their share.");
+    await run(env, "INSERT INTO team_task_updates (id, task_id, person_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,?,'remind',?,?)", uuid(), t.id, only || null, user.id, user.name || "", `Reminder sent to ${n === 1 ? "1 person" : n + " people"}.`, now);
+    return { ok: true, reminded: n };
+  },
+  /* Can't close yet: the reason and the expected date (up to 30 days), off the past-TAT reminders until then. */
+  "tasks.hold": async ({ env, user, payload }) => {
+    const t = await taskForLead(env, user, payload.id);
+    if (t.status !== "open") throw bad("This task is closed.");
+    const reason = TAT_HOLD_REASONS.includes(payload.reason) ? payload.reason : ""; if (!reason) throw bad("Pick why it cannot be closed yet.");
+    const note = str(payload.note, 500).trim(); if (reason === "Other" && note.length < 3) throw bad("Write the reason.");
+    const now = Date.now(), today = istISO(now), until = isoDate(payload.until);
+    if (!until || until < today) throw bad("Pick the expected close date: today or later.");
+    if (until > istISO(now + 30 * 86400000)) throw bad("The expected close date can be at most 30 days ahead.");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE team_tasks SET hold_reason = ?, hold_note = ?, hold_until = ?, hold_by_name = ?, updated_at = ? WHERE id = ?").bind(reason, note, until, user.name || "", now, t.id),
+      env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'hold',?,?)").bind(uuid(), t.id, user.id, user.name || "", `On hold until ${until}: ${reason}${note ? " (" + note + ")" : ""}.`, now),
+    ]);
+    return { ok: true, until };
+  },
+  "tasks.unhold": async ({ env, user, payload }) => {
+    const t = await taskForLead(env, user, payload.id);
+    if (!t.hold_until) throw bad("This task is not on hold.");
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE team_tasks SET hold_reason = '', hold_note = '', hold_until = NULL, hold_by_name = '', updated_at = ? WHERE id = ?").bind(now, t.id),
+      env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'unhold','Hold cleared.',?)").bind(uuid(), t.id, user.id, user.name || "", now),
+    ]);
+    return { ok: true };
+  },
+  "tasks.close": async ({ env, user, payload }) => {
+    const t = await taskForLead(env, user, payload.id);
+    if (t.status !== "open") throw bad("This task is already closed.");
+    const comment = String(payload.comment == null ? "" : payload.comment).trim(); if (comment.length > TASK_COMMENT_MAX) throw bad("The comment can be up to 2,000 characters.");
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE team_tasks SET status = 'closed', closed_at = ?, closed_by_name = ?, hold_until = NULL, updated_at = ? WHERE id = ?").bind(now, user.name || "", now, t.id),
+      env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'close',?,?)").bind(uuid(), t.id, user.id, user.name || "", comment || "Closed the task.", now),
+    ]);
+    await audit(env, user, "task.close", t.client_id || null, `${t.scope} · ${t.count_total} items`);
+    return { ok: true };
+  },
+  /* Edit or reassign: the name, description and due time; each person's share (never below what they have done); add people;
+     take off someone who has done nothing yet. */
+  "tasks.edit": async ({ env, user, payload }) => {
+    const t = await taskForLead(env, user, payload.id);
+    if (t.status !== "open") throw bad("This task is closed.");
+    const now = Date.now(), stmts = [], notes = [];
+    const title = payload.title == null ? t.title : String(payload.title).trim();
+    if (title.length < 3) throw bad("Write what the task is, a few words."); if (title.length > 160) throw bad("Keep the task name under 160 characters.");
+    const description = payload.description == null ? t.description : String(payload.description).trim(); if (description.length > TASK_DESC_MAX) throw bad("The description can be up to 4,000 characters.");
+    let due = { due_at: t.due_at, tat_hours: t.tat_hours };
+    // working hours count from when the task was given (the TAT); a date is checked against today
+    if (payload.tat) { due = payload.tat.kind === "date" ? taskDueFrom(now, payload.tat) : taskDueFrom(t.created_at, payload.tat); notes.push("due " + istWhen(due.due_at)); }
+    const current = await all(env, "SELECT p.*, u.name FROM team_task_people p LEFT JOIN users u ON u.id = p.user_id WHERE p.task_id = ?", t.id);
+    let count = t.count_total;
+    if (Array.isArray(payload.people)) {
+      const team = new Map((await visibleUsers(env, user)).filter((u) => u.active).map((u) => [u.id, u])), want = new Map();
+      for (const p of payload.people) { const id = str(p && p.user_id, 60), share = Math.round(num(p && p.share, -1)); if (want.has(id)) throw bad("Someone is picked twice."); want.set(id, share); }
+      for (const c of current) {
+        if (!want.has(c.user_id)) { if (c.done_n > 0) throw bad(`${c.name || "Someone"} has done ${c.done_n}: set their share to ${c.done_n} instead of taking them off.`);
+          stmts.push(env.DB.prepare("DELETE FROM team_task_people WHERE id = ?").bind(c.id)); notes.push("took off " + (c.name || "someone")); continue; }
+        const s = want.get(c.user_id); if (!(s >= 1) || s < c.done_n) throw bad(`${c.name || "Someone"}'s share can't be below ${Math.max(1, c.done_n)}.`);
+        if (s !== c.share) { stmts.push(env.DB.prepare("UPDATE team_task_people SET share = ?, status = CASE WHEN status = 'completed' AND done_n < ? THEN 'in_progress' ELSE status END, completed_at = CASE WHEN status = 'completed' AND done_n < ? THEN NULL ELSE completed_at END WHERE id = ?").bind(s, s, s, c.id)); notes.push(`${c.name || "someone"} ${c.share} to ${s}`); }
+        want.delete(c.user_id);
+      }
+      for (const [id, s] of want) { const u = team.get(id); if (!u) throw bad("Only people on your team can be given a task."); if (!(s >= 1)) throw bad("Each person needs a share of at least 1.");
+        stmts.push(env.DB.prepare("INSERT INTO team_task_people (id, task_id, user_id, share, done_n, status) VALUES (?,?,?,?,0,'new')").bind(uuid(), t.id, id, s)); notes.push(`gave ${s} to ${u.name || "someone"}`); }
+      count = [...payload.people].reduce((a, p) => a + Math.round(num(p && p.share, 0)), 0);
+      if (!(count >= 1)) throw bad("The task needs at least one person.");
+    }
+    if (title !== t.title) notes.push("renamed");
+    if (description !== t.description) notes.push("description changed");
+    stmts.push(env.DB.prepare("UPDATE team_tasks SET title = ?, description = ?, due_at = ?, tat_hours = ?, count_total = ?, updated_at = ? WHERE id = ?").bind(title, description, due.due_at, due.tat_hours, count, now, t.id));
+    if (notes.length) stmts.push(env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'edit',?,?)").bind(uuid(), t.id, user.id, user.name || "", "Changed: " + notes.join(", ") + ".", now));
+    await env.DB.batch(stmts);
+    return { ok: true, count, due_at: due.due_at };
+  },
+  "tasks.file": async ({ env, user, payload }) => {
+    const f = await one(env, "SELECT * FROM team_task_files WHERE id = ?", str(payload.id, 60));
+    if (!f) throw notFound("That file was not found.");
+    const t = await one(env, "SELECT * FROM team_tasks WHERE id = ?", f.task_id);
+    const mine = t && await one(env, "SELECT id FROM team_task_people WHERE task_id = ? AND user_id = ?", t.id, user.id);
+    if (!t || !(taskLeadSees(user, t) || mine)) throw denied("This file is not on one of your tasks.");
+    if (!taskLeadSees(user, t) && f.update_id) { const u = await one(env, "SELECT person_id FROM team_task_updates WHERE id = ?", f.update_id); if (!u || u.person_id !== mine.id) throw denied("This file is not on one of your tasks."); }
+    const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", f.id);
+    return { name: f.name, type: f.type, size: f.size, data: parts.map((p) => p.data).join("") };
+  },
   /* The Needs attention counts (the tabs, the bell, the menu badge), for one client when the page's Client filter asks.
      A flag on hold (Can't close yet, date not passed) is not counted as over the 48 working hours, the same as the TAT board. */
   "attention.count": async ({ env, user, payload }) => {
@@ -7062,7 +7472,15 @@ const OPS = {
     const mine = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state IN ('assigned','in_progress')", user.id);
     const fd = await one(env, `SELECT COUNT(*) AS n FROM handoffs h WHERE h.status IN ('assistance','back') AND h.done_at > ? AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)
       AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at)${one1("h.client_id")}${scopeSql(user, "h.client_id")}`, now - 30 * 86400000, ...cargs, ...scopeArgs(user));
-    return { n: ((r && r.n) || 0) + ((cr && cr.n) || 0) + ((fd && fd.n) || 0), escalations: (r && r.n) || 0, client_to_send: (cr && cr.n) || 0, from_desks: (fd && fd.n) || 0, overdue: (r && r.overdue) || 0, my_desk: (mine && mine.n) || 0 };
+    // team tasks this person sees: open ones for the tab; past the TAT or someone asking for help count on the badge
+    let tk = { open: 0, late: 0, help: 0 };
+    if (user.role === "supervisor") {
+      const today = istISO(now), lt = (await all(env, `SELECT id, client_id, created_by, due_at, hold_until FROM team_tasks WHERE status = 'open'${cid ? " AND client_id = ?" : ""} LIMIT 2000`, ...cargs)).filter((t) => taskLeadSees(user, t));
+      const helpIds = new Set(); for (const part of chunks(lt.map((t) => t.id), 80)) for (const h of await all(env, `SELECT DISTINCT task_id FROM team_task_people WHERE status = 'help' AND task_id IN (${part.map(() => "?").join(",")})`, ...part)) helpIds.add(h.task_id);
+      tk = { open: lt.length, late: lt.filter((t) => !(t.hold_until && t.hold_until >= today) && now > t.due_at).length, help: helpIds.size };
+    }
+    return { n: ((r && r.n) || 0) + ((cr && cr.n) || 0) + ((fd && fd.n) || 0) + tk.late + tk.help, escalations: (r && r.n) || 0, client_to_send: (cr && cr.n) || 0, from_desks: (fd && fd.n) || 0, overdue: (r && r.overdue) || 0, my_desk: (mine && mine.n) || 0,
+      tasks: tk.open, tasks_late: tk.late, tasks_help: tk.help };
   },
   /* Supervisor review of anything in Needs attention (a biller's escalation, or a claim a department sent back): four notes
      (why it came, what was reviewed, the findings, the next action) go into the claim history, then it goes to the biller who

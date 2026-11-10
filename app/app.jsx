@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.113.0";
+const APP_VERSION = "2.114.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -1345,21 +1345,23 @@ function deskOf(me, ho) {
   return "both";
 }
 /* The tabs, with the less-used screens grouped under Work and Manage so the bar stays one row. */
-const navFor = (me, ho, fb, at) => {
+const navFor = (me, ho, fb, at, tk) => {
   const inbox = fb && fb.reader ? [["feedback", "Feedback inbox"]] : [];
+  // My tasks: tasks a team lead gave this person (open, or done in the last 7 days)
+  const mt = tk && tk.any > 0 ? [["mytasks", "My tasks"]] : [];
   const desk = deskOf(me, ho);
   // Posting and Submission work only on what is handed to them: no AR screens (SAAG, inventory, allocation, attention, TFL)
-  if (desk && me.role === "supervisor") return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ["claims", "Claims"], ["escalations", "Escalation tracker"],
+  if (desk && me.role === "supervisor") return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["dashboard", "Dashboard"], ["handoffs", DESK[desk].tab], ...mt, ["claims", "Claims"], ["escalations", "Escalation tracker"],
     { g: "Manage", items: [["team", "Team"], ["clients", "Clients & locations"], ["raci", "RACI tracker"], ...inbox] }];
   const respNav = (me.resp_clients || []).length ? [["claims", "Claims"]] : [];
-  if (desk) return [["handoffs", DESK[desk].tab], ["history", "My work"], ...respNav, ["clients", "My clients"], ...inbox];
+  if (desk) return [["handoffs", DESK[desk].tab], ...mt, ["history", "My work"], ...respNav, ["clients", "My clients"], ...inbox];
   if (me.role !== "supervisor") {
-    const base = [...USER_NAV, ...respNav, ["clients", "My clients"]];
+    const base = [USER_NAV[0], ...mt, ...USER_NAV.slice(1), ...respNav, ["clients", "My clients"]];
     return [...(handoffTab(me, ho) ? [...base, ["handoffs", "Posting & submission"]] : base), ...inbox];
   }
   // Team today is part of the Dashboard now; Claims (the inventory list) has its own tab; Needs attention sits under Work
   // and its count also shows on the Dashboard tab.
-  const work = [["attention", "Needs attention"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["escalations", "Escalation tracker"], ["raci", "RACI tracker"], ...(at && at.my_desk > 0 ? [["mydesk", "My desk"]] : [])];
+  const work = [["attention", "Needs attention"], ...(handoffTab(me, ho) ? [["handoffs", "Posting & submission"]] : []), ["inventory", "Inventory & allocation"], ["escalations", "Escalation tracker"], ["raci", "RACI tracker"], ...(at && at.my_desk > 0 ? [["mydesk", "My desk"]] : []), ...mt];
   // Client 360 is not on the menu: it opens from Dashboard › Client 360 report and from a client's name or link
   const manage = [["team", "Team"], ["templates", "Note templates"], ["clients", "Clients & locations"], ["saag", "SAAG reference"], ["limits", "TFL / AFL"], ...(me.is_admin ? [["roster", "Roster"]] : []), ...(me.is_admin || me.access_all ? [["audit", "Audit trail"]] : []), ...inbox];
   return [["sla", "SLA"], ["thirdeye", "Sasha's Third Eye"], ["live", "Live status"], ["dashboard", "Dashboard"], ["claims", "Claims"], { g: "Work", items: work }, { g: "Manage", items: manage }];
@@ -1425,9 +1427,9 @@ const SearchIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="n
 const BellIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>;
 /* The bell: what needs this person now. A count shows for what changed since they last opened it. */
 const BELL_KEY = "brahmastra2:bell";
-/* The bell, in categories: Past TAT first (red), then Needs attention, Desks, Client escalations, Team, Setup; billers and desk
-   people get My work and Updates. All shows every category in this order, each with its first 3; a chip shows one category. */
-const BELL_CATS = [["tat", "⏰", "Past TAT"], ["attention", "🙋", "Needs attention"], ["desks", "🏢", "Desks"], ["escalations", "📣", "Escalations"],
+/* The bell, in categories: Past TAT first (red), then Needs attention, Tasks (given to you, or updates on the ones you gave),
+   Desks, Client escalations, Team, Setup; billers and desk people get My work and Updates. All shows every category in this order, each with its first 3; a chip shows one category. */
+const BELL_CATS = [["tat", "⏰", "Past TAT"], ["attention", "🙋", "Needs attention"], ["tasks", "🗂", "Tasks"], ["desks", "🏢", "Desks"], ["escalations", "📣", "Escalations"],
   ["team", "👥", "Team"], ["setup", "⚙", "Setup"], ["work", "📋", "My work"], ["updates", "🔔", "Updates"]];
 function Bell({ notify, allowed, onGo }) {
   const [open, setOpen] = useState(false);
@@ -1574,26 +1576,29 @@ function AllocBanner({ items, onGo, onSeen }) {
     </div>
   );
 }
-function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount, attention, handoffs, fb, notify, onGo, onSearch, onRefreshNotify, children }) {
+function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount, attention, handoffs, fb, notify, tasks, onGo, onSearch, onRefreshNotify, children }) {
   const [menu, setMenu] = useState(false);
   useEffect(() => {
     if (!notify) return;
     for (const a of notify.alerts || []) if (a.popup) tellComputer("miss:" + a.user_id + ":" + a.day, "Brahmastra: " + a.name + " has not logged in", `Shift ${a.shift || ""} · ${a.n} claim${a.n === 1 ? "" : "s"} on their desk. Open Brahmastra to reallocate.`);
     for (const x of notify.alloc_new || []) tellComputer("alloc:" + x.id, "Brahmastra: " + (x.n ? x.n + " new claim" + (x.n === 1 ? "" : "s") : "New claims") + " allocated to you", x.text);
+    // a new task from the team lead, a reminder on one, or someone asking the team lead for help: a note on this computer too
+    for (const x of (notify.items || []).filter((i) => /^task_(new|remind|help):/.test(i.key))) tellComputer(x.key, "Brahmastra: " + x.text, x.sub || "");
   }, [notify]);
   const [openG, setOpenG] = useState(null);
   // Esc closes the profile menu and an open menu group.
   useEffect(() => { if (!menu && !openG) return undefined; const k = (e) => { if (e.key === "Escape") { setMenu(false); setOpenG(null); } };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [menu, openG]);
   const [fbOpen, setFbOpen] = useState(false);
-  const nav = navFor(me, handoffs, fb, attention);
-  const pageLabel = (navItems(nav).find(([k]) => k === view) || [view, view === "settings" ? "Settings" : view === "digest" ? "Monday digest" : view])[1];
+  const nav = navFor(me, handoffs, fb, attention, tasks);
+  const pageLabel = (navItems(nav).find(([k]) => k === view) || [view, view === "settings" ? "Settings" : view === "digest" ? "Monday digest" : view === "mytasks" ? "My tasks" : view])[1];
   // Client 360 is off the menu (it opens from Dashboard › Client 360 report): the Dashboard tab stays lit on it
   const navKey = view === "client" ? "dashboard" : NAV_ALIAS[view] && me.role === "supervisor" ? NAV_ALIAS[view] : view;
   useEffect(() => { document.title = pageLabel + " · Brahmastra"; }, [pageLabel]);
-  const allowedViews = [...navItems(nav).map(([k]) => k), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
+  const allowedViews = [...navItems(nav).map(([k]) => k), "mytasks", ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   useEffect(() => { if (!menu && !openG) return; const h = () => { setMenu(false); setOpenG(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu, openG]);
-  const navBadge = (k) => (k === "attention" || k === "live") && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+  const navBadge = (k) => (k === "attention" || k === "live") && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue || attention.tasks_late ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+    : k === "mytasks" && tasks && tasks.open > 0 ? <span className={"badge " + (tasks.late ? "red" : tasks.unseen ? "teal" : "amber")} style={{ marginLeft: 6 }} title={tasks.late ? tasks.late + " past the TAT" : tasks.unseen ? tasks.unseen + " new" : "to do"}>{tasks.open}</span>
     : k === "handoffs" && handoffs && handoffs.n > 0 ? <span className={"badge " + (handoffs.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{handoffs.n}</span>
     : k === "feedback" && fb && fb.n > 0 ? <span className="badge amber" style={{ marginLeft: 6 }}>{fb.n}</span>
     : k === "tat" && notify && notify.past_tat > 0 ? <span className="badge red" style={{ marginLeft: 6 }}>{notify.past_tat}</span> : null;
@@ -1933,12 +1938,13 @@ function TeamStatusTab({ ctx, me, go }) {
     try { await navigator.clipboard.writeText(text); toast("Copied: paste it into your 1:1 notes."); } catch (e) { toast("Could not copy here; select the text instead.", "err"); }
   };
   const csv = () => {
-    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Entries counted", "Target counted", "Entries", "Target", "Performance", "Floor time needed (h)", "On floor (h)", "Floor time met", "Idle (h)", "Of it screen locked (h)", "Breaks (h)", "Days over 1 h of breaks", "Left over", "Of them high priority", "Escalations external (our error)", "Escalations internal (our error)", "Escalation SR numbers", "Start", "Due in production / plan end", "Comment"];
+    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Count for attainment (claims + task items)", "Target counted", "Entries", "Task items", "Tasks completed", "Target", "Performance", "Floor time needed (h)", "On floor (h)", "Floor time met", "Idle (h)", "Of it screen locked (h)", "Breaks (h)", "Days over 1 h of breaks", "Left over", "Of them high priority", "Escalations external (our error)", "Escalations internal (our error)", "Escalation SR numbers", "Start", "Due in production / plan end", "Comment"];
     const rampTxt = (x) => x.kind === "prod" ? "In production" : x.kind !== "ramp" ? "" : !x.due ? "No start date" : (x.flag === "over" ? "Overdue, was due " : "Due ") + x.due + (x.extended ? " (date agreed)" : "");
-    // Attainment % = Entries counted / Target counted (the days up to yesterday when there are any); Entries and Target include today
+    // Attainment % = Count for attainment (claims worked + team task items done) / Target counted, on the days up to yesterday when
+    // there are any; Entries, Task items and Target include today
     const line = (r) => [r.lead_name, r.name, r.doj, r.status, rampTxt(r.ramp) || r.status, r.attain == null ? "" : r.attain, r.attain == null ? "" : r.attain_basis === "done" ? "days up to yesterday" : "today",
-      r.attain == null ? "" : r.attain_basis === "done" ? r.worked_done : r.worked_today, r.attain == null ? "" : r.attain_basis === "done" ? r.target_done : r.target_today,
-      r.worked, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10,
+      r.attain == null ? "" : r.attain_basis === "done" ? r.count_done : r.count_today, r.attain == null ? "" : r.attain_basis === "done" ? r.target_done : r.target_today,
+      r.worked, r.task_items || 0, r.tasks_completed || 0, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10,
       r.on_floor_min == null ? "" : Math.round(r.on_floor_min / 6) / 10, r.floor === "met" ? "Met" : r.floor === "short" ? "Short " + Math.round(r.floor_short_min / 6) / 10 + " h" : r.floor === "pending" ? "Day under way" : r.floor === "no_attendance" ? "No attendance in Shastra" : "",
       r.idle_min == null ? "" : Math.round(r.idle_min / 6) / 10, r.locked_min == null ? "" : Math.round(r.locked_min / 6) / 10, r.break_min == null ? "" : Math.round(r.break_min / 6) / 10, r.break_min == null ? "" : r.break_over_days, r.left, r.left_high, r.esc_ext || 0, r.esc_int || 0, (r.escalations || []).map((e) => "SR" + e.sr + " " + e.client_name + " (" + e.kind + ")").join("; "), r.start_date, r.end_date, r.comment];
     downloadText(toCSV(rows, head.map((label, i) => ({ label, get: (r) => line(r)[i] }))), "Team status " + (span ? span[0] + " to " + span[1] : "") + ".csv");
@@ -1982,7 +1988,9 @@ function TeamStatusTab({ ctx, me, go }) {
           {t.on_floor_min != null ? <Kpi label="On floor · idle · breaks" value={fmtHM(t.on_floor_min)}
               sub={<>{t.idle_min != null ? "idle " + fmtHM(t.idle_min) + " · " : ""}{t.break_min != null ? "breaks " + fmtHM(t.break_min) + (t.break_over_days ? " (" + plural(t.break_over_days, "day") + " over 1 h)" : "") + " · " : ""}{t.floor_judged ? t.floor_met + " of " + t.floor_judged + " met the floor time" : "from Purview Shastra"}</>} tone={t.floor_judged && t.floor_met < t.floor_judged ? "" : "good"} />
             : <Kpi label="On floor · idle · breaks" value={<span className="muted">–</span>} sub={d.floor_source === "ok" ? "no attendance in Purview Shastra for these dates" : FLOOR_SRC[d.floor_source] || "from Purview Shastra"} />}
-          <Kpi label="Attainment" value={t.attain == null ? "–" : t.attain + "%"} sub={t.attain_basis === "done" ? fmtInt(t.worked_done) + " of " + fmtInt(Math.round(t.target_done)) + " claims up to yesterday" : fmtInt(t.worked_today) + " of " + fmtInt(Math.round(t.target_today)) + " claims today"} />
+          <Kpi label="Attainment" value={t.attain == null ? "–" : t.attain + "%"} sub={(() => { // the task items on the same days as the attainment
+            const ti = rows.reduce((a, r) => a + ((t.attain_basis === "done" ? r.task_items_done : r.task_items_today) || 0), 0);
+            return (t.attain_basis === "done" ? fmtInt(t.count_done) + " of " + fmtInt(Math.round(t.target_done)) + (ti ? "" : " claims") + " up to yesterday" : fmtInt(t.count_today) + " of " + fmtInt(Math.round(t.target_today)) + (ti ? "" : " claims") + " today") + (ti ? " · claims + " + plural(ti, "task item") : ""); })()} />
         </div>
         <div className="card">
           <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}><div className="cv-sec" style={{ margin: 0 }}>Team status by team lead</div>
@@ -1990,12 +1998,13 @@ function TeamStatusTab({ ctx, me, go }) {
               <button type="button" className="btn sm" onClick={() => setClosed(Object.fromEntries(groups.map((g) => [g.key || "none", true])))} title="Show only the team lead rows">Collapse all</button></>}
               <button className="btn sm" onClick={csv}>⬇ CSV for supervisors</button></div></div>
           <div className="table-wrap mt8"><table className="t ts">
-            <thead><tr><th>Team lead / associate</th><th>DOJ</th><th>Status</th><th>Ramp-up / plan</th><th className="num">Attainment</th><th className="num" title="Floor time needed: 8 h a working day, 4 h a half day">Floor needed</th><th className="num">On floor</th><th className="num">Idle</th><th className="num" title="Breaks taken, from Purview Shastra. Shastra allows 60 minutes a day">Breaks</th><th>Performance</th><th className="num" title="Escalations where the person is named as who made the error (our error), received in these dates: external and internal">Escalations</th><th>Comment</th></tr></thead>
+            <thead><tr><th>Team lead / associate</th><th>DOJ</th><th>Status</th><th>Ramp-up / plan</th><th className="num">Attainment</th><th className="num" title="Team task items marked done in these dates (Needs attention › Team tasks). They count with the claims in the attainment.">Tasks</th><th className="num" title="Floor time needed: 8 h a working day, 4 h a half day">Floor needed</th><th className="num">On floor</th><th className="num">Idle</th><th className="num" title="Breaks taken, from Purview Shastra. Shastra allows 60 minutes a day">Breaks</th><th>Performance</th><th className="num" title="Escalations where the person is named as who made the error (our error), received in these dates: external and internal">Escalations</th><th>Comment</th></tr></thead>
             <tbody>{groups.map((g) => { const open = !closed[g.key || "none"]; const gr = g.rows, wk = gr.reduce((a, r) => a + r.worked, 0), tg = gr.reduce((a, r) => a + r.target, 0);
               return <React.Fragment key={g.key || "none"}>
                 <tr className="tlrow click" onClick={() => setClosed((c) => ({ ...c, [g.key || "none"]: open }))}><td><span className="caret">{open ? "▾" : "▸"}</span> <b>{g.name}</b></td>
                   <td colSpan={3} className="small muted">{plural(gr.length, "person", "people")} · {gr.filter((r) => r.status === "Production").length} production{gr.some((r) => r.status !== "Production") ? " · " + gr.filter((r) => r.status !== "Production").length + " other" : ""}</td>
-                  <td className="num">{attainStamp((() => { const wd = gr.reduce((a, r) => a + r.worked_done, 0), td = gr.reduce((a, r) => a + r.target_done, 0), wt = gr.reduce((a, r) => a + r.worked_today, 0), tt = gr.reduce((a, r) => a + r.target_today, 0); return td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null; })())}</td><td className="num">{fmtHM(gr.reduce((a, r) => a + r.floor_needed_min, 0))}</td>
+                  <td className="num">{attainStamp((() => { const wd = gr.reduce((a, r) => a + r.count_done, 0), td = gr.reduce((a, r) => a + r.target_done, 0), wt = gr.reduce((a, r) => a + r.count_today, 0), tt = gr.reduce((a, r) => a + r.target_today, 0); return td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null; })())}</td>
+                  <td className="num">{gr.some((r) => r.task_items) ? <><b>{fmtInt(gr.reduce((a, r) => a + (r.task_items || 0), 0))}</b><div className="tiny muted">{plural(gr.filter((r) => r.task_items).length, "person", "people")}</div></> : <span className="muted">0</span>}</td><td className="num">{fmtHM(gr.reduce((a, r) => a + r.floor_needed_min, 0))}</td>
                   <td className="num">{gr.some((r) => r.on_floor_min != null) ? <>{fmtHM(gr.reduce((a, r) => a + (r.on_floor_min || 0), 0))}{gr.some((r) => r.floor === "short") ? <div className="tiny amber-ink">{gr.filter((r) => r.floor === "short").length} short</div> : null}</> : <span className="muted">–</span>}</td>
                   <td className="num">{gr.some((r) => r.idle_min != null) ? fmtHM(gr.reduce((a, r) => a + (r.idle_min || 0), 0)) : <span className="muted">–</span>}</td>
                   <td className="num">{gr.some((r) => r.break_min != null) ? <>{fmtHM(gr.reduce((a, r) => a + (r.break_min || 0), 0))}{gr.reduce((a, r) => a + (r.break_over_days || 0), 0) ? <div className="tiny amber-ink">{plural(gr.reduce((a, r) => a + (r.break_over_days || 0), 0), "day")} over 1 h</div> : null}</> : <span className="muted">–</span>}</td>
@@ -2007,7 +2016,9 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td className="small nowrap">{r.doj ? fmtDate(r.doj) : <span className="muted">–</span>}</td>
                   <td><span className={"badge " + (TS_STATUS_TONE[r.status] || "gray")}>{r.status}</span></td>
                   <td>{rampCell(r)}</td>
-                  <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " of " + Math.round(r.target_done) + " to yesterday" : r.worked_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.worked_today ? " · " + r.worked_today + " today" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div></td>
+                  <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.count_done + " of " + Math.round(r.target_done) + " to yesterday" : r.count_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.count_today ? " · " + r.count_today + " today" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div>
+                    {(r.attain_basis === "done" ? r.task_items_done : r.task_items_today) > 0 && r.attain != null && <div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " claims + " + r.task_items_done + " task items" : r.worked_today + " claims + " + r.task_items_today + " task items"}</div>}</td>
+                  <td className="num">{r.task_items ? <><b>{fmtInt(r.task_items)}</b> <span className="tiny muted">items</span><div className="tiny muted">{plural(r.tasks_worked || 0, "task")}{r.tasks_completed ? " · " + r.tasks_completed + " completed" : ""}</div></> : <span className="muted">0</span>}</td>
                   <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
                   <td className="num">{floorCell(r, d.floor_source)}</td><td className="num">{idleCell(r)}</td><td className="num">{breakCell(r)}</td>
                   <td>{perfCell(r, d.perf_mark)}{r.out_today ? <div className="tiny muted">{r.out_today === "half" ? "half day today" : "out today"}</div> : null}</td>
@@ -2015,7 +2026,7 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td><button type="button" className="btn sm note-btn" title={r.comment || "Add a start, end or comment"} onClick={() => setEdit({ r, start: r.start_date, end: r.end_date, comment: r.comment })}>{r.comment ? <span className="clamp3">{r.comment}</span> : <span className="muted">+ Add note</span>}</button></td>
                 </tr>)}
               </React.Fragment>; })}</tbody></table></div>
-          <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> comes from Purview Shastra (finished shifts, breaks taken out; a shift still open counts up to now) and is met or short on the finished days; Shastra's attendance also decides half days, leave and week offs. <b>Idle</b> is what Shastra Guard saw while they were punched in, breaks left out: no movement plus screen locked. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
+          <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> comes from Purview Shastra (finished shifts, breaks taken out; a shift still open counts up to now) and is met or short on the finished days; Shastra's attendance also decides half days, leave and week offs. <b>Idle</b> is what Shastra Guard saw while they were punched in, breaks left out: no movement plus screen locked. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. Claims worked and <b>team task items</b> done both count toward it. <b>Tasks:</b> items from Needs attention › Team tasks marked done in these dates (the night shift's early hours count to the day before, as for claims). <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
         </div>
         <div className="card">
           <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>Suggestions · {word}</div><button className="btn sm" onClick={copy}>⬇ Copy for my 1:1s</button></div>
@@ -2024,8 +2035,8 @@ function TeamStatusTab({ ctx, me, go }) {
         </div>
         <div className="grid ts-foot">
           <div className="card"><div className="cv-sec">Performance by status · {word}{t.attain_basis === "done" ? " · counted up to yesterday" : ""}</div>
-            <div className="table-wrap"><table className="t"><thead><tr><th>Status</th><th className="num">People</th><th className="num">Claims</th><th className="num">Target</th><th className="num">Attainment</th><th className="num">Claims a day</th></tr></thead>
-              <tbody>{d.by_status.map((x) => <tr key={x.status}><td className="b">{x.status}</td><td className="num">{x.people}</td><td className="num">{fmtInt(x.worked)}</td><td className="num">{fmtInt(x.target)}</td><td className="num">{attainStamp(x.attain)}</td><td className="num">{x.per_day == null ? "–" : x.per_day}</td></tr>)}</tbody></table></div></div>
+            <div className="table-wrap"><table className="t"><thead><tr><th>Status</th><th className="num">People</th><th className="num" title={t.task_items ? "Claims worked plus team task items done, on the same days as the attainment" : undefined}>{t.task_items ? "Claims + tasks" : "Claims"}</th><th className="num">Target</th><th className="num">Attainment</th>{t.task_items ? <th className="num" title="Team task items done in all the dates picked">Task items</th> : null}<th className="num">Claims a day</th></tr></thead>
+              <tbody>{d.by_status.map((x) => <tr key={x.status}><td className="b">{x.status}</td><td className="num">{x.people}</td><td className="num">{fmtInt(x.worked)}</td><td className="num">{fmtInt(x.target)}</td><td className="num">{attainStamp(x.attain)}</td>{t.task_items ? <td className="num">{fmtInt(x.task_items || 0)}</td> : null}<td className="num">{x.per_day == null ? "–" : x.per_day}</td></tr>)}</tbody></table></div></div>
           <div className="card"><div className="cv-sec">Roster checks</div>
             <div className="stack" style={{ gap: 8 }}>{d.checks.map((c, i) => <div key={i} className="row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "flex-start" }}><span className={"badge " + (c.n ? "amber" : "green")}>{c.n}</span><span className="small">{c.text}</span></div>)}
               <div className="tiny muted">Fix these in Purview Shastra; Brahmastra picks them up on the next roster sync.</div></div></div>
@@ -3574,7 +3585,7 @@ function AttentionView(props) {
   const [clientId, setClientId] = useState((props.params && props.params.client_id) || "");
   const counts = useRpc("attention.count", { client_id: clientId || undefined }, [clientId]);
   const c = counts.data || {};
-  const [pick, setPick] = useState((props.params && ["late", "held"].includes(props.params.pick) && props.params.pick) || "");
+  const [pick, setPick] = useState((props.params && props.params.tab !== "tasks" && ["late", "held"].includes(props.params.pick) && props.params.pick) || "");
   const [ver, setVer] = useState(0);
   const [hold, setHold] = useState(null);
   const sup = props.me.role === "supervisor";
@@ -3589,14 +3600,14 @@ function AttentionView(props) {
   return (
     <div className="stack">
       <div className="row between" style={{ alignItems: "flex-end" }}>
-        <div><h1>Needs attention</h1><div className="sub">{tab === "denials" ? "Claims denied again for the same reason, and the payer and reason seen on 3 or more claims in 30 days, with what led to payment before. From the team's own SAAG entries." : tab === "esc" ? "Claims your billers flagged for their team lead, on your projects, oldest first. Client escalations are logged in the Escalation tracker." : tab === "desks" ? "Claims Payment posting, Submission or Rejections sent back to AR with Need assistance from AR. They are already first on the biller's list with a notice; review one to give it to another biller or return it to the department. They leave this list once a biller saves an entry on the claim." : "Claims Posting, Submission or Rejections need the client for. Sending them to the client is the team lead's job; mark each one Sent."}</div></div>
-        <div className="seg2">{[["esc", "Flagged by billers", c.escalations], ["desks", "Sent back by Posting / Submission", c.from_desks], ["client", "Client requests", c.client_to_send], ["denials", "Repeat denials", 0]].map(([k, l, n]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}{n ? <span className="badge amber" style={{ marginLeft: 6 }}>{n}</span> : null}</button>)}</div>
+        <div><h1>Needs attention</h1><div className="sub">{tab === "tasks" ? "Tasks you give to people on your team: the client, the scope, the count, the TAT in working hours and files. Each person gets their share on My day and in My tasks with a notice, and you get a notice when they update it. Items done count on Team status." : tab === "denials" ? "Claims denied again for the same reason, and the payer and reason seen on 3 or more claims in 30 days, with what led to payment before. From the team's own SAAG entries." : tab === "esc" ? "Claims your billers flagged for their team lead, on your projects, oldest first. Client escalations are logged in the Escalation tracker." : tab === "desks" ? "Claims Payment posting, Submission or Rejections sent back to AR with Need assistance from AR. They are already first on the biller's list with a notice; review one to give it to another biller or return it to the department. They leave this list once a biller saves an entry on the claim." : "Claims Posting, Submission or Rejections need the client for. Sending them to the client is the team lead's job; mark each one Sent."}</div></div>
+        <div className="seg2" style={{ flexWrap: "wrap" }}>{[["esc", "Flagged by billers", c.escalations], ["desks", "Sent back by Posting / Submission", c.from_desks], ["client", "Client requests", c.client_to_send], ...(sup ? [["tasks", "Team tasks", c.tasks, c.tasks_late || c.tasks_help]] : []), ["denials", "Repeat denials", 0]].map(([k, l, n, hot]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}{n ? <span className={"badge " + (hot ? "red" : "amber")} style={{ marginLeft: 6 }}>{n}</span> : null}</button>)}</div>
       </div>
       <div className="row" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
         <div style={{ minWidth: 240 }}><ClientPicker ctx={props.ctx} clientId={clientId} setClientId={setClientId} allowAll /></div>
-        {pick && tab !== "denials" && <><span className="badge ink" style={{ marginBottom: 8 }}>{pick === "late" ? "Past 48 working hours only" : "On hold only"}</span><button className="btn sm link" style={{ marginBottom: 6 }} onClick={() => setPick("")}>Show all</button></>}
+        {pick && tab !== "denials" && tab !== "tasks" && <><span className="badge ink" style={{ marginBottom: 8 }}>{pick === "late" ? "Past 48 working hours only" : "On hold only"}</span><button className="btn sm link" style={{ marginBottom: 6 }} onClick={() => setPick("")}>Show all</button></>}
       </div>
-      {sup && tab !== "denials" && tq.data && <>
+      {sup && tab !== "denials" && tab !== "tasks" && tq.data && <>
         <div className="grid g3">
           <Kpi label="Past 48 working hours" value={fmtInt(tat.n.late.length)} tone={tat.n.late.length ? "bad" : ""} sub={tat.n.late.length ? byPart(tat.n.late) + " · at the top of each list" : "none"} onClick={() => setPick(pick === "late" ? "" : "late")} on={pick === "late"} title="Show only the ones past the TAT" />
           <Kpi label={"Due in the next " + (tq.data.due_soon_hours || 4) + " hours"} value={fmtInt(tat.n.soon.length)} tone={tat.n.soon.length ? "warn" : ""} sub={tat.n.soon.length ? byPart(tat.n.soon) : "still within the TAT"} />
@@ -3604,7 +3615,7 @@ function AttentionView(props) {
         </div>
         {tat.n.late.length > 0 && <div className="tiny muted">Every supervisor, SME and above on the client gets a reminder at 19:00 IST until each is closed or put on hold (Can't close yet, in the row).</div>}
       </>}
-      {tab === "denials" ? <RepeatDenialsView {...sub} /> : tab === "esc" ? <EscalationsView {...sub} /> : tab === "desks" ? <FromDesksView {...sub} /> : <ClientRequestsView {...sub} onChanged={reload} />}
+      {tab === "tasks" && sup ? <TeamTasksView {...sub} params={props.params} refreshAttention={() => { counts.reload(); props.refreshAttention && props.refreshAttention(); }} /> : tab === "denials" ? <RepeatDenialsView {...sub} /> : tab === "esc" ? <EscalationsView {...sub} /> : tab === "desks" ? <FromDesksView {...sub} /> : <ClientRequestsView {...sub} onChanged={reload} />}
       {hold && <HoldModal row={hold} reasons={(tq.data && tq.data.reasons) || []} maxDays={(tq.data && tq.data.max_days) || 30} onClose={() => setHold(null)} onDone={() => { setHold(null); reload(); }} />}
     </div>
   );
@@ -3641,6 +3652,392 @@ function RepeatDenialsView({ ctx, me, clientId }) {
             <tbody>{d.patterns.map((r) => <tr key={r.client_id + r.payer + r.reason}><td className="small">{r.client_name}</td><td className="small"><b>{r.payer || "–"}</b></td><td className="small">{r.reason}</td><td className="num">{fmtInt(r.claims)}</td><td className="num">{fmtMoney(r.bal)}</td><td className="small">{fmtWhen(r.last_at)}</td><td style={{ minWidth: 220 }}>{worked(r.worked, r.payer)}</td></tr>)}</tbody></table></div>}</div>
       </>}
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => { setOpen(null); q.reload(); }} onChanged={() => q.reload()} />}
+    </div>
+  );
+}
+/* ---------- Team tasks: Needs attention › Team tasks (team leads), My tasks and the My day panel (the people given them) ---------- */
+const TASK_SCOPES_UI = ["AR follow-up", "Payment posting", "Submission", "Rejections", "Eligibility (EV)", "Other"];
+const TASK_SCOPE_TONE = { "AR follow-up": "teal", "Payment posting": "purple", "Submission": "blue", "Rejections": "red", "Eligibility (EV)": "amber" };
+const TASK_STATUS_WORD = { new: "not started", in_progress: "in progress", help: "needs help", completed: "completed" };
+/* A field holding a row of buttons: a div, not a label, so a click on its name or hint does not press the first button. */
+const FieldGroup = ({ label, children, hint, style }) => (
+  <div className="field" style={style}><span>{label}</span>{children}{hint && <span className="tiny muted" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{hint}</span>}</div>
+);
+const ScopeBadge = ({ s }) => <span className={"badge " + (TASK_SCOPE_TONE[s] || "gray")}>{s}</span>;
+const fmtSize = (n) => (n >= 1048576 ? Math.round(n / 104857.6) / 10 + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+const clip = (t, n) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+const whLeft = (x) => (x < 1 ? Math.max(1, Math.round(x * 60)) + " min" : (Math.round(x * 10) / 10) + " working h");
+/* The TAT of a task or a share: past it, on hold, due soon, time left; done within it or not. */
+function TaskTat({ open, late, held, hold, dueSoon, leftWh, usedPct, dueAt, givenAt, doneAt, withinTat, closedByLead }) {
+  if (!open) return <div><span className={"badge " + (closedByLead ? "gray" : withinTat ? "green" : "amber")}>{closedByLead ? "Closed by the team lead" : "Completed · " + (withinTat ? "within TAT" : "after the TAT")}</span><div className="tiny muted">{doneAt ? "done " + fmtWhen(doneAt) + " · " : ""}due {fmtWhen(dueAt)}</div></div>;
+  const tone = late ? "red" : held ? "amber" : dueSoon || usedPct > 75 ? "amber" : "teal";
+  return (
+    <div>
+      <span className={"badge " + tone}>{held ? "On hold until " + fmtMDY(hold && hold.until) : late ? "Past the TAT by " + whLeft(-leftWh) : (dueSoon ? "⚠ " : "TAT · ") + whLeft(leftWh) + " left"}</span>
+      <div className="tatline"><i style={{ width: (late ? 100 : usedPct) + "%", background: "var(--" + (tone === "teal" ? "teal" : tone === "amber" ? "amber" : "red") + ")" }} /></div>
+      <div className="tiny muted">given {fmtWhen(givenAt)} · due {fmtWhen(dueAt)}</div>
+    </div>
+  );
+}
+const TaskProgress = ({ done, of, tone }) => (
+  <div><b>{fmtInt(done)} of {fmtInt(of)}</b><div className="tatline"><i style={{ width: Math.round(100 * done / Math.max(1, of)) + "%", background: "var(--" + (tone || "teal") + ")" }} /></div></div>);
+/* The files of a task or an update: pictures and PDFs open in a new tab, anything else downloads. */
+function TaskFileLinks({ files }) {
+  const openF = async (f) => {
+    const win = SAFE_VIEW.test(f.type || "") ? window.open("", "_blank") : null;
+    try {
+      const r = await rpc("tasks.file", { id: f.id });
+      const url = URL.createObjectURL(base64Blob(r.data, win && SAFE_VIEW.test(r.type || "") ? r.type : "application/octet-stream"));
+      if (win) win.location.href = url;
+      else { const a = document.createElement("a"); a.href = url; a.download = r.name; document.body.appendChild(a); a.click(); a.remove(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { if (win) win.close(); toast(e.message, "err"); }
+  };
+  if (!files || !files.length) return null;
+  return <span>{files.map((f, i) => <React.Fragment key={f.id}>{i ? " · " : ""}<button type="button" className="btn link sm" style={{ padding: 0 }} title={fmtSize(f.size)} onClick={() => openF(f)}>{/^image\//.test(f.type) ? "🖼 " : "📄 "}{f.name}</button></React.Fragment>)}</span>;
+}
+/* Files for a task or an update: attach files, paste a screenshot (Ctrl+V anywhere in the form) or capture the screen. */
+function TaskFilesPicker({ files, setFiles }) {
+  const input = useRef(null);
+  const add = async (list) => {
+    let n = files.length;
+    for (const file of list) {
+      if (n >= 6) { toast("Up to 6 files at a time.", "err"); break; }
+      if (file.size > ATTACH_MAX) { toast(file.name + " is over 8 MB.", "err"); continue; }
+      try { const data = await fileToBase64(file); n++;
+        setFiles((fs) => [...fs, { name: file.name, type: file.type || "application/octet-stream", size: file.size, data, url: /^image\//.test(file.type || "") ? URL.createObjectURL(file) : null }]); }
+      catch (e) { toast(e.message, "err"); }
+    }
+  };
+  const shotName = () => "Screenshot " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }).replace(/[^0-9]/g, "") + ".png";
+  useEffect(() => {
+    const h = (e) => { const all = [...((e.clipboardData && e.clipboardData.items) || [])], items = all.filter((i) => i.kind === "file"); if (!items.length) return;
+      // copied cells or text (Excel and Word put a picture on the clipboard too) paste as text into a text box
+      const t = e.target, inBox = t && (t.tagName === "TEXTAREA" || (t.tagName === "INPUT" && t.type !== "file"));
+      if (inBox && all.some((i) => i.kind === "string" && i.type === "text/plain")) return;
+      e.preventDefault();
+      add(items.map((i) => { const f = i.getAsFile(); return f && (!f.name || f.name === "image.png") ? new File([f], shotName(), { type: f.type || "image/png" }) : f; }).filter(Boolean)); };
+    document.addEventListener("paste", h); return () => document.removeEventListener("paste", h);
+  }, [files.length]);
+  const capture = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { toast("This browser cannot capture the screen here: paste a screenshot with Ctrl+V instead.", "err"); return; }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const v = document.createElement("video"); v.muted = true; v.srcObject = stream; await v.play(); await new Promise((r) => setTimeout(r, 400));
+      const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext("2d").drawImage(v, 0, 0);
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+      if (blob) add([new File([blob], shotName(), { type: "image/png" })]);
+    } catch (e) { if (!e || e.name !== "NotAllowedError") toast("The screen could not be captured: " + ((e && e.message) || "try Ctrl+V instead"), "err"); }
+  };
+  return (
+    <div>
+      <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button type="button" className="btn sm" onClick={() => input.current && input.current.click()}>📎 Attach files</button>
+        <button type="button" className="btn sm" onClick={capture}>📷 Add a screenshot</button>
+        <span className="tiny muted">or paste a screenshot with Ctrl+V · up to 6 files, 8 MB each</span>
+        <input ref={input} type="file" multiple style={{ display: "none" }} onChange={(e) => { add([...e.target.files]); e.target.value = ""; }} />
+      </div>
+      {files.length > 0 && <div className="row" style={{ gap: 10, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>{files.map((f, i) => {
+        const x = <button type="button" className="btn link tiny" style={{ padding: "0 2px" }} title="Remove" onClick={() => setFiles((fs) => fs.filter((_, k) => k !== i))}>×</button>;
+        return f.url ? <span key={i} className="task-shot"><img src={f.url} alt="" /><span className="tiny muted">{f.name} {x}</span></span> : <span key={i} className="chip">📄 {f.name} · {fmtSize(f.size)} {x}</span>; })}</div>}
+    </div>
+  );
+}
+/* Rough due time for the form's hint: working hours are every hour Monday to Friday, Shastra holidays left out (IST). The server
+   works out the real one when the task is saved. */
+function taskDueHint(hours, from) {
+  let t = from || Date.now(), left = Number(hours) || 0, guard = 0;
+  const workday = (ms) => { const d = new Date(ms + 330 * 60000), dow = d.getUTCDay(); return dow !== 0 && dow !== 6 && !APP_HOLIDAYS.has(d.toISOString().slice(0, 10)); };
+  while (left > 0 && guard++ < 5000) { const step = Math.min(left, 1); if (workday(t)) left -= step; t += step * 3600000; }
+  return t;
+}
+function TaskFormModal({ ctx, clientId, task, onClose, onDone }) {
+  const edit = !!task;
+  const [f, setF] = useState(() => (edit ? { client_id: task.client_id || "", source: task.source || "", scope: task.scope, title: task.title, description: task.description || "", tat: "keep", hours: "", date: "", count: task.count }
+    : { client_id: clientId || "", source: "", scope: "AR follow-up", title: "", description: "", tat: "24", hours: "", date: "", count: "" }));
+  const [people, setPeople] = useState(() => (edit ? task.people.map((p) => ({ user_id: p.user_id, name: p.name, share: p.share, done: p.done || 0 })) : []));
+  const [manual, setManual] = useState(edit);
+  const [files, setFiles] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const pq = useRpc("tasks.people", { client_id: f.client_id || undefined }, [f.client_id]);
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const split = (n, ps) => { const k = ps.length; if (!k || !(n > 0)) return ps; const b = Math.floor(n / k), extra = n - b * k; return ps.map((p, i) => ({ ...p, share: b + (i < extra ? 1 : 0) })); };
+  const setCount = (v) => { set("count", v); if (!manual) setPeople((ps) => split(Number(v) || 0, ps)); };
+  const addPerson = (id) => { const u = ((pq.data && pq.data.people) || []).find((x) => x.id === id); if (!u) return; setPeople((ps) => { const next = [...ps, { user_id: u.id, name: u.name, share: 0, done: 0 }]; return manual ? next : split(Number(f.count) || 0, next); }); };
+  const dropPerson = (id) => setPeople((ps) => { const next = ps.filter((p) => p.user_id !== id); return manual ? next : split(Number(f.count) || 0, next); });
+  const setShare = (id, v) => { setManual(true); setPeople((ps) => ps.map((p) => (p.user_id === id ? { ...p, share: v === "" ? "" : Math.max(0, Math.round(Number(v) || 0)) } : p))); };
+  const sum = people.reduce((a, p) => a + (Number(p.share) || 0), 0), count = edit ? sum : Number(f.count) || 0;
+  const tat = f.tat === "24" || f.tat === "72" ? { kind: f.tat } : f.tat === "hours" ? { kind: "hours", hours: Number(f.hours) } : f.tat === "date" ? { kind: "date", date: f.date } : null;
+  // in Edit, working hours count from when the task was given (as the server does); a date is the end of that day
+  const dueHint = f.tat === "24" || f.tat === "72" || (f.tat === "hours" && Number(f.hours) > 0) ? fmtWhen(taskDueHint(f.tat === "hours" ? f.hours : Number(f.tat), edit ? task.created_at : 0)) : f.tat === "date" && f.date ? fmtMDY(f.date) + ", end of the day" : "";
+  const clientOpts = [{ id: "", label: "No client (internal task)" }, ...ctx.clients.filter((c) => c.active || c.id === f.client_id).map((c) => ({ id: c.id, label: c.name + (c.code ? ` (${c.code})` : "") }))];
+  const options = ((pq.data && pq.data.people) || []).filter((u) => !people.some((p) => p.user_id === u.id)).map((u) => ({ id: u.id, label: u.name, sub: [u.on_client ? "on this client" : "", u.designation || (u.role === "user" ? "Biller" : "")].filter(Boolean).join(" · ") || undefined }));
+  const missing = [!f.title.trim() || f.title.trim().length < 3 ? "what the task is" : "", !edit && !(count >= 1) ? "the task count" : "", !people.length ? "who does it" : "", people.length && sum !== count ? `shares that add up to ${count} (now ${sum})` : "",
+    people.some((p) => !(Number(p.share) >= 1)) ? "a share of at least 1 for each person" : "", (f.tat === "hours" && !(Number(f.hours) >= 1)) || (f.tat === "date" && !f.date) ? "the TAT" : ""].filter(Boolean);
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const ps = people.map((p) => ({ user_id: p.user_id, share: Number(p.share) || 0 }));
+      if (edit) { await rpc("tasks.edit", { id: task.id, title: f.title, description: f.description, tat: f.tat === "keep" ? undefined : tat, people: ps }); toast("Task changed. Anyone new on it gets a notice."); }
+      else { const r = await rpc("tasks.create", { client_id: f.client_id || undefined, scope: f.scope, title: f.title, description: f.description, source: f.source || undefined, tat, count, people: ps, files: files.map(({ name, type, data }) => ({ name, type, data })) });
+        toast("Task given to " + plural(ps.length, "person", "people") + ", due " + fmtWhen(r.task.due_at) + "."); }
+      onDone();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const help = { textTransform: "none", letterSpacing: 0, fontWeight: 400 };
+  return (
+    <Modal title={edit ? "Edit or reassign" : "Add a task"} sub={edit ? "Change the name, the description, the TAT or the people and their shares. A share can't go below what the person has done." : "It goes on each person's My day and in My tasks, with a notice. You get a notice when they update it."} wide onClose={onClose}
+      footer={<div className="row between" style={{ width: "100%", gap: 8, alignItems: "center" }}><span className="small muted">{missing.length ? "Still needed: " + missing.join(", ") + "." : ""}</span>
+        <div className="row" style={{ gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || missing.length > 0}>{busy ? "Saving…" : edit ? "Save changes" : "Assign task" + (people.length > 1 ? " to " + people.length + " people" : "")}</button></div></div>}>
+      <div className="stack" style={{ gap: 12 }}>
+        {edit ? <div className="small muted">{task.client_name || "Internal"} · <ScopeBadge s={task.scope} />{task.source ? " · received from " + task.source.toLowerCase() : ""} · {fmtInt(task.count)} items</div> : <>
+          <div className="grid g2">
+            <Field label="Client" hint="Optional: leave it on No client for an internal task"><Combo value={f.client_id} options={clientOpts} placeholder="No client (internal task)" onChange={(v) => set("client_id", v || "")} /></Field>
+            <FieldGroup label="Received from" hint="Optional"><div className="seg2">{["Client", "Manager", "Internal"].map((s) => <button key={s} type="button" className={f.source === s ? "on" : ""} onClick={() => set("source", f.source === s ? "" : s)}>{s}</button>)}</div></FieldGroup>
+          </div>
+          <FieldGroup label="Scope"><div className="seg2" style={{ flexWrap: "wrap" }}>{TASK_SCOPES_UI.map((s) => <button key={s} type="button" className={f.scope === s ? "on" : ""} onClick={() => set("scope", s)}>{s}</button>)}</div></FieldGroup></>}
+        <Field label="Task"><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="What is to be done, in a few words" maxLength={160} /></Field>
+        <Field label="Description" hint={f.description.length > 3600 ? f.description.length + " of 4,000 characters" : "What, where, how; never patient details you don't need"}><textarea className="textarea" style={{ minHeight: 76 }} value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Details, the list or the portal, what to note…" /></Field>
+        <div className="grid g2">
+          <FieldGroup label="TAT" hint={(dueHint ? "Due about " + dueHint + " · " : "") + (edit && (f.tat === "24" || f.tat === "72" || f.tat === "hours") ? "counted from when it was given · " : "") + "Monday to Friday, Shastra holidays skipped"}>
+            <div className="seg2" style={{ flexWrap: "wrap" }}>{[...(edit ? [["keep", "Keep"]] : []), ["24", "24 working hours"], ["72", "72 working hours"], ["hours", "Other"], ["date", "A date"]].map(([k, l]) => <button key={k} type="button" className={f.tat === k ? "on" : ""} onClick={() => set("tat", k)}>{l}</button>)}</div>
+            {f.tat === "hours" && <input className="input" type="number" min={1} max={480} style={{ width: 160, marginTop: 6 }} value={f.hours} onChange={(e) => set("hours", e.target.value)} placeholder="Working hours" />}
+            {f.tat === "date" && <input className="input" type="date" min={todayISO()} style={{ width: 180, marginTop: 6 }} value={f.date} onChange={(e) => set("date", e.target.value)} />}
+          </FieldGroup>
+          {edit ? <Field label="Task count"><div className="small" style={{ paddingTop: 8 }}><b>{fmtInt(sum)}</b> items: the shares below add up to it</div></Field>
+            : <Field label="Task count" hint="How many items: claims, calls or accounts"><input className="input" type="number" min={1} style={{ maxWidth: 140 }} value={f.count} onChange={(e) => setCount(e.target.value)} /></Field>}
+        </div>
+        <div className="field"><span>Assign to</span>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {people.map((p) => <span key={p.user_id} className="chip on" style={{ gap: 6 }}>{p.name} · <input className="input sm" type="number" min={Math.max(1, p.done || 0)} value={p.share} onChange={(e) => setShare(p.user_id, e.target.value)} style={{ width: 64, display: "inline-block", padding: "2px 6px" }} title={p.done ? p.done + " done already" : "Their share"} />
+              {!(p.done > 0) && <button type="button" className="btn link tiny" style={{ color: "inherit", padding: "0 2px" }} title="Take off the task" onClick={() => dropPerson(p.user_id)}>×</button>}</span>)}
+            <Combo sm width={260} value="" onChange={(v) => v && addPerson(v)} placeholder={pq.loading ? "Loading your team…" : "Add someone from your team…"} options={options} />
+          </div>
+          <span className="tiny muted" style={help}>{people.length > 1 ? (manual ? "Shares typed by hand · " : "Split evenly · ") + "each person gets their own copy with their share." : "Pick one or more people; the count is split evenly, and you can change a share."}{people.length && sum !== count ? ` The shares add up to ${sum}, not ${count}.` : ""}</span></div>
+        {!edit && <div className="field"><span>Attachments</span><TaskFilesPicker files={files} setFiles={setFiles} /></div>}
+        <ErrorBox error={err} />
+      </div>
+    </Modal>
+  );
+}
+function TaskHoldModal({ task, reasons, onClose, onDone }) {
+  const [f, setF] = useState({ reason: "", note: "", until: "" });
+  const [busy, setBusy] = useState(false);
+  const max = new Date(Date.now() + 330 * 60000 + 30 * 86400000).toISOString().slice(0, 10);
+  const ok = f.reason && f.until && (f.reason !== "Other" || f.note.trim().length >= 3);
+  const save = async () => { setBusy(true); try { await rpc("tasks.hold", { id: task.id, ...f }); toast("On hold until " + fmtMDY(f.until) + ": no past-TAT reminders until then."); onDone(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  return (
+    <Modal title={"Can't close yet · " + clip(task.title, 60)} sub="Why it can't be closed yet, and the date you expect it to close (up to 30 days ahead). No past-TAT reminders until then." narrow onClose={onClose}>
+      <div className="stack">
+        <Field label="Why it cannot be closed yet"><select className="input" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}><option value="">Pick a reason…</option>{(reasons || []).map((x) => <option key={x} value={x}>{x}</option>)}</select></Field>
+        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 56 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
+        <Field label="Expected close date"><input className="input" type="date" min={todayISO()} max={max} value={f.until} onChange={(e) => setF({ ...f, until: e.target.value })} style={{ width: 180 }} /></Field>
+        <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!ok || busy} onClick={save}>{busy ? "Saving…" : "Put on hold"}</button></div>
+      </div>
+    </Modal>
+  );
+}
+/* One task, opened: everyone's share and updates for the team lead; the person's own share and updates for them. */
+function TaskDetailModal({ id, ctx, onClose, onChanged, onUpdate }) {
+  const [ver, setVer] = useState(0);
+  const q = useRpc("tasks.get", { id }, [id, ver]);
+  const [hold, setHold] = useState(false);
+  const [edit, setEdit] = useState(false);
+  const [closing, setClosing] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const d = q.data, t = d && d.task, lead = d && d.can_lead;
+  const reload = () => { setVer((v) => v + 1); if (onChanged) onChanged(); };
+  const act = async (fn, msg) => { setBusy(true); try { const r = await fn(); if (msg) toast(typeof msg === "function" ? msg(r) : msg); reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const share = (pid) => (t && t.people.find((p) => p.id === pid)) || {};
+  const filesOf = (uid) => (d ? d.files.filter((f) => f.update_id === uid) : []);
+  const line = (u) => u.kind === "update" ? <>{u.user_name}: <b>{u.done_n}{share(u.person_id).share ? " of " + share(u.person_id).share : ""}</b> done, {TASK_STATUS_WORD[u.status] || u.status}.{u.comment ? <span className="muted"> “{u.comment}”</span> : null} <TaskFileLinks files={filesOf(u.id)} /></>
+    : <>{u.user_name}: {u.comment}</>;
+  const open = t && t.status === "open";
+  return (
+    <Modal title={t ? t.title : "Task"} sub={t ? [t.client_name || "Internal", t.scope, t.source ? "received from " + t.source.toLowerCase() : "", "given by " + t.created_by_name + ", " + fmtWhen(t.created_at)].filter(Boolean).join(" · ") : ""} wide onClose={onClose}
+      footer={t && <div className="row between" style={{ width: "100%", gap: 8, flexWrap: "wrap" }}>
+        <div className="row" style={{ gap: 8 }}>{lead && open && (t.hold && t.hold.active ? <button className="btn" disabled={busy} onClick={() => act(() => rpc("tasks.unhold", { id }), "Hold cleared: it is back on the reminders.")}>Clear hold</button> : <button className="btn" onClick={() => setHold(true)}>Can't close yet</button>)}
+          {lead && open && <button className="btn" onClick={() => setEdit(true)}>Edit or reassign</button>}</div>
+        <div className="row" style={{ gap: 8 }}>{lead && open && <button className="btn" disabled={busy} onClick={() => act(() => rpc("tasks.remind", { id }), (r) => "Reminder sent to " + plural(r.reminded, "person", "people") + ".")}>Remind {t.people.filter((p) => p.status !== "completed").length > 1 ? "everyone" : ""}</button>}
+          {lead && open && <button className="btn primary" onClick={() => setClosing({ comment: "" })}>Close the task</button>}
+          {d.me && open && d.me.status !== "completed" && onUpdate && <button className="btn primary" onClick={() => onUpdate()}>Update</button>}</div></div>}>
+      {q.error ? <ErrorBox error={q.error} /> : !t ? <Spinner /> : <div className="stack" style={{ gap: 12 }}>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          {open ? <span className={"badge " + (t.late ? "red" : t.held ? "amber" : t.due_soon ? "amber" : "teal")}>{t.held ? "On hold until " + fmtMDY(t.hold.until) : t.late ? "Past the TAT by " + whLeft(-t.left_wh) : whLeft(t.left_wh) + " left"}</span>
+            : <span className={"badge " + (t.status === "closed" ? "gray" : t.within_tat ? "green" : "amber")}>{t.status === "closed" ? "Closed by " + t.closed_by_name : "Done · " + (t.within_tat ? "within TAT" : "after the TAT")}</span>}
+          <span className="badge gray">TAT {t.tat_hours} working h · due {fmtWhen(t.due_at)}</span>
+          <span className="badge teal">{fmtInt(t.done)} of {fmtInt(t.count)} done</span>
+          {t.files ? <span className="badge gray">📎 {plural(t.files, "file")}</span> : null}
+        </div>
+        {t.hold && t.hold.active && <div className="alert warn small">On hold: {t.hold.reason}{t.hold.note ? " (" + t.hold.note + ")" : ""}, set by {t.hold.by}. No past-TAT reminders until {fmtMDY(t.hold.until)}.</div>}
+        {(t.description || d.files.some((f) => !f.update_id)) && <div className="cell small" style={{ whiteSpace: "pre-wrap" }}>{t.description}{d.files.some((f) => !f.update_id) && <div style={{ marginTop: 6 }}><TaskFileLinks files={d.files.filter((f) => !f.update_id)} /></div>}</div>}
+        <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>{lead ? "Person" : "You"}</th><th className="num">Share</th><th>Done</th><th>Status</th><th>Last update</th>{lead && open ? <th /> : null}</tr></thead>
+          <tbody>{t.people.map((p) => <tr key={p.id}><td>{p.name}</td><td className="num">{p.share}</td><td style={{ minWidth: 140 }}><TaskProgress done={p.done} of={p.share} tone={p.status === "help" ? "amber" : p.status === "completed" ? "green" : "teal"} /></td>
+            <td><span className={"badge " + (p.status === "completed" ? "green" : p.status === "help" ? "amber" : p.status === "in_progress" ? "blue" : "gray")}>{TASK_STATUS_WORD[p.status] || p.status}</span>{lead && !p.seen && p.status === "new" ? <div className="tiny muted">not opened yet</div> : null}</td>
+            <td className="small">{p.updated_at ? fmtWhen(p.updated_at) : <span className="muted">–</span>}</td>
+            {lead && open ? <td className="r">{p.status !== "completed" && <button className="btn sm" disabled={busy} onClick={() => act(() => rpc("tasks.remind", { id, person_id: p.id }), "Reminder sent to " + p.name + ".")}>Remind</button>}</td> : null}</tr>)}</tbody></table></div></div>
+        <div><div className="sc-lbl" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--slate)", marginBottom: 6 }}>What happened</div>
+          <div className="stack" style={{ gap: 6 }}>{d.updates.map((u) => <div key={u.id} className="small"><b>{fmtWhen(u.at)}</b> · {line(u)}</div>)}</div></div>
+      </div>}
+      {hold && t && <TaskHoldModal task={t} reasons={d.hold_reasons} onClose={() => setHold(false)} onDone={() => { setHold(false); reload(); }} />}
+      {edit && t && <TaskFormModal ctx={ctx} task={t} onClose={() => setEdit(false)} onDone={() => { setEdit(false); reload(); }} />}
+      {closing && <Modal title="Close the task" sub="Everyone on it sees it as closed; their shares stop where they are." narrow onClose={() => setClosing(null)}>
+        <div className="stack"><Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={closing.comment} onChange={(e) => setClosing({ comment: e.target.value })} placeholder="Why it is closed now" /></Field>
+          <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}><button className="btn" onClick={() => setClosing(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => { const c = closing.comment; setClosing(null); act(() => rpc("tasks.close", { id, comment: c }), "Task closed."); }}>Close the task</button></div></div></Modal>}
+    </Modal>
+  );
+}
+/* Needs attention › Team tasks: the tasks a team lead gave (and, with edit access, the ones on their clients). */
+function TeamTasksView({ ctx, me, clientId, params, refreshAttention, refreshTasks }) {
+  const [view, setView] = useState("open");
+  const [pick, setPick] = useState(params && params.pick === "late" ? "late" : "");
+  const [ver, setVer] = useState(0);
+  const q = useRpc("tasks.list", { view, client_id: clientId || undefined }, [view, clientId, ver]);
+  const [add, setAdd] = useState(false);
+  const [open, setOpen] = useState((params && params.task) || null);
+  const d = q.data, st = (d && d.stats) || {};
+  const rows = d ? (pick === "late" ? d.rows.filter((t) => t.late) : d.rows) : [];
+  const reload = () => { setVer((v) => v + 1); if (refreshAttention) refreshAttention(); if (refreshTasks) refreshTasks(); };
+  const remind = async (t) => { try { const r = await rpc("tasks.remind", { id: t.id }); toast("Reminder sent to " + plural(r.reminded, "person", "people") + "."); reload(); } catch (e) { toast(e.message, "err"); } };
+  return (
+    <>
+      <div className="grid g4">
+        <Kpi label="Open" value={fmtInt(st.open || 0)} sub={fmtInt(st.items_left || 0) + " items left · " + plural(st.people || 0, "person", "people")} tone="accent" onClick={() => { setView("open"); setPick(""); }} on={view === "open" && !pick} />
+        <Kpi label={"Due in the next " + ((d && d.due_soon_hours) || 4) + " hours"} value={fmtInt(st.due_soon || 0)} tone={st.due_soon ? "warn" : ""} sub={st.due_soon ? "still within the TAT" : "none"} />
+        <Kpi label="Past TAT" value={fmtInt(st.late || 0)} tone={st.late ? "bad" : ""} sub={st.late ? "at the top: chase these first" : "none"} onClick={() => { setView("open"); setPick(pick === "late" ? "" : "late"); }} on={pick === "late"} title="Show only the tasks past their TAT" />
+        <Kpi label="Done · 7 days" value={fmtInt(st.done_7 || 0)} tone="good" sub={st.done_7 ? st.done_7_in_tat + " of " + st.done_7 + " within TAT" : "none yet"} onClick={() => { setView("done"); setPick(""); }} on={view === "done"} />
+      </div>
+      {st.late > 0 && pick !== "late" && <div className="alert err"><b>{plural(st.late, "task is", "tasks are")} past the TAT.</b> {st.late === 1 ? "It is" : "They are"} at the top. Everyone on {st.late === 1 ? "it" : "them"} sees it on their bell until they update it, or you put it on hold (Can't close yet).</div>}
+      {st.help > 0 && <div className="alert warn"><b>{plural(st.help, "task has", "tasks have")} someone asking for your help.</b> Open {st.help === 1 ? "it" : "them"} to see what they need.</div>}
+      <div className="row between" style={{ alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div className="row" style={{ gap: 8, alignItems: "center" }}><div className="seg2">{[["open", "Open", st.open], ["done", "Done", st.done], ["all", "All", (st.open || 0) + (st.done || 0)]].map(([k, l, n]) => <button key={k} type="button" className={view === k && !pick ? "on" : ""} onClick={() => { setView(k); setPick(""); }}>{l} {fmtInt(n || 0)}</button>)}</div>
+          {pick && <><span className="badge ink">Past TAT only</span><button className="btn sm link" onClick={() => setPick("")}>Show all</button></>}</div>
+        <button className="btn primary" onClick={() => setAdd(true)}>+ Add task</button>
+      </div>
+      <div className="card tight">
+        <ErrorBox error={q.error} />
+        {q.loading && !d && <Spinner />}
+        <div className="table-wrap"><table className="t"><thead><tr><th>TAT</th><th>Task</th><th>Client · scope</th><th>Assigned to</th><th>Done</th><th>Received</th><th /></tr></thead>
+          <tbody>{rows.map((t) => (
+            <tr key={t.id} className={t.late ? "tat-missed" : ""}>
+              <td style={{ whiteSpace: "nowrap", minWidth: 190 }}><TaskTat open={t.status === "open"} late={t.late} held={t.held} hold={t.hold} dueSoon={t.due_soon} leftWh={t.left_wh} usedPct={t.used_pct} dueAt={t.due_at} givenAt={t.created_at} doneAt={t.closed_at} withinTat={t.within_tat} closedByLead={t.status === "closed"} /></td>
+              <td style={{ maxWidth: 360 }}><b>{t.title}</b><div className="tiny muted">{t.files ? "📎 " + plural(t.files, "file") + (t.description ? " · " : "") : ""}{clip(t.description, 110)}</div></td>
+              <td>{t.client_name || <span className="muted">Internal</span>}<div style={{ marginTop: 3 }}><ScopeBadge s={t.scope} /></div></td>
+              <td>{t.people.map((p) => <div key={p.id} style={{ whiteSpace: "nowrap" }}>{p.name} <span className="muted">· {p.share}</span>{p.status === "help" ? <span className="badge amber" style={{ marginLeft: 4 }}>needs help</span> : p.status === "completed" ? <span className="teal-ink"> ✓</span> : null}</div>)}</td>
+              <td style={{ minWidth: 150 }}><TaskProgress done={t.done} of={t.count} tone={t.help ? "amber" : t.status !== "open" ? "green" : "teal"} /><div className="tiny muted">{t.people.length > 1
+                ? t.people.map((p) => p.name.split(" ")[0] + " " + p.done).join(" · ") + (t.last_update ? " · updated " + fmtWhen(t.last_update.at) : "")
+                : t.last_update ? (t.last_update.status === "help" ? "needs your help" : TASK_STATUS_WORD[t.last_update.status]) + " · " + fmtWhen(t.last_update.at) : t.status === "open" ? "not started" : ""}</div></td>
+              <td className="small">{t.source || <span className="muted">–</span>}<div className="tiny muted">{fmtWhen(t.created_at)}</div></td>
+              <td className="r" style={{ whiteSpace: "nowrap" }}>{t.unseen_update && <span className="badge teal" style={{ marginRight: 4 }}>new update</span>}<button className="btn sm" onClick={() => setOpen(t.id)}>Open</button>{t.status === "open" && <> <button className="btn sm" onClick={() => remind(t)}>Remind</button></>}</td>
+            </tr>))}
+            {d && !rows.length && <tr><td colSpan={7}><Empty>{pick === "late" ? "No task is past the TAT." : view === "done" ? "No task done in the last 30 days." : <>No open task{clientId ? " for this client" : ""}. <b>+ Add task</b> gives one to people on your team.</>}</Empty></td></tr>}</tbody></table></div>
+      </div>
+      {add && <TaskFormModal ctx={ctx} clientId={clientId} onClose={() => setAdd(false)} onDone={() => { setAdd(false); reload(); }} />}
+      {open && <TaskDetailModal id={open} ctx={ctx} onClose={() => { setOpen(null); reload(); }} onChanged={() => setVer((v) => v + 1)} />}
+    </>
+  );
+}
+/* The person given a task: how many are done, the status, a comment and files. */
+function TaskUpdateModal({ row, onClose, onDone }) {
+  const q = useRpc("tasks.get", { id: row.task_id }, [row.task_id]);
+  const [f, setF] = useState({ done: row.done, status: row.status === "help" ? "help" : "in_progress", comment: "" });
+  const [files, setFiles] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const d = q.data;
+  const done = Math.max(0, Math.min(row.share, Math.round(Number(f.done) || 0)));
+  const why = f.status === "help" && f.comment.trim().length < 3 ? "what you need help with" : f.status === "completed" && done < row.share && f.comment.trim().length < 3 ? "why the rest is not done" : f.status === "in_progress" && done === row.done && f.comment.trim().length < 3 ? "a new count or a comment" : "";
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try { const r = await rpc("tasks.update", { person_id: row.person_id, done, status: f.status, comment: f.comment, files: files.map(({ name, type, data }) => ({ name, type, data })) });
+      toast(r.closed ? "Saved. Everyone on it is done: the task is complete." : f.status === "completed" ? "Saved: your share is complete. Your team lead gets a notice." : f.status === "help" ? "Saved: your team lead sees you need help." : "Saved. Your team lead gets a notice.");
+      onDone(); } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  return (
+    <Modal title="Update task" sub={[row.title, row.client_name || "Internal", row.scope].join(" · ")} onClose={onClose}
+      footer={<div className="row between" style={{ width: "100%", alignItems: "center", gap: 8 }}><span className="small muted">{why ? "Still needed: " + why + "." : "Your team lead gets a notice with the count and your comment."}</span>
+        <div className="row" style={{ gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || !!why}>{busy ? "Saving…" : "Save update"}</button></div></div>}>
+      <div className="stack" style={{ gap: 12 }}>
+        <div className="cell small">From <b>{row.from}</b>, {fmtWhen(row.given_at)} · your share <b>{row.share}</b> · TAT {row.tat_hours} working hours · due {fmtWhen(row.due_at)} {row.late && <span className="badge red" style={{ marginLeft: 4 }}>past by {whLeft(-row.left_wh)}</span>}
+          {row.description ? <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{row.description}</div> : null}
+          {d && d.files.some((x) => !x.update_id) && <div style={{ marginTop: 6 }}><TaskFileLinks files={d.files.filter((x) => !x.update_id)} /></div>}</div>
+        <Field label="How many are done"><div className="row" style={{ gap: 8, alignItems: "center" }}><input className="input" type="number" min={0} max={row.share} value={f.done} onChange={(e) => setF({ ...f, done: e.target.value })} style={{ width: 100 }} /><span className="small">of {row.share}</span>
+          <div className="tatline" style={{ width: 200, margin: 0 }}><i style={{ width: Math.round(100 * done / Math.max(1, row.share)) + "%", background: "var(--teal)" }} /></div></div></Field>
+        <FieldGroup label="Status"><div className="seg2" style={{ flexWrap: "wrap" }}>{[["in_progress", "In progress"], ["completed", "Completed"], ["help", "Need help from team lead"]].map(([k, l]) => <button key={k} type="button" className={f.status === k ? "on" : ""} onClick={() => setF({ ...f, status: k, done: k === "completed" && Number(f.done) < row.share && !f.comment ? row.share : f.done })}>{l}</button>)}</div></FieldGroup>
+        <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={f.comment} onChange={(e) => setF({ ...f, comment: e.target.value })} placeholder={f.status === "help" ? "What you need help with" : "What you did, what is left"} /></Field>
+        <div className="field"><span>Attachments</span><TaskFilesPicker files={files} setFiles={setFiles} /></div>
+        <ErrorBox error={err} />
+      </div>
+    </Modal>
+  );
+}
+function MyTaskRows({ rows, onOpen, onUpdate, compact }) {
+  return (
+    <div className="table-wrap"><table className="t"><thead><tr><th>TAT</th><th>Task</th><th>Client · scope</th><th>{compact ? "Your share" : "Done"}</th><th>From</th>{!compact && <th>Last update</th>}<th /></tr></thead>
+      <tbody>{rows.map((r) => (
+        <tr key={r.person_id} className={r.late ? "tat-missed" : ""}>
+          <td style={{ whiteSpace: "nowrap", minWidth: 190 }}><TaskTat open={r.todo} late={r.late} held={r.held} hold={r.hold} dueSoon={r.due_soon} leftWh={r.left_wh} usedPct={r.used_pct} dueAt={r.due_at} givenAt={r.given_at} doneAt={r.done_at} withinTat={r.within_tat} closedByLead={r.closed_by_lead} /></td>
+          <td style={{ maxWidth: 360 }}><b>{r.title}</b>{r.new && <span className="badge teal" style={{ marginLeft: 6 }}>new</span>}{r.reminded && !r.new && <span className="badge amber" style={{ marginLeft: 6 }}>reminder</span>}<div className="tiny muted">{r.files ? "📎 " + plural(r.files, "file") + (r.description ? " · " : "") : ""}{clip(r.description, 90)}</div></td>
+          <td>{r.client_name || <span className="muted">Internal</span>}<div style={{ marginTop: 3 }}><ScopeBadge s={r.scope} /></div></td>
+          <td style={{ minWidth: 120 }}><TaskProgress done={r.done} of={r.share} tone={r.status === "help" ? "amber" : !r.todo ? "green" : "teal"} />{r.status === "help" && r.todo ? <div className="tiny amber-ink">asked for help</div> : null}</td>
+          <td className="small">{r.from}<div className="tiny muted">{fmtWhen(r.given_at)}</div></td>
+          {!compact && <td className="small">{r.updated_at ? <>{TASK_STATUS_WORD[r.status]}<div className="tiny muted">{fmtWhen(r.updated_at)}</div></> : <span className="muted">not started</span>}</td>}
+          <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => onOpen(r)}>Open</button>{r.todo && <> <button className="btn sm primary" onClick={() => onUpdate(r)}>Update</button></>}</td>
+        </tr>))}</tbody></table></div>
+  );
+}
+/* My tasks: the tasks a team lead gave this person, with the TAT; Update as they go. */
+function MyTasksView({ ctx, me, params, refreshTasks }) {
+  const [ver, setVer] = useState(0);
+  const q = useRpc("tasks.mine", {}, [ver]);
+  const [tab, setTab] = useState("todo");
+  const [upd, setUpd] = useState(null);
+  const [open, setOpen] = useState((params && params.id) || null);
+  const d = q.data, st = (d && d.stats) || {}, rows = d ? d.rows.filter((r) => (tab === "todo" ? r.todo : !r.todo)) : [];
+  const reload = () => { setVer((v) => v + 1); if (refreshTasks) refreshTasks(); };
+  const openRow = d && open ? d.rows.find((r) => r.task_id === open) : null;
+  return (
+    <div className="stack">
+      <div><h1>My tasks</h1><div className="sub">Tasks your team lead gave you, with the TAT in working hours (Monday to Friday). Update the count as you go and mark Completed when all are done; your team lead gets a notice each time.</div></div>
+      <div className="grid g4">
+        <Kpi label="To do" value={fmtInt(st.todo || 0)} sub={fmtInt(st.items_left || 0) + " items left"} tone="accent" onClick={() => setTab("todo")} on={tab === "todo"} />
+        <Kpi label="Due today" value={fmtInt(st.due_today || 0)} tone={st.due_today ? "warn" : ""} sub={st.due_today ? "finish these today" : "none"} />
+        <Kpi label="Past TAT" value={fmtInt(st.late || 0)} tone={st.late ? "bad" : ""} sub={st.late ? "update these first" : "none"} />
+        <Kpi label="Done · 7 days" value={fmtInt(st.done_7 || 0)} tone="good" sub={st.done_7 ? st.done_7_in_tat + " of " + st.done_7 + " within TAT" : "none yet"} onClick={() => setTab("done")} on={tab === "done"} />
+      </div>
+      <div className="seg2" style={{ alignSelf: "flex-start" }}><button type="button" className={tab === "todo" ? "on" : ""} onClick={() => setTab("todo")}>To do {fmtInt(st.todo || 0)}</button><button type="button" className={tab === "done" ? "on" : ""} onClick={() => setTab("done")}>Done {fmtInt(st.done_7 || 0)}</button></div>
+      <div className="card tight">
+        <ErrorBox error={q.error} />{q.loading && !d && <Spinner />}
+        {d && (rows.length ? <MyTaskRows rows={rows} onOpen={(r) => setOpen(r.task_id)} onUpdate={setUpd} /> : <Empty>{tab === "todo" ? "Nothing to do: no task from your team lead right now." : "No task done in the last 7 days."}</Empty>)}
+      </div>
+      {upd && <TaskUpdateModal row={upd} onClose={() => setUpd(null)} onDone={() => { setUpd(null); reload(); }} />}
+      {open && <TaskDetailModal id={open} ctx={ctx} onClose={() => { setOpen(null); reload(); }} onChanged={reload} onUpdate={openRow && openRow.todo ? () => { setOpen(null); setUpd(openRow); } : null} />}
+    </div>
+  );
+}
+/* My day: the tasks from the team lead, above the claims. */
+function MyTasksPanel({ ctx, me, go, refreshTasks }) {
+  const [ver, setVer] = useState(0);
+  const q = useRpc("tasks.mine", {}, [ver]);
+  const [upd, setUpd] = useState(null);
+  const [open, setOpen] = useState(null);
+  const rows = q.data ? q.data.rows.filter((r) => r.todo) : [];
+  if (!rows.length) return null;
+  const late = rows.filter((r) => r.late).length;
+  return (
+    <div className="card tight">
+      <div className="row between" style={{ padding: "12px 14px 0" }}>
+        <div><h3 style={{ margin: 0 }}>Tasks from your team lead <span className="badge teal" style={{ marginLeft: 6 }}>{rows.length}</span></h3>
+          <div className="sub">Work these with your claims. Update the count as you go; your team lead gets a notice each time.</div></div>
+        <div className="row" style={{ gap: 8 }}>{late > 0 && <span className="badge red">{late} past the TAT</span>}{go && <button className="btn sm" onClick={() => go("mytasks")}>Open My tasks</button>}</div>
+      </div>
+      <div style={{ marginTop: 8 }}><MyTaskRows rows={rows} compact onOpen={(r) => setOpen(r.task_id)} onUpdate={setUpd} /></div>
+      {upd && <TaskUpdateModal row={upd} onClose={() => setUpd(null)} onDone={() => { setUpd(null); setVer((v) => v + 1); if (refreshTasks) refreshTasks(); }} />}
+      {open && <TaskDetailModal id={open} ctx={ctx} onClose={() => { setOpen(null); setVer((v) => v + 1); if (refreshTasks) refreshTasks(); }} onUpdate={() => { const r = rows.find((x) => x.task_id === open); setOpen(null); if (r) setUpd(r); }} />}
     </div>
   );
 }
@@ -8350,7 +8747,7 @@ function MyRechecks({ ctx, me }) {
 /* The working day as the server counts it (Live status, My day): it starts at 05:00 IST, so a night shift (18:30 to 03:30)
    is one day and "Worked today" does not drop to 0 at midnight. */
 const bizDayBounds = () => { const now = Date.now(), ist = now + 330 * 60000; const start = now - (((ist - 5 * 3600000) % 86400000) + 86400000) % 86400000; return [start, start + 86400000 - 1]; };
-function QueueView({ ctx, me }) {
+function QueueView({ ctx, me, go, refreshTasks }) {
   const today = todayISO();
   const [[from, to], setBizDay] = useState(bizDayBounds);
   // Back on the tab after the day rolled over: count the new day.
@@ -8422,6 +8819,7 @@ function QueueView({ ctx, me }) {
         </div>
       )}
       {emptyMsg && <div className="card"><Empty>{emptyMsg}</Empty></div>}
+      <MyTasksPanel ctx={ctx} me={me} go={go} refreshTasks={refreshTasks} />
       <MyRechecks ctx={ctx} me={me} />
       {patientOf && <PatientModal id={patientOf} ctx={ctx} me={me} onClose={() => setPatientOf(null)} onOpenClaim={(r) => { if (r.mine && ["assigned", "in_progress", "completed"].includes(r.state)) { setPatientOf(null); open(r.id); } }} />}
       {bundle && <WorkPanel key={bundle.claim.id} bundle={bundle} ctx={ctx} me={me} onPatient={() => setPatientOf(bundle.claim.id)} onDone={(mode) => { if (mode === null) return refreshBundle(); setBundle(null); refreshAll(); if (mode) next(); }} />}
@@ -8633,12 +9031,16 @@ function App() {
   const [handoffs, setHandoffs] = useState(null);
   const refreshHandoffs = useCallback(async () => { if (!me) return; try { setHandoffs(await rpc("handoffs.count")); } catch (e) {} }, [me && me.id]);
   useEffect(() => { if (!ctx.loaded) return; refreshHandoffs(); const t = setInterval(refreshHandoffs, 30000); return () => clearInterval(t); }, [ctx.loaded, refreshHandoffs]);
+  // Tasks from a team lead: the My tasks tab and its badge (to do, past the TAT, not opened yet)
+  const [tasks, setTasks] = useState(null);
+  const refreshTasks = useCallback(async () => { if (!me) return; try { setTasks(await rpc("tasks.count")); } catch (e) {} }, [me && me.id]);
+  useEffect(() => { if (!ctx.loaded) return undefined; refreshTasks(); const t = setInterval(refreshTasks, 60000); return () => clearInterval(t); }, [ctx.loaded, refreshTasks, nav.view]);
   const [notify, setNotify] = useState(null);
   const refreshNotify = useCallback(async () => { if (!me) return; try { setNotify(await rpc("notify.list", { today: todayISO() })); } catch (e) {} }, [me && me.id]);
   useEffect(() => { if (!ctx.loaded) return undefined; refreshNotify(); const t = setInterval(refreshNotify, 30000); return () => clearInterval(t); }, [ctx.loaded, refreshNotify, nav.view]);
   // Back on the tab: refresh the desk count and the bell at once, so a hand-off or its result shows without waiting.
-  useEffect(() => { if (!ctx.loaded) return undefined; const f = () => { if (document.visibilityState === "visible") { refreshHandoffs(); refreshNotify(); } };
-    document.addEventListener("visibilitychange", f); window.addEventListener("focus", f); return () => { document.removeEventListener("visibilitychange", f); window.removeEventListener("focus", f); }; }, [ctx.loaded, refreshHandoffs, refreshNotify]);
+  useEffect(() => { if (!ctx.loaded) return undefined; const f = () => { if (document.visibilityState === "visible") { refreshHandoffs(); refreshNotify(); refreshTasks(); } };
+    document.addEventListener("visibilitychange", f); window.addEventListener("focus", f); return () => { document.removeEventListener("visibilitychange", f); window.removeEventListener("focus", f); }; }, [ctx.loaded, refreshHandoffs, refreshNotify, refreshTasks]);
   const [pal, setPal] = useState(false);
   const [palClaim, setPalClaim] = useState(null);
   const [palCoach, setPalCoach] = useState(null);
@@ -8655,18 +9057,19 @@ function App() {
   if (me.must_change) return (
     <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
-  const allowed = [...navItems(navFor(me, handoffs, fb, attention)).map((x) => x[0]), "settings", ...(me.role === "supervisor" ? ["digest", "client"] : []), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
+  const allowed = [...navItems(navFor(me, handoffs, fb, attention, tasks)).map((x) => x[0]), "settings", "mytasks", ...(me.role === "supervisor" ? ["digest", "client"] : []), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   // an old Past TAT link (#/tat) opens Posting & submission, where the reminders are now (Needs attention when that tab is not there)
   const asked = nav.view === "tat" ? (allowed.includes("handoffs") ? "handoffs" : "attention") : nav.view;
   const view = allowed.includes(asked) ? asked : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
   // A page this person cannot open (or a name that is not a page) shows their start page, and the address says so too.
   if (nav.view && nav.view !== view && ctx.loaded && handoffs !== null) { try { if ((location.hash || "").replace(/^#\/?/, "").split("?")[0] === nav.view) history.replaceState(null, "", "#/" + view); } catch (e) {} }
-  const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb };
+  const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb, refreshTasks: () => { refreshTasks(); refreshNotify(); } };
   const body = !ctx.loaded ? <Spinner label="Loading…" />
     : view === "dashboard" ? (deskOf(me, handoffs) ? <DeskDashboard {...props} desk={deskOf(me, handoffs)} /> : <DashboardHub {...props} />)
     : view === "portfolio" && me.role === "supervisor" ? <DashboardHub {...props} params={{ ...(props.params || {}), tab: "inventory" }} />
     : (view === "live" || view === "teamtoday") && me.role === "supervisor" ? <LiveStatusView {...props} />
     : view === "attention" ? <AttentionView {...props} />
+    : view === "mytasks" ? <MyTasksView {...props} />
     : view === "digest" ? <DigestDashboard {...props} />
     : view === "escalations" && me.role === "supervisor" ? <EscalationTrackerView {...props} />
     : view === "inventory" || view === "allocate" ? <InventoryView {...props} initialTab={view === "allocate" ? "allocate" : undefined} />
@@ -8692,11 +9095,11 @@ function App() {
     : <QueueView {...props} />;
   return (
     <>
-      <Shell me={me} view={view} attention={attention} handoffs={handoffs} fb={fb} notify={notify} onRefreshNotify={refreshNotify} onGo={go} onSearch={() => setPal(true)} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)} onDeleteAccount={() => setDelOpen(true)}>
+      <Shell me={me} view={view} attention={attention} handoffs={handoffs} fb={fb} notify={notify} tasks={tasks} onRefreshNotify={refreshNotify} onGo={go} onSearch={() => setPal(true)} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)} onDeleteAccount={() => setDelOpen(true)}>
         <React.Fragment key={view + JSON.stringify(nav.params || {})}><PageBoundary onHome={() => go(me.role === "supervisor" ? "dashboard" : "queue")}>{body}</PageBoundary></React.Fragment>
       </Shell>
       {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
-      {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb, attention)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
+      {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb, attention, tasks)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
       {palClaim && <ClaimDrawer id={palClaim} ctx={ctx} me={me} onClose={() => setPalClaim(null)} onChanged={() => {}} />}
       {palCoach && <CoachDrawer userId={palCoach} onClose={() => setPalCoach(null)} />}
       {idleLeft != null && <div className="idle-warn" role="alert"><b>Still there?</b> You will be signed out in {Math.floor(idleLeft / 60)}:{String(idleLeft % 60).padStart(2, "0")} to keep patient data safe. Move the mouse or press any key to stay signed in.</div>}

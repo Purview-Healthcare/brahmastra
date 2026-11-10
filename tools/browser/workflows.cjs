@@ -1,6 +1,6 @@
 /* Browser check of the workflows people do through the screens (the API checks cover the server side):
    inventory upload from a file, allocation, a biller's work entry, the claims and reports CSV, the dashboard
-   filter, the theme, month-end, answering an escalation, the posting desk, feedback, TFL / AFL, a new client.
+   filter, the theme, month-end, answering an escalation, the posting desk, feedback, TFL / AFL, a new client, team tasks.
    node tools/browser/workflows.cjs   (CHROME_PATH=... to use a local Chromium) */
 const { chromium } = require("playwright");
 const fs = require("fs");
@@ -435,6 +435,63 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await p.unroute("**/rest/v1/rpc/brahmastra_live");
     await p.evaluate(async () => { await window.__sql("DELETE FROM settings WHERE key = 'live_sync'"); await window.__flush(); });
     await as("tina");
+  });
+
+  S("Team tasks: a team lead gives a task, the billers update it, it counts on Team status");
+  await step("team-tasks", async () => {
+    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const comboWith = (scope, txt) => scope.locator(".combo").filter({ has: p.locator(".combo-val", { hasText: txt }) }).first();
+    // a short list has no search box (a space typed on the button would close it): click the name, searching first when there is a box
+    const choose = async (combo, text) => { await combo.locator(".combo-ctl").click(); await t(250); const q = p.locator(".combo-list input.combo-q");
+      if (await q.count()) { await q.fill(text.split(" ")[0]); await t(250); } await p.locator('.combo-item:has-text("' + text + '")').first().click(); await t(300); };
+    await as("tina"); await open("#/attention"); await t(800);
+    await p.locator('.main .seg2 button:has-text("Team tasks")').click(); await t(1500);
+    ok("Needs attention has a Team tasks tab with + Add task", (await p.locator('.main button:has-text("+ Add task")').count()) === 1);
+    await p.locator('.main button:has-text("+ Add task")').click(); await t(800);
+    const m = p.locator(".overlay .modal").first();
+    ok("Assign task is off until the task is filled in", await m.locator('button:has-text("Assign task")').isDisabled());
+    await choose(comboWith(m, "No client"), "Sunrise Eye Care");
+    await m.locator('.seg2 button:text-is("Client")').click();
+    await m.locator('.seg2 button:text-is("AR follow-up")').click();
+    await m.locator('input[placeholder="What is to be done, in a few words"]').fill("Call back on the October denials");
+    await m.locator("textarea").first().fill("The list is in the client's portal. Note the reference number on each claim.");
+    await m.locator("label.field", { hasText: "Task count" }).locator("input").fill("10");
+    await choose(comboWith(m, "Add someone"), "Arun Agent"); await choose(comboWith(m, "Add someone"), "Cara Agent");
+    const shares = await m.locator(".chip.on input").evaluateAll((xs) => xs.map((x) => x.value));
+    ok("the count of 10 is split evenly: 5 and 5", shares.join(",") === "5,5", shares);
+    await m.locator('input[type="file"]').setInputFiles({ name: "denials-list.png", mimeType: "image/png", buffer: Buffer.from(PNG, "base64") }); await t(600);
+    ok("an added picture shows small before it is saved", (await m.locator(".task-shot img").count()) === 1);
+    await m.locator('button:has-text("Assign task to 2 people")').click(); await t(2000);
+    const tl = await rpc("tasks.list", {}); const task = tl.rows.find((x) => x.title === "Call back on the October denials");
+    ok("the task is saved with both people, their shares, the file and a 24 working-hour TAT", task && task.people.length === 2 && task.people.every((x) => x.share === 5) && task.files === 1 && task.tat_hours === 24 && task.source === "Client", task);
+    ok("it is listed on Team tasks", /Call back on the October denials/.test(await p.innerText(".main")));
+    await as("arun");
+    const navs = await p.$$eval(".nav > button, .nav > .nav-group > button", (b) => b.map((x) => x.innerText.replace(/\s+/g, " ").trim()));
+    ok("Arun has a My tasks tab with a count", navs.some((x) => /^My tasks\s*1/.test(x)), navs);
+    ok("My day shows Tasks from your team lead", /Tasks from your team lead/.test(await p.innerText(".main")) && /Call back on the October denials/.test(await p.innerText(".main")));
+    const bell = await rpc("notify.list", { today: new Date().toISOString().slice(0, 10) });
+    ok("the bell has the new task from Tina", (bell.items || []).some((x) => /^task_new:/.test(x.key) && /Tina Lead/.test(x.text)), (bell.items || []).map((x) => x.key));
+    await p.locator('.card:has-text("Tasks from your team lead") button:has-text("Update")').first().click(); await t(1200);
+    const u = p.locator(".overlay .modal").first();
+    await u.locator('input[type="number"]').first().fill("3");
+    await u.locator("textarea").first().fill("Called 3 so far, the rest after lunch.");
+    await u.locator('button:has-text("Save update")').click(); await t(2000);
+    const mine = (await rpc("tasks.mine", {})).rows.find((x) => x.title === "Call back on the October denials");
+    ok("Arun's update is saved: 3 of 5, in progress", mine && mine.done === 3 && mine.status === "in_progress", mine);
+    await as("tina"); await open("#/attention"); await t(800);
+    await p.locator('.main .seg2 button:has-text("Team tasks")').click(); await t(1500);
+    const row = p.locator('.main tr:has-text("Call back on the October denials")').first();
+    ok("the team lead sees 3 of 10 done and a new update", /3 of 10/.test(await row.innerText()) && /new update/.test(await row.innerText()), await row.innerText());
+    await row.locator('button:has-text("Open")').click(); await t(1500);
+    ok("the task shows Arun's update with his comment", /Arun Agent: 3 of 5 done, in progress/.test(await p.innerText(".overlay")) && /Called 3 so far/.test(await p.innerText(".overlay")));
+    await p.locator('.overlay button:has-text("Close")').first().click(); await t(800);
+    await open("#/dashboard"); await p.locator('.dash-subtabs button:has-text("Team status")').click(); await t(3500);
+    const head = await p.locator(".main table.ts thead").innerText();
+    const arun = await p.locator('.main table.ts tr:has-text("Arun Agent")').first().innerText();
+    const todayIst = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const ra = ((await rpc("team.status", { from: todayIst, to: todayIst, today: todayIst })).rows || []).find((x) => x.name === "Arun Agent");
+    ok("Team status has a Tasks column and Arun's 3 task items count with his claims", /\btasks\b/i.test(head) && /\b3\s*items/.test(arun) && ra && ra.task_items_today === 3 && ra.count_today === ra.worked_today + 3,
+      [head, arun.replace(/\s+/g, " ").slice(0, 300), ra && { items: ra.task_items_today, count: ra.count_today, claims: ra.worked_today }]);
   });
 
   ok("no script errors on any page", !errs.length, errs);

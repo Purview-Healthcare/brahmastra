@@ -285,7 +285,11 @@ roster, grouped by team lead (no Emp ID):
   half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a Saturday
   worked, and Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
   way does not count against anyone; with only today picked, it is today's. Production people under 90% are
-  **below the mark**; Training and OJT are **in ramp-up** and not judged against it.
+  **below the mark**; Training and OJT are **in ramp-up** and not judged against it. Claims worked and **team task
+  items** done (Needs attention › Team tasks, below) both count toward it: the line under it says how many of each.
+- **Tasks**: the team task items each person marked done in the dates (by the day of the update, the night shift's early
+  hours counting to the day before, as for claims), with how many tasks they worked and completed. The CSV has
+  **Task items** and **Tasks completed**, and its count for the attainment is claims plus task items.
 - **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** comes from Purview Shastra (finished
   shifts with breaks taken out; a shift still open counts up to now) and shows **met** or **short** on the finished
   days. **Idle** is what Shastra Guard saw while the person was punched in, breaks left out: no movement plus screen
@@ -561,6 +565,39 @@ sent it (with the client's TAT).
 Sent back by Posting / Submission**: when, who sent it, the department, the reason and comment, the biller, and how many
 times the claim has come back. It counts on the Needs attention badge, turns red after 48 working hours, and leaves the
 list once a biller saves an entry on the claim.
+
+### Team tasks (Needs attention → Team tasks, and My tasks)
+
+Work that is not a claim on someone's list: a list the client emailed, an ERA batch, an eligibility run. Team leads,
+SMEs and above give it under **Needs attention → Team tasks → + Add task**:
+
+- the **client** (or none, for an internal task), **received from** (Client, Manager or Internal), the **scope** (AR
+  follow-up, Payment posting, Submission, Rejections, Eligibility (EV), Other), the **task** and a **description**;
+- the **TAT**: 24 or 72 working hours, another number of working hours, or a date (the end of that day). Working
+  hours are Monday to Friday with the Shastra holidays left out, the same clock as every other TAT;
+- the **task count**, and **who does it**: one or more people on the team. The count is split evenly and each share
+  can be changed (the shares must add up to the count);
+- **files** (up to 6, 8 MB each): attach them, paste a screenshot with **Ctrl+V**, or **Add a screenshot** to capture
+  the screen.
+
+Each person gets their share with a notice on the bell (and on the computer, if they allowed it). It shows on **My day**
+(*Tasks from your team lead*, above the claims) and on **My tasks**, with the TAT bar. **Update** saves how many are
+done, the status (**In progress**, **Completed**, **Need help from team lead**: help needs a comment, and so does
+Completed with some left), a comment and files. The team lead gets a notice for each update, for a call for help, and
+when everyone has completed (the task then closes by itself, within the TAT or not).
+
+The team lead's list has the cards **Open**, **Due in the next 4 hours**, **Past TAT** (at the top, red) and **Done ·
+7 days** (how many within the TAT), and each task shows everyone's count. **Open** shows each person's share, their
+updates and files in **What happened**, with **Remind** (one person or everyone), **Can't close yet** (a reason and an
+expected date, up to 30 days: no past-TAT reminders until then), **Edit or reassign** (the name, the description, the
+TAT, add people, change a share; never below what the person has done, and someone who has done some stays on it) and
+**Close the task**. A team lead sees the tasks they gave and, with edit access to a client, the ones on that client;
+admins and the VP see all. The person given a task sees only their own share and updates.
+
+Past the TAT, the task is on the bell of everyone on it and of the team lead until it is updated, closed or put on
+hold, and in the team lead's 19:00 email with the client, the scope, the count done and the due time only (never the
+task's name or description). Task items done count on **Dashboard › Team status** (the *Tasks* column and the
+attainment).
 
 ### Escalation tracker (Work → Escalation tracker)
 
