@@ -129,10 +129,10 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
   QA, MIS and Tech Support get no access, and nor does anyone only on Eligibility
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).
-- The top bar stays one row: SLA (Drishti and the scorecard, first so it is one
+- The top bar stays one row: **RACI** first, then SLA (Drishti and the scorecard, one
   click away all day), Sasha's Third Eye, Live status, Dashboard and Claims sit
   in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
-  Inventory & allocation, Escalation tracker, RACI tracker) and **Manage** (Team, Note templates, Clients &
+  Inventory & allocation, Escalation tracker) and **Manage** (Team, Note templates, Clients &
   locations, SAAG reference, TFL / AFL, Roster for admins, Audit trail for admins and the VP). Client 360 is not on
   the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count shows on the
   Live status tab, and the attention and hand-off counts on the group button while it is closed.
@@ -143,7 +143,7 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
 
 #### Client 360
 
-**Dashboard › Client 360 report › Open Client 360** (or **Open Client 360** on a client card, a client's name in the RACI tracker, or Ctrl+K) shows one
+**Dashboard › Client 360 report › Open Client 360** (or **Open Client 360** on a client card, a client's name on the RACI page, or Ctrl+K) shows one
 client on one page, for team leads, managers and the VP (and anyone a client is shared with, read-only):
 
 - a health line (**On track / Needs attention / At risk**) with the plain reasons: over-90 above the 15% target, SLA
@@ -469,7 +469,7 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 Shares are personal (one person, one client), show who shared and when, and can
 be taken back any time. SMEs cannot share; a view-only share cannot be passed on.
 
-#### RACI tracker
+#### RACI (the first tab)
 
 Everyone from SME up (never billers) gets the **RACI** page: one row per client
 with who is **R**esponsible (does the work, the billers), **A**ccountable (owns
