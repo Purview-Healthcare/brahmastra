@@ -843,12 +843,11 @@ async function escalationPeople(env, clientId) {
   if (!people.length) people = await all(env, "SELECT id, name, email, email_missing FROM users WHERE active = 1 AND role = 'admin'");
   return people;
 }
-/* A new escalation, or one marked as our error later: a notice in the bell and an email to the project's supervisors, except the
-   person who saved it. The client, SR, type, department and dates, and who made the error: never the description or the
-   client's email subject (they can carry patient details). */
+/* A new escalation, or one marked as our error later: a notice in the bell and an email to the project's supervisors; the person who
+   saved it gets a copy of the email (no bell notice: they know). The client, SR, type, department and dates, and who made the error:
+   never the description or the client's email subject (they can carry patient details). */
 async function escalationNotice(env, e, clientName, by, what, appUrl = "", defer = null) {
   const people = (await escalationPeople(env, e.client_id)).filter((u) => u.id !== by.id);
-  if (!people.length) return 0;
   const kind = ESC_KINDS[escKind(e)].toLowerCase(), now = Date.now();
   const err = e.is_error === "Y" ? ` Our error: made by ${e.error_by_name || "–"}, DOW ${e.error_dow ? mdy(e.error_dow) : "–"}.` : "";
   const text = (what === "error" ? `${by.name || "Someone"} marked ${kind} escalation SR${e.sr} (${e.dept}) at ${clientName} as our error.`
@@ -864,6 +863,12 @@ async function escalationNotice(env, e, clientName, by, what, appUrl = "", defer
   for (const u of people) {
     await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id, kind) VALUES (?,?,?,?,?,?,?)", uuid(), u.id, now, text.slice(0, 300), "escalations", e.client_id, "escalation");
     if (env.EMAIL_PROVIDER && u.email && !u.email_missing) mails.push({ to: u.email, subject, text: text + (link ? "\n\nOpen the Escalation tracker: " + link : ""), html });
+  }
+  // the copy for whoever saved it, so they have it in their mailbox too
+  if (env.EMAIL_PROVIDER && by && by.email && !by.email_missing && !people.some((u) => u.email && u.email.toLowerCase() === String(by.email).toLowerCase())) {
+    const copyNote = `You logged this escalation; this is your copy.${people.length ? " It also went to " + people.map((u) => u.name).join(", ") + "." : ""}`;
+    mails.push({ to: by.email, subject: "Copy: " + subject, text: text + "\n\n" + copyNote + (link ? "\n\nOpen the Escalation tracker: " + link : ""),
+      html: html.replace(/You get this as a supervisor on [^<]*\./, htmlEsc(copyNote)) });
   }
   // the emails after the save has answered (waitUntil), when the platform allows it
   const send = (async () => { for (const m of mails) { try { await sendEmail(env, m); } catch (x) {} } })();
@@ -6860,12 +6865,12 @@ const OPS = {
           deductible: amt(p.deductible, "Deductible"), coinsurance: amt(p.coinsurance, "Co-insurance"), copay: amt(p.copay, "Co-pay"), writeoff: amt(p.writeoff, "Write-off"),
           check_date: isoDate(p.check_date), pay_type: txt(p.pay_type, 40) };
         for (const k of ["allowed", "paid", "adjustment", "deductible", "coinsurance", "copay", "writeoff", "check_date", "pay_type", "adj_reason"]) if (proof[k] == null || proof[k] === "") delete proof[k];
-        // the amounts must add up: Allowed = Paid + Deductible + Co-insurance + Co-pay (to the cent). Checked whenever any of them is
-        // entered; only the older "amount posted" alone (an earlier version of the form) is taken as before.
+        // the amounts must add up: Allowed = Paid + Deductible + Co-insurance + Co-pay + Adjustment (to the cent). Checked whenever the
+        // allowed, the paid or a patient amount is entered; only the older "amount posted" alone (an earlier form) is taken as before.
         if (["allowed", "paid", "deductible", "coinsurance", "copay"].some((k) => p[k] !== "" && p[k] != null)) {
-          if (proof.allowed == null || proof.paid == null) throw bad("Enter the allowed and the paid amounts: paid, deductible, co-insurance and co-pay add up to the allowed.");
-          const total = Math.round((proof.paid + (proof.deductible || 0) + (proof.coinsurance || 0) + (proof.copay || 0)) * 100) / 100;
-          if (Math.abs(proof.allowed - total) > 0.005) throw bad(`The amounts do not add up: allowed ${proof.allowed.toFixed(2)}, but paid + deductible + co-insurance + co-pay = ${total.toFixed(2)}. Check the EOB.`);
+          if (proof.allowed == null || proof.paid == null) throw bad("Enter the allowed and the paid amounts: paid, deductible, co-insurance, co-pay and adjustment add up to the allowed.");
+          const total = Math.round((proof.paid + (proof.deductible || 0) + (proof.coinsurance || 0) + (proof.copay || 0) + (proof.adjustment || 0)) * 100) / 100;
+          if (Math.abs(proof.allowed - total) > 0.005) throw bad(`The amounts do not add up: allowed ${proof.allowed.toFixed(2)}, but paid + deductible + co-insurance + co-pay + adjustment = ${total.toFixed(2)}. Check the EOB.`);
         }
       } else {
         proof = { date: isoDate(p.date), ref: txt(p.ref, 80), mode: txt(p.mode, 40) };

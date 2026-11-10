@@ -338,9 +338,9 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const dt = m.locator('input[type="date"]').first(); if (await dt.count()) await dt.fill(new Date().toISOString().slice(0, 10));
     const texts = m.locator('input:not([type="date"]):not([type="checkbox"])');
     for (let i = 0; i < await texts.count(); i++) { const el = texts.nth(i); if (!(await el.isVisible()) || await el.isDisabled()) continue; const ty = (await el.getAttribute("type")) || "", ph = (await el.getAttribute("placeholder")) || ""; await el.fill(ty === "number" || /amount|\$|0\.00/i.test(ph) ? "120.50" : "CHK-" + (1000 + i)); }
-    // the EOB amounts must add up (allowed = paid + deductible + co-insurance + co-pay): allowed 120.50 = paid 100.50 + co-insurance 20
+    // the EOB amounts must add up (allowed = paid + deductible + co-insurance + co-pay + adjustment): 120.50 = 90.50 + 20 + 10
     const amt = async (label, v) => { const f = m.locator(".field", { hasText: label }).locator('input[type="number"]').first(); if (await f.count()) await f.fill(v); };
-    await amt("Allowed", "120.50"); await amt("Paid", "100.50"); await amt("Deductible", ""); await amt("Co-insurance", "20"); await amt("Co-pay", "");
+    await amt("Allowed", "120.50"); await amt("Paid", "90.50"); await amt("Deductible", ""); await amt("Co-insurance", "20"); await amt("Co-pay", ""); await amt("Adjustment", "10");
     ok("the posting amounts add up, so Mark completed is on", /The amounts add up/.test(await m.innerText()) && await m.locator('button.btn.primary').first().isEnabled());
     await m.locator('button.btn.primary').first().click(); await t(2000);
     const cl = (await rpc("claims.get", { id: c.id })).claim;

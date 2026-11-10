@@ -104,14 +104,14 @@ ok("the desk list carries the billed amount for the form", ph && "billed" in ph,
 let r = await T(() => PA("handoffs.close", { id: ph.id, outcome: "complete", proof: { date: todayIso, ref: "CHK-9001", paid: "abc" } }));
 ok("an amount that is not a number is refused", !r.ok && /Paid is not a number/.test(r.e || ""), r);
 r = await T(() => PA("handoffs.close", { id: ph.id, outcome: "complete", proof: { date: todayIso, ref: "CHK-9001", allowed: "190", paid: "80", coinsurance: "20" } }));
-ok("amounts that do not add up are refused: allowed must be paid + deductible + co-insurance + co-pay", !r.ok && /do not add up: allowed 190\.00, but paid \+ deductible \+ co-insurance \+ co-pay = 100\.00/.test(r.e || ""), r);
+ok("amounts that do not add up are refused: allowed must be paid + deductible + co-insurance + co-pay + adjustment", !r.ok && /do not add up: allowed 190\.00, but paid \+ deductible \+ co-insurance \+ co-pay \+ adjustment = 100\.00/.test(r.e || ""), r);
 r = await T(() => PA("handoffs.close", { id: ph.id, outcome: "complete", proof: { date: todayIso, ref: "CHK-9001", paid: "80" } }));
 ok("paid without the allowed is refused too", !r.ok && /Enter the allowed and the paid amounts/.test(r.e || ""), r);
 r = await T(() => PA("handoffs.close", { id: ph.id, outcome: "complete", note: "Posted per ERA", proof: { date: todayIso, ref: "CHK-9001", check_date: "2026-11-05", pay_type: "EFT",
-  allowed: "100", paid: "80", adjustment: "40", adj_reason: "CO-45", deductible: "0", coinsurance: "20", copay: "", writeoff: "" } }));
+  allowed: "140", paid: "80", adjustment: "40", adj_reason: "CO-253", deductible: "0", coinsurance: "20", copay: "", writeoff: "" } }));
 ok("posted with the EOB amounts", r.ok, r);
 const pr = (await row1("SELECT proof_json FROM handoffs WHERE id = ?", ph.id)).proof_json, pj = JSON.parse(pr);
-ok("saved with the posting: paid is also the amount the reports add up", pj.paid === 80 && pj.amount === 80 && pj.allowed === 100 && pj.adjustment === 40 && pj.coinsurance === 20 && pj.adj_reason === "CO-45" && pj.pay_type === "EFT" && !("copay" in pj), pj);
+ok("saved with the posting: paid is also the amount the reports add up", pj.paid === 80 && pj.amount === 80 && pj.allowed === 140 && pj.adjustment === 40 && pj.coinsurance === 20 && pj.adj_reason === "CO-253" && pj.pay_type === "EFT" && !("copay" in pj), pj);
 await sleep(500);
 const pf = fileIn("Payment posting", "Payment posting"), pt = tab(pf, "Payment posting");
 ok("this month's Payment posting file: the template's tab renamed Payment posting, no other tab", pf && pt && OD.books.get(pf.id).sheets.length === 1, pf && OD.books.get(pf.id).sheets.map((x) => x.name));
@@ -120,7 +120,7 @@ const prow = pt ? pt.rows[1] : [], P_ = (h) => prow[POST.indexOf(h)];
 ok("the row: client code, patient, DOS, invoice, insurance, CPT, billed and balance by themselves", prow && P_("Client") === "SEC" && P_("Patient") === c1.patient && P_("Date") === mdy(c1.dos) && P_("Invoice") === c1.claim_no && P_("Insurance") === c1.payer && P_("CPT") === c1.cpt && P_("Balance") === c1.balance,
   { client: P_("Client"), date: P_("Date"), dos: c1.dos, inv: P_("Invoice"), bal: P_("Balance") });
 ok("the entered details: check, check date, type, posted date, allowed, paid, adjustment, reason, co-insurance", P_("Check / EFT #") === "CHK-9001" && P_("Check / EFT date") === mdy("2026-11-05") && P_("Payment type") === "EFT" && P_("Posted date") === mdy(todayIso)
-  && P_("Allowed") === 100 && P_("Paid") === 80 && P_("Adjustment") === 40 && P_("Adjustment reason") === "CO-45" && P_("Co-insurance") === 20 && P_("Co-pay") === "", prow);
+  && P_("Allowed") === 140 && P_("Paid") === 80 && P_("Adjustment") === 40 && P_("Adjustment reason") === "CO-253" && P_("Co-insurance") === 20 && P_("Co-pay") === "", prow);
 ok("patient responsibility and the balance after posting add up by themselves", P_("Patient responsibility") === 20 && P_("Balance after posting") === Math.round((c1.balance - 80 - 40) * 100) / 100, { pr: P_("Patient responsibility"), after: P_("Balance after posting") });
 ok("who and when: DOW today, EMPID, Posted by, Posted, the comment; Allocation blank", P_("DOW") === mdy(todayIso) && P_("EMPID") === "D1" && P_("Posted by") === "Paula Post" && P_("Status") === "Posted" && P_("Comment") === "Posted per ERA" && P_("Allocation") === "", prow);
 const pfm = pt && pt.fmts && pt.fmts[1], PF = (h) => pfm && pfm[POST.indexOf(h)];

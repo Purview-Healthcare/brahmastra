@@ -569,7 +569,8 @@ list once a biller saves an entry on the claim.
 ### Team tasks (Needs attention → Team tasks, and My tasks)
 
 Work that is not a claim on someone's list: a list the client emailed, an ERA batch, an eligibility run. Team leads,
-SMEs and above give it under **Needs attention → Team tasks → + Add task**:
+SMEs and above give it under **Needs attention → Team tasks → + Add task** (Payment posting and Submission team leads, who
+have no Needs attention, under **Work → Team tasks**, next to the Escalation tracker):
 
 - the **client** (or none, for an internal task), **received from** (Client, Manager or Internal), the **scope** (AR
   follow-up, Payment posting, Submission, Rejections, Eligibility (EV), Other), the **task** and a **description**;
@@ -613,6 +614,10 @@ is our error), the Review date (between the received date and today), Rework com
 corrective and preventive actions and the close date; Save stays off and the form says what is still needed. Reviewed by
 is the Reported to / Responding person; the Review result is the Error (Y/N) answer (Error / No error); the Month comes
 from the received date.
+
+**A new escalation** (and one marked as our error later): the project's team leads get a bell notice and an email (the
+admins when the client has no team lead), and whoever logged it gets a copy of the email. The client, SR, type,
+department and dates only, never the description or the email subject.
 
 **Open over 24 hours** (from when it was logged): the row turns red with *reason needed*, the bell asks the team lead,
 and the hourly job sends the client's team leads one notice and email. The **team lead** (not the SME) gives the reason
@@ -847,8 +852,8 @@ rows in another layout earlier in the month gets a new tab, so no tab mixes two 
   Deductible, Co-insurance, Co-pay and Write-off (all optional but the check number and posted date), next to what
   Brahmastra knows (client, UID, DOS, patient, invoice, insurance, location, CPT, billed, balance). Patient
   responsibility (deductible + co-insurance + co-pay) and the balance after posting (balance - paid - adjustment -
-  write-off) add up by themselves. The amounts must add up: **Allowed = Paid + Deductible + Co-insurance + Co-pay**, to the
-  cent, or the claim cannot be marked completed (the form shows the difference; the server checks the same). With no
+  write-off) add up by themselves. The amounts must add up: **Allowed = Paid + Deductible + Co-insurance + Co-pay +
+  Adjustment**, to the cent, or the claim cannot be marked completed (the form shows the difference; the server checks the same). With no
   amount entered (a posting correction with no payment) there is nothing to check. Paid is also the amount posted the
   reports add up.
 
