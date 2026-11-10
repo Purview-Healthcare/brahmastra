@@ -137,7 +137,7 @@ r = await T(async () => Af("handoffs.close", { id: ho.id, outcome: "complete", p
 await sleep(500);
 const pf = folder(sun.name).posting && [...OD.items.values()].find((x) => x.parent === folder(sun.name).posting.id && x.kind === "file");
 const prow = pf ? OD.rows.get(pf.id) : [];
-ok("the posting is a row in the client's Payment posting file", r.ok && pf && /^Payment posting Production - Sunrise Eye Care - /.test(pf.name) && prow.length === 2 && prow[0].includes("Check / reference") && prow[1].includes("CHK-5521") && prow[1].includes("Completed: payment posted"), [r.ok, pf && pf.name, prow]);
+ok("the posting is a row in the client's Payment posting file", r.ok && pf && /^Payment posting Production - Sunrise Eye Care - /.test(pf.name) && prow.length === 2 && prow[0].includes("Check / EFT #") && prow[0].includes("Allowed") && prow[1].includes("CHK-5521") && prow[1].includes("Posted") && prow[1].includes(145.25), [r.ok, pf && pf.name, prow]);
 ok("not in the AR file", !OD.rows.get(f1.id).some((x) => x.includes("CHK-5521")));
 
 const fails = results.filter((x) => !x.pass);

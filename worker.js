@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.101.0";
+const VERSION = "2.102.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -420,6 +420,102 @@ const SCOPE_FOLDER = { ar: "AR", posting: "Payment posting", submission: "Submis
 const DEPT_SCOPE = { posting: "posting", submission: "submission", subcheck: "submission", rejection: "rejection" };
 const DESK_HEADER = ["Sr. No", "Date", "Department", "Done by", "Client", "Location", "Claim #", "Account #", "Patient", "Payer", "DOS", "Balance", "Action", "Proof date",
   "Check / reference", "Amount", "Reason / code", "Comment", "Sent by (AR)", "Sent at", "Within 24h TAT"];
+/* Submission: the team's Production Format Conso layout, one row per Submission action on a claim. Most columns come from the claim's
+   inventory row (the client's own columns too: NAEC Order No, the VEC columns), the old status / comment / bucket the inventory file had,
+   the hand-off and the person; Type, Inventory Status, Comment, Bucket and Claim Type are what the person enters (editable for now).
+   Allocation is left blank. The headers are the team's, spelling included, so their lookups keep working. */
+const SUB_HEADER = ["Client", "UID", "Date", "Patient", "Invoice", "NAEC Order No", "VEC S/W Insurance Name", "Insurance", "Balance", "VEC Patient Balance", "Location", "Type",
+  "VEC Claims Sourse", "VEC Submission Type", "Old status", "Old Comment", "old bucket", " Old Onhold/Pending ", "Allocation Date", "Allocation", "DOW", "EMPID", "Worked by",
+  "Inventory Status", "Comment", "Bucket", "Claim Type"];
+/* Payment posting: one row per claim, with the amounts the poster enters when they mark it Completed (allowed, paid, adjustment,
+   patient responsibility, write-off) next to what Brahmastra knows (client, patient, insurance, DOS, invoice, CPT, billed, balance). */
+const POST_HEADER = ["Client", "UID", "Date", "Patient", "Invoice", "Insurance", "Location", "CPT", "Billed", "Balance", "Check / EFT #", "Check / EFT date", "Payment type", "Posted date",
+  "Allowed", "Paid", "Adjustment", "Adjustment reason", "Deductible", "Co-insurance", "Co-pay", "Patient responsibility", "Write-off", "Balance after posting",
+  "Allocation Date", "Allocation", "DOW", "EMPID", "Posted by", "Status", "Comment"];
+// each desk's rows go to a tab of its own in the month's file
+const DESK_SHEET = { posting: "Payment posting", submission: "Submission", rejection: "Rejections" };
+// a column of the client's inventory file, whatever its spacing or case ("VEC S/W Insurance Name", "vec s/w insurance name"); the first name found wins
+const normKey = (k) => String(k == null ? "" : k).toLowerCase().replace(/[^a-z0-9]/g, "");
+function rawPick(raw, ...names) {
+  const m = new Map(); for (const [k, v] of Object.entries(raw || {})) if (v !== "" && v != null && !m.has(normKey(k))) m.set(normKey(k), String(v).trim());
+  for (const n of names) { const v = m.get(normKey(n)); if (v) return v; }
+  return "";
+}
+const moneyCell = (v) => { if (v === "" || v == null) return ""; const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[$,\s]/g, "")); return isFinite(n) ? Math.round(n * 100) / 100 : String(v); };
+// the claim type the AR biller's SAAG action already says (editable in the form)
+const claimTypeOf = (action) => (/^Need to Resubmit$/i.test(action || "") ? "Resubmission" : /^Need to Submit Paper Claim$/i.test(action || "") ? "Paper claim"
+  : /^Correction, Resubmission & Reprocessing$/i.test(action || "") ? "Corrected claim" : "");
+// dates are Excel date numbers shown as mm/dd/yyyy (the cell format is set with the row), so no locale can read 11/10 as 10 Nov
+const dateCell = (v) => { const iso = isoDate(String(v || "").slice(0, 10)); return iso ? excelSerial(iso) : String(v || ""); };
+const msDateCell = (ms) => (ms ? excelSerial(istISO(ms)) : "");
+// each column's cell format: dates, money, everything else as it comes
+const fmtFor = (header, dates, money) => header.map((h) => (dates.includes(h) ? "mm/dd/yyyy" : money.includes(h) ? "#,##0.00" : "General"));
+// the same unique key the AR production file uses (patient, DOS, payer, CPT), when the inventory file has no UID of its own
+const uidOf = (h, raw) => rawPick(raw, "UID", "Unique ID", "Uni") || [h.patient, excelSerial(isoDate(String(h.dos || "").slice(0, 10))), h.payer, h.cpt].map((x) => (x == null ? "" : x)).join("");
+function submissionRow(h, user, proof, action, now) {
+  const raw = jsonObj(h.raw_json), done = h.status === "complete";
+  const comment = done ? (h.note || "") : [h.reason, h.note].filter(Boolean).join(": ");
+  const bucket = { complete: "Payer", back: "Purview", client: "Client", rejected: "Purview" }[h.status] || "";
+  return [h.client_code || h.client_name || "", uidOf(h, raw), dateCell(h.dos), h.patient || "", h.claim_no || "",
+    rawPick(raw, "NAEC Order No", "Order No", "Order Number"), rawPick(raw, "VEC S/W Insurance Name", "S/W Insurance Name", "Software Insurance Name"),
+    h.payer || "", Number(h.balance) || 0, moneyCell(rawPick(raw, "VEC Patient Balance", "Patient Balance", "Pt Balance")), h.location_name || "",
+    (done && proof.type) || rawPick(raw, "Type"), rawPick(raw, "VEC Claims Sourse", "VEC Claims Source", "Claims Source", "Claim Source"),
+    rawPick(raw, "VEC Submission Type", "Submission Type") || (done && proof.mode) || "",
+    h.file_status || rawPick(raw, "Old status"), h.file_comments || rawPick(raw, "Old Comment"), h.file_bucket || rawPick(raw, "old bucket"),
+    rawPick(raw, "Old Onhold/Pending", "Onhold/Pending", "On hold/Pending", "On hold"),
+    msDateCell(h.created_at), "", msDateCell(now), user.emp_id || "", user.name || "",
+    (done && proof.inv_status) || action, comment, (done && proof.bucket) || bucket, (done && proof.claim_type) || claimTypeOf(h.saag_action)];
+}
+function postingRow(h, user, proof, action, now) {
+  const raw = jsonObj(h.raw_json), done = h.status === "complete", p = done ? proof : {};
+  const n = (v) => (v == null || v === "" ? "" : Number(v));
+  const paid = p.paid != null ? p.paid : p.amount;
+  const pr = [p.deductible, p.coinsurance, p.copay].some((v) => v != null && v !== "") ? Math.round(((Number(p.deductible) || 0) + (Number(p.coinsurance) || 0) + (Number(p.copay) || 0)) * 100) / 100 : "";
+  const after = paid != null && paid !== "" ? Math.round(((Number(h.balance) || 0) - (Number(paid) || 0) - (Number(p.adjustment) || 0) - (Number(p.writeoff) || 0)) * 100) / 100 : "";
+  return [h.client_code || h.client_name || "", uidOf(h, raw), dateCell(h.dos), h.patient || "", h.claim_no || "", h.payer || "", h.location_name || "", h.cpt || "",
+    n(h.billed), Number(h.balance) || 0, p.ref || "", p.check_date ? dateCell(p.check_date) : "", p.pay_type || "", p.date ? dateCell(p.date) : "",
+    n(p.allowed), n(paid), n(p.adjustment), p.adj_reason || "", n(p.deductible), n(p.coinsurance), n(p.copay), pr, n(p.writeoff), after,
+    msDateCell(h.created_at), "", msDateCell(now), user.emp_id || "", user.name || "", done ? "Posted" : action, [h.reason, h.note].filter(Boolean).join(": ")];
+}
+const SUB_FMT = fmtFor(SUB_HEADER, ["Date", "Allocation Date", "DOW"], ["Balance", "VEC Patient Balance"]);
+const POST_FMT = fmtFor(POST_HEADER, ["Date", "Check / EFT date", "Posted date", "Allocation Date", "DOW"],
+  ["Billed", "Balance", "Allowed", "Paid", "Adjustment", "Deductible", "Co-insurance", "Co-pay", "Patient responsibility", "Write-off", "Balance after posting"]);
+/* A desk's row goes to its own tab (Payment posting, Submission, Rejections) under that tab's header. A new month's file starts from
+   the AR template (the AR header on Sheet1): that tab is renamed and given the desk's header. A file already holding rows in another
+   layout (earlier in the month) gets a new tab, so no tab mixes two layouts. */
+async function appendDeskRow(tok, loc, values, header, sheetName, formats) {
+  const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
+  const list = ((await graphCall(tok, "GET", base + "/worksheets?$select=id,name")) || {}).value || [];
+  const same = (a, b) => String(a == null ? "" : a).trim().toLowerCase() === String(b == null ? "" : b).trim().toLowerCase();
+  const rowIs = (vals, hdr) => Array.isArray(vals) && hdr.every((x, i) => same(vals[i], x));
+  const usedOf = (id) => graphCall(tok, "GET", base + "/worksheets/" + encodeURIComponent(id) + "/usedRange(valuesOnly=true)?$select=rowCount,address,values");
+  const blank = (u) => !u || (u.rowCount <= 1 && (!u.values || !u.values[0] || u.values[0].every((v) => v === "" || v == null)));
+  let sheet = list.find((x) => same(x.name, sheetName)) || null, used = sheet ? await usedOf(sheet.id) : null;
+  if (!sheet && list[0]) {
+    const u = await usedOf(list[0].id), first = u && u.values && u.values[0];
+    if (blank(u) || rowIs(first, header) || (u.rowCount <= 1 && rowIs(first, WORKBOOK_HEADER))) {
+      sheet = list[0]; used = u;
+      try { await graphCall(tok, "PATCH", base + "/worksheets/" + encodeURIComponent(sheet.id), { name: sheetName }); } catch (e) {}
+    } else {
+      try { const add = await graphCall(tok, "POST", base + "/worksheets/add", { name: sheetName }); if (add && add.id) { sheet = add; used = null; } } catch (e) {}
+      if (!sheet) { sheet = list[0]; used = u; }   // a tab could not be added: the row is still kept, on the first tab
+    }
+  }
+  if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
+  const ws = base + "/worksheets/" + encodeURIComponent(sheet.id);
+  let startRow;
+  if (!rowIs(used && used.values && used.values[0], header) && (blank(used) || used.rowCount <= 1)) {
+    // this desk's header on row 1 (over the template's AR header, cleared to its last column), then the row under it
+    const width = Math.max(header.length, WORKBOOK_HEADER.length);
+    await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(width)}1')`, { values: [[...header, ...Array(width - header.length).fill("")]] });
+    try { await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(header.length)}1')/format/font`, { bold: true, color: "#FFFFFF" });
+      await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(header.length)}1')/format/fill`, { color: "#111B4D" }); } catch (e) {}
+    startRow = 2;
+  } else startRow = (parseInt(String(used.address).replace(/^.*![A-Z]+\d+:?[A-Z]*/, "").replace(/\D/g, ""), 10) || used.rowCount) + 1;
+  const row = values.map((v) => (v === SR_NO ? startRow - 1 : v));
+  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${colLetter(row.length)}${startRow}')`, { values: [row], ...(formats ? { numberFormat: [formats] } : {}) });
+  return loc.name;
+}
 async function odChild(tok, driveId, parentId, name) {
   try { return await graphCall(tok, "POST", `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}/children`, { name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }); }
   catch (e) { if (!/\(409/.test(String(e.message))) throw e; return graphCall(tok, "GET", `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}:/${encodeURIComponent(name)}?$select=id,name,parentReference,webUrl`); }
@@ -483,19 +579,23 @@ async function clientProductionFile(env, tok, clientId, ms, scope = "ar") {
 /* Every action a Payment posting / Submission / Rejections desk takes on a hand-off is a row in that scope's file. */
 async function deskProduction(env, user, handoffId) {
   if (String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
-  const h = await one(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, cl.name AS client_name, l.name AS location_name
+  const h = await one(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.billed, c.cpt, c.file_status, c.file_comments, c.file_bucket, c.raw_json,
+      cl.name AS client_name, cl.code AS client_code, l.name AS location_name
     FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE h.id = ?`, handoffId);
   if (!h) return;
   const scope = DEPT_SCOPE[h.dept] || "submission", proof = jsonObj(h.proof_json), now = Date.now();
   const action = { complete: h.dept === "posting" ? "Completed: payment posted" : h.dept === "subcheck" ? "Recheck: accepted" : "Completed: submitted", pending: "Pending", back: "Need assistance from AR",
     client: "Need assistance from client", rejected: "Rejected", assigned: "Client answered (back to open)", pending_open: "Pending" }[h.status] || h.status;
-  const row = [SR_NO, excelSerial(istISO(now)), DEPT_LABEL[h.dept] || h.dept, user.name || "", h.client_name || "", h.location_name || "", h.claim_no || "", h.account_no || "", h.patient || "", h.payer || "",
+  // Submission (with its rechecks) in the team's Conso layout, Payment posting with the amounts, Rejections as before
+  const header = scope === "submission" ? SUB_HEADER : scope === "posting" ? POST_HEADER : DESK_HEADER;
+  const row = scope === "submission" ? submissionRow(h, user, proof, action, now) : scope === "posting" ? postingRow(h, user, proof, action, now)
+    : [SR_NO, excelSerial(istISO(now)), DEPT_LABEL[h.dept] || h.dept, user.name || "", h.client_name || "", h.location_name || "", h.claim_no || "", h.account_no || "", h.patient || "", h.payer || "",
     h.dos || "", Number(h.balance) || 0, action, proof.date || "", proof.ref || proof.code || "", proof.amount == null ? "" : Number(proof.amount), h.reason || "", h.note || "", h.created_by_name || "",
     h.created_at ? excelSerial(istISO(h.created_at)) : "", h.due_at ? (now <= h.due_at ? "Yes" : "No") : ""];
   try {
     const tok = await graphAppToken(env);
     const loc = await clientProductionFile(env, tok, h.client_id, now, scope);
-    await appendRowTo(tok, loc, row, DESK_HEADER);
+    await appendDeskRow(tok, loc, row, header, DESK_SHEET[scope] || SCOPE_FOLDER[scope], scope === "submission" ? SUB_FMT : scope === "posting" ? POST_FMT : null);
     await recordWorkbookStatus(env, h.client_id + ":" + scope, { ok: true, at: now, file: loc.path, claim_no: h.claim_no });
   } catch (e) {
     const msg = String(e && e.message || e).slice(0, 300);
@@ -6574,7 +6674,7 @@ const OPS = {
       : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : view === "late" ? ` AND h.status IN (${onDesk}) AND h.due_at < ? AND NOT ${heldSql}`
       : view === "held" ? ` AND h.status IN ('pending','assigned','client') AND ${heldSql}` : hideClient ? " AND h.status IN ('pending','assigned')" : " AND (h.status IN ('pending','assigned') OR (h.status = 'client' AND h.chase_at <= ?))";
     const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : view === "late" ? [now] : view === "client" || view === "held" || hideClient ? [] : [now];
-    const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name, cl.posting_tat_hours AS cl_posting_tat, cl.submission_tat_hours AS cl_submission_tat, cl.subcheck_hours AS cl_subcheck_hours,
+    const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.billed, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name, cl.posting_tat_hours AS cl_posting_tat, cl.submission_tat_hours AS cl_submission_tat, cl.subcheck_hours AS cl_subcheck_hours,
         (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns,
         a.name AS assigned_name, l.name AS lead_name, b.name AS backup_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations lo ON lo.id = c.location_id
@@ -6750,9 +6850,28 @@ const OPS = {
     let guard = null;
     if (outcome === "complete") {
       const p = payload.proof || {};
-      const proof = h.dept === "posting"
-        ? { date: isoDate(p.date), ref: str(p.ref, 80).trim(), amount: p.amount === "" || p.amount == null ? null : num(p.amount, 0) }
-        : { date: isoDate(p.date), ref: str(p.ref, 80).trim(), mode: str(p.mode, 40).trim() };
+      // amounts: optional, a number when given (Paid is the "amount posted" the reports add up)
+      const amt = (v, label) => { if (v === "" || v == null) return null; const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[$,\s]/g, "")); if (!isFinite(n)) throw bad(label + " is not a number."); return Math.round(n * 100) / 100; };
+      const txt = (v, n) => str(v, n).trim();
+      let proof;
+      if (h.dept === "posting") {
+        const paid = amt(p.paid != null && p.paid !== "" ? p.paid : p.amount, "Paid");
+        proof = { date: isoDate(p.date), ref: txt(p.ref, 80), amount: paid, paid, allowed: amt(p.allowed, "Allowed"), adjustment: amt(p.adjustment, "Adjustment"), adj_reason: txt(p.adj_reason, 60),
+          deductible: amt(p.deductible, "Deductible"), coinsurance: amt(p.coinsurance, "Co-insurance"), copay: amt(p.copay, "Co-pay"), writeoff: amt(p.writeoff, "Write-off"),
+          check_date: isoDate(p.check_date), pay_type: txt(p.pay_type, 40) };
+        for (const k of ["allowed", "paid", "adjustment", "deductible", "coinsurance", "copay", "writeoff", "check_date", "pay_type", "adj_reason"]) if (proof[k] == null || proof[k] === "") delete proof[k];
+        // the amounts must add up: Allowed = Paid + Deductible + Co-insurance + Co-pay (to the cent). Checked whenever any of them is
+        // entered; only the older "amount posted" alone (an earlier version of the form) is taken as before.
+        if (["allowed", "paid", "deductible", "coinsurance", "copay"].some((k) => p[k] !== "" && p[k] != null)) {
+          if (proof.allowed == null || proof.paid == null) throw bad("Enter the allowed and the paid amounts: paid, deductible, co-insurance and co-pay add up to the allowed.");
+          const total = Math.round((proof.paid + (proof.deductible || 0) + (proof.coinsurance || 0) + (proof.copay || 0)) * 100) / 100;
+          if (Math.abs(proof.allowed - total) > 0.005) throw bad(`The amounts do not add up: allowed ${proof.allowed.toFixed(2)}, but paid + deductible + co-insurance + co-pay = ${total.toFixed(2)}. Check the EOB.`);
+        }
+      } else {
+        proof = { date: isoDate(p.date), ref: txt(p.ref, 80), mode: txt(p.mode, 40) };
+        // for the Submission file (the team's Conso layout): typed by the person, editable for now
+        if (h.dept === "submission") for (const [k, n] of [["inv_status", 80], ["bucket", 60], ["claim_type", 60], ["type", 60]]) { const v = txt(p[k], n); if (v) proof[k] = v; }
+      }
       // Names of the proof files attached to the claim with this step (optional), so the history shows what backs it.
       const files = (Array.isArray(p.files) ? p.files : []).slice(0, 10).map((f) => str(f, 200).trim()).filter(Boolean);
       if (files.length) proof.files = files;

@@ -822,10 +822,35 @@ Brahmastra Clients / <Client> /
    Inventory        the client's inventory files; Upload inventory > Open OneDrive opens this folder
    Production /
       AR                "AR Production - <Client> - Nov 2026.xlsx": one row per entry a biller saves
-      Payment posting   "Payment posting Production - …": one row per action the posting desk takes
-      Submission        submissions and the 48-hour rechecks
+      Payment posting   "Payment posting Production - …": one row per claim the posting desk works
+      Submission        submissions and the 48-hour rechecks, in the team's Production Format Conso layout
       Rejections        rejected claims worked by the Rejections person
 ```
+
+Dates are written as Excel dates shown as mm/dd/yyyy and amounts as money, so the files read the same whatever OneDrive's language.
+Each desk's rows go to a tab of its own (**Payment posting**, **Submission**, **Rejections**) under that tab's header; a new
+month's file starts from the AR template, so its first tab is renamed and given the desk's header. A file that already held
+rows in another layout earlier in the month gets a new tab, so no tab mixes two layouts.
+
+- **Submission** uses the team's *Production Format Conso* columns, spelling included: Client (the client code), UID, Date
+  (DOS), Patient, Invoice, NAEC Order No, VEC S/W Insurance Name, Insurance, Balance, VEC Patient Balance, Location, Type,
+  VEC Claims Sourse, VEC Submission Type, Old status, Old Comment, old bucket, Old Onhold/Pending, Allocation Date,
+  Allocation (left blank), DOW, EMPID, Worked by, Inventory Status, Comment, Bucket, Claim Type. Most fill themselves:
+  the client's own columns (NAEC, VEC, UID, Type...) come from the client's inventory file row, whatever their case or
+  spacing (blank when the file has no such column); the old status, comment and bucket are the inventory file's; UID
+  is the file's own, otherwise the same key as the AR file (patient, DOS, payer, CPT). The person types **Inventory
+  Status**, **Bucket**, **Claim Type** and **Type** in the Completed form (free text with suggestions for now; Type left
+  empty takes the inventory file's; Claim Type starts from the biller's SAAG action), and the comment is the Comment
+  column. Pending, Need assistance and the rechecks write their own status, bucket and comment.
+- **Payment posting** is one row per claim with what the poster enters in the Completed form from the EOB / ERA:
+  Check / EFT #, Check / EFT date, Payment type, Posted date, Allowed, Paid, Adjustment and its reason (e.g. CO-45),
+  Deductible, Co-insurance, Co-pay and Write-off (all optional but the check number and posted date), next to what
+  Brahmastra knows (client, UID, DOS, patient, invoice, insurance, location, CPT, billed, balance). Patient
+  responsibility (deductible + co-insurance + co-pay) and the balance after posting (balance - paid - adjustment -
+  write-off) add up by themselves. The amounts must add up: **Allowed = Paid + Deductible + Co-insurance + Co-pay**, to the
+  cent, or the claim cannot be marked completed (the form shows the difference; the server checks the same). With no
+  amount entered (a posting correction with no payment) there is nothing to check. Paid is also the amount posted the
+  reports add up.
 
 A new file starts by itself on the 1st of each month in each folder; nobody links or renames anything. Each folder
 gets a link anyone at Purview can open, and supervisors see every path, this month's file and when the last row was
