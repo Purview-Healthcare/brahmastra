@@ -2921,7 +2921,10 @@ async function describeProfile(env, c) {
   for (const [s, label] of SERVICES) {
     const [m, l, b] = RESP_COLS[s];
     const who = c[m] === "person" && c[l] ? names.get(c[l]) + (c[b] ? " (backup " + names.get(c[b]) + ")" : "") : c[m] === "client" ? "client does it" : c[m] === "biller" ? "biller does it" : "not set";
-    out.push(`${label}: ${scope.includes(s) ? "in scope" + (targets[s] ? ", target " + targets[s] + " a day" : "") + ", " : scope.length ? "not in scope, " : ""}${who}`);
+    // The TAT sets every hand-off's due time, so a change to it is kept too (Rejections work to the Submission TAT).
+    const tatOf = s === "posting" || s === "submission" ? s : s === "rejection" && !scope.includes("submission") ? "submission" : "";
+    const tat = tatOf && scope.includes(s) ? ", TAT " + tatHours(c, tatOf) + " working hours" : "";
+    out.push(`${label}: ${scope.includes(s) ? "in scope" + (targets[s] ? ", target " + targets[s] + " a day" : "") + ", " : scope.length ? "not in scope, " : ""}${who}${tat}`);
   }
   out.push("Submission follow-up: " + (c.submission_check_mode === "person" ? names.get(c.submission_check_person) || "someone" : c.submission_check_mode === "biller" ? "the biller who sent it" : "not set")
     + (scope.includes("submission") ? ", recheck " + subcheckHours(c) + " working hours after submitting" : ""));

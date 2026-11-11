@@ -160,6 +160,27 @@ const heldBy = async (w, userId) => (await w.row("SELECT COUNT(*) AS n FROM clai
   ok("E-03: the moved biller is no longer on the team lead's Team status (their claims are in the pool, not stuck with them)", !ts.rows.some((x) => x.id === arun.id), ts.rows.map((x) => x.name));
 }
 
+/* A new client of Tina's with every part of the profile: AR, Payment posting and Submission (the people from the roster). */
+const profileOf = async (w, tat, over = {}) => {
+  const id = async (n) => (await w.U(n)).id;
+  return { scope: ["ar", "posting", "submission"], targets: { ar: 40 }, tat, resp: { ar: { lead: await id("Tina Lead") }, posting: { lead: await id("Pavan Poster") }, submission: { lead: await id("Sahil Submitter") }, subcheck: { mode: "biller" } }, ...over };
+};
+{
+  S("E-04: a TAT change is kept in the client's change history");
+  const w = await world();
+  const TI = await w.firstIn("Tina Lead");
+  const nc = (await TI("clients.save", { name: "Tat Clinic", code: "TC", follow_up_days: 30, active: true, locations: ["Main"], profile: await profileOf(w, { posting: 24, submission: 24, subcheck: 48 }) })).client.id;
+  const h0 = (await TI("clients.history", { client_id: nc })).rows.length;
+  const r = await w.T(async () => TI("clients.save", { id: nc, name: "Tat Clinic", code: "TC", follow_up_days: 30, active: true, profile: await profileOf(w, { posting: 8, submission: 72, subcheck: 48 }) }));
+  const h = (await TI("clients.history", { client_id: nc })).rows;
+  const said = h.slice(0, h.length - h0).map((x) => x.detail).join(" | ");
+  ok("E-04: the TATs are saved and the change history gets a line for it", r.ok && h.length === h0 + 1, { e: r.e, said });
+  ok("E-04: Payment posting TAT 24 -> 8 shows with what it was", /Payment posting: in scope, Pavan Poster, TAT 8 working hours\s+\(was: in scope, Pavan Poster, TAT 24 working hours\)/.test(said), said);
+  ok("E-04: Submission TAT 24 -> 72 shows with what it was", /Submission: in scope, Sahil Submitter, TAT 72 working hours\s+\(was: in scope, Sahil Submitter, TAT 24 working hours\)/.test(said), said);
+  const created = h[h.length - 1].detail;
+  ok("E-04: the line made when the client was added names the TATs too", /Payment posting: in scope, Pavan Poster, TAT 24 working hours/.test(created), created);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
