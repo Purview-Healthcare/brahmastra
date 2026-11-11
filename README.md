@@ -142,7 +142,8 @@ not in Brahmastra.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
-  inventory or allocation.
+  inventory or allocation. Someone Shastra moves off AR gives their AR claims back
+  to the pool, as when someone leaves.
 
 #### Client 360
 

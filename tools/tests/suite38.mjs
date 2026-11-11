@@ -140,6 +140,26 @@ const heldBy = async (w, userId) => (await w.row("SELECT COUNT(*) AS n FROM clai
   ok("E-02: exactly half (6 of 12) is applied", r.ok && (await w.row("SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1")).n === 6, r.e);
 }
 
+{
+  S("E-03: someone Shastra moves off AR does not keep AR claims");
+  const w = await world({ feed: baseFeed().map((r) => (r.emp_id === "A2" ? { ...r, also_in_departments: "Posting" } : r)) });
+  const AR = await w.firstIn("Arun Agent"), TI = await w.firstIn("Tina Lead");
+  const arun = await w.U("Arun Agent"), bela = await w.U("Bela Agent"), cyra = await w.U("Cyra Agent");
+  await giveClaims(w, arun.id, 4); await giveClaims(w, bela.id, 2); await giveClaims(w, cyra.id, 2, w.lake.id);
+  // Bela (AR, also in Posting) is on a posting hand-off; she moves to Posting only
+  const hc = (await w.row("SELECT id FROM claims WHERE client_id = ? AND state = 'open' LIMIT 1", w.sun.id)).id;
+  await w.sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id) VALUES ('ho-e03', ?, ?, 'posting', 'pending', ?, ?, ?)", hc, w.sun.id, Date.now(), Date.now() + 86400000, bela.id);
+  w.st.feed = baseFeed().map((r) => (r.emp_id === "A1" ? { ...r, department: "Posting" } : r.emp_id === "A2" ? { ...r, department: "Posting" } : r.emp_id === "A3" ? { ...r, department: "Posting", also_in_departments: "AR" } : r));
+  const r = await w.sync();
+  const nx = await w.T(() => AR("queue.next", {}));
+  ok("E-03: moved from AR to Posting: their 4 AR claims go back to the pool", r.ok && (await heldBy(w, arun.id)) === 0 && (await w.row("SELECT COUNT(*) AS n FROM claims WHERE assigned_to IS NULL AND state = 'open' AND client_id = ?", w.sun.id)).n > 0, r.e);
+  ok("E-03: Work the next claim no longer hands them an AR claim", nx.ok && !nx.r.claim, nx);
+  ok("E-03: AR plus Posting moved to Posting only: AR claims back too, the posting hand-off stays theirs", (await heldBy(w, bela.id)) === 0 && (await w.row("SELECT lead_id FROM handoffs WHERE id = 'ho-e03'")).lead_id === bela.id);
+  ok("E-03: still on AR as an also-in department: they keep their claims", (await heldBy(w, cyra.id)) === 2);
+  const ts = await TI("team.status", { from: w.today(), to: w.today(), today: w.today() });
+  ok("E-03: the moved biller is no longer on the team lead's Team status (their claims are in the pool, not stuck with them)", !ts.rows.some((x) => x.id === arun.id), ts.rows.map((x) => x.name));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

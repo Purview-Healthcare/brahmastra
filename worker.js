@@ -2042,6 +2042,9 @@ async function importRoster(env, user, payload) {
       n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.shift, n.city, id);
     p.id = id;
     if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+    // Moved off AR in Shastra (to Payment posting or Submission): their AR claims go back to the pool, as when someone leaves.
+    // Their desk hand-offs stay with them: the desk is still theirs.
+    else if (n.active && p.match && isAR(p.match) && !isAR(n)) await run(env, "UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', updated_at = ? WHERE assigned_to = ? AND state IN ('assigned','in_progress')", Date.now(), id);
   }
   const off = [...leaving.map((u) => u.id), ...dropped];
   for (const id of off) { await run(env, "UPDATE users SET active = 0 WHERE id = ?", id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
