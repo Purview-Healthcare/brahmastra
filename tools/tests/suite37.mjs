@@ -1,2 +1,159 @@
-/* suite37: regression checks for the bug-test fixes (desks, hand-offs and their TAT). */
-console.log("\n==== 0 passed, 0 failed of 0");
+/* suite37: regression checks for the bug-test fixes (desks, hand-offs and their TAT): the life of a claim through Payment
+   posting, Submission, Rejections and the recheck, the desk dashboard, the TAT tallies and the OneDrive rows. Each check names
+   the finding it guards. A made-up roster and a fake Microsoft Graph; made-up data only. */
+import { makeRig } from "./rig.mjs";
+const results = []; let section = "";
+const S = (n) => { section = n; console.log("\n## " + n); };
+const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 600))); };
+const P = (o) => Object.assign({ emp_id: "", name: "", position: "Agent", function: "Operations", department: "AR", also_in_departments: "", status: "Working", project: "", also_on_projects: "", reports_to: "", shift: "", location: "Pune", doj: "2026-01-05", exit_date: null, email: "" }, o);
+const feed = [
+  P({ emp_id: "M1", name: "Mona Manager", position: "Manager", project: "Sunrise Eye Care", also_on_projects: "Lakeview Dental Group", email: "mona@purview-healthcare.com" }),
+  P({ emp_id: "T1", name: "Tina Lead", position: "Team Lead", project: "Sunrise Eye Care", reports_to: "Mona Manager", email: "tina@purview-healthcare.com" }),
+  P({ emp_id: "T2", name: "Lara Lead", position: "Team Lead", project: "Lakeview Dental Group", reports_to: "Mona Manager", email: "lara@purview-healthcare.com" }),
+  P({ emp_id: "S1", name: "Sima Expert", position: "SME", project: "Sunrise Eye Care", reports_to: "Tina Lead", email: "sima@purview-healthcare.com" }),
+  P({ emp_id: "A1", name: "Arun Agent", project: "Sunrise Eye Care", reports_to: "Tina Lead", email: "arun@purview-healthcare.com" }),
+  P({ emp_id: "A2", name: "Bela Agent", project: "Sunrise Eye Care", reports_to: "Tina Lead", email: "bela@purview-healthcare.com" }),
+  P({ emp_id: "A3", name: "Cyra Agent", project: "Lakeview Dental Group", reports_to: "Lara Lead", email: "cyra@purview-healthcare.com" }),
+  P({ emp_id: "D1", name: "Pia Poster", department: "Posting", project: "Sunrise Eye Care", reports_to: "Pat Postlead", email: "pia@purview-healthcare.com" }),
+  P({ emp_id: "D2", name: "Otto Poster", department: "Posting", project: "Sunrise Eye Care", reports_to: "Pat Postlead", email: "otto@purview-healthcare.com" }),
+  P({ emp_id: "D3", name: "Pat Postlead", position: "Team Lead", department: "Posting", project: "Sunrise Eye Care", reports_to: "Mona Manager", email: "pat@purview-healthcare.com" }),
+  P({ emp_id: "D4", name: "Quin Submit", department: "Submission", project: "Sunrise Eye Care", reports_to: "Mona Manager", email: "quin@purview-healthcare.com" }),
+  P({ emp_id: "D5", name: "Rex Reject", department: "Submission", project: "Sunrise Eye Care", reports_to: "Mona Manager", email: "rex@purview-healthcare.com" }),
+  P({ emp_id: "D6", name: "Lex Lakepost", department: "Posting", project: "Lakeview Dental Group", reports_to: "Mona Manager", email: "lex@purview-healthcare.com" }),
+];
+const J = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "Content-Type": "application/json" } });
+// ---- a fake Microsoft Graph (as in suite34): folders, files, worksheets per workbook, and every range write kept ----
+const AR_TEMPLATE = ["Sr. No", "Location", "Project", "Practice", "Uni", "IG Claim ID#/Charge ID#", "Patient Name", "DOS", "Payer", "Age", "Bucket", "Billed Amount($)", "Balance Amount($)", "CPT",
+  "Comments/Notes", "Status", "Sub Status", "Action", "Bucket", "Mode of Work", "Start Time", "End Time", "Total Duration", "Date Worked", "Emp. ID", "Associate Name", "Status", "Errors", "Team Lead", "Date Range", "Week"];
+const OD = { items: new Map(), seq: 0, books: new Map(), writes: [] };
+const mk = (name, parent, kind) => { const id = "it" + (++OD.seq); const it = { id, name, parent, kind, webUrl: "https://od.example/" + id }; OD.items.set(id, it);
+  if (kind === "file") OD.books.set(id, { n: 1, sheets: [{ id: "s1", name: "Sheet1", rows: [AR_TEMPLATE.slice()] }] }); return it; };
+const child = (parent, name) => [...OD.items.values()].find((x) => x.parent === parent && x.name.toLowerCase() === name.toLowerCase());
+const out = (it) => ({ id: it.id, name: it.name, webUrl: it.webUrl, parentReference: { driveId: "d1" }, ...(it.kind === "folder" ? { folder: {} } : { file: {} }) });
+const colNum = (s) => [...s].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+const graph = async (url, init) => {
+  const m = (init && init.method) || "GET"; const u = new URL(url); const path = decodeURIComponent(u.pathname.replace(/^\/v1\.0/, ""));
+  let r;
+  if (m === "POST" && (r = path.match(/^\/users\/[^/]+\/drive\/root\/children$/))) { const b = JSON.parse(init.body); if (child("root", b.name)) return J({}, 409); return J(out(mk(b.name, "root", "folder")), 201); }
+  if (m === "GET" && (r = path.match(/^\/users\/[^/]+\/drive\/root:\/(.+?):?$/))) {
+    // a path under the root, one folder at a time
+    let cur = "root"; for (const part of r[1].replace(/:$/, "").split("/")) { const it = child(cur, part); if (!it) return J({}, 404); cur = it.id; } return J(out(OD.items.get(cur))); }
+  if (m === "PUT" && (r = path.match(/^\/users\/[^/]+\/drive\/root:\/(.+):\/content$/))) {
+    let cur = "root"; const parts = r[1].split("/"); for (const part of parts.slice(0, -1)) cur = (child(cur, part) || mk(part, cur, "folder")).id;
+    if (child(cur, parts[parts.length - 1])) return J({}, 409); return J(out(mk(parts[parts.length - 1], cur, "file")), 201); }
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/children$/))) { const b = JSON.parse(init.body); if (child(r[1], b.name)) return J({}, 409); return J(out(mk(b.name, r[1], "folder")), 201); }
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/createLink$/))) return J({ link: { webUrl: "https://purview.sharepoint.example/share/" + r[1] } });
+  if (m === "PUT" && (r = path.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+):\/content$/))) { if (child(r[1], r[2])) return J({}, 409); return J(out(mk(r[2], r[1], "file")), 201); }
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+?):?$/))) { const it = child(r[1], r[2].replace(/:$/, "")); return it ? J(out(it)) : J({}, 404); }
+  const bk = (id) => OD.books.get(id), sh = (b, sid) => b && b.sheets.find((x) => x.id === sid);
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets$/))) return J({ value: bk(r[1]).sheets.map((x) => ({ id: x.id, name: x.name })) });
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/add$/))) { const b = bk(r[1]); const nm = JSON.parse(init.body).name;
+    if (b.sheets.some((x) => x.name.toLowerCase() === nm.toLowerCase())) return J({ error: { message: "exists" } }, 409); const s = { id: "s" + (++b.n), name: nm, rows: [] }; b.sheets.push(s); return J({ id: s.id, name: s.name }); }
+  if (m === "PATCH" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/([^/]+)$/))) { const s = sh(bk(r[1]), r[2]); s.name = JSON.parse(init.body).name; return J({ id: s.id, name: s.name }); }
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/([^/]+)\/usedRange/))) { const s = sh(bk(r[1]), r[2]); const n = Math.max(1, s.rows.length);
+    return J({ rowCount: n, address: s.name + "!A1:AE" + n, values: s.rows.length ? s.rows : [[""]] }); }
+  if (m === "POST" && (r = path.match(/\/range\(address='[^']*'\)\/clear$/))) return J({});
+  if (m === "PATCH" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/([^/]+)\/range\(address='([A-Z]+)(\d+):[A-Z]+\d+'\)\/format\//))) return J({});
+  if (m === "PATCH" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/([^/]+)\/range\(address='([A-Z]+)(\d+):[A-Z]+\d+'\)$/))) {
+    const s = sh(bk(r[1]), r[2]), at = Number(r[4]) - 1, c0 = colNum(r[3]) - 1, body = JSON.parse(init.body);
+    OD.writes.push({ file: (OD.items.get(r[1]) || {}).name || "", values: body.values });
+    body.values.forEach((row, i) => { const cur = s.rows[at + i] || []; row.forEach((v, k) => { cur[c0 + k] = v; }); s.rows[at + i] = cur; }); return J({}); }
+  return J({ error: "fake graph: no route " + m + " " + path }, 404);
+};
+const fetchMock = async (url, init) => {
+  if (url.includes("brahmastra_roster")) return J({ ok: true, rows: feed });
+  if (url.includes("brahmastra_holidays") || url.includes("brahmastra_wfm") || url.includes("brahmastra_live") || url.includes("brahmastra_floor")) return J({ ok: false, error: "not here" }, 404);
+  if (url.includes("login.microsoftonline.com")) return J({ access_token: "t" });
+  if (url.includes("graph.microsoft.com")) return graph(url, init);
+  return new Response("nope", { status: 500 });
+};
+const _log = console.log; console.log = (...a) => { if (/^(Snapshot|Folders|Shastra|TAT|Escalation|Digest)/.test(String(a[0]))) return; _log(...a); };
+const rig = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48), MS_TENANT_ID: "t", MS_CLIENT_ID: "c", MS_CLIENT_SECRET: "s" }, fetchMock });
+const { as, tryOp, sha } = rig; const T = (fn) => tryOp(fn);
+const DB = rig.backend.env.DB; const sql = (q, ...a) => DB.prepare(q).bind(...a).run();
+const rows = async (q, ...a) => (await DB.prepare(q).bind(...a).all()).results;
+const row1 = async (q, ...a) => (await rows(q, ...a))[0];
+await rig.app.seedDemo(() => {});
+const login = async (email, pw) => as(null)("auth.login", { email, passHash: await sha(pw) });
+const A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
+await A("roster.syncShastra");
+const users = (await A("users.list")).users; const U = (n) => { const u = users.find((x) => x.name === n); if (!u) throw new Error("no user " + n); return u; };
+await sql("UPDATE sessions SET expires_at = expires_at + ?", 400 * 86400000);
+const firstIn = async (name) => { const u = U(name); await as(null)("auth.firstPassword", { user_id: u.id, passHash: await sha("pw-" + u.email) }); const tok = (await login(u.email, "pw-" + u.email)).token;
+  await sql("UPDATE sessions SET expires_at = expires_at + ? WHERE token = ?", 400 * 86400000, tok); return as(tok); };
+const clients = (await A("clients.list")).clients; const sun = clients.find((c) => /Sunrise/.test(c.name)), lake = clients.find((c) => /Lakeview/.test(c.name));
+// the clock: IST wall time; every read ticks 1 ms so two steps never share a millisecond (as on a real server)
+const IST = (y, mo, d, h = 0, mi = 0) => Date.UTC(y, mo - 1, d, h, mi) - 330 * 60000;
+const real = Date.now; let tick = 0;
+const setNow = (ms) => { if (ms == null) { Date.now = real; return; } tick = ms; Date.now = () => tick++; };
+const nowIso = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+const call = (Pf, op, p = {}) => Pf(op, { today: nowIso(), ...p });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+for (const [dept, lead, backup] of [["posting", "Pia Poster", "Otto Poster"], ["submission", "Quin Submit", null], ["rejection", "Rex Reject", null]]) {
+  const r = await T(() => A("clients.saveResponsibility", { client_id: sun.id, dept, mode: "person", lead: U(lead).id, backup: backup ? U(backup).id : null })); if (!r.ok) console.log("responsibility", dept, r.e);
+}
+const AR = await firstIn("Arun Agent"), BE = await firstIn("Bela Agent"), CY = await firstIn("Cyra Agent"), TI = await firstIn("Tina Lead");
+const PI = await firstIn("Pia Poster"), OT = await firstIn("Otto Poster"), QU = await firstIn("Quin Submit"), RX = await firstIn("Rex Reject"), LX = await firstIn("Lex Lakepost");
+const SAAG = {
+  post: { status: "Claim Paid", sub_status: "EOB Available", action: "Need to Post/Posting Correction", bucket: "Closed", effective: "AR Closed-Pending Posting" },
+  resub: { status: "Claim In Process", sub_status: "Need to allow some time", action: "Need to Resubmit", bucket: "Purview", effective: "Pending-Submission" },
+  rej: { status: "Claim Rejected", sub_status: "Other rejection Reason", action: "Need to Resubmit", bucket: "Purview", effective: "Pending-Submission" },
+  fu: { status: "Claim In Process", sub_status: "Need to allow some time", action: "EOB not Available/Requested EOB", bucket: "Payer", effective: "Pending-Collectible Insurance" },
+};
+const NOTE = (t = "Checked the payer portal, claim on file") => ({ source: "Portal", findings: t });
+const PDF = Buffer.from("%PDF-1.4 made-up eob\n%%EOF").toString("base64");
+const claim = (id) => row1("SELECT * FROM claims WHERE id = ?", id);
+// the fields a failed check prints
+const brief = async (id) => { const c = await claim(id); return c && { state: c.state, handoff_status: c.handoff_status, bucket: c.last_bucket, effective: c.last_effective, first_up: c.first_up, follow_up_on: c.follow_up_on, assigned_to: c.assigned_to, state_reason: c.state_reason }; };
+const hos = (id) => rows("SELECT * FROM handoffs WHERE claim_id = ? ORDER BY created_at, rowid", id);
+const openH = async (id, dept) => (await hos(id)).filter((h) => h.dept === dept && ["pending", "assigned", "client"].includes(h.status)).slice(-1)[0];
+// open claims of a client given to a biller (a fresh set each time)
+let used = 0;
+const give = async (name, n, client = sun) => { const pool = (await A("claims.list", { client_id: client.id, state: "open", page_size: 300 })).rows.filter((c) => !c.assigned_to).slice(0, n);
+  await A("alloc.apply", { client_id: client.id, assignments: pool.map((c) => ({ id: c.id, user_id: U(name).id })) }); used += n; return pool.map((c) => c.id); };
+// a biller's entry from My day (open, then save)
+const save = async (who, id, saag, extra = {}) => { await call(who, "queue.open", { id }); return call(who, "queue.complete", { id, saag, note: NOTE(extra.findings), desk: true, ...extra }); };
+const postIt = async (id) => call(PI, "handoffs.close", { id: (await openH(id, "posting")).id, outcome: "complete", proof: { date: nowIso(), ref: "CHK-1", allowed: "100", paid: "80", adjustment: "20" }, note: "Posted" });
+const submitIt = async (who, id, dept = "submission") => call(who, "handoffs.close", { id: (await openH(id, dept)).id, outcome: "complete", proof: { date: nowIso(), ref: "B-1", mode: "Portal", ...(dept === "rejection" ? { code: "Taxonomy missing" } : {}) }, note: "Sent" });
+
+S("C-03: a recheck marked Need assistance leaves a claim Posting closed as it is");
+setNow(IST(2026, 11, 10, 10, 0));
+{
+  const ids = await give("Arun Agent", 3);
+  const posted = async (id) => { const c = await claim(id), g = await call(AR, "claims.get", { id }); return c.state === "closed" && c.handoff_status === "posted" && c.last_bucket === "Closed" && c.last_effective === "Posting Closed" && g.claim.locked; };
+  for (const id of ids) {
+    setNow(IST(2026, 11, 10, 10, 0));
+    await save(AR, id, SAAG.resub); await submitIt(QU, id);
+    await call(AR, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF });
+    await call(AR, "queue.complete", { id, saag: SAAG.post, note: NOTE("Payment found on the portal, EOB attached"), rework: true });
+    await postIt(id);
+  }
+  setNow(IST(2026, 11, 12, 12, 0));   // the recheck is open now
+  await sql("DELETE FROM user_notices");
+  let rc = await openH(ids[0], "subcheck");
+  let r = await T(() => call(QU, "handoffs.close", { id: rc.id, outcome: "back", reason: "Payer has no record yet", note: "Payer portal shows no claim on file yet" }));
+  ok("C-03: Need assistance from AR on the recheck is saved", r.ok && (await row1("SELECT status FROM handoffs WHERE id = ?", rc.id)).status === "back", r);
+  ok("C-03: ...the posted claim stays closed, Posting Closed, bucket Closed, read only", await posted(ids[0]), await brief(ids[0]));
+  ok("C-03: ...it is not put back on the biller's list (not first up, no follow-up today)", (await claim(ids[0])).first_up === 0 && (await claim(ids[0])).follow_up_on === "", await brief(ids[0]));
+  ok("C-03: ...and nobody is told it is back on their list", !(await rows("SELECT text FROM user_notices")).some((n) => /back to you|first on your list/.test(n.text)), await rows("SELECT text FROM user_notices"));
+  const ev = await row1("SELECT data_json FROM claim_events WHERE claim_id = ? AND kind = 'handoff_back'", ids[0]);
+  ok("C-03: ...the history says the claim stays closed (not 'on the biller's list today')", ev && JSON.parse(ev.data_json).kept === "closed", ev);
+  rc = await openH(ids[1], "subcheck");
+  r = await T(() => call(QU, "handoffs.close", { id: rc.id, outcome: "client", reason: "Need signature or documents", note: "Need the signed form from the office" }));
+  ok("C-03: Need assistance from client on the recheck keeps the claim Posting Closed and read only", r.ok && await posted(ids[1]), [r, await brief(ids[1])]);
+  r = await T(() => call(QU, "handoffs.close", { id: rc.id, outcome: "resume", note: "The office sent the form" }));
+  ok("C-03: ...and Client answered leaves it so too", r.ok && await posted(ids[1]), [r, await brief(ids[1])]);
+  // the same mistake in the sibling path: a rejected recheck on a posted claim goes to Rejections; Rejections resubmitting it kept
+  // the claim closed but lifted the lock (handoff_status 'submitted')
+  rc = await openH(ids[2], "subcheck");
+  r = await T(() => call(QU, "handoffs.close", { id: rc.id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy" }));
+  ok("C-03: a rejected recheck on a posted claim goes to Rejections and leaves the claim posted", r.ok && !!(await openH(ids[2], "rejection")) && await posted(ids[2]), r);
+  r = await T(() => submitIt(RX, ids[2], "rejection"));
+  ok("C-03: ...Rejections resubmitting it keeps the claim Posting Closed and read only", r.ok && await posted(ids[2]), [r, await brief(ids[2])]);
+}
+setNow(null);
+
+const fails = results.filter((x) => !x.pass);
+console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
+for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
+process.exit(fails.length ? 1 : 0);

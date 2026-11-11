@@ -6849,9 +6849,13 @@ const OPS = {
     // The four choices: completed, pending (still working, with a comment), need assistance from AR, need assistance from client.
     // ("assistance" is the older name for assistance from AR.)
     const outcome = payload.outcome === "assistance" ? "back" : payload.outcome;
+    // A claim already closed (Posting posted it, AR or the team lead closed it) or excluded stays as it is: a desk step on it
+    // afterwards (a recheck, a Rejections task) is kept on the hand-off and in the history, and never opens the claim again or
+    // lifts the read-only lock of a claim Posting closed.
+    const KEEP = " AND state NOT IN ('closed','excluded')", kept = c.state === "closed" || c.state === "excluded";
     // Back to AR: on the biller's desk today (or the pool when nobody has it).
-    const backToAr = (status, extra = "") => env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','closed','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,
-        state_reason = '', follow_up_on = ?, skipped_at = NULL, first_up = 1${extra}, updated_at = ? WHERE id = ?`);
+    const backToAr = (status, extra = "") => env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,
+        state_reason = '', follow_up_on = ?, skipped_at = NULL, first_up = 1${extra}, updated_at = ? WHERE id = ?${KEEP}`);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const note = str(payload.note, 2000).trim();
     const stmts = [];
@@ -6897,7 +6901,8 @@ const OPS = {
         // Submitted: back to the biller with a 15-day follow-up, and always a check after 48 working hours (accepted, or rejected?):
         // the follow-up person set on the client, the biller when the client says so, otherwise whoever submitted it.
         const fu = workingDayOnOrAfter(addDays(today, 15));
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
+        // a claim Posting closed meanwhile (a rejected recheck sent it here) keeps its Posting Closed status and read-only lock
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`).bind(fu, now, c.id));
         const cl = await one(env, "SELECT submission_check_mode, submission_check_person, submission_tat_hours, subcheck_hours FROM clients WHERE id = ?", h.client_id);
         // "The biller" is the AR biller of the claim (biller_id): on a Rejections hand-off created_by is whoever rejected the last recheck.
         const checker = cl && cl.submission_check_mode === "person" && cl.submission_check_person ? await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", cl.submission_check_person) : null;
@@ -6942,7 +6947,8 @@ const OPS = {
       if (!reason) throw bad("Pick what is needed from AR.");
       if (!commentOk(note)) throw bad("Write what AR should do, a few words at least.");
       const returns = await returnsOf(env, c.id) + 1;
-      const bounced = returns >= BOUNCE_LIMIT;
+      // (a claim that stays closed is not escalated either: nothing comes back to AR)
+      const bounced = returns >= BOUNCE_LIMIT && !kept;
       const text = `${DEPT_LABEL[h.dept]} needs assistance from AR (${reason}): ${note}` + (bounced ? ` [returned ${returns} times: for both team leads to review]` : "");
       guard = env.DB.prepare(`UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, reason, note, h.id);
       // The third return goes to the AR team lead's Needs attention as well (the department lead sees it on their dashboard).
@@ -6951,7 +6957,7 @@ const OPS = {
         ? backToAr(pfx + "_back", ", last_note = ?, escalated = 1, escalated_at = ?, escalated_by = ?").bind(pfx + "_back", today, text.slice(0, 600), now, h.biller_id || c.assigned_to || c.last_worked_by || h.created_by || null, now, c.id)
         : backToAr(pfx + "_back", ", last_note = ?").bind(pfx + "_back", today, text.slice(0, 600), now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
-      stmts.push(claimEvent(env, c.id, user, "handoff_back", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at, returns, bounced }));
+      stmts.push(claimEvent(env, c.id, user, "handoff_back", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at, returns, bounced, ...(kept ? { kept: c.state } : {}) }));
     } else if (outcome === "pending") {
       // Pending: still with the department, a comment on where it stands; the 24-hour TAT keeps running.
       if (!commentOk(note)) throw bad("Write where it stands, a few words at least.");
@@ -6978,7 +6984,7 @@ const OPS = {
       // team lead sends it (attention.clientSent starts that clock: a request nobody sent is not chased).
       guard = env.DB.prepare(`UPDATE handoffs SET status = 'client', reason = ?, note = ?, paused_at = ?, client_req_by_name = ?, chase_at = NULL,
           client_sent_at = NULL, client_sent_by = NULL, client_sent_by_name = '', client_sent_how = '', client_sent_note = '' WHERE id = ? AND status IN ('pending','assigned')`).bind(reason, note, now, user.name, h.id);
-      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, last_bucket = 'Client', updated_at = ? WHERE id = ?").bind(pfx + "_client", "Waiting on client (" + DEPT_LABEL[h.dept] + ")", now, c.id));
+      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, last_bucket = 'Client', updated_at = ? WHERE id = ?" + KEEP).bind(pfx + "_client", "Waiting on client (" + DEPT_LABEL[h.dept] + ")", now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_client", DEPT_LABEL[h.dept], { dept: h.dept, reason, note }));
     } else if (outcome === "resume") {
@@ -6986,7 +6992,7 @@ const OPS = {
       if (h.status !== "client") throw bad("Only a claim waiting on the client can be resumed.");
       const due = h.due_at;
       guard = env.DB.prepare("UPDATE handoffs SET status = CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'pending' END, chase_at = NULL, client_answered_at = ?, note = ? WHERE id = ? AND status = 'client'").bind(now, note || h.note || "", h.id);
-      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, updated_at = ? WHERE id = ?").bind("with_" + (h.dept === "subcheck" ? "submission" : h.dept), "With " + DEPT_LABEL[h.dept], now, c.id));
+      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, updated_at = ? WHERE id = ?" + KEEP).bind("with_" + (h.dept === "subcheck" ? "submission" : h.dept), "With " + DEPT_LABEL[h.dept], now, c.id));
       if (note) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]}: client answered. ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_resume", DEPT_LABEL[h.dept], { dept: h.dept, note, due_at: due }));
     } else throw bad("Pick what happened: completed, in process, pending, need assistance from AR, need assistance from client or other.");
@@ -6995,7 +7001,8 @@ const OPS = {
     const sentBy = h.biller_id || h.created_by;
     const billerId = sentBy && sentBy !== user.id ? sentBy : null;
     const tellBiller = { complete: h.dept === "posting" ? "posted" : h.dept === "subcheck" ? "confirmed the payer accepted" : "submitted", back: "sent back to you", client: "is waiting on the client for" }[outcome];
-    if (billerId && tellBiller && h.dept !== "subcheck") {
+    // a claim that stays closed is not sent back to anyone's list, so nobody is told it is
+    if (billerId && tellBiller && h.dept !== "subcheck" && !(outcome === "back" && kept)) {
       const cno = c.claim_no || c.account_no || "a claim";
       const text = outcome === "complete" ? `${user.name} ${tellBiller} claim ${cno} (${DEPT_LABEL[h.dept]} complete)`
         : outcome === "back" ? `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${cno} back to you (${str(payload.reason, 80).trim()})`
@@ -7003,7 +7010,7 @@ const OPS = {
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), billerId, now, text.slice(0, 300), outcome === "back" ? "queue" : "history", h.client_id));
     }
     // Sent back to AR: the biller whose list it is on hears too (when that is someone else), and it is first on their list.
-    if (outcome === "back" && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
+    if (outcome === "back" && !kept && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), c.assigned_to, now,
         `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${c.claim_no || c.account_no || ""} back to AR (${str(payload.reason, 80).trim()}). It is first on your list.`.slice(0, 300), "queue", h.client_id));
     if (guard && !changesOf(await guard.run())) throw bad(outcome === "resume" ? "Only a claim waiting on the client can be resumed." : outcome === "client" ? "It is already waiting on the client, or the hand-off is closed." : "This hand-off is already closed.");
