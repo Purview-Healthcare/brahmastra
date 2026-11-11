@@ -220,13 +220,16 @@ function parseMoney(v) {
   if (v == null) return null;
   if (typeof v === "number") return isNaN(v) ? null : v;
   let s = String(v).trim().toUpperCase();
-  if (!s || /^(-+|N\/?A|#N\/A|NULL|NONE)$/.test(s)) return null;
+  // a formula written as text in a CSV ("=SUM(F2:F9)") is not an amount
+  if (!s || /^(-+|N\/?A|#N\/A|NULL|NONE)$/.test(s) || s[0] === "=") return null;
   const neg = /\(.*\)/.test(s) || /^-|^\$\s*-|-$/.test(s) || /\bCR$/.test(s);
   const n = parseFloat(s.replace(/\b(CR|DR)$/, "").replace(/[^0-9.]/g, ""));
   if (isNaN(n)) return null;
   return neg ? -n : n;
 }
 function excelSerialToISO(n) { return new Date(Math.round((n - 25569) * 86400000)).toISOString().slice(0, 10); }
+// a day that is on the calendar (not 02/29/2026 or 04/31/2026), as the server's isoDate checks it
+const isRealDay = (y, m, d) => m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
 function parseDateAny(v) {
   if (v == null || v === "") return "";
   if (v instanceof Date) return isNaN(v) ? "" : isoOf(v);
@@ -236,13 +239,14 @@ function parseDateAny(v) {
   if (/^\d{5}(\.\d+)?$/.test(s)) { const n = Number(s); return n > 20000 && n < 90000 ? excelSerialToISO(n) : ""; }
   let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
   if (m) {
-    let mo = +m[1], da = +m[2], yr = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    // a two-digit year: 00 to 49 is 2000 to 2049, 50 to 99 is 1950 to 1999 (as a CSV's dates were read before)
+    let mo = +m[1], da = +m[2], yr = m[3].length === 2 ? (+m[3] < 50 ? 2000 : 1900) + +m[3] : +m[3];
     if (mo > 12 && da <= 12) { const t = mo; mo = da; da = t; }
-    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31 && yr > 1990 && yr < 2100) return `${yr}-${pad2(mo)}-${pad2(da)}`;
+    if (isRealDay(yr, mo, da) && yr > 1990 && yr < 2100) return `${yr}-${pad2(mo)}-${pad2(da)}`;
     return "";
   }
   m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
-  if (m) return `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}`;
+  if (m) return isRealDay(+m[1], +m[2], +m[3]) ? `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}` : "";
   const t = Date.parse(s);
   if (isNaN(t)) return "";
   const d = new Date(t);
@@ -251,9 +255,11 @@ function parseDateAny(v) {
 }
 
 /* ---------- reading spreadsheets ---------- */
+/* A CSV / text file is read as text, cell for cell: claim and account numbers keep every digit and their leading zeros, and
+   "12/14" or 05/06/2026 stay as written (parseMoney and parseDateAny read the money and date columns from the text). */
 function readWorkbook(buffer, fileName) {
   const isText = /\.(csv|txt|tsv)$/i.test(fileName || "");
-  const wb = isText ? XLSX.read(new TextDecoder("utf-8").decode(buffer), { type: "string", cellDates: false }) : XLSX.read(buffer, { type: "array", cellDates: false });
+  const wb = isText ? XLSX.read(new TextDecoder("utf-8").decode(buffer), { type: "string", cellDates: false, raw: true }) : XLSX.read(buffer, { type: "array", cellDates: false });
   return wb.SheetNames.map((name) => ({ name, rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" }) })).filter((s) => s.rows.length);
 }
 function detectHeaderRow(rows) {
