@@ -1931,7 +1931,23 @@ async function importRoster(env, user, payload) {
   const byEmp = new Map(); existing.forEach((u) => { if (u.emp_id) put(byEmp, u.emp_id.toUpperCase(), u); });
   const byEmail = new Map(existing.map((u) => [u.email, u]));
   // Exact full name also matches accounts created by hand before the roster, so they keep their password and get their Emp ID.
-  const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") put(byName, u.name.trim().toLowerCase(), u); });
+  // Every account of that name is kept (ones with a password or a sign-in first): a name match takes the first that may be theirs.
+  const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") { const k = u.name.trim().toLowerCase(); byName.set(k, [...(byName.get(k) || []), u]); } });
+  byName.forEach((l) => l.sort((a, b) => !!(b.pass_hash || b.last_login) - !!(a.pass_hash || a.last_login)));
+  // Emp ID first, then email, whatever order Shastra lists the rows in: an account a row has by its Emp ID is that row's, and
+  // no other row takes it by email or name. The no-email placeholder or the name alone joins a row only to an account that no
+  // row has by Emp ID or email and that carries no other Emp ID and no other email; the name only when no one else in Shastra
+  // has it. So a namesake who joins, or a new joiner with a leaver's name, gets an account of their own, and people with no
+  // Emp ID yet keep theirs (it has no Emp ID either).
+  const nameKey = (r) => r.name.trim().toLowerCase();
+  const nameRows = new Map(); rows.forEach((r) => nameRows.set(nameKey(r), (nameRows.get(nameKey(r)) || 0) + 1));
+  const empHit = (row) => (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || null;
+  const mailHit = (row) => (mailOk(row.email) && byEmail.get(row.email)) || null;
+  const byEmpRow = new Set(rows.map(empHit).filter(Boolean).map((u) => u.id));
+  const byKeyRow = new Set([...byEmpRow, ...rows.map(mailHit).filter(Boolean).map((u) => u.id)]);
+  const byPlaceholder = new Set(rows.map((r) => byEmail.get(placeholderEmail(r))).filter(Boolean).map((u) => u.id));
+  const weakOk = (row, u) => !byKeyRow.has(u.id) && !(u.emp_id && u.emp_id.toUpperCase() !== String(row.emp_id || "").toUpperCase())
+    && !(mailOk(row.email) && !/\.(comcom|con)$/.test(row.email) && !u.email_missing && u.email !== row.email);
   const domains = {}; rows.forEach((r) => { if (mailOk(r.email)) { const d = r.email.split("@")[1]; domains[d] = (domains[d] || 0) + 1; } });
   const plan = [], excluded = [], warnings = [], used = new Set(), dropped = new Set();
   // Two Shastra rows with the same email (or, with no email and no Emp ID, the same name) cannot both be applied:
@@ -1941,10 +1957,11 @@ async function importRoster(env, user, payload) {
   const claimed = new Map(), planMail = new Map();
   const skipRow = (row, match, issue) => { if (match) used.add(match.id); warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues: [issue], skipped: true }); };
   for (const row of rows) {
-    const match0 = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
+    const e = empHit(row), m = mailHit(row);
+    const named = nameRows.get(nameKey(row)) === 1 ? (byName.get(nameKey(row)) || []).filter((u) => !byPlaceholder.has(u.id)) : [];
     // A name or placeholder match already taken by another row is not this person's account.
-    const strong = match0 && ((row.emp_id && match0.emp_id && match0.emp_id.toUpperCase() === row.emp_id.toUpperCase()) || (mailOk(row.email) && match0.email === row.email));
-    const match = match0 && claimed.has(match0.id) && !strong ? null : match0;
+    const match = e || (m && !byEmpRow.has(m.id) ? m : null)
+      || [...named, byEmail.get(placeholderEmail(row))].find((u) => u && !claimed.has(u.id) && weakOk(row, u)) || null;
     const cls = rosterClassify(row, match && match.source === "roster" && match.active && match.roster_kind && match.roster_kind !== "agent" ? match.roster_kind : "");
     const twins = byMail.get(rowMail(row)) || [];
     if (!cls.reason && twins.length > 1) {
