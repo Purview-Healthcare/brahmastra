@@ -121,6 +121,25 @@ const heldBy = async (w, userId) => (await w.row("SELECT COUNT(*) AS n FROM clai
   ok("E-01: a name alone does not join a row to an account with another email (the hand-made account is left as it was)", r.ok && hh2.email === "hana@purview-healthcare.com" && !hh2.emp_id && hh2.source !== "roster", hh2);
 }
 
+{
+  S("E-02: a short Shastra answer changes nothing, also for a small team");
+  const w = await world();
+  const arun = await w.U("Arun Agent"); await giveClaims(w, arun.id, 3);
+  const before = (await w.row("SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1")).n;
+  w.st.feed = baseFeed().slice(0, 3);
+  let r = await w.sync();
+  const after = (await w.row("SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1")).n;
+  ok("E-02: 3 people sent while 12 are active: refused, with the reason", !r.ok && r.e === "Shastra sent 3 people while 12 are active here, so nothing was changed.", r.e);
+  ok("E-02: nobody is switched off and the biller keeps their claims", before === 12 && after === 12 && (await heldBy(w, arun.id)) === 3, { before, after });
+  const card = JSON.parse((await w.row("SELECT value_json FROM settings WHERE key = 'shastra_sync'")).value_json);
+  ok("E-02: the Roster card says why", card.ok === false && /nothing was changed/.test(card.error), card);
+  w.st.feed = baseFeed().slice(0, 1); r = await w.sync();
+  ok("E-02: one person sent reads '1 person'", !r.ok && /^Shastra sent 1 person while 12 are active here/.test(r.e), r.e);
+  // half of the active people is not "under half", so it is applied
+  w.st.feed = baseFeed().slice(0, 6); r = await w.sync();
+  ok("E-02: exactly half (6 of 12) is applied", r.ok && (await w.row("SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1")).n === 6, r.e);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

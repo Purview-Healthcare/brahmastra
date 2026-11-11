@@ -2069,10 +2069,11 @@ async function syncShastra(env, by) {
     throw new ApiError(502, "Purview Shastra did not send the roster: " + why);
   }
   const rows = Array.isArray(data.rows) ? data.rows : [];
-  // A short or empty answer is a fault on the way, not half the company leaving: nothing is applied.
+  // A short or empty answer is a fault on the way, not half the company leaving: nothing is applied (a small team too).
   const active = await one(env, "SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1");
-  if (!rows.length || (active && active.n >= 20 && rows.length < active.n * 0.5)) {
-    const error = `Shastra sent ${rows.length} people while ${active ? active.n : 0} are active here, so nothing was changed.`;
+  if (!rows.length || (active && rows.length < active.n * 0.5)) {
+    const n = active ? active.n : 0;
+    const error = `Shastra sent ${rows.length} ${rows.length === 1 ? "person" : "people"} while ${n} ${n === 1 ? "is" : "are"} active here, so nothing was changed.`;
     await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error });
     throw new ApiError(502, error);
   }
