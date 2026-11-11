@@ -176,6 +176,20 @@ if (rj) {
   ok("Rejections: its own tab with the desk header (not the AR template's), Sr. No 1", r.ok && rt && rt.rows[0][0] === "Sr. No" && rt.rows[0][2] === "Department" && rt.rows[1][0] === 1 && rt.rows[1].includes("B-2"), rt && rt.rows.slice(0, 2));
 } else ok("the rejected recheck went to the Rejections person", false, "no rejection hand-off");
 
+S("Each step writes its own status and comment (In process, Other, Pending)");
+await AR("queue.complete", { id: pool[3].id, ...sub });
+const sh3 = (await SA("handoffs.list", {})).rows.find((h) => h.claim_id === pool[3].id);
+const lastSub = () => tab(sf, "Submission").rows.slice(-1)[0], L_ = (row, h) => row[SUB.indexOf(h)];
+r = await T(() => SA("handoffs.close", { id: sh3.id, outcome: "inprocess", note: "" })); await sleep(400);
+const ip = lastSub();
+ok("In process: its own status, no comment", r.ok && L_(ip, "Inventory Status") === "In process" && L_(ip, "Comment") === "" && L_(ip, "Invoice") === pool[3].claim_no, [r.e, L_(ip, "Inventory Status"), L_(ip, "Comment")]);
+r = await T(() => SA("handoffs.close", { id: sh3.id, outcome: "other", reason: "Waiting on the clearinghouse", note: "The clearinghouse is down until noon" })); await sleep(400);
+const ot = lastSub();
+ok("Other: the reason in the status, the reason and comment in Comment", r.ok && L_(ot, "Inventory Status") === "Other: Waiting on the clearinghouse" && L_(ot, "Comment") === "Waiting on the clearinghouse: The clearinghouse is down until noon", [r.e, L_(ot, "Inventory Status"), L_(ot, "Comment")]);
+r = await T(() => SA("handoffs.close", { id: sh3.id, outcome: "pending", note: "Resubmitting it after lunch" })); await sleep(400);
+const pe = lastSub();
+ok("Pending: its own status, and only its own comment (not the earlier step's reason)", r.ok && L_(pe, "Inventory Status") === "Pending" && L_(pe, "Comment") === "Resubmitting it after lunch", [r.e, L_(pe, "Inventory Status"), L_(pe, "Comment")]);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -452,9 +452,8 @@ const msDateCell = (ms) => (ms ? excelSerial(istISO(ms)) : "");
 const fmtFor = (header, dates, money) => header.map((h) => (dates.includes(h) ? "mm/dd/yyyy" : money.includes(h) ? "#,##0.00" : "General"));
 // the same unique key the AR production file uses (patient, DOS, payer, CPT), when the inventory file has no UID of its own
 const uidOf = (h, raw) => rawPick(raw, "UID", "Unique ID", "Uni") || [h.patient, excelSerial(isoDate(String(h.dos || "").slice(0, 10))), h.payer, h.cpt].map((x) => (x == null ? "" : x)).join("");
-function submissionRow(h, user, proof, action, now) {
+function submissionRow(h, user, proof, action, now, comment) {
   const raw = jsonObj(h.raw_json), done = h.status === "complete";
-  const comment = done ? (h.note || "") : [h.reason, h.note].filter(Boolean).join(": ");
   const bucket = { complete: "Payer", back: "Purview", client: "Client", rejected: "Purview" }[h.status] || "";
   return [h.client_code || h.client_name || "", uidOf(h, raw), dateCell(h.dos), h.patient || "", h.claim_no || "",
     rawPick(raw, "NAEC Order No", "Order No", "Order Number"), rawPick(raw, "VEC S/W Insurance Name", "S/W Insurance Name", "Software Insurance Name"),
@@ -466,7 +465,7 @@ function submissionRow(h, user, proof, action, now) {
     msDateCell(h.created_at), "", msDateCell(now), user.emp_id || "", user.name || "",
     (done && proof.inv_status) || action, comment, (done && proof.bucket) || bucket, (done && proof.claim_type) || claimTypeOf(h.saag_action)];
 }
-function postingRow(h, user, proof, action, now) {
+function postingRow(h, user, proof, action, now, comment) {
   const raw = jsonObj(h.raw_json), done = h.status === "complete", p = done ? proof : {};
   const n = (v) => (v == null || v === "" ? "" : Number(v));
   const paid = p.paid != null ? p.paid : p.amount;
@@ -475,7 +474,7 @@ function postingRow(h, user, proof, action, now) {
   return [h.client_code || h.client_name || "", uidOf(h, raw), dateCell(h.dos), h.patient || "", h.claim_no || "", h.payer || "", h.location_name || "", h.cpt || "",
     n(h.billed), Number(h.balance) || 0, p.ref || "", p.check_date ? dateCell(p.check_date) : "", p.pay_type || "", p.date ? dateCell(p.date) : "",
     n(p.allowed), n(paid), n(p.adjustment), p.adj_reason || "", n(p.deductible), n(p.coinsurance), n(p.copay), pr, n(p.writeoff), after,
-    msDateCell(h.created_at), "", msDateCell(now), user.emp_id || "", user.name || "", done ? "Posted" : action, [h.reason, h.note].filter(Boolean).join(": ")];
+    msDateCell(h.created_at), "", msDateCell(now), user.emp_id || "", user.name || "", done ? "Posted" : action, comment];
 }
 const SUB_FMT = fmtFor(SUB_HEADER, ["Date", "Allocation Date", "DOW"], ["Balance", "VEC Patient Balance"]);
 const POST_FMT = fmtFor(POST_HEADER, ["Date", "Check / EFT date", "Posted date", "Allocation Date", "DOW"],
@@ -577,18 +576,24 @@ async function clientProductionFile(env, tok, clientId, ms, scope = "ar") {
   return loc;
 }
 /* Every action a Payment posting / Submission / Rejections desk takes on a hand-off is a row in that scope's file. */
-async function deskProduction(env, user, handoffId) {
+async function deskProduction(env, user, handoffId, outcome = "") {
   if (String(env.REPORTS_AUTO || "on").toLowerCase() === "off") return;
   const h = await one(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.billed, c.cpt, c.file_status, c.file_comments, c.file_bucket, c.raw_json,
       cl.name AS client_name, cl.code AS client_code, l.name AS location_name
     FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE h.id = ?`, handoffId);
   if (!h) return;
   const scope = DEPT_SCOPE[h.dept] || "submission", proof = jsonObj(h.proof_json), now = Date.now();
-  const action = { complete: h.dept === "posting" ? "Completed: payment posted" : h.dept === "subcheck" ? "Recheck: accepted" : "Completed: submitted", pending: "Pending", back: "Need assistance from AR",
-    client: "Need assistance from client", rejected: "Rejected", assigned: "Client answered (back to open)", pending_open: "Pending" }[h.status] || h.status;
+  // the status of the step just taken: In process, Pending and Other leave the hand-off's own status as it was
+  const done = { complete: h.dept === "posting" ? "Completed: payment posted" : h.dept === "subcheck" ? "Recheck: accepted" : "Completed: submitted" };
+  const action = (outcome && { ...done, rejected: "Rejected", pending: "Pending", inprocess: "In process", other: "Other" + (h.reason ? ": " + h.reason : ""), back: "Need assistance from AR",
+    client: "Need assistance from client", resume: "Client answered (back to open)" }[outcome])
+    || { ...done, pending: "Pending", back: "Need assistance from AR", client: "Need assistance from client", rejected: "Rejected", assigned: "Client answered (back to open)", pending_open: "Pending" }[h.status] || h.status;
+  // the comment of this step: its own reason where the step has one, never an older step's
+  const step = outcome || h.status;
+  const comment = ["back", "client", "other", "rejected"].includes(step) ? [h.reason, h.note].filter(Boolean).join(": ") : (h.note || "");
   // Submission (with its rechecks) in the team's Conso layout, Payment posting with the amounts, Rejections as before
   const header = scope === "submission" ? SUB_HEADER : scope === "posting" ? POST_HEADER : DESK_HEADER;
-  const row = scope === "submission" ? submissionRow(h, user, proof, action, now) : scope === "posting" ? postingRow(h, user, proof, action, now)
+  const row = scope === "submission" ? submissionRow(h, user, proof, action, now, comment) : scope === "posting" ? postingRow(h, user, proof, action, now, comment)
     : [SR_NO, excelSerial(istISO(now)), DEPT_LABEL[h.dept] || h.dept, user.name || "", h.client_name || "", h.location_name || "", h.claim_no || "", h.account_no || "", h.patient || "", h.payer || "",
     h.dos || "", Number(h.balance) || 0, action, proof.date || "", proof.ref || proof.code || "", proof.amount == null ? "" : Number(proof.amount), h.reason || "", h.note || "", h.created_by_name || "",
     h.created_at ? excelSerial(istISO(h.created_at)) : "", h.due_at ? (now <= h.due_at ? "Yes" : "No") : ""];
@@ -7003,7 +7008,7 @@ const OPS = {
         `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${c.claim_no || c.account_no || ""} back to AR (${str(payload.reason, 80).trim()}). It is first on your list.`.slice(0, 300), "queue", h.client_id));
     if (guard && !changesOf(await guard.run())) throw bad(outcome === "resume" ? "Only a claim waiting on the client can be resumed." : outcome === "client" ? "It is already waiting on the client, or the hand-off is closed." : "This hand-off is already closed.");
     await env.DB.batch(stmts);
-    if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
+    if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id, outcome); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
     return { ok: true };
   },
 
