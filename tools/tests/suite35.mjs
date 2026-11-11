@@ -128,6 +128,25 @@ else {
   ok("A-04: a date of birth is never after today", app.parseDateAny("2026-11-11", { dob: true }) === "" && app.parseDateAny("2026-11-10", { dob: true }) === "2026-11-10", app.parseDateAny("2026-11-11", { dob: true }));
 }
 
+S("A-01: a file status of Unpaid or Not paid is open money");
+{
+  const cl = await mkClient("Made-up Clinic S35 A01");
+  const up = await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "CPT", "AR Balance", "Status"],
+    ["9801001", "Test Patient One", "Aetna", "09/15/2026", "99213", "1250.00", "Unpaid"], ["9801002", "Test Patient Two", "Cigna", "09/20/2026", "99214", "980.00", "Not paid"],
+    ["9801003", "Test Patient Three", "UHC", "09/22/2026", "99213", "400.00", "Pending"], ["9801004", "Test Patient Four", "UHC", "09/22/2026", "99213", "300.00", "Paid in full"]]);
+  const got = Object.fromEntries((await claimsOf(cl)).map((c) => [c.claim_no, c.state + " " + c.status_class]));
+  ok("A-01: Unpaid and Not paid load as open claims (awaiting payer); Paid in full still closes", got["9801001"] === "open awaiting" && got["9801002"] === "open awaiting" && got["9801004"] === "closed paid" && up.r.inserted === 3 && up.r.closed === 1, [got, up.r]);
+  const st = await A("inventory.status", { client_id: cl.id, today: TODAY });
+  ok("A-01: Inventory status counts their money: AR $2,630", Math.round(st.ar * 100) === 263000, st.ar);
+  const cls = (s) => app.classifyOne(s);
+  ok("A-01: paid and closed are read as words (Prepaid, Overpaid are not paid; PAID_IN_FULL, Paid/Closed, Claim closed are)", cls("Prepaid") !== "paid" && cls("Overpaid") !== "paid" && cls("No payment") === "awaiting" && cls("Not closed") === "awaiting"
+    && cls("PAID_IN_FULL") === "paid" && cls("Paid/Closed") === "paid" && cls("Claim closed") === "paid" && cls("Underpaid") === "partial" && cls("Denied - not paid") === "denied",
+    ["Prepaid", "Overpaid", "No payment", "Not closed", "PAID_IN_FULL", "Paid/Closed", "Claim closed", "Underpaid", "Denied - not paid"].map((s) => s + ":" + cls(s)));
+  // a later file that says Unpaid does not close a claim already on file
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "CPT", "AR Balance", "Status"], ["9801003", "Test Patient Three", "UHC", "09/22/2026", "99213", "400.00", "Unpaid"]], { name: "next.csv" });
+  ok("A-01: a later file with Unpaid leaves the claim open", (await q1("SELECT state FROM claims WHERE client_id = ? AND claim_no = '9801003'", cl.id)).state === "open");
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

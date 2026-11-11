@@ -374,7 +374,10 @@ const STATUS_MAP = [
   { key: "patient", test: /patient\s*resp|self\s*pay|pt\s*resp|patient\s*bal|patient_responsibility|deductible|copay|co-?insurance|\bpr\b/i },
   { key: "secondary", test: /secondary/i },
   { key: "awaiting", test: /await|pending|process|in\s*process|submitted|payer|delay|no\s*claim\s*on\s*file|not\s*on\s*file|\bnof\b/i },
-  { key: "paid", test: /paid|closed|settled|adjusted\s*off|zero\s*balance/i },
+  // not paid yet ("Unpaid", "Not paid", "No payment", "Not closed") is open money, never paid
+  { key: "awaiting", test: /(^|[^a-z])(un|not|non|no)[\s_-]*(yet[\s_-]*)?(paid|payment|closed)([^a-z]|$)/i },
+  // "paid" and "closed" as words: "Unpaid", "Prepaid" and "Overpaid" are not paid
+  { key: "paid", test: /(^|[^a-z])(paid|closed)([^a-z]|$)|settled|adjusted\s*off|zero\s*balance/i },
 ];
 const STATUS_LABEL = { rejected: "Rejected", denied: "Denied", partial: "Partially paid", secondary: "Awaiting secondary", awaiting: "Awaiting payer", patient: "Patient responsibility", paid: "Paid / closed", other: "Other", unknown: "No status" };
 const STATUS_ORDER = ["rejected", "denied", "partial", "secondary", "awaiting", "other", "unknown", "patient", "paid"];
