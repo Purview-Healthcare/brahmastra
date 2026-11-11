@@ -10,8 +10,10 @@ export async function makeRig({ envExtra = {}, fetchMock = null } = {}) {
   window.initSqlJs = (o) => initSqlJs({ locateFile: (f) => require.resolve("sql.js/dist/" + f) });
   const lib = await import(REPO + "/lib/local-backend.js?" + Math.random());
   // worker.js is an ES module; a .mjs copy lets Node load it as one.
-  const wcopy = path.join(HERE, ".worker.mjs");
+  // one copy per process, removed when the process ends, so two checks can run in the same folder at once
+  const wcopy = path.join(HERE, ".worker-" + process.pid + "-" + Math.random().toString(36).slice(2) + ".mjs");
   fs.copyFileSync(REPO + "/worker.js", wcopy);
+  process.on("exit", () => { try { fs.unlinkSync(wcopy); } catch (e) {} });
   const worker = await import(wcopy + "?" + Math.random());
   const realFetch = globalThis.fetch;
   if (fetchMock) globalThis.fetch = (u, i) => fetchMock(String(u), i, realFetch);

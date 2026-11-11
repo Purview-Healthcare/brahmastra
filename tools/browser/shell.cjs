@@ -3,8 +3,9 @@
 const { chromium } = require("playwright");
 const { prepareDemo, serve, routeCdn } = require("./demo.cjs");
 (async () => {
-  const srv = await serve(8767);
-  const url = prepareDemo({ base: "http://localhost:8767" });
+  const PORT = Number(process.env.BROWSER_PORT) || 8767; // BROWSER_PORT lets two copies of the repo run their checks at once
+  const srv = await serve(PORT);
+  const url = prepareDemo({ base: "http://localhost:" + PORT });
   const b = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   const p = await b.newPage({ viewport: { width: 1440, height: 950 } });
   await routeCdn(p);

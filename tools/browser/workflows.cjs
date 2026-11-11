@@ -16,8 +16,9 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
   P({ emp_id: "D1", name: "Snail Post", department: "Posting", project: "Lakeview Dental Group", email: "snail@purview-healthcare.com" }),
   P({ emp_id: "T2", name: "Leo Lead", position: "Team Lead", project: "Lakeview Dental Group", reports_to: "Joseph Manager", email: "leo@purview-healthcare.com" })];
 (async () => {
-  const srv = await serve(8768);
-  const url = prepareDemo({ base: "http://localhost:8768" });
+  const PORT = Number(process.env.BROWSER_PORT) || 8768; // BROWSER_PORT lets two copies of the repo run their checks at once
+  const srv = await serve(PORT);
+  const url = prepareDemo({ base: "http://localhost:" + PORT });
   const b = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   const ctx = await b.newContext({ viewport: { width: 1440, height: 950 }, acceptDownloads: true });
   const p = await ctx.newPage();

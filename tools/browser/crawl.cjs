@@ -15,8 +15,9 @@ const FEED = [P({ emp_id: 'E1', name: 'Tina Lead', position: 'Team Lead', report
 const ROLES = [['admin', null], ['ar-lead', 'tina@purview-healthcare.com'], ['manager', 'mo@purview-healthcare.com'], ['biller', 'arun@purview-healthcare.com'], ['posting', 'snail@purview-healthcare.com'], ['submission', 'mark@purview-healthcare.com'], ['posting-lead', 'paula@purview-healthcare.com'], ['submission-lead', 'sam@purview-healthcare.com']];
 const THEMES = (process.env.THEMES || 'light').split(',');
 (async () => {
-  const srv = await serve(8766);
-  const url = prepareDemo();
+  const PORT = Number(process.env.BROWSER_PORT) || 8766; // BROWSER_PORT lets two copies of the repo run their checks at once
+  const srv = await serve(PORT);
+  const url = prepareDemo({ base: "http://localhost:" + PORT });
   const b = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}); const p = await b.newPage({ viewport: { width: 1440, height: 950 } });
   await routeCdn(p);
   await p.route('https://qhbgshnqugxqiwdywsas.supabase.co/**', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, rows: FEED }) }));
