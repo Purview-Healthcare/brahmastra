@@ -5120,7 +5120,8 @@ const OPS = {
   },
   /* EV production for the client report. Brahmastra does not do eligibility checks, so the team uploads the EV file from
      OneDrive; the browser reads it and sends only the columns the report uses (no patient names). A file replaces what
-     was kept for the same client, location and dates. */
+     was kept for the same client, location and dates: in each month it has checks in, from its first to its last check
+     there, so a stray date in another month never wipes the months in between. */
   "creport.evUpload": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
     if (user.role !== "supervisor") throw denied("The Client 360 report is for team leads and above.");
@@ -5136,9 +5137,12 @@ const OPS = {
     if (!clean.length) throw bad("No row has the date the check was done.");
     let from = clean[0][7], to = from; for (const c of clean) { if (c[7] < from) from = c[7]; if (c[7] > to) to = c[7]; }
     if ((Date.parse(to) - Date.parse(from)) / 86400000 > 400) throw bad("One EV file can cover up to a year.");
+    // the dates the file really covers: its first to its last check in each month it has checks in
+    const spans = new Map();
+    for (const c of clean) { const s = spans.get(c[7].slice(0, 7)); if (!s) spans.set(c[7].slice(0, 7), [c[7], c[7]]); else { if (c[7] < s[0]) s[0] = c[7]; if (c[7] > s[1]) s[1] = c[7]; } }
     const batch = uuid(), now = Date.now(), file = str(payload.file_name, 200) || "EV file";
     const touched = (await all(env, "SELECT id FROM ev_batches WHERE client_id = ? AND location_id = ? AND from_day <= ? AND to_day >= ?", clientId, loc, to, from)).map((x) => x.id);
-    await run(env, "DELETE FROM ev_rows WHERE client_id = ? AND location_id = ? AND work_date BETWEEN ? AND ?", clientId, loc, from, to);
+    for (const [a, b] of spans.values()) await run(env, "DELETE FROM ev_rows WHERE client_id = ? AND location_id = ? AND work_date BETWEEN ? AND ?", clientId, loc, a, b);
     const stmts = [], per = 8;
     for (let i = 0; i < clean.length; i += per) {
       const part = clean.slice(i, i + per);

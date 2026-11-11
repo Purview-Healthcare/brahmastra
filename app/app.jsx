@@ -230,18 +230,21 @@ function parseMoney(v) {
 function excelSerialToISO(n) { return new Date(Math.round((n - 25569) * 86400000)).toISOString().slice(0, 10); }
 // a day that is on the calendar (not 02/29/2026 or 04/31/2026), as the server's isoDate checks it
 const isRealDay = (y, m, d) => m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
-function parseDateAny(v) {
+const DMY_RE = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/;
+/* order: how the date column writes 05/06/2026, decided once for the whole column by dateOrderOf ("dmy" day first, "mdy" month
+   first); left out, each date is read on its own (month first, unless its first part is over 12). */
+function parseDateAny(v, { order = "" } = {}) {
   if (v == null || v === "") return "";
   if (v instanceof Date) return isNaN(v) ? "" : isoOf(v);
   if (typeof v === "number") return v > 20000 && v < 90000 ? excelSerialToISO(v) : "";
   const s = String(v).trim();
   if (!s) return "";
   if (/^\d{5}(\.\d+)?$/.test(s)) { const n = Number(s); return n > 20000 && n < 90000 ? excelSerialToISO(n) : ""; }
-  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  let m = s.match(DMY_RE);
   if (m) {
     // a two-digit year: 00 to 49 is 2000 to 2049, 50 to 99 is 1950 to 1999 (as a CSV's dates were read before)
     let mo = +m[1], da = +m[2], yr = m[3].length === 2 ? (+m[3] < 50 ? 2000 : 1900) + +m[3] : +m[3];
-    if (mo > 12 && da <= 12) { const t = mo; mo = da; da = t; }
+    if (order === "dmy" || (!order && mo > 12 && da <= 12)) { const t = mo; mo = da; da = t; }
     if (isRealDay(yr, mo, da) && yr > 1990 && yr < 2100) return `${yr}-${pad2(mo)}-${pad2(da)}`;
     return "";
   }
@@ -253,6 +256,16 @@ function parseDateAny(v) {
   if (d.getFullYear() < 2000 || d.getFullYear() > 2100) return "";
   return isoOf(d);
 }
+/* The day / month order of one date column of a file, decided once for the whole column: a date whose first part is over 12
+   (13/06/2026) makes it day first, one whose second part is over 12 (06/13/2026) month first; with neither it is month first.
+   A column with both reads each date on its own. */
+function dateOrderOf(values) {
+  let dayFirst = false, monthFirst = false;
+  for (const v of values) { const m = typeof v === "string" ? v.trim().match(DMY_RE) : null; if (!m) continue; if (+m[1] > 12) dayFirst = true; else if (+m[2] > 12) monthFirst = true; }
+  return dayFirst && monthFirst ? "" : dayFirst ? "dmy" : "mdy";
+}
+// the reader for one date column: every value of the column read in the same order
+const dateReader = (values) => { const order = dateOrderOf(values); return (v) => parseDateAny(v, { order }); };
 
 /* ---------- reading spreadsheets ---------- */
 /* A CSV / text file is read as text, cell for cell: claim and account numbers keep every digit and their leading zeros, and
@@ -471,17 +484,19 @@ function buildClaims({ rows, mapping, kind, today }) {
   const txt = (v) => (v == null ? "" : String(v).trim());
   const first = (lines, f) => (lines.find((l) => l[f]) || {})[f] || "";
   const hasBalance = !!mapping.balance;
+  // each date column is read in one day / month order, decided from the whole column
+  const dateOf = Object.fromEntries(["dos", "date_worked", "follow_up"].map((f) => [f, dateReader(mapping[f] ? rows.map((r) => r[mapping[f]]) : [])]));
   const groups = new Map();
   let footer = 0, blank = 0;
   rows.forEach((r, i) => {
-    const claim_no = txt(get(r, "claim_no")), patient = txt(get(r, "patient")), dos = parseDateAny(get(r, "dos")), payer = txt(get(r, "payer"));
+    const claim_no = txt(get(r, "claim_no")), patient = txt(get(r, "patient")), dos = dateOf.dos(get(r, "dos")), payer = txt(get(r, "payer"));
     if (!claim_no && !patient && !dos) { blank++; return; }
     if (/^\s*(grand\s*|sub\s*)?totals?\b/i.test(claim_no) || /^\s*(grand\s*|sub\s*)?totals?\b/i.test(patient) || /^\s*(grand\s*|sub\s*)?totals?\b/i.test(payer)) { footer++; return; }
     const line = {
       claim_no, patient, dos, payer, account_no: txt(get(r, "account_no")), cpt: txt(get(r, "cpt")), provider: txt(get(r, "provider")),
       billed: mapping.billed ? parseMoney(get(r, "billed")) : null, balance: hasBalance ? parseMoney(get(r, "balance")) : null,
       status: txt(get(r, "status")), sub_status: txt(get(r, "sub_status")), action: txt(get(r, "action")), comments: txt(get(r, "comments")),
-      date_worked: parseDateAny(get(r, "date_worked")), follow_up: parseDateAny(get(r, "follow_up")), file_bucket: txt(get(r, "file_bucket")), location: txt(get(r, "location")), raw: r, idx: i,
+      date_worked: dateOf.date_worked(get(r, "date_worked")), follow_up: dateOf.follow_up(get(r, "follow_up")), file_bucket: txt(get(r, "file_bucket")), location: txt(get(r, "location")), raw: r, idx: i,
     };
     const key = claim_no && /\d/.test(claim_no) ? "claim:" + claim_no.toLowerCase().replace(/\s+/g, "") : "fp:" + [patient, dos, payer, line.provider].map(normKey).join("|");
     if (!groups.has(key)) groups.set(key, []);
@@ -2924,10 +2939,11 @@ function DetailsReport({ ctx, go }) {
   const run = async () => {
     setBusy("Matching…"); setResult(null);
     const cell = (r, h) => (h ? r[h] : "");
+    const dobOf = dateReader(map.patient_dob ? table.rows.map((r) => r[map.patient_dob]) : []);
     const rows = table.rows.map((r) => {
       const o = { claim_no: String(cell(r, map.claim_no) ?? "").trim(), account_no: String(cell(r, map.account_no) ?? "").trim() };
       for (const k of DETAIL_TARGETS) if (k !== "account_no" && map[k]) o[k] = String(cell(r, map[k]) ?? "").trim();
-      if (o.patient_dob) o.patient_dob = parseDateAny(cell(r, map.patient_dob)) || o.patient_dob;
+      if (o.patient_dob) o.patient_dob = dobOf(cell(r, map.patient_dob)) || o.patient_dob;
       if (keepOther) { o.extra = {}; for (const h of others.slice(0, 40)) { const v = r[h]; if (v !== "" && v != null) o.extra[h] = typeof v === "number" && /date|dob/i.test(h) ? (parseDateAny(v) || String(v)) : String(v); } }
       return o;
     }).filter((o) => o.claim_no || o.account_no);
@@ -8034,9 +8050,11 @@ function crReadEV(bytes, name) {
   const found = CR_EV_COLS.filter(([k]) => map[k]).map(([k]) => [CR_EV_LABEL[k], String(map[k])]);
   if (!map.wd) return { file: name, noDate: true, found, n: t.rows.length };
   const rows = []; let skipped = 0;
+  // the check's date and the DOS, each read in one day / month order decided from its whole column (05/10/2026 is 5 Oct once 13/10 is in it)
+  const wdOf = dateReader(t.rows.map((x) => x[map.wd])), dosOf = dateReader(map.dos ? t.rows.map((x) => x[map.dos]) : []);
   for (const x of t.rows) {
-    const wd = parseDateAny(x[map.wd]); if (!wd) { skipped++; continue; }
-    rows.push({ wd, dos: map.dos ? parseDateAny(x[map.dos]) : "", no: txt(x, "no", 60), py: txt(x, "py", 120), st: (txt(x, "st", 120) || txt(x, "ty", 120)), act: txt(x, "act", 120), by: txt(x, "by", 80), cm: txt(x, "cm", 300) });
+    const wd = wdOf(x[map.wd]); if (!wd) { skipped++; continue; }
+    rows.push({ wd, dos: map.dos ? dosOf(x[map.dos]) : "", no: txt(x, "no", 60), py: txt(x, "py", 120), st: (txt(x, "st", 120) || txt(x, "ty", 120)), act: txt(x, "act", 120), by: txt(x, "by", 80), cm: txt(x, "cm", 300) });
   }
   if (!rows.length) return { file: name, noDate: true, found, n: t.rows.length };
   let from = rows[0].wd, to = from; for (const x of rows) { if (x.wd < from) from = x.wd; if (x.wd > to) to = x.wd; }

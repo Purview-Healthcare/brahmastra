@@ -173,9 +173,11 @@ changed and keeps working on its own address. Team leads and above, for their ow
 1. **Data.** EV production is the one thing to upload, because Brahmastra does not do eligibility checks: *Upload EV
    from OneDrive* reads the file in the browser, finds its columns by their usual names (date of the check, DOS,
    insurance, status or verification type, action, done by, account, comment) and shows what it found before
-   *Save to the report*. The patient's name, birth date, member ID, phone and address are never read. The rows are
+   *Save to the report*. The patient's name, birth date, member ID, phone and address are never read. Each date
+   column is read in one order: once a date such as 13/10/2026 shows the column is day first, 05/10/2026 is 5 Oct. The rows are
    kept for the client (and location), so the whole team sees the same EV page; a new file for the same dates
-   replaces the old rows, and *Remove* takes a file out. Below, everything Brahmastra fills by itself is listed with
+   replaces the old rows (in each month it has checks in, from its first to its last check there), and *Remove* takes
+   a file out. Below, everything Brahmastra fills by itself is listed with
    the figure each page will show (or "nothing in these dates; the page is left out").
 2. **Dates.** Monthly, Weekly or Custom, whether to compare with the period before, and the location.
 
@@ -964,7 +966,9 @@ can move them afterwards on Allocate or Claims.
   follow-up date (date worked + the client's follow-up days, or the file's own
   follow-up column) and comes back into the pool when it is due.
 
-Excel (`.xlsx`, `.xls`) and CSV are accepted. Columns are matched by name
+Excel (`.xlsx`, `.xls`) and CSV are accepted. Dates are read month first (05/06/2026 is 6 May) unless a date in
+the same column, such as 13/06/2026, shows the column is written day first: then the whole column is read day first
+(05/06/2026 is 5 June). Columns are matched by name
 (`IG Claim ID#/Charge ID#`, `Claim ID`, `Patient Name`, `Payer`, `DOS`, `CPT`,
 `Provider`, `Balance Amount($)`, `Status`, `Sub Status`, `Action`,
 `Comments/Notes`, `Date Worked`, and the usual variants); when a claim column

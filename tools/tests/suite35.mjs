@@ -68,6 +68,48 @@ S("A-08: a CSV is read as text");
   ok("A-08: an impossible date (02/30/2026) is no date; 03/15/95 is 1995 and 10/26/26 is 2026, as before", dos["9800002"] === "" && dos["9800003"] === "1995-03-15" && dos["9800004"] === "2026-10-26", dos);
 }
 
+S("A-15: one day / month order per date column");
+{
+  const cl = await mkClient("Made-up Clinic S35 A15");
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "Date Worked"],
+    ["9815001", "Test Patient One", "Aetna", "13/06/2026", "400.00", "Pending", "13/10/2026"],
+    ["9815002", "Test Patient Two", "Aetna", "05/06/2026", "400.00", "Pending", "05/11/2026"]], { kind: "worked" });
+  const c2 = (await claimsOf(cl)).find((c) => c.claim_no === "9815002") || {};
+  ok("A-15: a day-first column (13/06/2026 in it) reads 05/06/2026 as 5 June and a Date Worked of 05/11/2026 as 5 Nov", c2.dos === "2026-06-05" && c2.last_worked_on === "2026-11-05", [c2.dos, c2.last_worked_on]);
+  const b = build([["Claim ID", "Patient Name", "DOS", "Balance"], ["9815003", "Test Patient Three", "06/13/2026", "10"], ["9815004", "Test Patient Four", "05/06/2026", "10"]]);
+  const d = Object.fromEntries(b.claims.map((c) => [c.claim_no, c.dos]));
+  ok("A-15: a month-first column (06/13/2026 in it) reads 05/06/2026 as 6 May", d["9815003"] === "2026-06-13" && d["9815004"] === "2026-05-06", d);
+  const b2 = build([["Claim ID", "Patient Name", "DOS", "Balance"], ["9815005", "Test Patient Five", "05/06/2026", "10"], ["9815006", "Test Patient Six", "2026-07-01", "10"]]);
+  ok("A-15: a column with no part over 12 stays month first", b2.claims.find((c) => c.claim_no === "9815005").dos === "2026-05-06", b2.claims.map((c) => c.dos));
+  const order = typeof app.dateOrderOf === "function" ? app.dateOrderOf : () => "none";
+  ok("A-15: the order is decided per column (13/06 day first, 06/13 month first, both: each date on its own, neither: month first)",
+    order(["13/06/2026", "05/06/2026"]) === "dmy" && order(["06/13/2026", "05/06/2026"]) === "mdy" && order(["13/06/2026", "06/14/2026"]) === "" && order(["05/06/2026", 46280]) === "mdy",
+    [order(["13/06/2026", "05/06/2026"]), order(["06/13/2026"]), order(["13/06/2026", "06/14/2026"])]);
+  const mixed = build([["Claim ID", "Patient Name", "DOS", "Balance"], ["9815007", "Test Patient Seven", "13/06/2026", "10"], ["9815008", "Test Patient Eight", "06/14/2026", "10"]]);
+  ok("A-15: a column with both orders reads each date the only way it can be read", mixed.claims.map((c) => c.dos).sort().join() === "2026-06-13,2026-06-14", mixed.claims.map((c) => c.dos));
+}
+
+S("F-07: the Client 360 EV upload reads a day-first file and keeps other months' rows");
+{
+  const cl = await mkClient("Made-up Clinic S35 F07");
+  const sep = Array.from({ length: 10 }, (_, i) => ({ wd: "2026-09-" + String(i + 1).padStart(2, "0"), py: "Aetna", st: "Active coverage", by: "Test EV A" }));
+  await A("creport.evUpload", { client_id: cl.id, file_name: "EV Sep.xlsx", rows: sep });
+  let csv = "Date Verified,DOS,Insurance,Status,Verified By\n", n = 0;
+  for (let d = 1; d <= 31; d++) { const w = new RealDate(Date.UTC(2026, 9, d)).getUTCDay(); if (w === 0 || w === 6) continue; n++; csv += `${String(d).padStart(2, "0")}/10/2026,${String(d).padStart(2, "0")}/09/2026,Aetna,Active coverage,Test EV B\n`; }
+  const draft = app.crReadEV(new TextEncoder().encode(csv), "EV Oct.csv");
+  ok("F-07: 01/10/2026 to 30/10/2026 is read as 1 to 30 Oct (the start screen shows the range before saving)", draft.from === "2026-10-01" && draft.to === "2026-10-30" && draft.n === n && draft.rows.every((r) => r.wd.slice(0, 7) === "2026-10" && r.dos.slice(0, 7) === "2026-09"), [draft.from, draft.to, draft.n]);
+  const r = await A("creport.evUpload", { client_id: cl.id, file_name: draft.file, rows: draft.rows });
+  const cnt = async (m) => (await q1("SELECT COUNT(*) AS n FROM ev_rows WHERE client_id = ? AND work_date LIKE ?", cl.id, m + "-%")).n;
+  ok("F-07: saving October keeps September's 10 rows and keeps all of October's checks", r.n === n && (await cnt("2026-09")) === 10 && (await cnt("2026-10")) === n, [r.n, await cnt("2026-09"), await cnt("2026-10")]);
+  // a file whose dates really are spread (one stray check in July): only that day's rows in July are replaced, never August and September
+  await A("creport.evUpload", { client_id: cl.id, file_name: "EV Aug.xlsx", rows: [{ wd: "2026-08-03", py: "Cigna", st: "Active coverage", by: "Test EV A" }, { wd: "2026-07-15", py: "Cigna", st: "Active coverage", by: "Test EV A" }] });
+  await A("creport.evUpload", { client_id: cl.id, file_name: "EV Oct fixed.xlsx", rows: [...draft.rows, { wd: "2026-07-15", py: "Cigna", st: "Inactive", by: "Test EV B" }] });
+  ok("F-07: a stray date in July replaces only that day's July rows; August and September stay", (await cnt("2026-08")) === 1 && (await cnt("2026-09")) === 10 && (await cnt("2026-07")) === 1 && (await cnt("2026-10")) === n
+    && (await q1("SELECT status FROM ev_rows WHERE client_id = ? AND work_date = '2026-07-15'", cl.id)).status === "Inactive", [await cnt("2026-07"), await cnt("2026-08"), await cnt("2026-09"), await cnt("2026-10")]);
+  await A("creport.evUpload", { client_id: cl.id, file_name: "EV Oct again.xlsx", rows: draft.rows.filter((x) => x.wd !== "2026-10-15") });
+  ok("F-07: a new file for the same month still replaces that month's rows from its first to its last check", (await cnt("2026-10")) === n - 1 && (await cnt("2026-09")) === 10, [await cnt("2026-10")]);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
