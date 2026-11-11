@@ -232,29 +232,34 @@ function excelSerialToISO(n) { return new Date(Math.round((n - 25569) * 86400000
 const isRealDay = (y, m, d) => m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
 const DMY_RE = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/;
 /* order: how the date column writes 05/06/2026, decided once for the whole column by dateOrderOf ("dmy" day first, "mdy" month
-   first); left out, each date is read on its own (month first, unless its first part is over 12). */
-function parseDateAny(v, { order = "" } = {}) {
+   first); left out, each date is read on its own (month first, unless its first part is over 12).
+   dob: a date of birth, from 1900 (an Excel date from 1900 too) up to today; a two-digit year that would be in the future is in
+   the 1900s (03/15/95 is 1995, 12/15/26 is 1926 while that day is still to come). */
+function parseDateAny(v, { order = "", dob = false } = {}) {
   if (v == null || v === "") return "";
-  if (v instanceof Date) return isNaN(v) ? "" : isoOf(v);
-  if (typeof v === "number") return v > 20000 && v < 90000 ? excelSerialToISO(v) : "";
+  const fit = (iso) => (!dob || (iso >= "1900-01-01" && iso <= todayISO()) ? iso : "");
+  const serialFrom = dob ? 0 : 20000;
+  if (v instanceof Date) return isNaN(v) ? "" : fit(isoOf(v));
+  if (typeof v === "number") return v > serialFrom && v < 90000 ? fit(excelSerialToISO(v)) : "";
   const s = String(v).trim();
   if (!s) return "";
-  if (/^\d{5}(\.\d+)?$/.test(s)) { const n = Number(s); return n > 20000 && n < 90000 ? excelSerialToISO(n) : ""; }
+  if (/^\d{5}(\.\d+)?$/.test(s)) { const n = Number(s); return n > serialFrom && n < 90000 ? fit(excelSerialToISO(n)) : ""; }
   let m = s.match(DMY_RE);
   if (m) {
     // a two-digit year: 00 to 49 is 2000 to 2049, 50 to 99 is 1950 to 1999 (as a CSV's dates were read before)
     let mo = +m[1], da = +m[2], yr = m[3].length === 2 ? (+m[3] < 50 ? 2000 : 1900) + +m[3] : +m[3];
     if (order === "dmy" || (!order && mo > 12 && da <= 12)) { const t = mo; mo = da; da = t; }
-    if (isRealDay(yr, mo, da) && yr > 1990 && yr < 2100) return `${yr}-${pad2(mo)}-${pad2(da)}`;
+    if (dob && m[3].length === 2) { yr = 2000 + +m[3]; if (`${yr}-${pad2(mo)}-${pad2(da)}` > todayISO()) yr -= 100; }
+    if (isRealDay(yr, mo, da) && (dob ? yr >= 1900 : yr > 1990 && yr < 2100)) return fit(`${yr}-${pad2(mo)}-${pad2(da)}`);
     return "";
   }
   m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
-  if (m) return isRealDay(+m[1], +m[2], +m[3]) ? `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}` : "";
+  if (m) return isRealDay(+m[1], +m[2], +m[3]) ? fit(`${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}`) : "";
   const t = Date.parse(s);
   if (isNaN(t)) return "";
   const d = new Date(t);
-  if (d.getFullYear() < 2000 || d.getFullYear() > 2100) return "";
-  return isoOf(d);
+  if (dob ? d.getFullYear() < 1900 : d.getFullYear() < 2000 || d.getFullYear() > 2100) return "";
+  return fit(isoOf(d));
 }
 /* The day / month order of one date column of a file, decided once for the whole column: a date whose first part is over 12
    (13/06/2026) makes it day first, one whose second part is over 12 (06/13/2026) month first; with neither it is month first.
@@ -264,8 +269,8 @@ function dateOrderOf(values) {
   for (const v of values) { const m = typeof v === "string" ? v.trim().match(DMY_RE) : null; if (!m) continue; if (+m[1] > 12) dayFirst = true; else if (+m[2] > 12) monthFirst = true; }
   return dayFirst && monthFirst ? "" : dayFirst ? "dmy" : "mdy";
 }
-// the reader for one date column: every value of the column read in the same order
-const dateReader = (values) => { const order = dateOrderOf(values); return (v) => parseDateAny(v, { order }); };
+// the reader for one date column: every value of the column read in the same order (dob: a date of birth column)
+const dateReader = (values, { dob = false } = {}) => { const order = dateOrderOf(values); return (v) => parseDateAny(v, { order, dob }); };
 
 /* ---------- reading spreadsheets ---------- */
 /* A CSV / text file is read as text, cell for cell: claim and account numbers keep every digit and their leading zeros, and
@@ -2906,6 +2911,20 @@ function detailAutoMap(headers) {
   }
   return out;
 }
+/* What a patient details report sends for each row: its claim # / account #, the fields mapped and (when kept) its other columns.
+   The date of birth is read as one (1900 to today, a two-digit year in the future is in the 1900s); an Excel date that cannot be
+   read is left out, never sent as a bare number. */
+function detailRows({ rows, map, others = [], keepOther = false }) {
+  const cell = (r, h) => (h ? r[h] : "");
+  const dobOf = dateReader(map.patient_dob ? rows.map((r) => r[map.patient_dob]) : [], { dob: true });
+  return rows.map((r) => {
+    const o = { claim_no: String(cell(r, map.claim_no) ?? "").trim(), account_no: String(cell(r, map.account_no) ?? "").trim() };
+    for (const k of DETAIL_TARGETS) if (k !== "account_no" && map[k]) o[k] = String(cell(r, map[k]) ?? "").trim();
+    if (o.patient_dob) { const v = cell(r, map.patient_dob); o.patient_dob = dobOf(v) || (typeof v === "number" ? "" : o.patient_dob); }
+    if (keepOther) { o.extra = {}; for (const h of others.slice(0, 40)) { const v = r[h]; if (v !== "" && v != null) o.extra[h] = typeof v === "number" && /date|dob/i.test(h) ? (parseDateAny(v, { dob: /dob|birth/i.test(h) }) || String(v)) : String(v); } }
+    return o;
+  }).filter((o) => o.claim_no || o.account_no);
+}
 function DetailsReport({ ctx, go }) {
   const [clientId, setClientId] = useState("");
   const [locId, setLocId] = useState("");
@@ -2938,15 +2957,7 @@ function DetailsReport({ ctx, go }) {
   const ready = clientId && purpose && table && (map.claim_no || map.account_no) && (fills.length || (keepOther && others.length)) && keyed > 0;
   const run = async () => {
     setBusy("Matching…"); setResult(null);
-    const cell = (r, h) => (h ? r[h] : "");
-    const dobOf = dateReader(map.patient_dob ? table.rows.map((r) => r[map.patient_dob]) : []);
-    const rows = table.rows.map((r) => {
-      const o = { claim_no: String(cell(r, map.claim_no) ?? "").trim(), account_no: String(cell(r, map.account_no) ?? "").trim() };
-      for (const k of DETAIL_TARGETS) if (k !== "account_no" && map[k]) o[k] = String(cell(r, map[k]) ?? "").trim();
-      if (o.patient_dob) o.patient_dob = dobOf(cell(r, map.patient_dob)) || o.patient_dob;
-      if (keepOther) { o.extra = {}; for (const h of others.slice(0, 40)) { const v = r[h]; if (v !== "" && v != null) o.extra[h] = typeof v === "number" && /date|dob/i.test(h) ? (parseDateAny(v) || String(v)) : String(v); } }
-      return o;
-    }).filter((o) => o.claim_no || o.account_no);
+    const rows = detailRows({ rows: table.rows, map, others, keepOther });
     let uploadId = null, tot = { rows: 0, matched: 0, updated: 0, fields: {} };
     try {
       for (let i = 0; i < rows.length; i += 1000) {

@@ -110,6 +110,24 @@ S("F-07: the Client 360 EV upload reads a day-first file and keeps other months'
   ok("F-07: a new file for the same month still replaces that month's rows from its first to its last check", (await cnt("2026-10")) === n - 1 && (await cnt("2026-09")) === 10, [await cnt("2026-10")]);
 }
 
+S("A-04: dates of birth from a patient details report");
+if (typeof app.detailRows !== "function") ok("A-04: the patient details report reads its date-of-birth column as dates of birth", false, "detailRows is missing");
+else {
+  const cl = await mkClient("Made-up Clinic S35 A04");
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"],
+    ...["9804001", "9804002", "9804003", "9804004", "9804005"].map((n, i) => [n, "Test Patient " + i, "Medicare", "09/15/2026", "300", "Pending"])]);
+  const fill = async (rows, name) => { const t = name.endsWith(".csv") ? readCsv(rows, name) : app.tableFromSheet(rows); return A("inventory.enrich", { client_id: cl.id, purpose: "DOB / member ID needed for calls", file_name: name, rows: app.detailRows({ rows: t.rows, map: app.detailAutoMap(t.headers) }) }); };
+  await fill([["Claim ID", "DOB"], ["9804001", "06/15/1952"], ["9804002", "03/15/95"]], "details.csv");
+  await fill([["Claim ID", "DOB"], ["9804003", 19160], ["9804004", "12/15/26"], ["9804005", 95000]], "details.xlsx");   // an Excel date cell, text, a number that is no date
+  const dob = Object.fromEntries((await claimsOf(cl)).map((c) => [c.claim_no, c.patient_dob]));
+  ok("A-04: 06/15/1952 from a CSV is 15 Jun 1952 (not a serial number)", dob["9804001"] === "1952-06-15", dob);
+  ok("A-04: an Excel date cell before 1954 (19160) is 15 Jun 1952", dob["9804003"] === "1952-06-15", dob);
+  ok("A-04: a two-digit year in a date of birth: 03/15/95 is 1995, and 12/15/26 (still to come on 10 Nov 2026) is 1926", dob["9804002"] === "1995-03-15" && dob["9804004"] === "1926-12-15", dob);
+  ok("A-04: a number that cannot be a date of birth is left out, never stored as the bare number", dob["9804005"] === "", dob);
+  ok("A-04: other dates keep their rule: a follow-up written 12/15/26 is 15 Dec 2026", app.parseDateAny("12/15/26") === "2026-12-15" && app.parseDateAny("06/15/1952") === "", [app.parseDateAny("12/15/26"), app.parseDateAny("06/15/1952")]);
+  ok("A-04: a date of birth is never after today", app.parseDateAny("2026-11-11", { dob: true }) === "" && app.parseDateAny("2026-11-10", { dob: true }) === "2026-11-10", app.parseDateAny("2026-11-11", { dob: true }));
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
