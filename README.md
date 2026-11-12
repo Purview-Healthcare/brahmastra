@@ -476,7 +476,7 @@ people on their own projects), the managers above them and the admin. Holding a
 share of a client, or putting someone on a client's team, does not make that
 person yours: on the Team list they show as "on another team". With a view-only
 share the client's people are there to look at only: no Out today, Team status
-note or rebalance for them.
+note, rebalance or team task for them, and no team task on that client.
 
 #### RACI (the first tab)
 

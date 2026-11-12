@@ -7400,11 +7400,11 @@ const OPS = {
     list.sort((a, b) => (a.status !== "open") - (b.status !== "open") || (a.held - b.held) || (b.late - a.late) || (a.status === "open" ? a.due_at - b.due_at : b.closed_at - a.closed_at));
     return { rows: list, stats, scopes: TASK_SCOPES, sources: TASK_SOURCES, hold_reasons: TAT_HOLD_REASONS, due_soon_hours: DUE_SOON_HOURS };
   },
-  /* The people a team lead can give a task to: their team (as on Team), active. */
+  /* The people a team lead can give a task to: their team (as on Team), active; not the people they see only through a view-only share. */
   "tasks.people": async ({ env, user, payload }) => {
     if (user.role !== "supervisor") throw denied("Team tasks are for team leads and above.");
     const cid = payload.client_id ? str(payload.client_id, 60) : "";
-    let users = (await visibleUsers(env, user)).filter((u) => u.active && u.id !== user.id);
+    let users = (await visibleUsers(env, user, "edit")).filter((u) => u.active && u.id !== user.id);
     // with a client picked, the people on it first
     const onIt = new Set(); if (cid) { const c = await one(env, "SELECT team_json FROM clients WHERE id = ?", cid); if (c) parseTeam(c.team_json).forEach((id) => onIt.add(id)); }
     users = users.map((u) => ({ id: u.id, name: u.name || u.email, role: u.role, designation: u.designation || "", department: u.department || "", on_client: onIt.has(u.id) }))
@@ -7414,7 +7414,8 @@ const OPS = {
   "tasks.create": async ({ env, user, payload }) => {
     if (user.role !== "supervisor") throw denied("Team tasks are given by team leads and above.");
     const now = Date.now(), cid = payload.client_id ? str(payload.client_id, 60) : "";
-    if (cid) { const c = await one(env, "SELECT id FROM clients WHERE id = ?", cid); if (!c) throw bad("That client was not found."); if (!inScope(user, cid)) throw outOfScope(); }
+    // a task on a client is a change to that client: a view-only share is not enough (as for escalations)
+    if (cid) { const c = await one(env, "SELECT id FROM clients WHERE id = ?", cid); if (!c) throw bad("That client was not found."); editableOr(user, cid); }
     const scope = TASK_SCOPES.includes(payload.scope) ? payload.scope : ""; if (!scope) throw bad("Pick the scope.");
     const title = String(payload.title == null ? "" : payload.title).trim(); if (title.length < 3) throw bad("Write what the task is, a few words."); if (title.length > 160) throw bad("Keep the task name under 160 characters; the rest goes in the description.");
     const description = String(payload.description == null ? "" : payload.description).trim(); if (description.length > TASK_DESC_MAX) throw bad("The description can be up to 4,000 characters.");
@@ -7424,7 +7425,7 @@ const OPS = {
     const people = Array.isArray(payload.people) ? payload.people : [];
     if (!people.length) throw bad("Pick who does it.");
     if (people.length > 25) throw bad("Up to 25 people on one task.");
-    const team = new Map((await visibleUsers(env, user)).filter((u) => u.active).map((u) => [u.id, u]));
+    const team = new Map((await visibleUsers(env, user, "edit")).filter((u) => u.active).map((u) => [u.id, u]));
     const seen = new Set(), list = [];
     for (const p of people) {
       const id = str(p && p.user_id, 60), u = team.get(id);
@@ -7576,7 +7577,7 @@ const OPS = {
     const current = await all(env, "SELECT p.*, u.name FROM team_task_people p LEFT JOIN users u ON u.id = p.user_id WHERE p.task_id = ?", t.id);
     let count = t.count_total;
     if (Array.isArray(payload.people)) {
-      const team = new Map((await visibleUsers(env, user)).filter((u) => u.active).map((u) => [u.id, u])), want = new Map();
+      const team = new Map((await visibleUsers(env, user, "edit")).filter((u) => u.active).map((u) => [u.id, u])), want = new Map();
       for (const p of payload.people) { const id = str(p && p.user_id, 60), share = Math.round(num(p && p.share, -1)); if (want.has(id)) throw bad("Someone is picked twice."); want.set(id, share); }
       for (const c of current) {
         if (!want.has(c.user_id)) { if (c.done_n > 0) throw bad(`${c.name || "Someone"} has done ${c.done_n}: set their share to ${c.done_n} instead of taking them off.`);

@@ -186,6 +186,17 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-01: on a team lead's Team list the people of their own span are marked theirs, the crossover and share people are not", (await TI("users.list")).users.filter((u) => u.in_span).map((u) => u.name).sort().join() === ["Arun Agent", "Bela Agent", "Dev Agent", "Pavan Poster", "Pia Postlead", "Pooja Postlead", "Sahil Submitter", "Sima Expert", "Suri Sublead", "Tina Lead"].sort().join(),
     (await TI("users.list")).users.map((u) => u.name + ":" + u.in_span));
 
+  S("E-07: a view-only share gives no team tasks on that client");
+  r = await T(() => VK("tasks.create", { client_id: sun.id, scope: "AR follow-up", title: "Recheck the made-up list", source: "Internal", tat: { kind: "24" }, count: 5, people: [{ user_id: id["Arun Agent"], share: 5 }] }));
+  ok("E-07: a team task on a view-only client is refused, like an escalation", refused(r, /view-only/) && refused(await T(() => VK("escalations.save", { client_id: sun.id, kind: "external" })), /view-only/), r);
+  r = await T(() => VK("tasks.create", { scope: "AR follow-up", title: "Recheck the made-up list", source: "Internal", tat: { kind: "24" }, count: 5, people: [{ user_id: id["Arun Agent"], share: 5 }] }));
+  ok("E-07: nor a task without a client to the people seen through the view-only share", refused(r, /Only people on your team/), r);
+  ok("E-07: nothing landed on the biller's My tasks", (await (await w.c("Arun Agent"))("tasks.mine", {})).rows.length === 0);
+  ok("E-07: the task form's people list leaves them out", !(await VK("tasks.people", {})).people.some((p) => p.id === id["Arun Agent"]));
+  r = await T(() => ED("tasks.create", { client_id: sun.id, scope: "AR follow-up", title: "Recheck the made-up list", source: "Internal", tat: { kind: "24" }, count: 5, people: [{ user_id: id["Arun Agent"], share: 5 }] }));
+  ok("E-07: with an edit share the task is given", r.ok && (await (await w.c("Arun Agent"))("tasks.mine", {})).rows.length === 1, r);
+  r = await T(() => TI("tasks.create", { client_id: sun.id, scope: "AR follow-up", title: "Recheck the made-up list again", source: "Internal", tat: { kind: "24" }, count: 4, people: [{ user_id: id["Bela Agent"], share: 4 }] }));
+  ok("E-07: the client's own team lead gives tasks as before", r.ok, r);
 }
 
 const fails = results.filter((x) => !x.pass);
