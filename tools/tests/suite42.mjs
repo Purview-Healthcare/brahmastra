@@ -18,6 +18,20 @@ const SRC = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
 const HTML = fs.readFileSync(REPO + "/index.html", "utf8");
 // one component's code in app.jsx: from "function Name(" to the next top-level function
 const fnSrc = (name) => { const i = SRC.indexOf("\nfunction " + name + "("); if (i < 0) return ""; const j = SRC.indexOf("\nfunction ", i + 10); return SRC.slice(i, j < 0 ? undefined : j); };
+// The theme colours as index.html defines them, and the contrast of text on a background (WCAG: 4.5 to 1 for text)
+const CSS = HTML.slice(HTML.indexOf("<style>"), HTML.indexOf("</style>"));
+const tokensOf = (sel) => { const out = {}; let i = 0; while ((i = CSS.indexOf(sel + "{", i)) >= 0) { const body = CSS.slice(i + sel.length + 1, CSS.indexOf("}", i)); for (const m of body.matchAll(/(--[\w-]+):([^;]+)/g)) out[m[1]] = m[2].trim(); i += sel.length; } return out; };
+const LIGHT = tokensOf(":root"), THEME = { light: LIGHT, navy: { ...LIGHT, ...tokensOf(':root[data-theme="navy"]') }, gold: { ...LIGHT, ...tokensOf(':root[data-theme="gold"]') } };
+const rgba = (c) => { c = String(c).trim(); let m = c.match(/^#([0-9a-f]{6})$/i); if (m) return [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)).concat(1); m = c.match(/^rgba?\(([^)]+)\)$/); if (m) { const a = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return [a[0], a[1], a[2], a.length > 3 ? a[3] : 1]; } return null; };
+const over = (top, bot, alpha = 1) => { const a = top[3] * alpha; return [0, 1, 2].map((k) => top[k] * a + bot[k] * (1 - a)).concat(1); };
+const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+const ratio = (a, b) => { const x = lum(a), y = lum(b); return Math.round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) * 100) / 100; };
+// a colour value in a theme: a literal, or var(--token) looked up in that theme
+const col = (theme, v) => { const m = String(v).trim().match(/^var\((--[\w-]+)\)$/); return rgba(m ? THEME[theme][m[1]] : v); };
+// the declarations of the rules whose selector is exactly `sel` (merged, in order); `media` picks rules inside that @media block only
+const decls = (body) => { const out = {}; for (const d of body.split(";")) { const k = d.indexOf(":"); if (k > 0) out[d.slice(0, k).trim()] = d.slice(k + 1).trim(); } return out; };
+const mediaBody = (media) => { const i = CSS.indexOf("@media" + media + "{"); if (i < 0) return ""; let depth = 0, j = i; for (; j < CSS.length; j++) { if (CSS[j] === "{") depth++; else if (CSS[j] === "}" && --depth === 0) break; } return CSS.slice(CSS.indexOf("{", i) + 1, j); };
+const rule = (sel, media) => { const src = media ? mediaBody(media) : CSS.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, ""); const out = {}; for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) if (m[1].trim() === sel) Object.assign(out, decls(m[2])); return out; };
 
 S("Pop-ups: Escape, the shade, typed text and Tab (H-01, H-02, H-13, H-14, H-15)");
 const layered = ["Modal", "ClaimDrawer", "CommandPalette", "DiscardAsk", "AlertLayer", "SidePanel"];
@@ -95,6 +109,16 @@ r = await saveC(undefined);
 ok("H-11 (same mistake): a client save without the follow-up keeps it (it used to become 30)", r.ok && (await fuOf()) === 21, [r, await fuOf()]);
 ok("H-11 (same mistake): the client profile form says 1 to 365 and lists a wrong follow-up under Still needed",
   /wholeIn\(f\.follow_up_days, 1, 365\)/.test(fnSrc("profileMissing")) && /"1 to 365"/.test(fnSrc("ClientProfileForm")));
+
+S("The Feedback tab: readable in every theme (H-03)");
+const fb = rule(".fb-tab");
+ok("H-03: the Feedback tab's text is the dark ink the primary buttons use on teal and gold", fb.color === "var(--pri-ink)" && fb.background === "var(--teal)", fb);
+for (const th of ["light", "navy", "gold"]) {
+  const paper = col(th, "var(--paper)"), op = Number(fb.opacity || 1);
+  const bg = over(col(th, fb.background), paper, op), fg = over(col(th, fb.color), paper, op);
+  const k = ratio(fg, bg);
+  ok(`H-03: ${th}: the Feedback tab text is at least 4.5 to 1 (now ${k} to 1; it was about 2 to 1 in white)`, k >= 4.5, { th, k });
+}
 
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
