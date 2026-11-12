@@ -3759,6 +3759,10 @@ const OPS = {
       if (ex.role === "admin") { if (!user.is_admin) throw denied("Only an admin can change an admin account."); role = "admin"; }
       // A new email: for someone the roster had no (or a wrong) address for.
       const newEmail = payload.email != null ? mailClean(payload.email) : ex.email;
+      // The Emp ID decides whose Shastra row this account gets at the next roster sync (the other account with it is switched off):
+      // the admin's to change, and never to one that another account in use has.
+      const empId = payload.emp_id != null ? str(payload.emp_id, 20).trim().toUpperCase() : null;
+      const empChanged = empId != null && empId !== String(ex.emp_id || "").trim().toUpperCase();
       // Not the admin: you change only people who report up to you (or billers and desk people on your projects), never your own
       // projects or manager, an email only where it is missing, projects only from your own, and nobody's role up to team lead.
       if (!user.is_admin) {
@@ -3769,6 +3773,7 @@ const OPS = {
         // Roles come from Purview Shastra: only the admin makes someone a team lead, or takes the SME designation (and its limits) off.
         if (role === "supervisor" && ex.role !== "supervisor") throw denied("Only the admin can make someone a team lead. Roles come from Purview Shastra.");
         if (isSME(ex) && !isSME({ ...ex, designation })) throw denied("Only the admin can change an SME's designation. Designations come from Purview Shastra.");
+        if (empChanged) throw denied("Only the admin can change an Emp ID: it decides whose Shastra row the account gets.");
         if (projects && user.scope) { const mine = new Set((user.scope_projects || []).map(projKey)); const extra = projects.filter((x) => !mine.has(projKey(x.name)));
           if (extra.length) throw denied("You can only give people your own projects. Not yours: " + extra.map((x) => x.name).join(", ") + "."); }
       }
@@ -3776,6 +3781,10 @@ const OPS = {
       if (newEmail !== ex.email) {
         if (!mailOk(newEmail)) throw bad("Enter a valid email address.");
         if (await one(env, "SELECT id FROM users WHERE email = ? AND id <> ?", newEmail, ex.id)) throw bad("That email already has an account.");
+      }
+      if (empChanged && empId) {
+        const other = await one(env, "SELECT name FROM users WHERE upper(trim(emp_id)) = ? AND id <> ? AND active = 1 AND (COALESCE(pass_hash, '') <> '' OR last_login IS NOT NULL) LIMIT 1", empId, ex.id);
+        if (other) throw bad(`That Emp ID is ${other.name}'s, and their account is in use: at the next roster sync one of the two would be switched off. If this account is to take its place, switch that one off first.`);
       }
       if (ex.id === user.id && (!active || (role !== "supervisor" && role !== "admin"))) throw bad("You can't deactivate or demote your own account.");
       if (ex.role === "supervisor" && (role !== "supervisor" || !active)) {
@@ -3785,7 +3794,7 @@ const OPS = {
       const boss = reportsTo ? await one(env, "SELECT name FROM users WHERE id = ?", reportsTo) : null;
       await env.DB.batch([
         ...(newEmail !== ex.email ? [env.DB.prepare("UPDATE users SET email = ?, email_missing = 0 WHERE id = ?").bind(newEmail, ex.id)] : []),
-        ...(payload.emp_id != null ? [env.DB.prepare("UPDATE users SET emp_id = ? WHERE id = ?").bind(str(payload.emp_id, 20).trim().toUpperCase(), ex.id)] : []),
+        ...(empChanged ? [env.DB.prepare("UPDATE users SET emp_id = ? WHERE id = ?").bind(empId, ex.id)] : []),
         ...(projects ? [env.DB.prepare("UPDATE users SET projects_json = ? WHERE id = ?").bind(JSON.stringify(projects), ex.id)] : []),
         ...(reportsTo !== undefined ? [env.DB.prepare("UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?").bind(reportsTo, boss ? boss.name : "", ex.id)] : []),
         env.DB.prepare("UPDATE users SET name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, capacity = ?, active = ? WHERE id = ?").bind(name, first, last, designation, role, capacity, active, ex.id),
@@ -3794,7 +3803,8 @@ const OPS = {
       // Switched off here as in a roster sync: their claims go back to the pool and their open hand-offs to the backup.
       if (!active && ex.active) await unassignOpen(env, ex.id);
       if (projects || reportsTo !== undefined || role !== ex.role || active !== ex.active) { await recomputeScopes(env); await syncTeams(env); }
-      if (role !== ex.role || active !== ex.active || projects) await audit(env, user, "user.save", null, name + (role !== ex.role ? " · role " + ex.role + " → " + role : "") + (active !== ex.active ? (active ? " · reactivated" : " · deactivated") : "") + (projects ? " · projects " + projects.map((x) => x.name).join(", ") : ""));
+      if (role !== ex.role || active !== ex.active || projects || empChanged) await audit(env, user, "user.save", null, name + (role !== ex.role ? " · role " + ex.role + " → " + role : "") + (active !== ex.active ? (active ? " · reactivated" : " · deactivated") : "")
+        + (empChanged ? " · Emp ID " + (ex.emp_id || "none") + " → " + (empId || "none") : "") + (projects ? " · projects " + projects.map((x) => x.name).join(", ") : ""));
       return { user: publicUser(await one(env, "SELECT * FROM users WHERE id = ?", ex.id)) };
     }
     const email = mailClean(payload.email);

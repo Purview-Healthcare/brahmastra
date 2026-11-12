@@ -266,6 +266,42 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-02: taking the team lead role off someone who reports to you stays as it was (not a way up)", r.ok && (await roleOf("Tina Lead")) === "user", r);
 }
 
+/* ================= D-09: nobody puts someone else's Emp ID on a profile ================= */
+{
+  const feed = [...FEED(), P({ emp_id: "Z9", name: "Zed Newjoiner", project: SUN, reports_to: "Tina Lead", email: "zed" + D })];
+  const w = await makeWorld({ feed });
+  const { A, T, id } = w;
+  const TI = await w.c("Tina Lead"), PI = await w.c("Pia Postlead");
+  const emp = async (n) => (await w.U(n)).emp_id;
+
+  S("D-09: the Emp ID is the admin's to change");
+  const seen = (await w.anon("auth.lookup", { q: "Pia" })).matches.find((m) => m.id === id["Pia Postlead"]).emp_id;   // Emp IDs show on the sign-in screen
+  let r = await T(() => TI("users.save", { id: id["Tina Lead"], first_name: "Tina", last_name: "Lead", role: "supervisor", emp_id: seen }));
+  ok("D-09: a team lead cannot put another person's Emp ID on their own profile", refused(r, /Only the admin can change an Emp ID/) && (await emp("Tina Lead")) === "T1", [r, await emp("Tina Lead")]);
+  r = await T(() => TI("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", role: "user", emp_id: seen }));
+  ok("D-09: nor on a team member's profile", refused(r, /Only the admin can change an Emp ID/) && (await emp("Arun Agent")) === "A1", r);
+  await w.sync();
+  const pia = await w.U("Pia Postlead");
+  ok("D-09: after the roster sync that person is still switched on and signs in", pia.active === 1 && (await T(() => PI("auth.me"))).ok && (await T(async () => w.anon("auth.loginById", { user_id: pia.id, passHash: await w.sha("pw-Pia Postlead") }))).ok, pia && pia.active);
+  r = await T(() => TI("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", role: "user", capacity: 31, emp_id: "a1" }));
+  ok("D-09: a team lead's save with the Emp ID as it is (any letter case, as the form sends it) still goes through", r.ok && r.r.user.capacity === 31 && (await emp("Arun Agent")) === "A1", r);
+
+  S("D-09: the admin matches an account to its roster row, never to one in use");
+  r = await T(() => A("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", role: "user", emp_id: seen }));
+  ok("D-09: the admin cannot give an account the Emp ID of another account that is in use", !r.ok && /in use/.test(r.e) && (await emp("Arun Agent")) === "A1", r);
+  const admin = await w.row("SELECT * FROM users WHERE role = 'admin'");
+  r = await T(() => A("users.save", { id: admin.id, first_name: admin.first_name || "Admin", last_name: admin.last_name || "One", emp_id: "T1" }));
+  ok("D-09: not on the admin's own profile either", !r.ok && /in use/.test(r.e) && (await w.row("SELECT emp_id FROM users WHERE id = ?", admin.id)).emp_id !== "T1", r);
+  // a hand-made account for someone who also has an unused roster copy: the admin merges them by the Emp ID (the documented use)
+  const made = await A("users.save", { first_name: "Zed", last_name: "Handmade", email: "zed.hand" + D, designation: "Biller", role: "user", passHash: await w.sha("temp-for-zed") });
+  r = await T(() => A("users.save", { id: made.user.id, first_name: "Zed", last_name: "Handmade", role: "user", emp_id: "z9" }));
+  ok("D-09: the admin can still put the Emp ID of an unused roster copy on a hand-made account", r.ok && (await w.row("SELECT emp_id FROM users WHERE id = ?", made.user.id)).emp_id === "Z9", r);
+  ok("D-09: the Emp ID change is in the audit trail", (await w.audits("user.save")).some((a) => /Zed Handmade · Emp ID none → Z9/.test(a.detail)), await w.audits("user.save"));
+  await w.sync();
+  const kept = await w.row("SELECT * FROM users WHERE id = ?", made.user.id), copies = await w.rows("SELECT id, active FROM users WHERE name = 'Zed Newjoiner' OR emp_id = 'Z9'");
+  ok("D-09: at the next sync the hand-made account takes the roster row and the unused copy is gone or off", kept.source === "roster" && kept.name === "Zed Newjoiner" && kept.active === 1 && !!kept.pass_hash && copies.filter((c) => c.active).length === 1, [kept && [kept.source, kept.name, kept.active], copies]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
