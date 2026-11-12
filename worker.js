@@ -3385,6 +3385,13 @@ function workingHoursBetween(a, b) {
 const escPast = (at, now = Date.now()) => !!at && addWorkingHours(at, ESC_TAT_HOURS) < now;
 /* A claim's age in days by date of service (the file's age when the date is missing or not a real date): one ? for today. */
 const AGE_SQL = (p = "") => `(CASE WHEN ${p}dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(${p}dos, 1, 10)), ${p}age_days) ELSE ${p}age_days END)`;
+/* The age buckets (the names the page's BUCKETS use) by that age today, as the rows and the over-90 figures count it, not the bucket
+   saved at upload: a claim's bucket moves on as it ages. A DOS in the future is 0-30. */
+const AGE_BUCKETS = [["0\u201330", -99999, 30], ["31\u201360", 31, 60], ["61\u201390", 61, 90], ["91\u2013120", 91, 120], ["120+", 121, 99999]];
+const AGE_BUCKET_SQL = (age) => `(CASE WHEN ${age} IS NULL THEN bucket ${AGE_BUCKETS.slice(0, -1).map(([k, , hi]) => `WHEN ${age} <= ${hi} THEN '${k}'`).join(" ")} ELSE '120+' END)`;
+// claims in the bucket picked, today: three ? (today, from, to). For a list whose conditions get a table prefix: "id IN (...)".
+const IN_AGE_BUCKET = "id IN (SELECT id FROM claims WHERE " + AGE_SQL() + " BETWEEN ? AND ?)";
+const ageBucketArgs = (name, today) => { const b = AGE_BUCKETS.find(([k]) => k === name); return b ? [today, b[1], b[2]] : null; };
 /* Turning 90 soon: a claim crosses into "over 90" (the AR Aging KPI) when it is 91 days old. On a biller's list, claims 77 to 90 days
    old move up (more in their last week), so they are worked before they cross. Two ? for today. */
 // A claim the team lead Lowered stays behind the others: it gets no turning-90 boost until the setting is changed back.
@@ -5796,7 +5803,9 @@ const OPS = {
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(payload.location_id); }
     if (payload.state === "workable") where.push(`c.state IN ${WORKABLE}`);
     else if (payload.state) { where.push("c.state = ?"); params.push(str(payload.state, 20)); }
-    for (const f of ["tier", "bucket", "status_class", "payer", "inventory_kind"]) if (payload[f]) { where.push(`c.${f} = ?`); params.push(str(payload[f], 200)); }
+    for (const f of ["tier", "status_class", "payer", "inventory_kind"]) if (payload[f]) { where.push(`c.${f} = ?`); params.push(str(payload[f], 200)); }
+    // the age bucket today (as each row shows its age), not the one saved at upload
+    if (payload.bucket) { const ab = ageBucketArgs(str(payload.bucket, 20), isoDate(payload.today) || isoToday()); if (ab) { where.push("c." + IN_AGE_BUCKET); params.push(...ab); } else { where.push("c.bucket = ?"); params.push(str(payload.bucket, 200)); } }
     if (payload.assigned_to === "__none") where.push("c.assigned_to IS NULL");
     else if (payload.assigned_to) { where.push("c.assigned_to = ?"); params.push(str(payload.assigned_to, 60)); }
     if (payload.worked_before === true) where.push("c.worked_before = 1");
@@ -5876,16 +5885,18 @@ const OPS = {
     // A manager who picked a team lead on the Dashboard: that team lead's clients.
     if (payload.lead_id) { const lc = await leadClientIds(env, user, payload.lead_id); if (lc) { where.push(`client_id IN (${lc.length ? lc.map(() => "?").join(",") : "NULL"})`); params.push(...lc); } }
     // Dashboard cross-filters: click a bar and every other number is recomputed for that slice.
-    for (const f of ["tier", "bucket", "status_class", "payer", "inventory_kind", "assigned_to"]) if (payload[f]) { where.push(`${f} = ?`); params.push(str(payload[f], 200)); }
+    const today = isoDate(payload.today) || isoToday();
+    for (const f of ["tier", "status_class", "payer", "inventory_kind", "assigned_to"]) if (payload[f]) { where.push(`${f} = ?`); params.push(str(payload[f], 200)); }
+    // the age bucket clicked: by the claim's age today, as the By age bars below group it
+    if (payload.bucket) { const ab = ageBucketArgs(str(payload.bucket, 20), today); if (ab) { where.push(IN_AGE_BUCKET); params.push(...ab); } else { where.push("bucket = ?"); params.push(str(payload.bucket, 200)); } }
     if (payload.saag_status) { where.push("last_status_code = ?"); params.push(str(payload.saag_status, 60)); }
     if (payload.saag_bucket) { where.push("last_bucket = ?"); params.push(str(payload.saag_bucket, 20)); }
     const w = where.length ? "WHERE " + where.join(" AND ") : "";
     const ww = (where.length ? w + " AND " : "WHERE ") + `state IN ${WORKABLE}`;
-    const today = isoDate(payload.today) || isoToday();
     const [states, tiers, buckets, classes, payers, kinds, users, due, escalated] = await Promise.all([
       all(env, `SELECT state, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${w} GROUP BY state`, ...params),
       all(env, `SELECT tier, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${ww} GROUP BY tier`, ...params),
-      all(env, `SELECT bucket, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${ww} GROUP BY bucket`, ...params),
+      all(env, `SELECT ${AGE_BUCKET_SQL("age")} AS bucket, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM (SELECT ${AGE_SQL()} AS age, bucket, balance FROM claims ${ww}) GROUP BY 1`, today, ...params),
       all(env, `SELECT status_class, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${ww} GROUP BY status_class`, ...params),
       all(env, `SELECT payer, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${ww} GROUP BY payer ORDER BY amt DESC LIMIT 12`, ...params),
       all(env, `SELECT inventory_kind, worked_before, COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims ${ww} GROUP BY inventory_kind, worked_before`, ...params),

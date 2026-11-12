@@ -344,6 +344,29 @@ S("A-05: Undo upload after the upload allocated its claims");
   ok("A-05: Undo also removes a worked-file claim that was waiting for its follow-up date", r3.removed === 1 && (await claimsOf(c3)).length === 0, r3);
 }
 
+S("A-06: one age bucket for a claim, as of today");
+{
+  const cl = await mkClient("Made-up Clinic S35 A06");
+  // loaded on 1 Nov: DOS 08/08/2026 was 85 days old then (61-90); on 10 Nov it is 94 days old (91-120)
+  const t = readCsv([["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"], ["9806001", "Test Patient One", "Aetna", "08/08/2026", "1000.00", "Denied"],
+    ["9806002", "Test Patient Two", "Aetna", "12/20/2026", "200.00", "Pending"], ["9806003", "Test Patient Three", "Aetna", "", "300.00", "Pending"]]);
+  const built = app.buildClaims({ rows: t.rows, mapping: app.autoMap(t.headers), kind: "fresh", today: "2026-11-01" });
+  await app.uploadClaims({ client_id: cl.id, location_id: cl.loc, kind: "fresh", file_name: "nov1.csv", claims: built.claims, summary: built.summary, rows_read: 3 });
+  const stored = (await q1("SELECT bucket FROM claims WHERE client_id = ? AND claim_no = '9806001'", cl.id)).bucket;
+  const list = async (bucket) => (await A("claims.list", { client_id: cl.id, state: "workable", bucket, today: TODAY })).rows.map((r) => r.claim_no).sort().join();
+  ok("A-06: the Claims list's age filter ages the claim to today: 91-120 finds it, 61-90 (the bucket saved at upload) does not", stored === "61\u201390" && (await list("91\u2013120")) === "9806001" && (await list("61\u201390")) === "", [stored, await list("91\u2013120"), await list("61\u201390")]);
+  ok("A-06: a DOS in the future is in 0-30; a claim with no DOS is in no age bucket", (await list("0\u201330")) === "9806002" && !(await list("120+")).includes("9806003"), await list("0\u201330"));
+  const st = await A("claims.stats", { client_id: cl.id, today: TODAY });
+  const bk = Object.fromEntries(st.buckets.map((b) => [b.bucket, b.n]));
+  ok("A-06: Claims in detail By age counts it in 91-120, the same as the rows and the over-90 figure", bk["91\u2013120"] === 1 && !bk["61\u201390"] && bk["0\u201330"] === 1, st.buckets);
+  const sel = await A("claims.stats", { client_id: cl.id, today: TODAY, bucket: "91\u2013120" });
+  const none = await A("claims.stats", { client_id: cl.id, today: TODAY, bucket: "61\u201390" });
+  const n = (x) => x.states.reduce((t, r) => t + r.n, 0);
+  ok("A-06: clicking the 91-120 bar narrows every figure to that claim (61-90 to none), the people and location tables too", n(sel) === 1 && n(none) === 0 && sel.by_location.length === 1 && sel.by_location[0].n === 1 && none.by_location.length === 0, [n(sel), n(none), sel.by_location.length]);
+  const co = await A("client.overview", { client_id: cl.id, today: TODAY });
+  ok("A-06: Client 360 agrees: the claim is over 90", co.ar.over90 === 1000, co.ar);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
