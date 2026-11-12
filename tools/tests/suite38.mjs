@@ -498,6 +498,27 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-21: the last active location says what switching it off means", /only active location of \$\{locOff\.client\}/.test(src) && /nothing reaches anyone/.test(src));
 }
 
+{
+  S("E-16: a roster project never makes a client without its profile; Create opens the Add client setup");
+  const f = baseFeed().map((r) => (r.emp_id === "S1" ? { ...r, also_on_projects: "Hillcrest Clinic" } : r.emp_id === "T1" ? { ...r, also_on_projects: "Hillcrest Clinic" } : r));
+  const w = await world({ feed: f });
+  const SI = await w.firstIn("Sima Expert"), TI = await w.firstIn("Tina Lead");
+  const n0 = (await w.row("SELECT COUNT(*) AS n FROM clients")).n;
+  const bySme = await w.T(() => SI("projects.map", { name: "Hillcrest Clinic", create: true, client_name: "Hillcrest Clinic" }));
+  const byLead = await w.T(() => TI("projects.map", { name: "Hillcrest Clinic", create: true }));
+  ok("E-16: the pop-up's old create is refused for an SME and a team lead, pointing to Add client", !bySme.ok && !byLead.ok && /Add client/.test(byLead.e) && (await w.row("SELECT COUNT(*) AS n FROM clients")).n === n0, [bySme.e, byLead.e]);
+  const sme = await w.T(async () => SI("clients.save", { name: "Hillcrest Clinic", locations: ["Main"], profile: await profileOf(w, { posting: 24, submission: 24, subcheck: 48 }) }));
+  ok("E-16: an SME still cannot add the client (Add client is for team leads and up)", !sme.ok && /team leads and above/.test(sme.e), sme.e);
+  const add = await w.T(async () => TI("clients.save", { name: "Hillcrest Clinic", code: "HC", follow_up_days: 30, active: true, locations: ["Main"], profile: await profileOf(w, { posting: 24, submission: 24, subcheck: 48 }) }));
+  const c = add.ok ? await w.row("SELECT id, roster_names_json FROM clients WHERE id = ?", add.r.client.id) : null;
+  const au = c ? (await w.row("SELECT COUNT(*) AS n FROM audit_log WHERE client_id = ?", c.id)).n : 0;
+  ok("E-16: the team lead adds it with its whole profile: the project is matched to it and the audit trail has it", add.ok && /Hillcrest Clinic/.test(c.roster_names_json) && au >= 1, { e: add.e, c, au });
+  const again = await w.T(() => TI("projects.map", { name: "Hillcrest Clinic", client_id: c.id }));
+  ok("E-16: matching the project to the client just made (what the page does after the setup) works", again.ok, again.e);
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("E-16: the page opens the setup for Create, and SMEs are not offered it", /canCreate=\{!isSmeUI\(me\)\} onCreate=/.test(src) && /if \(make && onCreate\) onCreate\(make\)/.test(src) && !/create: true/.test(src) && /initialName=\{newFor\}/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -7831,11 +7831,10 @@ const OPS = {
     const name = str(payload.name, 80).trim();
     if (!name) throw bad("Which roster project?");
     if (user.scope && !user.scope_projects.some((p) => projKey(p) === projKey(name))) throw outOfScope();
-    let clientId = str(payload.client_id, 60);
-    if (payload.create) {
-      clientId = uuid();
-      await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,1,30,?,?)", clientId, str(payload.client_name || name, 160).trim() || name, "", user.id, Date.now());
-    }
+    // A new client is made only through Add client, with its whole profile (team leads and up); the page opens that setup with
+    // the project's name, then matches the project to the client it made.
+    if (payload.create) throw bad("Add the new client with its whole profile (Manage › Clients & locations › Add client); a project with the same name is matched to it by itself.");
+    const clientId = str(payload.client_id, 60);
     const c = await one(env, "SELECT id, roster_names_json FROM clients WHERE id = ?", clientId);
     if (!c) throw bad("Pick the client this project is.");
     const others = await all(env, "SELECT id, roster_names_json FROM clients");

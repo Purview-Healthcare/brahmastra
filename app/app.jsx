@@ -2206,9 +2206,9 @@ function profileMissing(f, locCount) {
 // Payment posting and Submission have a TAT (Rejections resubmit to the Submission TAT); only AR has a daily target.
 const tatScopes = (scope) => ["posting", "submission"].filter((k) => scope.includes(k) || (k === "submission" && scope.includes("rejection")));
 const Step = ({ n, title, sub, children }) => <div className="group"><div className="gt row" style={{ gap: 8 }}><span className="stepn">{n}</span>{title}</div>{sub && <div className="tiny muted" style={{ margin: "-4px 0 8px" }}>{sub}</div>}{children}</div>;
-function ClientProfileForm({ ctx, client, onClose, onSaved }) {
+function ClientProfileForm({ ctx, client, onClose, onSaved, initialName }) {
   const isNew = !client;
-  const [f, setF] = useState(() => ({ name: client ? client.name : "", code: client ? client.code || "" : "", follow_up_days: client ? client.follow_up_days : 30, active: client ? client.active : true,
+  const [f, setF] = useState(() => ({ name: client ? client.name : initialName || "", code: client ? client.code || "" : "", follow_up_days: client ? client.follow_up_days : 30, active: client ? client.active : true,
     workbook_link: client ? client.workbook_link || "" : "", prodMode: client && client.workbook_link ? "link" : "auto", locations: [], locDraft: "", ...profileFrom(client) }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -2226,10 +2226,10 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
     setBusy(true); setErr(null);
     try {
       // seen: the client as this form opened it; if someone saved it since, the server refuses instead of undoing their change
-      await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active, seen: client ? client.stamp : undefined,
+      const r = await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active, seen: client ? client.stamp : undefined,
         locations: isNew ? f.locations : undefined, profile: { scope: f.scope, targets: f.targets, tat: f.tat, resp: f.resp } });
       toast(isNew ? f.name.trim() + " created. Everyone set as responsible sees it now." : "Client profile saved.");
-      onSaved();
+      onSaved(r && r.client);
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -2703,7 +2703,7 @@ async function autoAllocate({ ctx, client, loc }) {
 
 /* ---------- the day's team for a project: who receives claims today, and how many ---------- */
 const STATUS_TONE = { working: "green", ojt: "blue", training: "blue", sabbatical: "amber", "serving notice": "red" };
-function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
+function ProjectMapModal({ names, clients, onDone, onClose, canCreate, onCreate }) {
   const guess = (n) => { const k = String(n).toLowerCase().replace(/[^a-z0-9]/g, ""); const hit = clients.filter((c) => { const a = c.name.toLowerCase().replace(/[^a-z0-9]/g, ""), b = String(c.code || "").toLowerCase().replace(/[^a-z0-9]/g, ""); return a.includes(k) || k.includes(a) || (b && (b === k || a.startsWith(k))); }); return hit.length === 1 ? hit[0].id : ""; };
   const [pick, setPick] = useState(() => Object.fromEntries(names.map((n) => [n, guess(n)])));
   const [busy, setBusy] = useState(false);
@@ -2711,9 +2711,11 @@ function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
     setBusy(true);
     try {
       let n = 0;
-      for (const name of names) { const v = pick[name]; if (!v) continue; await rpc("projects.map", v === "__new" ? { name, create: true } : { name, client_id: v }); n++; }
-      toast(n ? `${n} project${n > 1 ? "s" : ""} matched.` : "Nothing matched yet.");
-      onDone && onDone();
+      for (const name of names) { const v = pick[name]; if (!v || v === "__new") continue; await rpc("projects.map", { name, client_id: v }); n++; }
+      // a new client is made with its whole profile, like Add client: the setup opens with the project's name
+      const make = names.find((name) => pick[name] === "__new");
+      if (n || !make) toast(n ? `${n} project${n > 1 ? "s" : ""} matched.` : "Nothing matched yet.");
+      if (make && onCreate) onCreate(make); else onDone && onDone();
     } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
@@ -2768,11 +2770,14 @@ function RosterView({ ctx, reload, me }) {
   const [emails, setEmails] = useState(null);
   useEffect(() => { if (meta.data && emails == null) setEmails(meta.data.extra_emails.join("\n")); }, [meta.data]);
   const saveEmails = async () => { setBusy("Saving…"); try { const r = await rpc("roster.saveEmails", { emails }); setEmails(r.extra_emails.join("\n")); toast("Saved: " + r.extra_emails.length + " extra email(s) can sign in."); meta.reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
-  const remap = async (name, v) => { setBusy("Saving…"); try { await rpc("projects.map", v === "__new" ? { name, create: true } : { name, client_id: v }); toast(name + " matched."); meta.reload(); await reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
+  const [newFor, setNewFor] = useState(null);
+  const remap = async (name, v) => { if (v === "__new") { setNewFor(name); return; } setBusy("Saving…"); try { await rpc("projects.map", { name, client_id: v }); toast(name + " matched."); meta.reload(); await reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
   const projOptions = ctx.clients;
   const last = meta.data && meta.data.shastra && meta.data.shastra.last;
   return (
     <div className="stack">
+      {newFor && <ClientProfileForm ctx={ctx} client={null} initialName={newFor} onClose={() => setNewFor(null)}
+        onSaved={async (cl) => { const name = newFor; setNewFor(null); if (cl) await rpc("projects.map", { name, client_id: cl.id }).catch(() => {}); meta.reload(); await reload(); }} />}
       <div><h1>Roster</h1><div className="sub">Everyone in Brahmastra comes from Purview Shastra: who reports to whom, departments, projects, status and date of joining. It updates by itself every hour; change people in Shastra, not here.</div></div>
       <ShastraSync data={meta.data && meta.data.shastra} onDone={(r) => { if (r) { setPreview(r); setTab("people"); } meta.reload(); reload(); }} />
       <div className="tiny muted" style={{ margin: "-4px 4px 0" }}>Access: Agents work claims; SMEs, Team Leads and Sr Team Leads lead their own projects; Assistant Managers, Managers and Sr Managers also see their people's projects; the Vice President sees every project. CEO, Director, HR, IT, Administration, QA, MIS and Tech Support get no access. Only AR agents receive AR claims. Nothing changes until you press Apply.</div>
@@ -9106,6 +9111,7 @@ function App() {
   useEffect(() => { if (me && me.prefs && Object.keys(me.prefs).length) storePrefs({ ...readPrefs(), ...me.prefs }); }, [me && me.id, me && JSON.stringify(me.prefs || {})]);
   /* After sign-in, a team lead first matches any roster project that is not yet a client, then (TLs and SMEs) sets who works each project today. */
   const [mapAsk, setMapAsk] = useState(null);
+  const [newFor, setNewFor] = useState(null);   // a roster project to add as a new client (the Add client setup, its name filled in)
   const checkPending = useCallback(async () => {
     if (!me || me.role !== "supervisor") return;
     try {
@@ -9193,7 +9199,9 @@ function App() {
       <Shell me={me} view={view} attention={attention} handoffs={handoffs} fb={fb} notify={notify} tasks={tasks} onRefreshNotify={refreshNotify} onGo={go} onSearch={() => setPal(true)} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)} onDeleteAccount={() => setDelOpen(true)}>
         <React.Fragment key={view + JSON.stringify(nav.params || {})}><PageBoundary onHome={() => go(me.role === "supervisor" ? "dashboard" : "queue")}>{body}</PageBoundary></React.Fragment>
       </Shell>
-      {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
+      {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate={!isSmeUI(me)} onCreate={(name) => { setMapAsk(null); setNewFor(name); }} onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
+      {newFor && <ClientProfileForm ctx={ctx} client={null} initialName={newFor} onClose={() => setNewFor(null)}
+        onSaved={async (cl) => { const name = newFor; setNewFor(null); if (cl) await rpc("projects.map", { name, client_id: cl.id }).catch(() => {}); await reload(); checkPending(); }} />}
       {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb, attention, tasks)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
       {palClaim && <ClaimDrawer id={palClaim} ctx={ctx} me={me} onClose={() => setPalClaim(null)} onChanged={() => {}} />}
       {palCoach && <CoachDrawer userId={palCoach} onClose={() => setPalCoach(null)} />}

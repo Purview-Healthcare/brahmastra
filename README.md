@@ -684,8 +684,9 @@ department lead. Department dashboards show **Needs you now**, **why claims need
 biller) and, for Submission, **rejections by code** (by code, client and biller). Rejected rechecks and
 resubmitted rejections carry a rejection code.
 - Each roster project is matched to a client (same name or code automatically;
-  otherwise a team lead is asked once). Active AR agents on a project become
-  that client's billers.
+  otherwise a team lead is asked once; a project that is a new client opens the
+  Add client setup with its name, so it gets its whole profile). Active AR agents
+  on a project become that client's billers.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
   when it has one), each up to their daily target, minus anyone marked **Out today** on Live status. Automatic
   allocation after an upload and the Allocate screen both use that; there is no daily ticking.
