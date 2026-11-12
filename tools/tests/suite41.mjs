@@ -203,6 +203,32 @@ S("G-06: Drishti does not answer: the message says when Brahmastra asks it again
   drDown = false; await fresh();
 }
 
+S("G-14: Drishti stops answering after a good read: every SLA page says its figures are old");
+{ const oct = (deny) => month("p-oct", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.1), collectionRate: cell(0.9), denialRate: cell(deny) });
+  DR_CLIENTS = [drClient("d-sun", "Sunrise Eye Care", [oct(0.2)])];
+  await fresh(); drDown = false;
+  const T0 = IST(2026, 11, 10, 12), T3 = T0 + 3 * 3600000;
+  const a = await at(T0, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+  ok("G-14: a good read: October 67%, nothing old about it", a.state === "ok" && a.score === 67 && !a.stale && a.at === T0 && !app.drStaleNote(a), [a.state, a.score, a.stale]);
+  DR_CLIENTS[0].periods = [oct(0.04)]; drDown = true;   // Drishti re-scores October to 100%, then stops answering
+  const b = await at(T3, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+  ok("G-14: three hours later the scorecard still has the read of 12:00, and says it is old: stale, read at, failed at, asked again at", b.state === "ok" && b.score === 67 && b.stale === true && b.at === T0 && b.failed_at === T3 && b.retry_at === T3 + 60000, { state: b.state, score: b.score, stale: b.stale, at: b.at, failed_at: b.failed_at });
+  const note = app.drStaleNote(b);
+  ok("G-14: the page says Drishti did not answer, from when the figures are, and when Brahmastra asks again", note.startsWith("Drishti did not answer at " + app.fmtWhen(T3) + ", so these are its figures as Brahmastra read them at " + app.fmtWhen(T0) + ".") && /asks Drishti again from/.test(note), note);
+  const pf = await at(T3 + 1000, () => A("portfolio.overview", TODAY));
+  ok("G-14: the Portfolio knows it too (its SLA tile says from when)", pf.drishti.state === "ok" && pf.drishti.stale === true && pf.drishti.at === T0, pf.drishti);
+  const sp = (await at(T3 + 1000, () => A("digest.spans", {}))).spans.find((x) => x.clients.some((c) => c.id === sun.id));
+  const dd = await at(T3 + 2000, () => A("digest.dashboard", { span: sp.key }));
+  const mail = await at(T3 + 3000, () => A("digest.preview", { span: sp.key }));
+  const said = "Drishti did not answer when this digest was made, so the SLA scores are from Brahmastra's last read of Drishti, Nov 10 12:00 IST.";
+  ok("G-14: the Monday digest page and its email say the SLA scores are from the last read, with when", dd.notices.includes(said) && mail.text.includes(said) && mail.html.includes(said.replace(/'/g, "&#39;")), { notices: dd.notices, text: mail.text.split("\n").slice(0, 5) });
+  drDown = false;
+  const c = await at(T3 + 61000, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+  const mail2 = await at(T3 + 62000, () => A("digest.preview", { span: sp.key }));
+  ok("G-14: Drishti back a minute later: the new figures (100%), nothing old said any more", c.state === "ok" && c.score === 100 && !c.stale && !app.drStaleNote(c) && !mail2.text.includes("did not answer"), [c.score, c.stale]);
+  await fresh();
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

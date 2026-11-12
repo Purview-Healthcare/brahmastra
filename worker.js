@@ -2636,6 +2636,7 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
 <tr><td style="padding:16px 22px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr>
 ${box(R.sla_avg == null ? "–" : R.sla_avg + "%", "avg SLA score" + (R.sla_month ? " · " + htmlEsc(R.sla_month.slice(0, 3)) : ""))}${box(R.esc ? R.esc.n + " · " + (R.esc.internal || 0) : "–", `external · internal escalations ${R.esc ? htmlEsc(R.esc.month.slice(0, 3)) + " " : ""}· target ${ESC_SLA_TARGET}`, R.esc && R.esc.n ? "#BA2340" : "#127A4D")}${box(dShort(R.ar), "AR" + (R.ar_ago != null ? (R.ar_ago <= 0 ? " · down " : " · up ") + dShort(Math.abs(R.ar_ago)) : ""))}${box(R.pct + "%", "over 90 · target " + R.target + "%", R.pct > R.target ? "#BA2340" : "#0F1B24")}
 </tr></table></td></tr>
+${extra.drStale ? `<tr><td style="padding:0 22px 6px;font-size:12px;color:#935300">${htmlEsc(drStaleText(extra.drStale))}</td></tr>` : ""}
 ${sec("CLIENT BY CLIENT")}
 <tr><td style="padding:0 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12.5px;border-collapse:collapse">
 <tr>${hcell("Client")}${hcell("SLA", "center")}${hcell("Escalations<br>external · internal", "center")}${hcell("Billable / Assign FTE", "center")}${hcell("Over 90", "right")}</tr>
@@ -2653,7 +2654,7 @@ ${link ? `<tr><td style="padding:16px 22px 4px"><table role="presentation" cellp
   const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`,
     `Manager name: ${extra.manager ? extra.manager.name : "No manager"} · Designation: ${extra.manager ? extra.manager.designation : "-"} · Period: week of ${weekTxt}`,
     ...(wf.length ? [`Total team: Billable FTE: ${fteTxt(wsum("billable"))} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}`] : []),
-    `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} external (target ${ESC_SLA_TARGET}) and ${R.esc.internal || 0} internal` : ""), "", "Client by client:",
+    `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} external (target ${ESC_SLA_TARGET}) and ${R.esc.internal || 0} internal` : ""), ...(extra.drStale ? [drStaleText(extra.drStale)] : []), "", "Client by client:",
     ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "not scored"}` + (d.esc ? `, escalations ${d.esc.n} external and ${d.esc.internal || 0} internal` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
     ...(ds.some((d) => d.tat) ? ["", "TAT last week (working hours, Monday to Friday):", ...TAT_PARTS.filter(([k]) => R.tat[k]).map(([k, label]) => `- ${label}: ${R.tat[k].pct}% (${R.tat[k].met} of ${R.tat[k].due})`),
       ...order.filter((d) => d.tat).map((d) => `- ${d.client.name}: ${tatLine(d.tat)}`)] : []),
@@ -2693,11 +2694,15 @@ async function spanData(env, span, wk) {
   // TAT last week: Payment posting, Submission and Needs attention, and where it was missed most (no claim numbers in the digest)
   const ts = await tatStats(env, ds.map((d) => d.client.id), wk.from, wk.to);
   for (const d of ds) d.tat = tatDigest(ts.get(d.client.id));
-  return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null };
+  // Drishti not answering when the digest is made: the cards are its last read, and the digest says from when
+  const old = ds.find((d) => d.card && d.card.stale && d.card.at);
+  return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null, drStale: old ? { at: old.card.at } : null };
 }
+// "SLA scores are from Brahmastra's last read of Drishti, Nov 9 14:05 IST": for the digest when Drishti did not answer
+const drStaleText = (s) => (s && s.at ? `Drishti did not answer when this digest was made, so the SLA scores are from Brahmastra's last read of Drishti, ${dDay(istISO(s.at))} ${istStamp(s.at).slice(9)} IST.` : "");
 async function spanMail(env, span, wk) {
-  const { ds, manager } = await spanData(env, span, wk);
-  return spanEmail(span, wk, ds, env.APP_URL || "", { manager });
+  const { ds, manager, drStale } = await spanData(env, span, wk);
+  return spanEmail(span, wk, ds, env.APP_URL || "", { manager, drStale });
 }
 /* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
 async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, by = "Monday job" } = {}) {
@@ -4750,7 +4755,8 @@ const OPS = {
     const want = weeks.find((w) => w.week === isoDate(payload.week)) || weeks[0];
     if (askWeek && want.week !== askWeek) notices.push(`The week in the link (${askWeek}) is not one of the last 9 Mondays. This is the week of ${dDay(want.first)}.`);
     const wk = digestWeek(Date.parse(want.week + "T12:00:00Z"));
-    const { ds, manager } = await spanData(env, s, wk);
+    const { ds, manager, drStale } = await spanData(env, s, wk);
+    if (drStale) notices.push(drStaleText(drStale));
     const R = digestRollup(ds);
     const card = (c) => c ? { score: c.score, band: c.band, period: c.period.label, delta: c.delta, prev: c.prev ? c.prev.label : "", kpi_ok: c.items.filter((i) => i.kind === "KPI" && i.status === "ok").length,
       kpi_n: c.items.filter((i) => i.kind === "KPI" && ["ok", "warn", "miss"].includes(i.status)).length, scopes: c.scopes.filter((x) => x.scored).map((x) => ({ name: x.short || x.name, pct: x.pct, band: x.band })),
@@ -4849,7 +4855,7 @@ const OPS = {
     const sum = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
     const totAr = sum("ar"), withAgo = rows.filter((r) => r.ar_month_ago != null), totAgo = withAgo.reduce((t, r) => t + r.ar_month_ago, 0), arComparable = withAgo.reduce((t, r) => t + (r.ar || 0), 0), totO90 = sum("o90_owed"), totOwed = sum("ar_owed");
     const slas = rows.filter((r) => r.sla); const drAll = rows.filter((r) => r.drishti), drRows = drAll.filter((r) => r.drishti.kind === "month");
-    const drishti = { state: drOv.state, stale: !!drOv.stale, error: drOv.error || "", failed_at: drOv.failed_at, retry_at: drOv.retry_at, avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
+    const drishti = { state: drOv.state, stale: !!drOv.stale, at: drOv.at, error: drOv.error || "", failed_at: drOv.failed_at, retry_at: drOv.retry_at, avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
       bands: { ok: drRows.filter((r) => r.drishti.band === "ok").length, warn: drRows.filter((r) => r.drishti.band === "warn").length, miss: drRows.filter((r) => r.drishti.band === "miss").length },
       // KPIs in the red: KPIs only (an SLA task line under 70% is red on the scorecard, but it is not a KPI)
       weeks_only: drAll.length - drRows.length, red: drRows.reduce((t, r) => t + r.drishti.kpi_red.length, 0), red_names: [...new Set(drRows.flatMap((r) => r.drishti.kpi_red))].slice(0, 4), clients_red: drRows.filter((r) => r.drishti.kpi_red.length > 0).length };
@@ -6556,7 +6562,8 @@ const OPS = {
       prev: prev ? { id: prev.id, label: prev.label, from: prev.range.from, to: prev.range.to, pct: drScore(d, prev, null).pct } : null,
       score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts, scored: sc.scored, kpi_pct: sc.kpi_pct, sla_pct: sc.sla_pct,
       scopes: sc.scopes.map((x) => ({ key: x.key, name: x.name, short: x.short, ok: x.ok, warn: x.warn, miss: x.miss, scored: x.scored, pct: x.pct, band: x.band, missing: x.missing || [], items: x.items.map((i) => ({ name: i.name, shown: i.shown, status: i.status })) })),
-      items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at };
+      // stale: Drishti has not answered since the read these figures come from (at); the page says so
+      items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at, stale: !!ov.stale, failed_at: ov.failed_at || null, retry_at: ov.retry_at || null };
   },
   /* Beside the scorecard: the client's people from Shastra WFM and its escalations in the period (SLA threshold 0). */
   "sla.extras": async ({ env, user, payload }) => {

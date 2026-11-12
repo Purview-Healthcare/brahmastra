@@ -6521,7 +6521,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
           <Kpi label={"Collected · " + rangeText(dr).toLowerCase()} value={<span className="teal-ink">{fmtMoney(t.collected_month)}</span>} sub="from payment posting" />
           <Kpi label="KPIs in the red" value={d.drishti && d.drishti.state === "ok" ? <span className={d.drishti.red ? "red-ink" : "teal-ink"}>{fmtInt(d.drishti.red)}</span> : "–"} sub={d.drishti && d.drishti.state === "ok" ? (d.drishti.red ? d.drishti.red_names.join(", ") + " · " + plural(d.drishti.clients_red, "client") : "no KPI is red on the scorecards") : d.drishti && d.drishti.state === "error" ? "Drishti did not answer" + (d.drishti.retry_at ? "; Brahmastra asks it again from " + drWhen(d.drishti.retry_at, true) : "") : "Drishti's scorecard is not connected"} />
           <Kpi label="SLA score, average" value={d.drishti && d.drishti.avg != null ? <span className={DR_BAND[d.drishti.avg >= 90 ? "ok" : d.drishti.avg >= 80 ? "warn" : "miss"][0]}>{d.drishti.avg}%</span> : t.sla_avg != null ? <span className={t.sla_avg < 90 ? "amber-ink" : "teal-ink"}>{t.sla_avg}%</span> : "–"}
-            sub={d.drishti && d.drishti.avg != null ? `${d.drishti.bands.ok} green · ${d.drishti.bands.warn} amber · ${d.drishti.bands.miss} red (Drishti)` : fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
+            sub={d.drishti && d.drishti.avg != null ? `${d.drishti.bands.ok} green · ${d.drishti.bands.warn} amber · ${d.drishti.bands.miss} red (Drishti)` + (d.drishti.stale && d.drishti.at ? ` · as read at ${drWhen(d.drishti.at)}: Drishti has not answered since` : "") : fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
         </div>
         <div className="card tight"><div className="table-wrap"><table className="t">
           <thead><tr><th>Client · health</th><th>Team lead · manager</th><th className="num">AR</th><th className="num">Unassigned</th><th className="num">Over 90</th><th className="num">Collected</th><th>SLA score <span className="tiny muted" style={{ fontWeight: 400 }}>· Drishti</span></th><th>Pulling it down</th><th className="num">Missed</th><th>Waiting<br />on client</th><th className="num">TFL risk</th><th title="Claims still to work, at the pace of the last two weeks">Days to<br />clear</th><th>Last<br />inventory</th></tr></thead>
@@ -8596,6 +8596,12 @@ function drReadNote(d) {
   return `Brahmastra could not read Drishti's scorecard${d.failed_at ? " at " + drWhen(d.failed_at) : ""}: ${d.error || "Drishti did not answer."}` +
     (d.retry_at ? ` It asks Drishti again from ${drWhen(d.retry_at, true)}: open the scorecard again then.` : "");
 }
+/* Drishti stopped answering after a good read: the figures shown are that read's, and the page says so. */
+function drStaleNote(d) {
+  if (!d || !d.stale) return "";
+  return `Drishti did not answer${d.failed_at ? " at " + drWhen(d.failed_at) : ""}, so these are its figures as Brahmastra read them${d.at ? " at " + drWhen(d.at) : " before"}.` +
+    (d.retry_at ? ` Brahmastra asks Drishti again from ${drWhen(d.retry_at, true)}.` : "");
+}
 const Ring = ({ pct, band, size = 30, w = 4 }) => (
   <span className="sc-ring" style={{ width: size, height: size, background: `conic-gradient(${band ? KPI_COL[band] : "#C9D1D9"} 0 ${Math.max(2, pct || 0)}%, var(--soft) ${Math.max(2, pct || 0)}% 100%)` }}><i style={{ inset: w }} /></span>
 );
@@ -8661,6 +8667,7 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
         : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it in <b>Inputs (Drishti)</b>.</div>
         : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports in <b>Inputs (Drishti)</b> and it shows here.</div>
         : <>
+          {d.stale && <div className="alert warn">{drStaleNote(d)}</div>}
           {fellBack && <div className="alert info">Drishti has no {fellBack === "month" ? "monthly" : fellBack === "week" ? "weekly" : fellBack} scorecard for <b>{first}</b>, so its {d.period.kind === "week" ? "weeks are" : d.period.kind === "month" ? "months are" : "periods are"} shown.</div>}
           {(d.ambiguous || []).length > 1 && <div className="alert warn">Drishti has {d.ambiguous.length} clients whose names match <b>{first}</b>: {d.ambiguous.join(", ")}. This is <b>{d.drishti.name}</b>. Rename the others in Drishti so the scores cannot mix.</div>}
           <div className={"card sc-hero glow " + (d.band || "none")}>
