@@ -2603,7 +2603,8 @@ const MONTHEND_STEPS = [
    the scheduled job, a few spans per run. */
 const DIGEST_SYSTEM = { id: "system", name: "Brahmastra", email: "", role: "supervisor", is_admin: true, scope: null, scope_view_only: new Set() };
 const DIGEST_HOURS = [8.5, 13];   // IST, Monday
-const DIGEST_CRON = "*/10 3-7 * * 1";   // wrangler.toml: every 10 minutes, Monday 03:00 to 07:50 UTC (08:30 to 13:20 IST)
+const DIGEST_CRON = "*/10 3-7 * * MON";   // wrangler.toml: every 10 minutes, Monday 03:00 to 07:50 UTC (08:30 to 13:20 IST). By name: Cloudflare counts 1 as Sunday
+const isDigestCron = (cron) => String(cron || "").trim().replace(/\s+/g, " ").toUpperCase() === DIGEST_CRON;
 const NO_SPAN = "span:none";
 function digestWeek(now) {
   const t = istISO(now), dow = new Date(t + "T00:00:00Z").getUTCDay();
@@ -8551,10 +8552,10 @@ export default {
       try { await tatMonthFiles(env); } catch (e) { console.log("TAT report files: " + (e && e.message)); }
       try { await escMonthFiles(env); } catch (e) { console.log("Escalation files: " + (e && e.message)); }
       if (env.EMAIL_PROVIDER && !env.DEMO) { try { const r = await sendTatReminders(env); if (r.kind && (r.sent || r.failed)) console.log(`TAT reminders ${r.kind} ${r.day}: ${r.sent} sent, ${r.failed} failed`); } catch (e) { console.log("TAT reminders: " + (e && e.message)); } }
-      if (env.SHASTRA_FEED_KEY && event.cron !== DIGEST_CRON) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
+      if (env.SHASTRA_FEED_KEY && !isDigestCron(event.cron)) { try { await syncShastra(env, "hourly"); } catch (e) { console.log("Shastra sync: " + (e && e.message)); } }
       // Monday mornings (IST): this week's digest, a few clients per run until every client has had it
       // only the Monday job sends it (the hourly run falls inside the same hours and could send it twice)
-      if (env.EMAIL_PROVIDER && event.cron === DIGEST_CRON && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {
+      if (env.EMAIL_PROVIDER && isDigestCron(event.cron) && digestDue(Date.now()) && (await getSetting(env, "digest_enabled", true)) !== false) {
         try { const r = await sendDigests(env, { limit: Math.max(1, Math.min(20, Number(env.DIGEST_BATCH) || 3)) }); if (r.spans) console.log(`Digest ${r.week}: ${r.spans} spans, ${r.sent} sent, ${r.failed} failed, ${r.left} left`); } catch (e) { console.log("Digest: " + (e && e.message)); }
       }
     })());

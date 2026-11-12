@@ -484,7 +484,8 @@ no patient names, claim or account numbers.
   audit trail).
 - **Settings › Email**: anyone can turn their digest off (or on again).
 - How it is sent: the same Microsoft 365 mailbox as the sign-in codes and feedback (`EMAIL_PROVIDER`). A second
-  schedule in `wrangler.toml` (`*/10 3-7 * * 1`, every 10 minutes from 08:30 to 13:20 IST on Mondays) sends a few
+  schedule in `wrangler.toml` (`*/10 3-7 * * MON`, every 10 minutes from 08:30 to 13:20 IST on Mondays; weekdays are
+  written by name because Cloudflare counts 1 as Sunday) sends a few
   spans per run (`DIGEST_BATCH`, default 3) until every span has gone, and never sends a span to the same person
   twice in a week. `APP_URL` puts an **Open Client 360** button in the email.
 

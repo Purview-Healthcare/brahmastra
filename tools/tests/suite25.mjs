@@ -253,8 +253,8 @@ const today = new Date().toISOString().slice(0, 10), iso = (d) => new Date(Date.
   const IST = 330 * 60000;
   const mon = (ms) => { const d = new Date(ms + IST); const dow = (d.getUTCDay() + 6) % 7; return Date.parse(d.toISOString().slice(0, 10) + "T00:00:00Z") - dow * 86400000 - IST; };
   const nextMon = mon(Date.now()) + 7 * 86400000, wkKey = new Date(nextMon + IST).toISOString().slice(0, 10);
-  const runJob = async (at, cron = "*/10 3-7 * * 1") => { const real = Date.now; Date.now = () => at; try { const ps = []; await rig.worker.default.scheduled({ cron }, rig.backend.env, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { Date.now = real; } };
-  const runBoth = async (at) => { const real = Date.now; Date.now = () => at; try { const ps = []; await Promise.all(["*/10 3-7 * * 1", "*/10 3-7 * * 1"].map((cron) => rig.worker.default.scheduled({ cron }, rig.backend.env, { waitUntil: (p) => ps.push(p) }))); await Promise.all(ps); } finally { Date.now = real; } };
+  const runJob = async (at, cron = "*/10 3-7 * * MON") => { const real = Date.now; Date.now = () => at; try { const ps = []; await rig.worker.default.scheduled({ cron }, rig.backend.env, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { Date.now = real; } };
+  const runBoth = async (at) => { const real = Date.now; Date.now = () => at; try { const ps = []; await Promise.all(["*/10 3-7 * * MON", "*/10 3-7 * * MON"].map((cron) => rig.worker.default.scheduled({ cron }, rig.backend.env, { waitUntil: (p) => ps.push(p) }))); await Promise.all(ps); } finally { Date.now = real; } };
 
   S("Digest: a failed send is tried again by the next Monday run");
   mails.length = 0; mailDown = true;

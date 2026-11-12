@@ -36,7 +36,7 @@ const cl = (await A("clients.list")).clients; const sun = cl.find((c) => /Sunris
 // IST times as UTC milliseconds
 const IST = (y, mo, d, h, mi = 0) => Date.UTC(y, mo - 1, d, h, mi) - 330 * 60000;
 const at = async (ms, fn) => { const real = Date.now; Date.now = () => ms; try { return await fn(); } finally { Date.now = real; } };
-const runJob = (ms, cron = "30 3,13 * * 1-5") => at(ms, async () => { const ps = []; await rig.worker.default.scheduled({ cron }, { ...rig.backend.env, ...rig.liveEnv, DEMO: false, DB: rig.backend.env.DB }, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); });
+const runJob = (ms, cron = "30 3,13 * * MON-FRI") => at(ms, async () => { const ps = []; await rig.worker.default.scheduled({ cron }, { ...rig.backend.env, ...rig.liveEnv, DEMO: false, DB: rig.backend.env.DB }, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); });
 await sql("UPDATE clients SET posting_tat_hours = 36, submission_tat_hours = 24 WHERE id = ?", sun.id);
 const pool = (await A("claims.list", { client_id: sun.id, state: "open", page_size: 40 })).rows;
 const lpool = (await A("claims.list", { client_id: lake.id, state: "open", page_size: 10 })).rows;

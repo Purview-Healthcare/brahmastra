@@ -119,7 +119,7 @@ ok("it is in the audit trail", (await A("audit.list", {})).rows.some((x) => x.ac
 await JO("auth.savePrefs", { digest: "on" });
 
 S("The Monday job");
-const runJob = async (at) => { const real = Date.now; Date.now = () => at; try { const ps = []; await rig.worker.default.scheduled({ cron: "*/10 3-7 * * 1" }, rig.backend.env, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { Date.now = real; } };
+const runJob = async (at) => { const real = Date.now; Date.now = () => at; try { const ps = []; await rig.worker.default.scheduled({ cron: "*/10 3-7 * * MON" }, rig.backend.env, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { Date.now = real; } };
 const nextMon = thisMonday + 7 * 86400000;
 mails.length = 0;
 await runJob(nextMon + 7 * 3600000);
