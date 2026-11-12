@@ -2998,6 +2998,11 @@ const isSME = (u) => u && u.source === "roster" && /\bsme\b|subject matter/i.tes
 const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`);
 const scopeArgs = (user) => (user && user.scope) || [];
 const outOfScope = () => denied("That project is not one of yours.");
+/* A client of a team lead's own span, for matching a roster project to it: one they may change and are responsible for (set on
+   its profile), or that one of their own projects is already matched to, or that they added themselves. A client someone shared
+   with them is not, and neither is one that only has no roster project yet. */
+const ownClient = (user, c) => !user.scope || (canEditClient(user, c.id) && ((!!user.resp_clients && user.resp_clients.has(c.id)) || c.created_by === user.id
+  || jsonList(c.roster_names_json).some((n) => (user.scope_projects || []).some((p) => projKey(p) === projKey(n)))));
 const notYours = () => denied("That person is not on your team: they are not on your own projects and do not report up to you. Ask their team lead or the admin.");
 /* Team status rules: Training and OJT are due in production 6 weeks from their start (4 weeks training + 2 OJT);
    attainment under 90% counts as below the production mark. */
@@ -7790,11 +7795,12 @@ const OPS = {
 
   /* ---- roster projects ↔ Brahmastra clients ---- */
   "projects.unmapped": async ({ env, user }) => {
-    const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients WHERE active = 1 ORDER BY name");
+    const clients = await all(env, "SELECT id, name, code, roster_names_json, created_by FROM clients WHERE active = 1 ORDER BY name");
     const mapped = new Set(clients.flatMap((c) => jsonList(c.roster_names_json).map(projKey)));
     const mine = user.scope ? new Set(user.scope_projects.map(projKey)) : null;
     const names = (await rosterProjectNames(env)).filter((n) => !mapped.has(projKey(n)) && (!mine || mine.has(projKey(n))));
-    return { names, clients: clients.map((c) => ({ id: c.id, name: c.name, code: c.code })) };
+    // the clients offered are the ones projects.map takes: for a team lead, the clients of their own span
+    return { names, clients: clients.filter((c) => ownClient(user, c)).map((c) => ({ id: c.id, name: c.name, code: c.code })) };
   },
   "projects.map": async ({ env, user, payload }) => {
     const name = str(payload.name, 80).trim();
@@ -7805,22 +7811,26 @@ const OPS = {
       clientId = uuid();
       await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,1,30,?,?)", clientId, str(payload.client_name || name, 160).trim() || name, "", user.id, Date.now());
     }
-    const c = await one(env, "SELECT id, roster_names_json FROM clients WHERE id = ?", clientId);
+    const c = await one(env, "SELECT id, name, roster_names_json, created_by FROM clients WHERE id = ?", clientId);
     if (!c) throw bad("Pick the client this project is.");
-    const others = await all(env, "SELECT id, roster_names_json FROM clients");
+    const others = await all(env, "SELECT id, name, roster_names_json FROM clients");
+    const from = others.find((o) => o.id !== c.id && jsonList(o.roster_names_json).some((n) => projKey(n) === projKey(name)));
     if (user.scope && !payload.create) {
-      // A team lead matches their own project to a client that is theirs to change, or to one no project is matched to yet;
-      // and moves it off a client only when they may change that client too. Taking over another lead's client is the admin's call.
-      if (!canEditClient(user, c.id) && jsonList(c.roster_names_json).some((n) => projKey(n) !== projKey(name))) throw denied("That client is already matched to another roster project. Ask your admin to change it.");
-      const from = others.find((o) => o.id !== c.id && jsonList(o.roster_names_json).some((n) => projKey(n) === projKey(name)));
+      // A team lead matches their own project only to a client of their own span (ownClient): never to one that was shared with
+      // them, or that just has no roster project yet (everyone on the project would get its claims). And moves it off a client only
+      // when they may change that client too. Anything else is the admin's call.
+      if (!ownClient(user, c)) throw denied("You can match your project only to a client you are responsible for. Ask your admin to match it to this one.");
       if (from) editableOr(user, from.id);
     }
+    let changed = !!payload.create;
     for (const o of others) {
       const list = jsonList(o.roster_names_json).filter((n) => projKey(n) !== projKey(name));
       if (o.id === c.id) list.push(name);
-      if (JSON.stringify(list) !== o.roster_names_json) await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify(list), o.id);
+      if (JSON.stringify(list) !== o.roster_names_json) { await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify(list), o.id); changed = true; }
     }
     await syncTeams(env);
+    // who sees a client follows from this match, so it goes in the audit trail
+    if (changed) await audit(env, user, "project.map", c.id, `Roster project ${name} matched to ${c.name}` + (payload.create ? " (a new client)" : "") + (from ? `; it was on ${from.name}` : ""));
     return { ok: true, client_id: c.id };
   },
 

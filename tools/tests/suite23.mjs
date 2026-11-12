@@ -51,8 +51,15 @@ ok("both clients keep their projects", JSON.parse((await row("SELECT roster_name
 r = await T(() => leadA("claims.list", { client_id: cB.id }));
 ok("and client B stays out of their scope", !r.ok, r);
 const cNew = { id: "c-new-23" }; await sql("INSERT INTO clients (id, name, code, active, follow_up_days, created_at, roster_names_json) VALUES (?, 'Unmatched Clinic', '', 1, 30, ?, '[]')", cNew.id, now);
+// (bug-test fix D-03: this check used to say the lead may match onto any client with no project yet; that was the hole.
+//  A team lead matches only onto a client of their own span: one they are responsible for or added. The rest is the admin's.)
 r = await T(() => leadA("projects.map", { name: "ProjA", client_id: cNew.id }));
-ok("a client with no project yet can still be matched by the lead", r.ok, r);
+ok("a client with no project yet, that the lead neither added nor is responsible for, is not theirs to match onto", !r.ok && r.status === 403, r);
+await sql("UPDATE clients SET created_by = 'u-leadA' WHERE id = ?", cNew.id);
+await sql("INSERT INTO client_access (id, client_id, user_id, level, granted_by, granted_by_name, at) VALUES ('ca-23-new', ?, 'u-leadA', 'edit', 'u-leadA', 'Lead Alpha', ?)", cNew.id, now);
+r = await T(() => leadA("projects.map", { name: "ProjA", client_id: cNew.id }));
+ok("a client the lead added (with no project yet) can still be matched by the lead", r.ok, r);
+await sql("DELETE FROM client_access WHERE id = 'ca-23-new'");
 await sql("UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify(["ProjA"]), cA.id); await sql("UPDATE clients SET roster_names_json = '[]' WHERE id = ?", cNew.id);
 
 S("Sign-in by name keeps the email allow-list");

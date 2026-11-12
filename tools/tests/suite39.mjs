@@ -302,6 +302,56 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-09: at the next sync the hand-made account takes the roster row and the unused copy is gone or off", kept.source === "roster" && kept.name === "Zed Newjoiner" && kept.active === 1 && !!kept.pass_hash && copies.filter((c) => c.active).length === 1, [kept && [kept.source, kept.name, kept.active], copies]);
 }
 
+/* ================= D-03: a roster project is matched only onto a client of the team lead's own span ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, lake } = w;
+  const TI = await w.c("Tina Lead"), LA = await w.c("Lara Lead"), VK = await w.c("Vik Viewer"), ED = await w.c("Eda Editor");
+  const profile = (lead) => ({ scope: ["ar"], targets: { ar: 30 }, resp: { ar: { lead } } });
+  const namesOn = async (cid) => JSON.parse((await w.row("SELECT roster_names_json FROM clients WHERE id = ?", cid)).roster_names_json || "[]");
+  const mapAudits = async () => (await w.audits("project.map")).length;
+
+  S("D-03: not onto a client another team lead added, and not onto a shared client");
+  const echo = (await LA("clients.save", { name: "Echo Clinic", locations: ["Main"], profile: profile(id["Cyra Agent"]) })).client.id;
+  let before = await T(() => VK("claims.list", { client_id: echo }));
+  let n0 = await mapAudits();
+  let r = await T(() => VK("projects.map", { name: "Delta Practice", client_id: echo }));
+  ok("D-03: a team lead whose project has no client cannot match it onto a client another team lead just added", !before.ok && refused(r, /only to a client you are responsible for/) && (await namesOn(echo)).length === 0, [before, r, await namesOn(echo)]);
+  r = await T(() => VK("claims.list", { client_id: echo }));
+  ok("D-03: so that client's claims stay closed to them", !r.ok && r.status === 403, r);
+  await A("clients.accessSave", { client_id: sun.id, user_id: id["Vik Viewer"], level: "view" });
+  await A("clients.accessSave", { client_id: lake.id, user_id: id["Eda Editor"], level: "edit" });
+  r = await T(() => VK("projects.map", { name: "Delta Practice", client_id: sun.id }));
+  ok("D-03: not onto a client shared with them view-only", refused(r, /only to a client you are responsible for/), r);
+  r = await T(() => ED("projects.map", { name: "Delta Practice", client_id: lake.id }));
+  ok("D-03: not onto a client shared with them to edit either (a share is not their own span)", refused(r, /only to a client you are responsible for/) && !(await namesOn(lake.id)).includes("Delta Practice"), [r, await namesOn(lake.id)]);
+  r = await T(() => TI("projects.map", { name: SUN, client_id: lake.id }));
+  ok("D-03: a team lead cannot move their project onto another team lead's client", refused(r, /only to a client you are responsible for/) && (await namesOn(sun.id)).includes(SUN), r);
+  ok("D-03: none of the refused matches left an audit row", (await mapAudits()) === n0);
+  const um = await VK("projects.unmapped");
+  ok("D-03: the match pop-up offers the team lead their unmatched project, and none of those clients", um.names.includes("Delta Practice") && !um.clients.some((c) => [echo, sun.id, lake.id].includes(c.id)), um);
+
+  S("D-03: onto a client of their own span, with an audit row");
+  const fox = (await A("clients.save", { name: "Foxtrot Clinic", locations: ["Main"], profile: profile(id["Vik Viewer"]) })).client.id;
+  ok("D-03: a client they are set responsible for is offered", (await VK("projects.unmapped")).clients.some((c) => c.id === fox));
+  const golf = (await ED("clients.save", { name: "Golf Dental", locations: ["Main"], profile: profile(id["Cyra Agent"]) })).client.id;
+  ok("D-03: and so is a client they added themselves", (await ED("projects.unmapped")).clients.some((c) => c.id === golf) && !(await VK("projects.unmapped")).clients.some((c) => c.id === golf));
+  r = await T(() => VK("projects.map", { name: "Delta Practice", client_id: fox }));
+  ok("D-03: the team lead matches their project to the client they are responsible for", r.ok && (await namesOn(fox)).includes("Delta Practice"), r);
+  let au = await w.audits("project.map");
+  ok("D-03: the match is in the audit trail: who, the project and the client", au.length === n0 + 1 && au[au.length - 1].user_name === "Vik Viewer" && au[au.length - 1].client_id === fox && /Delta Practice matched to Foxtrot Clinic/.test(au[au.length - 1].detail), au);
+  ok("D-03: the other team lead on that project gets the client too", (await T(() => ED("claims.list", { client_id: fox }))).ok);
+  r = await T(() => ED("projects.map", { name: "Delta Practice", client_id: golf }));
+  au = await w.audits("project.map");
+  ok("D-03: a team lead moves their project to a client they added, and the audit row says where it was", r.ok && (await namesOn(golf)).includes("Delta Practice") && !(await namesOn(fox)).includes("Delta Practice") && /Delta Practice matched to Golf Dental; it was on Foxtrot Clinic/.test(au[au.length - 1].detail), [r, au[au.length - 1]]);
+  r = await T(() => A("projects.map", { name: "Delta Practice", client_id: echo }));
+  au = await w.audits("project.map");
+  ok("D-03: the admin matches any project to any client, as before, also audited", r.ok && (await namesOn(echo)).includes("Delta Practice") && /matched to Echo Clinic; it was on Golf Dental/.test(au[au.length - 1].detail) && (await A("projects.unmapped")).clients.length >= 5, [r, au[au.length - 1]]);
+  const n1 = au.length;
+  await A("projects.map", { name: "Delta Practice", client_id: echo });
+  ok("D-03: a match that changes nothing adds no audit row", (await mapAudits()) === n1);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

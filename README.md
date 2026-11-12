@@ -687,7 +687,11 @@ biller) and, for Submission, **rejections by code** (by code, client and biller)
 resubmitted rejections carry a rejection code.
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once). Active AR agents on a project become
-  that client's billers.
+  that client's billers. A team lead matches their project only to a client of
+  their own span: one they are responsible for on its profile, one they added,
+  or one another of their projects is already matched to (or a new client).
+  Matching it to any other client is the admin's call (Roster). Every match is
+  in the audit trail.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
   when it has one), each up to their daily target, minus anyone marked **Out today** on Live status. Automatic
   allocation after an upload and the Allocate screen both use that; there is no daily ticking.
