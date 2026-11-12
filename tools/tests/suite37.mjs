@@ -5,6 +5,8 @@ import { makeRig } from "./rig.mjs";
 const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 600))); };
+// one section: a crash inside it is a failed check, and the sections after it still run
+const part = async (name, fn) => { S(name); try { await fn(); } catch (e) { ok(name.split(":")[0] + ": the section ran to its end", false, String((e && e.stack) || e).slice(0, 500)); } finally { setNow(null); } };
 const P = (o) => Object.assign({ emp_id: "", name: "", position: "Agent", function: "Operations", department: "AR", also_in_departments: "", status: "Working", project: "", also_on_projects: "", reports_to: "", shift: "", location: "Pune", doj: "2026-01-05", exit_date: null, email: "" }, o);
 const feed = [
   P({ emp_id: "M1", name: "Mona Manager", position: "Manager", project: "Sunrise Eye Care", also_on_projects: "Lakeview Dental Group", email: "mona@purview-healthcare.com" }),
@@ -116,9 +118,8 @@ const save = async (who, id, saag, extra = {}) => { await call(who, "queue.open"
 const postIt = async (id) => call(PI, "handoffs.close", { id: (await openH(id, "posting")).id, outcome: "complete", proof: { date: nowIso(), ref: "CHK-1", allowed: "100", paid: "80", adjustment: "20" }, note: "Posted" });
 const submitIt = async (who, id, dept = "submission") => call(who, "handoffs.close", { id: (await openH(id, dept)).id, outcome: "complete", proof: { date: nowIso(), ref: "B-1", mode: "Portal", ...(dept === "rejection" ? { code: "Taxonomy missing" } : {}) }, note: "Sent" });
 
-S("C-03: a recheck marked Need assistance leaves a claim Posting closed as it is");
-setNow(IST(2026, 11, 10, 10, 0));
-{
+await part("C-03: a recheck marked Need assistance leaves a claim Posting closed as it is", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
   const ids = await give("Arun Agent", 3);
   const posted = async (id) => { const c = await claim(id), g = await call(AR, "claims.get", { id }); return c.state === "closed" && c.handoff_status === "posted" && c.last_bucket === "Closed" && c.last_effective === "Posting Closed" && g.claim.locked; };
   for (const id of ids) {
@@ -150,12 +151,10 @@ setNow(IST(2026, 11, 10, 10, 0));
   ok("C-03: a rejected recheck on a posted claim goes to Rejections and leaves the claim posted", r.ok && !!(await openH(ids[2], "rejection")) && await posted(ids[2]), r);
   r = await T(() => submitIt(RX, ids[2], "rejection"));
   ok("C-03: ...Rejections resubmitting it keeps the claim Posting Closed and read only", r.ok && await posted(ids[2]), [r, await brief(ids[2])]);
-}
-setNow(null);
+});
 
-S("C-11: an entry edited into Need to Post or Need to Resubmit sends the claim to the desk, as a first save does");
-setNow(IST(2026, 11, 10, 10, 0));
-{
+await part("C-11: an entry edited into Need to Post or Need to Resubmit sends the claim to the desk, as a first save does", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
   const noteOf = async (id) => (await rows("SELECT * FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC", id))[0];
   const [a, b, d, e, f] = await give("Arun Agent", 5);
   for (const id of [a, b, d, e]) await save(AR, id, SAAG.fu);
@@ -194,8 +193,34 @@ setNow(IST(2026, 11, 10, 10, 0));
   r = await T(async () => call(CY, "notes.update", { id: (await noteOf(g)).id, saag: SAAG.resub, note: NOTE("Claim needs a corrected resubmission") }));
   c = await claim(g);
   ok("C-11: nobody set for Submission: no hand-off, the claim stays with the biller with the 15-day follow-up of that action", r.ok && r.r.handoff && r.r.handoff.mode !== "person" && !(await hos(g)).length && c.state === "completed" && c.follow_up_on === "2026-11-25", [r.ok && r.r.handoff, await brief(g)]);
-}
-setNow(null);
+});
+
+await part("C-12: an edit does not undo the team lead's Close or Exclude", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const noteOf = async (id) => (await rows("SELECT * FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC", id))[0];
+  const CLOSE = { status: "Claim Paid", sub_status: "Already Posted", action: "Moved To Closed/Non Workable", bucket: "Closed", effective: "Processing-Closed" };
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  for (const id of [a, b, d]) await save(AR, id, SAAG.fu, { findings: "Checked the payer portal, claim on fle" });
+  await call(TI, "claims.setState", { ids: [a], state: "closed" });
+  await call(TI, "claims.setState", { ids: [b], state: "excluded" });
+  let r = await T(async () => call(AR, "notes.update", { id: (await noteOf(a)).id, saag: SAAG.fu, note: NOTE("Checked the payer portal, claim on file") }));
+  let c = await claim(a);
+  ok("C-12: a typo fix leaves a claim the team lead closed closed, with the team lead's reason", r.ok && c.state === "closed" && c.state_reason === "Closed by supervisor", await brief(a));
+  ok("C-12: ...the entry itself is corrected", /claim on file/.test((await noteOf(a)).comment));
+  r = await T(async () => call(AR, "notes.update", { id: (await noteOf(b)).id, saag: CLOSE, note: NOTE("Already posted, nothing left to work") }));
+  c = await claim(b);
+  ok("C-12: an edit into a closing entry does not turn an excluded claim into a closed one", r.ok && c.state === "excluded" && c.state_reason === "Excluded by supervisor", await brief(b));
+  // and an edit into a desk action does not send a claim the team lead closed to the desk
+  r = await T(async () => call(AR, "notes.update", { id: (await noteOf(a)).id, saag: SAAG.resub, note: NOTE("Claim needs a corrected resubmission") }));
+  ok("C-12: a claim the team lead closed is not sent to a desk by an edit", r.ok && !r.r.handoff && !(await hos(a)).length && (await claim(a)).state === "closed", [r, await brief(a)]);
+  // what an edit still does: a claim the entry itself closed opens again, and an open follow-up closes
+  await save(AR, e, CLOSE, { findings: "Already posted, nothing left to work" });
+  ok("C-12: (set-up) a closing entry closes the claim", (await claim(e)).state === "closed" && /^Closed: /.test((await claim(e)).state_reason), await brief(e));
+  r = await T(async () => call(AR, "notes.update", { id: (await noteOf(e)).id, saag: SAAG.fu, note: NOTE("Not posted after all, following up") }));
+  ok("C-12: a claim its own entry closed still opens again when that entry is edited into a follow-up", r.ok && (await claim(e)).state === "completed" && (await claim(e)).follow_up_on !== "", await brief(e));
+  r = await T(async () => call(AR, "notes.update", { id: (await noteOf(d)).id, saag: CLOSE, note: NOTE("Already posted, nothing left to work") }));
+  ok("C-12: and an edit into a closing entry still closes an open follow-up", r.ok && (await claim(d)).state === "closed" && (await claim(d)).state_reason === "Closed: Processing-Closed", await brief(d));
+});
 
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

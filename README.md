@@ -1065,7 +1065,9 @@ allocation pool when the date arrives.
 Entries can be **edited at any time** by their author or a team lead (no time
 limit); another biller cannot edit them, and each edit shows in the claim history.
 Editing a claim's latest entry into Need to Post, a resubmission or a paper claim
-sends the claim to that desk, exactly as saving it that way does.
+sends the claim to that desk, exactly as saving it that way does. An edit never
+undoes a team lead's Close or Exclude: only a claim its own entry closed opens
+again when that entry is edited into a follow-up.
 
 ### SAAG reference and updates
 

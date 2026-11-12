@@ -6273,7 +6273,10 @@ const OPS = {
     // An entry edited into an action that goes to a desk (Need to Post / Posting Correction, a resubmission, a paper claim) sends
     // the claim there exactly as saving it that way the first time does: the hand-off to the client's person, In process for AR,
     // no follow-up date while the desk has it (and the entry's own follow-up when nobody is set for that desk).
-    const sends = sets && !!handoffDeptOf(saag.action) && handoffDeptOf(saag.action) !== handoffDeptOf(n.action || n.action_code);
+    // A claim the team lead closed or excluded (or an upload closed) keeps its state, its reason and its follow-up through an edit:
+    // only a claim this entry closed itself (reason "Closed: ...") opens again when the edit makes the entry a follow-up.
+    const held = (c.state === "closed" && !/^Closed: /.test(c.state_reason || "")) || c.state === "excluded";
+    const sends = sets && !held && !!handoffDeptOf(saag.action) && handoffDeptOf(saag.action) !== handoffDeptOf(n.action || n.action_code);
     const toDesk = sends && !closed && !!((await entryDesk(env, c.client_id, saag)).people || {}).lead;
     const autoFu = () => addDays(today, followUpDays(saag.effective, c.client_follow_up_days));
     const followUp = closed || toDesk ? "" : sends ? workingDayOnOrAfter((wantedFu && wantedFu >= today ? wantedFu : "") || autoFu())
@@ -6283,9 +6286,9 @@ const OPS = {
     const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, call_min = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
       .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, "", JSON.stringify(fields), callMinOf(fields), now, user.id, n.id)];
     if (sets) {
-      const newState = closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
+      const newState = held ? c.state : closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?, last_note = ?, follow_up_on = ?, updated_at = ? WHERE id = ?`)
-        .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", comment.slice(0, 600), followUp, now, c.id));
+        .bind(newState, held ? c.state_reason : closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", comment.slice(0, 600), held ? c.follow_up_on : followUp, now, c.id));
     }
     stmts.push(claimEvent(env, c.id, user, "edited", "", { note_id: n.id }));
     const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
