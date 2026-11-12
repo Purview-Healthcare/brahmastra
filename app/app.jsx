@@ -180,6 +180,12 @@ function downloadText(text, name, type = "text/csv;charset=utf-8") {
 /* A cell that starts with = + - @, a tab or a carriage return would run as a formula in Excel: it gets a leading '
    (plain numbers, negative ones too, stay numbers). */
 const csvSafe = (v) => { const s = v == null ? "" : String(v); return typeof v !== "number" && /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s) ? "'" + s : s; };
+/* Every row of a list the server sends in pages of 500 (claims.list, reports.claimsProduction), however many there are. */
+async function rpcAllPages(op, payload) {
+  const rows = []; let r = null;
+  for (let page = 1; page <= 10000; page++) { r = await rpc(op, { ...payload, page, page_size: 500 }); rows.push(...r.rows); if (rows.length >= r.total || !r.rows.length) break; }
+  return { ...r, rows };
+}
 /* a CSV from a header row and array rows (the Production layout the server builds) */
 function arrayCSV(header, rows) {
   const esc = (v) => { let s = csvSafe(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
@@ -3388,19 +3394,17 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   };
   const sortBy = (k) => { if (f.sort === k) set("dir", f.dir === "asc" ? "desc" : "asc"); else setF((x) => ({ ...x, sort: k, dir: k === "patient" || k === "payer" ? "asc" : "desc", page: 1 })); };
   const th = (k, label, cls) => <th key={k} className={"sort " + (cls || "")} onClick={() => sortBy(k)}>{label}{f.sort === k ? (f.dir === "asc" ? " ▲" : " ▼") : ""}</th>;
+  // both files hold every claim of the list, read 500 at a time
   const exportCSV = async () => {
     setBusy(true);
-    try {
-      const all = [];
-      for (let page = 1; page <= 20; page++) { const r = await rpc("claims.list", { ...payload, page, page_size: 500 }); all.push(...r.rows); if (all.length >= r.total || !r.rows.length) break; }
-      downloadText(toCSV(all, CLAIM_COLS), `brahmastra-claims-${todayISO()}.csv`);
-    } catch (e) { toast(e.message, "err"); }
+    try { const r = await rpcAllPages("claims.list", payload); downloadText(toCSV(r.rows, CLAIM_COLS), `brahmastra-claims-${todayISO()}.csv`); }
+    catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   // the CSV the team keeps: the Production Conso layout, one row per claim with its last entry
   const exportProduction = async () => {
     setBusy(true);
-    try { const r = await rpc("reports.claimsProduction", payload); downloadText(arrayCSV(r.header, r.rows), `Production - claims - ${todayISO()}.csv`); }
+    try { const r = await rpcAllPages("reports.claimsProduction", payload); downloadText(arrayCSV(r.header, r.rows), `Production - claims - ${todayISO()}.csv`); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };

@@ -394,6 +394,26 @@ S("A-11: the allocation after loading shares the claims evenly");
   ok("A-11: 150 claims: 35 each (the daily target), 45 stay in the pool", d.per.join() === "35,35,35" && d.al.applied === 105, [d.per, d.al.applied]);
 }
 
+S("A-16: the Claims exports hold every claim, past 10,000");
+if (typeof app.rpcAllPages !== "function") ok("A-16: the Claims exports read every page of the list", false, "rpcAllPages is missing");
+else {
+  const cl = await mkClient("Made-up Clinic S35 A16");
+  const N = 10500, now = Date.now();
+  await x(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < ${N - 1})
+    INSERT INTO claims (id, client_id, location_id, match_key, claim_no, patient, payer, dos, balance, priority, state, created_at, updated_at)
+    SELECT 's35a16-' || i, ?, ?, 'claim:' || (9816000 + i), CAST(9816000 + i AS TEXT), 'Test Patient ' || i, 'Aetna', '2026-09-15', 100, i % 7, 'open', ?, ? FROM n`, cl.id, cl.loc, now, now);
+  const p = { client_id: cl.id, state: "workable" };
+  const total = (await A("claims.list", { ...p, page_size: 10 })).total;
+  const cols = await app.rpcAllPages("claims.list", p);
+  const prod = await app.rpcAllPages("reports.claimsProduction", p);
+  const sr = prod.rows.map((r) => r[0]);
+  ok("A-16: Brahmastra columns has all 10,500 claims, each once", total === N && cols.rows.length === N && new Set(cols.rows.map((r) => r.id)).size === N, [total, cols.rows.length]);
+  ok("A-16: Download CSV (Production layout) has all 10,500 rows, Sr. No 1 to 10,500 in order across the parts", prod.rows.length === N && sr.every((v, i) => v === i + 1) && prod.header.length === AR_HEADER.length, [prod.rows.length, sr[0], sr[sr.length - 1]]);
+  const whole = await A("reports.claimsProduction", p);
+  ok("A-16: the server op asked without a page still gives every row", whole.rows.length === N && whole.total === N, [whole.rows.length, whole.total]);
+  await x("DELETE FROM claims WHERE client_id = ?", cl.id);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

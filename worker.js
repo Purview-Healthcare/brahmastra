@@ -6587,10 +6587,12 @@ const OPS = {
     return { wfm: w, wfm_ok: !!(feed && feed.ok), esc: await escSummary(env, clientId, from, to), tat, month: monthLabel(from.slice(0, 7)) };
   },
   /* The Claims tab's CSV in the Production Conso layout: one row per claim with its last entry (blank work columns when
-     nobody has worked it yet). Same filters as the list. */
+     nobody has worked it yet). Same filters as the list. Every claim of the list: the page asks for it 500 at a time (page),
+     so a big client's file is read in parts; without a page, all of them in one answer. */
   "reports.claimsProduction": async ({ env, user, payload }) => {
     const rows = []; let total = 0;
-    for (let page = 1; page <= 20; page++) { const rr = await OPS["claims.list"]({ env, user, payload: { ...payload, page, page_size: 500 } }); rows.push(...rr.rows); total = rr.total; if (rows.length >= rr.total || !rr.rows.length) break; }
+    const onePage = payload.page != null, first = Math.max(1, Math.round(num(payload.page, 1)));
+    for (let page = first; page < first + (onePage ? 1 : 2000); page++) { const rr = await OPS["claims.list"]({ env, user, payload: { ...payload, page, page_size: 500 } }); rows.push(...rr.rows); total = rr.total; if ((first - 1) * 500 + rows.length >= rr.total || !rr.rows.length) break; }
     const people = await all(env, "SELECT id, name, emp_id, city, reports_to FROM users"), byId = new Map(people.map((p) => [p.id, p]));
     const person = (id) => { const p = byId.get(id) || { name: "" }; return { ...p, reports_to_name: (byId.get(p.reports_to) || {}).name || "" }; };
     const cl = new Map((await all(env, "SELECT id, name FROM clients")).map((c) => [c.id, c.name]));
@@ -6600,10 +6602,10 @@ const OPS = {
     const out = rows.map((c, i) => {
       const worked = !!(c.last_status_code || c.last_worked_on), by = worked ? person(c.last_worked_by || workedBy.get(c.id)) : null;
       const row = productionRow({ ...c, client_name: c.client_name || cl.get(c.client_id) || "" }, by, { ended_at: worked && c.last_worked_on ? Date.parse(c.last_worked_on + "T12:00:00+05:30") : Date.now(), age_at: Date.now() });
-      row[0] = i + 1; if (!worked) { row[iWorked] = ""; row[iAssoc] = ""; row[iEmp] = ""; row[iTl] = ""; row[iRange] = ""; row[iWeek] = ""; row[iLoc] = ""; } else row[iWorked] = c.last_worked_on ? excelSerial(c.last_worked_on) : "";
+      row[0] = (first - 1) * 500 + i + 1; if (!worked) { row[iWorked] = ""; row[iAssoc] = ""; row[iEmp] = ""; row[iTl] = ""; row[iRange] = ""; row[iWeek] = ""; row[iLoc] = ""; } else row[iWorked] = c.last_worked_on ? excelSerial(c.last_worked_on) : "";
       return row;
     });
-    return { header: WORKBOOK_HEADER, rows: out, total };
+    return { header: WORKBOOK_HEADER, rows: out, total, page: first };
   },
   /* Drishti without a second sign-in: Brahmastra mints Drishti's own session token for the signed-in team lead, so the
      Drishti page inside My day & reports opens already signed in. Needs the Worker secret DRISHTI_TOKEN_SECRET (the same
