@@ -3905,16 +3905,26 @@ const OPS = {
     const projects = Array.isArray(payload.projects) ? payload.projects.map((x) => ({ name: str(x && x.name != null ? x.name : x, 80).trim(), share: x && x.share != null ? num(x.share, 0) : null })).filter((x) => x.name && !/^(none|all)$/i.test(x.name)).slice(0, 30) : null;
     let reportsTo = payload.reports_to === undefined ? undefined : (str(payload.reports_to, 60) || null);
     if (reportsTo) { const r = await one(env, "SELECT id, name FROM users WHERE id = ?", reportsTo); if (!r) throw bad("Pick who they report to."); }
-    const first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
-    const name = fullName(first, last, str(payload.name, 120).trim());
-    const designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
-    const capacity = Math.max(1, Math.min(500, Math.round(num(payload.capacity, 35))));
-    const active = payload.active === false ? 0 : 1;
+    let first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
+    let name = fullName(first, last, str(payload.name, 120).trim());
+    let designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
+    let capacity = Math.max(1, Math.min(500, Math.round(num(payload.capacity, 35))));
+    let active = payload.active === false ? 0 : 1;
     // People come from Purview Shastra; only the admin adds someone by hand.
     if (!payload.id && !user.is_admin) throw denied("People come from Purview Shastra. Use Sync from Purview Shastra on the Team tab, or ask the admin.");
     if (payload.id) {
       const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown user.");
+      // A field not sent stays as it is (the page sends every field; another caller may send only what it changes): leaving out
+      // Active does not switch someone back on, nor does leaving out the role, designation or daily target change them.
+      const sent = (k) => payload[k] !== undefined && payload[k] !== null;
+      if (!sent("role")) role = ex.role === "supervisor" ? "supervisor" : "user";
+      if (!sent("first_name")) first = ex.first_name || "";
+      if (!sent("last_name")) last = ex.last_name || "";
+      name = fullName(first, last, sent("name") ? str(payload.name, 120).trim() : ex.name);
+      if (!sent("designation")) designation = ex.designation || "";
+      if (!sent("capacity")) capacity = ex.capacity;
+      if (!sent("active")) active = ex.active ? 1 : 0;
       if (!name) throw bad("Enter the person's name.");
       if (!(await inSpan(env, user, ex.id))) throw notYours();
       if (ex.role === "admin") { if (!user.is_admin) throw denied("Only an admin can change an admin account."); role = "admin"; }
@@ -5636,11 +5646,12 @@ const OPS = {
     const ex = await one(env, `SELECT id, ${payload.location_id ? "client_id" : "id AS client_id"} FROM ${table} WHERE id = ?`, id);
     if (!ex) throw bad("Unknown " + (payload.location_id ? "location" : "client") + ".");
     editableOr(user, ex.client_id);
-    const ids = [...new Set((Array.isArray(payload.team) ? payload.team : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
+    const old = await one(env, `SELECT team_json, auto_allocate, name FROM ${table} WHERE id = ?`, ex.id);
+    // the team or the auto-allocation switch not sent stays as it is (the page sends both)
+    const ids = [...new Set((Array.isArray(payload.team) ? payload.team : parseTeam(old && old.team_json)).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
     const valid = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
     const team = ids.filter((x) => valid.includes(x));
-    const auto = payload.auto_allocate === false ? 0 : 1;
-    const old = await one(env, `SELECT team_json, auto_allocate, name FROM ${table} WHERE id = ?`, ex.id);
+    const auto = payload.auto_allocate == null ? (old && old.auto_allocate == null ? 1 : old && old.auto_allocate ? 1 : 0) : payload.auto_allocate === false ? 0 : 1;
     await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ?`, JSON.stringify(team), auto, ex.id);
     const was = parseTeam(old && old.team_json), add = team.filter((x) => !was.includes(x)), gone = was.filter((x) => !team.includes(x));
     const nm = await namesOf(env, [...add, ...gone]);
@@ -5652,13 +5663,17 @@ const OPS = {
   "clients.save": async ({ env, user, payload }) => {
     const name = str(payload.name, 160).trim();
     if (!name) throw bad("Give the client a name.");
-    const code = str(payload.code, 20).trim().toUpperCase();
-    const fu = Math.max(1, Math.min(365, Math.round(num(payload.follow_up_days, 30))));
-    const active = payload.active === false ? 0 : 1;
+    let code = str(payload.code, 20).trim().toUpperCase();
+    let fu = Math.max(1, Math.min(365, Math.round(num(payload.follow_up_days, 30))));
+    let active = payload.active === false ? 0 : 1;
     const link = workbookLinkOf(payload.workbook_link);
     if (payload.id) {
       const ex = await one(env, "SELECT * FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
+      // a field not sent stays as it is (not switched back on, the code not cleared, the follow-up days not reset)
+      if (payload.code == null) code = ex.code || "";
+      if (payload.follow_up_days == null) fu = ex.follow_up_days;
+      if (payload.active == null) active = ex.active ? 1 : 0;
       editableOr(user, ex.id);
       // Every check comes before the first write (the profile check included), so a save that is refused changes nothing.
       let p = null;
@@ -5748,10 +5763,12 @@ const OPS = {
       if (!ex) throw bad("Unknown location.");
       editableOr(user, ex.client_id);
       const old = await one(env, "SELECT name, active, workbook_link FROM locations WHERE id = ?", ex.id);
-      await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
-      const ch = [...(old.name !== name ? [`renamed ${old.name} → ${name}`] : []), ...(!!old.active !== !!active ? [active ? "reactivated" : "deactivated"] : []), ...(link != null && (old.workbook_link || "") !== link ? [link ? "production file link set" : "production file link removed"] : [])];
+      // Active not sent stays as it is (a rename does not switch a location back on)
+      const act = payload.active == null ? (old.active ? 1 : 0) : active;
+      await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, act, link, link, ex.id);
+      const ch = [...(old.name !== name ? [`renamed ${old.name} → ${name}`] : []), ...(!!old.active !== !!act ? [act ? "reactivated" : "deactivated"] : []), ...(link != null && (old.workbook_link || "") !== link ? [link ? "production file link set" : "production file link removed"] : [])];
       if (ch.length) await audit(env, user, "client.location", ex.client_id, `Location ${old.name}: ` + ch.join("; "));
-      return { location: { id: ex.id, client_id: ex.client_id, name, active: !!active, workbook_link: link } };
+      return { location: { id: ex.id, client_id: ex.client_id, name, active: !!act, workbook_link: link } };
     }
     const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!client) throw bad("Unknown client.");

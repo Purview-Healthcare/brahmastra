@@ -725,6 +725,52 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("N-08: a save without a profile still changes the name and code", r.ok && (await row("SELECT name FROM clients WHERE id = ?", sun.id)).name === "Sunrise Eye Care", r);
 }
 
+/* ================= N-15: a field not sent stays as it is ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, row, sql } = w;
+  const TI = await w.c("Tina Lead");
+  const u = async (n) => row("SELECT name, first_name, last_name, active, designation, capacity, role FROM users WHERE id = ?", id[n]);
+  S("N-15: Team edit: what is not sent is not changed");
+  await TI("users.save", { id: id["Bela Agent"], first_name: "Bela", last_name: "Agent", designation: "Sr Biller", role: "user", capacity: 42, active: false });
+  let r = await T(() => A("users.save", { id: id["Bela Agent"], last_name: "Agentova" }));
+  let b = await u("Bela Agent");
+  ok("N-15: a save that leaves out Active does not switch the person back on", r.ok && b.active === 0, b);
+  ok("N-15: nor clears the designation or resets the daily target", b.designation === "Sr Biller" && b.capacity === 42, b);
+  ok("N-15: and changes only what was sent (the last name; the first name kept)", b.name === "Bela Agentova" && b.first_name === "Bela" && b.role === "user", b);
+  r = await T(() => TI("users.save", { id: id["Tina Lead"], capacity: 25 }));
+  const t = await u("Tina Lead");
+  ok("N-15: a team lead's save of their own target alone keeps their role (it is not a demotion)", r.ok && t.role === "supervisor" && t.capacity === 25 && t.name === "Tina Lead", [r, t]);
+  r = await T(() => A("users.save", { id: id["Tina Lead"], designation: "Sr TL" }));
+  ok("N-15: the admin's save of a designation alone keeps the team lead role", r.ok && (await u("Tina Lead")).role === "supervisor" && (await u("Tina Lead")).designation === "Sr TL", r);
+  r = await T(() => TI("users.save", { id: id["Bela Agent"], first_name: "Bela", last_name: "Agent", designation: "Biller", role: "user", capacity: 35, active: true }));
+  b = await u("Bela Agent");
+  ok("N-15: what is sent is still saved (the page sends every field): back on, Biller, 35 a day", r.ok && b.active === 1 && b.designation === "Biller" && b.capacity === 35, b);
+  r = await T(() => TI("users.save", { id: id["Bela Agent"], first_name: "Bela", last_name: "Agent", role: "user", active: false }));
+  ok("N-15: and Active sent as off still switches someone off", r.ok && (await u("Bela Agent")).active === 0, r);
+
+  S("N-15: the same for clients, locations and client teams");
+  const c = async () => row("SELECT name, code, follow_up_days, active, team_json, auto_allocate FROM clients WHERE id = ?", sun.id);
+  await TI("clients.save", { id: sun.id, name: "Sunrise Eye Care", code: "SEC", follow_up_days: 21, active: false });
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Sunrise Eye Care Group" }));
+  let cc = await c();
+  ok("N-15: a client save that sends only the name keeps it inactive, its code and its follow-up days", r.ok && cc.name === "Sunrise Eye Care Group" && cc.active === 0 && cc.code === "SEC" && cc.follow_up_days === 21, cc);
+  await TI("clients.save", { id: sun.id, name: "Sunrise Eye Care", code: "SEC", follow_up_days: 30, active: true });
+  const loc = (await w.rows("SELECT id, name FROM locations WHERE client_id = ? ORDER BY name", sun.id))[0];
+  await TI("locations.save", { id: loc.id, name: loc.name, active: false });
+  r = await T(() => TI("locations.save", { id: loc.id, name: loc.name + " Clinic" }));
+  const l = await row("SELECT name, active FROM locations WHERE id = ?", loc.id);
+  ok("N-15: renaming a switched-off location does not switch it back on", r.ok && l.active === 0 && l.name === loc.name + " Clinic", l);
+  const team0 = (await TI("clients.list")).clients.find((x) => x.id === sun.id).team;
+  await TI("clients.saveTeam", { client_id: sun.id, team: team0, auto_allocate: false });
+  r = await T(() => TI("clients.saveTeam", { client_id: sun.id, team: team0 }));
+  cc = await c();
+  ok("N-15: a team save that leaves out auto-allocation keeps it off", r.ok && cc.auto_allocate === 0, cc);
+  r = await T(() => TI("clients.saveTeam", { client_id: sun.id, auto_allocate: true }));
+  cc = await c();
+  ok("N-15: and one that leaves out the team keeps the team", r.ok && JSON.parse(cc.team_json).length === team0.length && team0.length > 0 && cc.auto_allocate === 1, cc);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
