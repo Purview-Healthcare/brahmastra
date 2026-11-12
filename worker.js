@@ -1940,9 +1940,12 @@ const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_
 const PREF_KEYS = { theme: ["light", "navy", "gold", "auto"], text: ["normal", "large"], digest: ["on", "off"] };
 function userPrefs(j) { let o = {}; try { o = JSON.parse(j || "{}") || {}; } catch (e) { o = {}; } const out = {}; for (const k in PREF_KEYS) if (PREF_KEYS[k].includes(o[k])) out[k] = o[k]; return out; }
 
-const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).first();
-const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...p).all()).results || [];
-const run = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).run();
+// D1 refuses undefined as a value (D1_TYPE_ERROR, a 500): a value left out of a call is NULL, so a missing id finds nothing
+// and the op answers its own message ("Claim not found."), as the demo does.
+const d1Vals = (p) => p.map((v) => (v === undefined ? null : v));
+const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...d1Vals(p)).first();
+const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...d1Vals(p)).all()).results || [];
+const run = (env, sql, ...p) => env.DB.prepare(sql).bind(...d1Vals(p)).run();
 const changesOf = (r) => (r && r.meta && Number(r.meta.changes)) || 0;
 async function batchAll(env, stmts, size = 50) {
   const out = [];

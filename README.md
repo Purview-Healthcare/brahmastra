@@ -21,7 +21,7 @@ hours, and can be exported as one cell per note.
 | `worker.js` | The API: a Cloudflare Worker on a D1 (SQLite) database. One file, no build step. |
 | `lib/saag.js` | The SAAG matrix (8 statuses, 96 sub-statuses, 50 actions, their Effective Matrix), generated from the SAAG Claim Entry Tool workbook. |
 | `lib/denial-library.js` | The denial library from Purview Gurukul (72 denial scenarios: meaning, questions for the payer, next steps). Drives the "Suggested next steps" panel. |
-| `lib/local-backend.js` | Demo mode only: runs `worker.js` inside the browser on SQLite-in-WebAssembly so the app works with no server. |
+| `lib/local-backend.js` | Demo mode only: runs `worker.js` inside the browser on SQLite-in-WebAssembly so the app works with no server. It refuses what Cloudflare's D1 refuses, with D1's own messages, so the demo and the API checks fail where the live app would. |
 | `lib/msal-browser.js`, `lib/msal-redirect-bridge.js` | Microsoft's MSAL 5.22 (as shipped in the previous Brahmastra) for the OneDrive picker. |
 | `dev/build-saag.ps1` | Regenerates `lib/saag.js` from a new copy of the workbook. |
 | `dev/build-denial-library.ps1` | Refreshes `lib/denial-library.js` from Gurukul's `index.html`. |
