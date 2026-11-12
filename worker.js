@@ -5036,8 +5036,10 @@ const OPS = {
           AND ((h.status = 'complete' AND h.done_at BETWEEN ? AND ?) OR (h.status <> 'complete' AND h.created_at BETWEEN ? AND ?)) LIMIT 60000`, clientId, ...la, A, B, A, B),
       all(env, `SELECT h.claim_id, h.status, h.created_at, h.done_at, h.done_by_name, h.proof_json, h.reason, c.claim_no, c.account_no, c.dos, c.payer, c.billed, c.balance, COALESCE(c.location_id, '') AS loc
         FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = 'rejection' AND h.client_id = ? AND h.created_at BETWEEN ? AND ?${lw} LIMIT 60000`, clientId, A, B, ...la),
+      // every request that overlaps the two periods: asked by the end, and still waiting or answered (or done) after the start, however long ago it was asked
       all(env, `SELECT h.claim_id, h.dept, h.status, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_answered_at, h.done_at, h.chase_at, c.claim_no, c.account_no, c.dos, c.age_days, c.payer, c.balance, COALESCE(c.location_id, '') AS loc
-        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.paused_at IS NOT NULL AND (h.status = 'client' OR h.paused_at BETWEEN ? AND ?)${lw} LIMIT 20000`, clientId, A, B, ...la),
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.paused_at IS NOT NULL AND h.paused_at <= ?
+          AND (h.status = 'client' OR COALESCE(h.client_answered_at, h.done_at, h.paused_at) >= ?)${lw} LIMIT 20000`, clientId, B, A, ...la),
     ]);
     const no = (r) => r.claim_no || r.account_no || "";
     const HO_STATE = { complete: "Done", pending: "Pending", assigned: "Being worked", client: "Waiting on the client", back: "Back with AR", assistance: "Back with AR", rejected: "Sent back" };
