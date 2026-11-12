@@ -336,6 +336,26 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("D-12: an email with no account points to the roster, not to a sign-up", !otp.ok && /Purview Shastra roster/.test(otp.e) && !/create a team lead account/i.test(otp.e), otp.e);
 }
 
+{
+  S("E-11: a team task closes when everyone left on it has completed, also after Edit or reassign");
+  const w = await world();
+  const TI = await w.firstIn("Tina Lead"), AR = await w.firstIn("Arun Agent");
+  const arun = (await w.U("Arun Agent")).id, bela = (await w.U("Bela Agent")).id;
+  const mk = async () => (await TI("tasks.create", { client_id: w.sun.id, scope: "AR follow-up", title: "Work the client's list", description: "made up", source: "Client", tat: { kind: "24" }, count: 10, people: [{ user_id: arun, share: 5 }, { user_id: bela, share: 5 }] })).task.id;
+  const tid = await mk();
+  const ap = (await AR("tasks.mine", {})).rows.find((x) => x.task_id === tid).person_id;
+  await AR("tasks.update", { person_id: ap, done: 5, status: "completed", comment: "" });
+  const r = await w.T(() => TI("tasks.edit", { id: tid, people: [{ user_id: arun, share: 5 }] }));
+  const t = (await TI("tasks.list", { view: "all" })).rows.find((x) => x.id === tid);
+  const row = await w.row("SELECT status, closed_at, closed_by_name FROM team_tasks WHERE id = ?", tid);
+  ok("E-11: taking off the only one who had not completed closes the task as done", r.ok && r.r.closed === true && row.status === "done" && row.closed_at && row.closed_by_name === "everyone completed their share", { r, row });
+  ok("E-11: it is no longer open on the team lead's list", t && t.status !== "open", t && t.status);
+  // an edit that leaves someone not completed keeps it open
+  const tid2 = await mk();
+  const r2 = await w.T(() => TI("tasks.edit", { id: tid2, title: "Work the client's list again" }));
+  ok("E-11: an edit with people still to complete leaves the task open", r2.ok && !r2.r.closed && (await w.row("SELECT status FROM team_tasks WHERE id = ?", tid2)).status === "open", r2);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

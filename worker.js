@@ -7618,7 +7618,11 @@ const OPS = {
     stmts.push(env.DB.prepare("UPDATE team_tasks SET title = ?, description = ?, due_at = ?, tat_hours = ?, count_total = ?, updated_at = ? WHERE id = ?").bind(title, description, due.due_at, due.tat_hours, count, now, t.id));
     if (notes.length) stmts.push(env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'edit',?,?)").bind(uuid(), t.id, user.id, user.name || "", "Changed: " + notes.join(", ") + ".", now));
     await env.DB.batch(stmts);
-    return { ok: true, count, due_at: due.due_at };
+    // Everyone left on it has completed (the edit took off the only one who had not): it is done, as when the last one completes.
+    const left = await one(env, "SELECT COUNT(*) AS n, SUM(CASE WHEN status <> 'completed' THEN 1 ELSE 0 END) AS todo FROM team_task_people WHERE task_id = ?", t.id);
+    const closed = !!(left && left.n && !left.todo);
+    if (closed) await run(env, "UPDATE team_tasks SET status = 'done', closed_at = ?, closed_by_name = ?, updated_at = ? WHERE id = ? AND status = 'open'", now, "everyone completed their share", now, t.id);
+    return { ok: true, count, due_at: due.due_at, closed };
   },
   "tasks.file": async ({ env, user, payload }) => {
     const f = await one(env, "SELECT * FROM team_task_files WHERE id = ?", str(payload.id, 60));
