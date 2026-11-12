@@ -2351,7 +2351,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
   );
 }
 const CLIENT_ACTION = { "client.save": "Profile", "client.responsibility": "Responsibility", "client.team": "Team", "client.location": "Location", "access.share": "Shared", "access.remove": "Share removed",
-  "raci.save": "RACI", "client.log": "Call log", "digest.sendNow": "Digest" };
+  "raci.save": "RACI", "client.log": "Call log", "client.logRemove": "Call log", "digest.sendNow": "Digest" };
 function ClientHistory({ c, onClose }) {
   const q = useRpc("clients.history", { client_id: c.id }, [c.id]);
   const rows = (q.data && q.data.rows) || [];
@@ -6662,7 +6662,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
 }
 const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took a share back", "raci.save": "Changed the RACI", "feedback.recipients": "Changed who gets feedback",
   "client.responsibility": "Changed posting / submission responsibility", "settings.save": "Changed settings", "client.delete": "Deleted a client", "client.save": "Edited a client",
-  "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
+  "user.save": "Changed a team member", "client.log": "Logged a client call", "client.logRemove": "Removed a client call log entry", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL",
   "project.map": "Matched a roster project to a client", "user.code": "Gave a sign-in code", "user.reset": "Reset a password", "user.email": "Changed an email address",
   "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails" };
@@ -6686,6 +6686,7 @@ function AuditView({ ctx }) {
 }
 /* ---------- Client 360: everything about one client on one page (client managers, team leads, the VP) ---------- */
 const C360_KIND = [["call", "Call"], ["email", "Email"], ["meeting", "Meeting"], ["note", "Note"], ["next", "Next call"]];
+const C360_LOG_MAX = 2000;   // characters in one call log entry (the server refuses a longer one with a message, it never cuts it)
 const c360Last = () => { try { return localStorage.getItem("brahmastra:c360") || ""; } catch (e) { return ""; } };
 function TrendChart({ trend }) {
   if (!trend || trend.length < 2) return null;
@@ -6829,7 +6830,8 @@ function ClientView({ ctx, me, go, params }) {
               <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><div className="seg2">{C360_KIND.map(([k, l]) => <button key={k} className={log.kind === k ? "on" : ""} onClick={() => setLog({ ...log, kind: k })}>{l}</button>)}</div>
                 {log.kind === "next" && <input className="input sm" type="date" value={log.next_on} min={todayISO()} onChange={(e) => setLog({ ...log, next_on: e.target.value })} />}</div>
               <div className="row mt8" style={{ gap: 6 }}><textarea className="textarea" style={{ minHeight: 54, flex: 1 }} value={log.text} onChange={(e) => setLog({ ...log, text: e.target.value })} placeholder={log.kind === "next" ? "What to prepare for the next call" : "What was said or decided, and by whom"} />
-                <button className="btn primary" disabled={busy || log.text.trim().length < 8 || (log.kind === "next" && !log.next_on)} onClick={addLog}>Add</button></div></div>}
+                <button className="btn primary" disabled={busy || log.text.trim().length < 8 || log.text.trim().length > C360_LOG_MAX || (log.kind === "next" && !log.next_on)} onClick={addLog}>Add</button></div>
+              {log.text.trim().length > C360_LOG_MAX - 200 && <div className={"tiny mt8 " + (log.text.trim().length > C360_LOG_MAX ? "red-ink" : "muted")}>{fmtInt(log.text.trim().length)} of {fmtInt(C360_LOG_MAX)} characters{log.text.trim().length > C360_LOG_MAX ? ": too long for one entry. Shorten it, or add the rest as a second entry." : ""}</div>}</div>}
             {d.log.length ? d.log.slice(0, 12).map((l) => <div key={l.id} className={"c3-log " + l.kind}><b>{l.kind === "next" ? "Next call · " + fmtDate(l.next_on) : C360_KIND.find(([k]) => k === l.kind)[1] + " · " + fmtWhen(l.at)} · {l.by_name}{(l.mine || (me.role === "supervisor" && d.monthend.can_edit)) && <button className="btn link sm no-print" style={{ padding: "0 4px" }} disabled={busy} onClick={() => delLog(l)}>remove</button>}</b>{l.text}</div>)
               : <Empty>No calls logged yet. Note what the client agreed and when the next call is, so the next person does not start from zero.</Empty>}</div>
         </div>
@@ -7215,6 +7217,8 @@ function crDatasets(raw) {
   out.inventory = inv(d.inventory, !!d.inventory.cells);
   out.inventoryPrev = inv(d.inventoryPrev, !!d.inventoryPrev.cells); out.inventoryPrev.role = "inventoryPrev";
   out._movement = Array.isArray(d.movement) ? d.movement : [];   // where the claims open at the period before went (not a dataset)
+  // the report's own period (the records cover the period before too, for the comparison): a page has data only when it has rows in it
+  out._period = raw.period && crD(raw.period.from) && crD(raw.period.to) ? { start: crD(raw.period.from), end: crD(raw.period.to) } : null;
   out.worked = crDataset("worked", d.worked, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, charge: r.chg, balance: r.amt, amount: r.chg != null ? r.chg : r.amt, bucket: r.bk,
     purviewStatus: r.st, status: r.sub, action: r.act, moveTo: r.mv, workDate: r.wd, workBy: r.by, loc: r.loc }), { dateField: "workDate" });
   out.payment = crDataset("payment", d.payment, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, checkNo: r.chk, paidDate: r.pd, paid: r.paid, charge: r.chg,
@@ -7235,7 +7239,7 @@ function crDatasets(raw) {
 }
 /* ---------- aggregation (Third Eye's agg, Pareto, folding, cross-filter) ---------- */
 function crLabelOf(ds, field, key) {
-  if (!key) return "(blank)";
+  if (!key) return field === "bucket" ? "Unknown age" : "(blank)";
   if (field === "payerKey") return (ds.labels.payerKey && ds.labels.payerKey[key]) || crTitle(key);
   if (field === "bucket") return (ds.labels.bucket && ds.labels.bucket[key]) || key;
   const L = ds.labels[field]; return (L && L[key]) || crTitle(key);
@@ -7245,7 +7249,8 @@ function crAgg(rows, field, ds, opts = {}) {
   const measure = opts.measure || "count", m = new Map();
   for (const r of rows) { const k = r[field] == null ? "" : String(r[field]); let e = m.get(k); if (!e) { e = { key: k, count: 0, amount: 0, lo: r.bucketLo, first: null }; m.set(k, e); } e.count += r._n || 1; e.amount += Number(r.amount) || 0; if (r.workDate && (!e.first || r.workDate < e.first)) e.first = r.workDate; }
   let items = [...m.values()].map((e) => ({ ...e, label: crLabelOf(ds, field, e.key), value: measure === "amount" ? e.amount : e.count }));
-  if (!opts.keepBlank) items = items.filter((x) => x.key !== "" || items.length === 1);
+  // claims with no age stay in as "Unknown age" (as in Third Eye), so the age groups add up to the total and shares are of that total
+  if (!opts.keepBlank && field !== "bucket") items = items.filter((x) => x.key !== "" || items.length === 1);
   const total = crSum(items, (x) => x.value) || 1; items.forEach((x) => { x.share = x.value / total; });
   if (field === "bucket") items.sort((a, b) => a.lo - b.lo);
   else if (opts.order === "label") items.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
@@ -7281,7 +7286,7 @@ const crSubState = (r) => { const st = r.status || ""; if (/dup/.test(st)) retur
 /* the datasets a page reads; denials come from the AR entries (as Third Eye does without a denial sheet) */
 function crDerived(DS, role) {
   if (role === "denial") { const w = DS.worked; const recs = w ? w.recs.filter(crIsDenied) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked", dedupe: true } : null; }
-  if (role === "rejection") { const r = DS.rejection; if (r && r.recs.length) return r; const w = DS.worked; const recs = w ? w.recs.filter(crIsRejected) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked" } : null; }
+  if (role === "rejection") { const r = DS.rejection; if (r && r.recs.length) return r; const w = DS.worked; const recs = w ? w.recs.filter(crIsRejected) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked", dedupe: true } : null; }
   const ds = DS[role]; return ds && ds.recs.length ? ds : null;
 }
 /* One row per claim: a desk request over an AR entry, an open request over an answered one, else the later entry. */
@@ -7315,6 +7320,7 @@ function crCardBar(c, field, title, opts = {}) {
   const role = opts.role, ds = c.ds(role); if (!ds) return null;
   const id = `${c.pageId}.${role}.${field}`;
   let rows = c.rows(role, field); if (opts.rowFilter) rows = rows.filter(opts.rowFilter);
+  if (opts.claims) rows = crClaimsOf(rows);   // claims, not entries: one row per claim (its latest entry), as the page's KPIs count
   const measure = (c.R.cardMeasure && c.R.cardMeasure[id]) || opts.measure || "count";
   let items = crAgg(rows, field, ds, { measure, order: opts.order });
   if (opts.filterItems) items = items.filter(opts.filterItems);
@@ -7322,6 +7328,7 @@ function crCardBar(c, field, title, opts = {}) {
   if (opts.emph) crEmph80(items);
   crMarkSel(items, c.sel[field]);
   let prevRows = opts.prev && c.hasPrev(role) ? c.prev(role) : null; if (prevRows && opts.rowFilter) prevRows = prevRows.filter(opts.rowFilter);
+  if (prevRows && opts.claims) prevRows = crClaimsOf(prevRows);
   const prevItems = prevRows ? crAgg(prevRows, field, ds, { measure }) : null;
   const m = CR_MEASURE[measure], sec = measure === "count" ? { key: "amount", label: "Amount", fmt: crF.money } : { key: "count", label: "Claims", fmt: crF.int };
   return { id, title, sub: opts.sub, cols: opts.cols || 6, type: opts.type || "hbar", dim: field, dimLabel: crDimLabel(ds, field), items, prevItems, measure, canToggle: true, measureLabel: m.label,
@@ -7383,9 +7390,14 @@ function crInvSets(c) {
     prevLabel: two ? `AR · ${asOf(prevDs)}` : "", curLabel: two ? `AR · ${asOf(ds)}` : "Open AR", pw,
     rebuilt: two && prevDs.source === "rebuilt" ? prevDs.asOf : null };
 }
-/* Over 90 days is a share of the money owed: credit balances are left out (the Dashboard's rule). */
-const crOwed = (set, lo = 0) => crSum(set.filter((r) => r.bucketLo >= lo), (r) => Math.max(0, Number(r.amount) || 0));
+/* Over 90 days is a share of the money owed: credit balances are left out (the Dashboard's rule). The money owed is every claim
+   (Future DOS and a claim with no age too); "older than" counts only claims whose age is known (no age is lo 9999, never older). */
+const crOlder = (r, lo) => r.bucketLo >= lo && r.bucketLo < 9999;
+const crOwed = (set, lo) => crSum(lo == null ? set : set.filter((r) => crOlder(r, lo)), (r) => Math.max(0, Number(r.amount) || 0));
 const crOverShare = (set, lo) => { const owed = crOwed(set); return owed ? crOwed(set, lo) / owed : null; };
+/* the money owed by age group (credits left out), the share each holds of it, and the credits left out */
+const crOwedBuckets = (set, ds) => crAgg(set.filter((r) => Number(r.amount) > 0), "bucket", ds, { measure: "amount" });
+const crCredit = (set) => -crSum(set.filter((r) => Number(r.amount) < 0), (r) => r.amount);
 function crBuildInventory(c) {
   const R = c.R, { ds, prevSet, curSet, twoSnapshots, prevLabel, curLabel, rebuilt, noPrev } = crInvSets(c);
   if (!twoSnapshots) return crBuildInventoryNow(c, ds, curSet, noPrev);
@@ -7393,17 +7405,17 @@ function crBuildInventory(c) {
   const red = amtPrev ? 1 - amtCur / amtPrev : null;
   const o90 = crOverShare(curSet, 91), o90p = crOverShare(prevSet, 91);
   const kpis = [
-    crKpi(prevLabel, crF.money(amtPrev, 0), { sub: `${crF.int(nPrev)} claims` }),
-    crKpi(red != null && red >= 0 ? "Reduction" : "Change", red == null ? "–" : crF.pct(Math.abs(red), 1), { sub: red == null ? "" : `${crF.money(Math.abs(amtPrev - amtCur), 0)} ${red >= 0 ? "off the open AR" : "added"}${nPrev !== nCur ? " · " + crPl(Math.abs(nPrev - nCur), "claim") : ""}`, accent: true }),
-    crKpi(curLabel, crF.money(amtCur, 0), { sub: `${crF.int(nCur)} claims`, delta: twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK }),
-    crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: o90p == null ? "of the open balance" : `was ${crF.pct(o90p, 1)}`, delta: o90 != null && o90p != null ? { cur: o90, prev: o90p, diff: o90 - o90p, pct: null, pts: true } : null, upGood: false }),
+    crKpi(prevLabel, crF.money(amtPrev, 0), { sub: crPl(nPrev, "claim") }),
+    crKpi(red != null && red >= 0 ? "Reduction" : "Change", red == null ? "–" : crF.pct(Math.abs(red), 1), { sub: red == null ? "" : `${crF.money(Math.abs(amtPrev - amtCur), 0)} ${red >= 0 ? "off the open AR" : "added"}${nPrev !== nCur ? " · " + crF.int(Math.abs(nPrev - nCur)) + (nCur < nPrev ? " fewer " : " more ") + (Math.abs(nPrev - nCur) === 1 ? "claim" : "claims") : ""}`, accent: true }),
+    crKpi(curLabel, crF.money(amtCur, 0), { sub: crPl(nCur, "claim"), delta: twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK }),
+    crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: o90p == null ? "of the money owed" : `was ${crF.pct(o90p, 1)}`, delta: o90 != null && o90p != null ? { cur: o90, prev: o90p, diff: o90 - o90p, pct: null, pts: true } : null, upGood: false }),
   ];
   const bP = crAgg(prevSet, "bucket", ds, { measure: "amount" }), bC = crAgg(curSet, "bucket", ds, { measure: "amount" }), bPc = crAgg(prevSet, "bucket", ds), bCc = crAgg(curSet, "bucket", ds);
   crMarkSel(bP, c.sel.bucket); crMarkSel(bC, c.sel.bucket);
   const keys = crUniq([...bP.map((x) => x.key), ...bC.map((x) => x.key)]).map((k) => ({ k, lo: (bP.find((x) => x.key === k) || bC.find((x) => x.key === k)).lo })).sort((a, b) => a.lo - b.lo).map((x) => x.k);
   const mk = (P, Q) => keys.map((k) => { const p = P.find((x) => x.key === k), q = Q.find((x) => x.key === k); const pv = p ? p.value : 0, cv = q ? q.value : 0; return { key: k, label: crLabelOf(ds, "bucket", k), value: pv - cv, prev: pv, cur: cv, dim: c.sel.bucket && c.sel.bucket.size && !c.sel.bucket.has(k) }; });
   const redAmt = mk(bP, bC), redCnt = mk(bPc, bCc);
-  const grouped = keys.map((k) => { const p = bP.find((x) => x.key === k), q = bC.find((x) => x.key === k); return { key: k, label: k === "future" ? "Future DOS" : k + "", prev: p ? p.value : 0, cur: q ? q.value : 0, dim: c.sel.bucket && c.sel.bucket.size && !c.sel.bucket.has(k), sel: c.sel.bucket && c.sel.bucket.has(k) }; });
+  const grouped = keys.map((k) => { const p = bP.find((x) => x.key === k), q = bC.find((x) => x.key === k); return { key: k, label: k === "future" ? "Future DOS" : k || "Unknown age", prev: p ? p.value : 0, cur: q ? q.value : 0, dim: c.sel.bucket && c.sel.bucket.size && !c.sel.bucket.has(k), sel: c.sel.bucket && c.sel.bucket.has(k) }; });
   const cards = [
     { id: "inv.bucket.both", title: `Aging, ${twoSnapshots ? "then against now" : "received against still open"}`, sub: "Balance by age of claim", cols: 7, type: "grouped", dim: "bucket", items: grouped, fmtV: crF.moneyK, labels: [prevLabel, curLabel] },
     { id: "inv.red.amt", title: "What changed in each age group", sub: "Balance off the open AR (right) or added (left)", cols: 5, type: "diverge", dim: "bucket", items: redAmt, fmtV: crF.moneyK, posLabel: "Balance reduced", negLabel: "Balance increased" },
@@ -7413,15 +7425,18 @@ function crBuildInventory(c) {
   if (moves.length) cards.push({ id: "inv.moves", title: "Where the claims went", sub: `Claims open at ${prevLabel.replace(/^AR · /, "")}, by their latest step · AR close: closed by AR or sent for posting · a submitted claim comes back to AR for follow-up`, cols: 12, type: "table",
     head: ["", ...moves.map((x) => x.label)], rows: [["Claims", ...moves.map((x) => crF.int(x.n))], ["Amount", ...moves.map((x) => crF.money(x.amt, 0))]] });
   const ins = [], pw = crPrevWord(R);
-  if (red != null) ins.push(twoSnapshots ? `The AR inventory ${red >= 0 ? "came down" : "went up"} by ${crF.pct(Math.abs(red), 0)} against the ${pw}: ${crF.money(amtPrev, 0)} (${crF.int(nPrev)} claims) to ${crF.money(amtCur, 0)} (${crF.int(nCur)} claims).`
-    : `Of the ${crF.money(amtPrev, 0)} received (${crF.int(nPrev)} claims), ${crF.money(amtPrev - amtCur, 0)} has been closed and ${crF.money(amtCur, 0)} across ${crF.int(nCur)} claims is still open, a ${crF.pct(Math.max(0, red), 0)} reduction.`);
+  if (red != null) ins.push(twoSnapshots ? `The AR inventory ${red >= 0 ? "came down" : "went up"} by ${crF.pct(Math.abs(red), 0)} against the ${pw}: ${crF.money(amtPrev, 0)} (${crPl(nPrev, "claim")}) to ${crF.money(amtCur, 0)} (${crPl(nCur, "claim")}).`
+    : `Of the ${crF.money(amtPrev, 0)} received (${crPl(nPrev, "claim")}), ${crF.money(amtPrev - amtCur, 0)} has been closed and ${crF.money(amtCur, 0)} across ${crPl(nCur, "claim")} is still open, a ${crF.pct(Math.max(0, red), 0)} reduction.`);
   // with the "Where the claims went" table, two lighter lines give way so the page prints at a readable size
-  const cnt = crDelta(nCur, nPrev); if (cnt && cnt.diff && twoSnapshots && !moves.length) ins.push(`Claim count ${cnt.diff >= 0 ? "rose" : "fell"} from ${crF.int(nPrev)} to ${crF.int(nCur)} (${crPl(Math.abs(cnt.diff), "claim")} ${cnt.diff > 0 ? "more" : "fewer"}), so the average open claim is now ${crF.money(nCur ? amtCur / nCur : 0, 0)}${nPrev ? ` against ${crF.money(amtPrev / nPrev, 0)} before` : ""}.`);
+  const cnt = crDelta(nCur, nPrev); if (cnt && cnt.diff && twoSnapshots && !moves.length) ins.push(`Claim count ${cnt.diff >= 0 ? "rose" : "fell"} from ${crF.int(nPrev)} to ${crF.int(nCur)} (${crF.int(Math.abs(cnt.diff))} ${cnt.diff > 0 ? "more" : "fewer"} ${Math.abs(cnt.diff) === 1 ? "claim" : "claims"}), so the average open claim is now ${crF.money(nCur ? amtCur / nCur : 0, 0)}${nPrev ? ` against ${crF.money(amtPrev / nPrev, 0)} before` : ""}.`);
   const cntOf = (k) => (redCnt.find((x) => x.key === k) || {}).value || 0;
   const bestRed = redAmt.filter((x) => x.value > 0).sort((a, b) => b.value - a.value)[0]; if (bestRed) ins.push(`The largest reduction came from the ${bestRed.label} bucket: ${crF.money(bestRed.value, 0)}${cntOf(bestRed.key) > 0 ? " (" + crPl(cntOf(bestRed.key), "claim") + ")" : ""} off the open AR.`);
   const worst = redAmt.filter((x) => x.value < 0).sort((a, b) => a.value - b.value)[0]; if (worst) ins.push(`The ${worst.label} bucket grew by ${crF.money(-worst.value, 0)}${cntOf(worst.key) < 0 ? " (" + crPl(-cntOf(worst.key), "claim") + ")" : ""}; these need attention before they age further.`);
-  const top = bC.slice().sort((a, b) => b.value - a.value)[0]; if (top && !moves.length) { const pt = bP.find((x) => x.key === top.key); ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of the open balance${pt ? ` (${crF.pct(pt.share, 0)} at ${prevLabel.replace(/^AR · /, "")})` : ""}.`); }
+  // the heaviest age group is a share of the money owed (credits left out, as Over 90 days), among the groups with a known age
+  const owC = crOwedBuckets(curSet, ds), owP = crOwedBuckets(prevSet, ds), credit = crCredit(curSet), ofWhat = credit ? "the money owed" : "the open balance";
+  const top = owC.filter((x) => x.key).sort((a, b) => b.value - a.value)[0]; if (top && !moves.length) { const pt = owP.find((x) => x.key === top.key); ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of ${ofWhat}${pt ? ` (${crF.pct(pt.share, 0)} at ${prevLabel.replace(/^AR · /, "")})` : ""}.`); }
   const o120 = crOverShare(curSet, 121), o120p = crOverShare(prevSet, 121); if (o120) ins.push(`${crF.pct(o120, 0)} of the money owed is older than 120 days${o120p != null ? `, compared with ${crF.pct(o120p, 0)} before` : ""}; timely filing and appeal limits make this the priority slice.`);
+  if (credit && owC.length) ins.push(`The age shares are of the ${crF.money(crSum(owC, (x) => x.value), 0)} owed; credit balances (${crF.money(credit, 0)}) are left out.`);
   const headline = red == null ? "Inventory analysis" : twoSnapshots ? `AR ${red >= 0 ? "came down" : "went up"} ${crF.pct(Math.abs(red), 0)} in ${R.periodName}` : `${crF.pct(Math.max(0, red), 0)} of the inventory received is off the open AR`;
   return { title: "Inventory analysis", headline, sub: twoSnapshots ? `Open AR at ${prevLabel.replace(/^AR · /, "")} against ${curLabel.replace(/^AR · /, "")}, by age of claim` : `Inventory on file · ${R.client}`,
     note: rebuilt ? `The ${crF.date(crD(rebuilt))} inventory is rebuilt from the claims' history (Brahmastra keeps a month-end snapshot from now on).` : "",
@@ -7432,47 +7447,56 @@ function crBuildInventoryNow(c, ds, curSet, noPrev) {
   const R = c.R; if (!ds) return null;
   const amt = crSum(curSet, (r) => r.amount), n = crN(curSet), o90 = crOverShare(curSet, 91), o120 = crOverShare(curSet, 121);
   const bC = crAgg(curSet, "bucket", ds, { measure: "amount" }); crMarkSel(bC, c.sel.bucket);
-  const kpis = [crKpi("Open AR", crF.money(amt, 0), { sub: `${crF.int(n)} claims`, accent: true }),
+  const kpis = [crKpi("Open AR", crF.money(amt, 0), { sub: crPl(n, "claim"), accent: true }),
     crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: `${crF.money(crOwed(curSet, 91), 0)} of the money owed`, upGood: false })];
   const cards = [{ id: "inv.bucket.now", title: "Aging of the open AR", sub: "Balance by age of claim", cols: 12, type: "col", dim: "bucket", dimLabel: "Aging bucket", items: bC, measure: "amount", measureLabel: "Amount",
     fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 14 }];
-  const ins = [`The open AR is ${crF.money(amt, 0)} across ${crF.int(n)} claims.`];
+  const ins = [`The open AR is ${crF.money(amt, 0)} across ${crPl(n, "claim")}.`];
   ins.push(noPrev ? "There is no month-end inventory before this one to compare with: the reduction shows from the next report." : "Compare is off: this page shows the open AR only.");
-  const top = bC.slice().sort((a, b) => b.value - a.value)[0]; if (top) ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of the open balance.`);
+  const owC = crOwedBuckets(curSet, ds), credit = crCredit(curSet);
+  const top = owC.filter((x) => x.key).sort((a, b) => b.value - a.value)[0]; if (top) ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of ${credit ? "the money owed" : "the open balance"}.`);
   if (o120) ins.push(`${crF.pct(o120, 0)} of the money owed is older than 120 days; timely filing and appeal limits make this the priority slice.`);
-  return { title: "Inventory analysis", headline: `${crF.money(amt, 0)} open across ${crF.int(n)} claims`, sub: `Open AR by age of claim · ${R.client}`, watermark: "INVENTORY", kpis, cards, insights: ins,
+  if (credit && owC.length) ins.push(`The age shares are of the ${crF.money(crSum(owC, (x) => x.value), 0)} owed; credit balances (${crF.money(credit, 0)}) are left out.`);
+  return { title: "Inventory analysis", headline: `${crF.money(amt, 0)} open across ${crPl(n, "claim")}`, sub: `Open AR by age of claim · ${R.client}`, watermark: "INVENTORY", kpis, cards, insights: ins,
     slicers: ["payerKey", "bucket", "purviewStatus", "action"].filter((f) => curSet.some((r) => r[f])), claims: crClaims(ds, ds.cells ? [] : curSet, "inventory"), unfiltered: true };
 }
 function crBuildInventory2(c) {
   const R = c.R, { ds, prevSet, curSet, twoSnapshots, curLabel } = crInvSets(c);
   if (!ds) return null;
   const amtCur = crSum(curSet, (r) => r.amount);
-  const payerItems = crEmph80(crAgg(curSet, "payerKey", ds, { measure: "amount" })); crMarkSel(payerItems, c.sel.payerKey);
+  // payer, status and action shares are of the money owed: credit balances are left out (the rule of Over 90 days, and of Third Eye's client report)
+  const owedOf = (rows) => rows.filter((r) => !(Number(r.amount) < 0)), owedSet = owedOf(curSet), credit = crCredit(curSet);
+  const ofBal = credit ? "the money owed" : "the balance", ofOpen = credit ? "the money owed" : "the open balance";
+  const payerItems = crEmph80(crAgg(owedSet, "payerKey", ds, { measure: "amount" })); crMarkSel(payerItems, c.sel.payerKey);
   const n80 = payerItems.filter((x) => x.emph).length;
   // the real share the highlighted payers hold (the Pareto stops at the first payer that reaches 80%, so it is often a little more)
   const share80 = crF.pct(crSum(payerItems.filter((x) => x.emph), (x) => x.share), 0);
   const statusField = curSet.some((r) => r.purviewStatus) ? "purviewStatus" : curSet.some((r) => r.pmsStatus) ? "pmsStatus" : "status";
-  const stAll = crAgg(curSet, statusField, ds, { measure: "amount" }), stItems = crFold(stAll, 6); crMarkSel(stItems, c.sel[statusField]);
-  const actItems = crAgg(curSet, "action", ds, { measure: "amount" }); crMarkSel(actItems, c.sel.action);
-  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: `${crF.int(crN(curSet))} claims`, accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold ${share80} of the balance` : "" })];
+  const stAll = crAgg(owedSet, statusField, ds, { measure: "amount" }), stItems = crFold(stAll, 6); crMarkSel(stItems, c.sel[statusField]);
+  const actItems = crAgg(owedSet, "action", ds, { measure: "amount" }); crMarkSel(actItems, c.sel.action);
+  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: crPl(crN(curSet), "claim"), accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold ${share80} of ${ofBal}` : "" })];
   if (payerItems[0]) kpis.push(crKpi("Largest payer", crF.pct(payerItems[0].share, 0), { sub: payerItems[0].label }));
   if (stAll[0]) kpis.push(crKpi("Top status", crF.pct(stAll[0].share, 0), { sub: stAll[0].label }));
   const cards = [
-    { id: "inv2.payer", title: "Insurance wise Pareto", sub: "Payers holding the top 80% of the balance are highlighted", cols: 6, type: "hbar", dim: "payerKey", dimLabel: "Payer", items: payerItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, emphasis: true, maxRows: 7,
-      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} payers</b> hold ${share80} of the balance: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
-    { id: "inv2.status", title: "Inventory status mix", sub: crDimLabel(ds, statusField), cols: 6, type: "donut", dim: statusField, items: stItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, centerValue: crF.moneyK(amtCur), centerLabel: "open" },
+    { id: "inv2.payer", title: "Insurance wise Pareto", sub: `Payers holding the top 80% of ${credit ? "the money owed (credits left out)" : "the balance"} are highlighted`, cols: 6, type: "hbar", dim: "payerKey", dimLabel: "Payer", items: payerItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, emphasis: true, maxRows: 7,
+      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} payers</b> hold ${share80} of ${ofBal}: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
+    { id: "inv2.status", title: "Inventory status mix", sub: crDimLabel(ds, statusField), cols: 6, type: "donut", dim: statusField, items: stItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, centerValue: crF.moneyK(credit ? crSum(owedSet, (r) => r.amount) : amtCur), centerLabel: credit ? "owed" : "open" },
   ];
   if (actItems.length > 1) cards.push({ id: "inv2.action", title: "Action wise breakdown", sub: "Balance by action taken", cols: 12, type: "hbar", dim: "action", dimLabel: "Action", items: actItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 5 });
   const ins = [];
   // the real share the top payers hold (88%, not the 80% line they cross), so it matches the chart and the amount
   const top80 = payerItems.filter((x) => x.emph);
-  if (payerItems.length) ins.push(`${crListNames(top80)} ${n80 === 1 ? "holds" : "hold"} ${crF.pct(crSum(top80, (x) => x.share), 0)} of the open balance (${crF.money(crSum(top80, (x) => x.amount), 0)}), so payer level follow up with ${n80 === 1 ? "this payer" : "these payers"} moves most of the money.`);
-  if (payerItems[0]) ins.push(`${payerItems[0].label} alone carries ${crF.pct(payerItems[0].share, 0)} (${crF.int(payerItems[0].count)} claims, ${crF.money(payerItems[0].amount, 0)})${payerItems[1] ? `; ${payerItems[1].label} follows with ${crF.pct(payerItems[1].share, 0)}` : ""}.`);
+  if (payerItems.length) ins.push(`${crListNames(top80)} ${n80 === 1 ? "holds" : "hold"} ${crF.pct(crSum(top80, (x) => x.share), 0)} of ${ofOpen} (${crF.money(crSum(top80, (x) => x.amount), 0)}), so payer level follow up with ${n80 === 1 ? "this payer" : "these payers"} moves most of the money.`);
+  if (payerItems[0]) ins.push(`${payerItems[0].label} alone carries ${crF.pct(payerItems[0].share, 0)} (${crPl(payerItems[0].count, "claim")}, ${crF.money(payerItems[0].amount, 0)})${payerItems[1] ? `; ${payerItems[1].label} follows with ${crF.pct(payerItems[1].share, 0)}` : ""}.`);
+  if (credit && payerItems.length) ins.push(`Payer, status and action shares are of the ${crF.money(crSum(owedSet, (r) => r.amount), 0)} owed; credit balances (${crF.money(credit, 0)}) are left out.`);
   if (stAll.length) ins.push(`Status mix: ${stAll.slice(0, 4).map((s) => `${s.label} ${crF.pct(s.share, 0)}`).join(", ")}.`);
-  const denied = stAll.find((s) => /deni/.test(s.key)); if (denied) ins.push(`${crF.money(denied.amount, 0)} (${crF.int(denied.count)} claims) sits in denied status and needs appeals or corrected claims before it can be collected.`);
-  if (actItems[0]) ins.push(`The most common action is ${actItems[0].label} (${crF.pct(actItems[0].share, 0)} of the balance)${actItems[1] ? `, then ${actItems[1].label} (${crF.pct(actItems[1].share, 0)})` : ""}.`);
-  if (twoSnapshots) { ins.push(...crMovers(R, curSet, prevSet, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "inventory balance" })); ins.push(...crMovers(R, curSet, prevSet, statusField, ds, { measure: "amount", noun: "status", share: false, newItems: true })); }
-  const headline = payerItems[0] ? `${payerItems[0].label} holds ${crF.pct(payerItems[0].share, 0)} of the open balance` : "Inventory breakdown";
+  const denied = stAll.find((s) => /deni/.test(s.key)); if (denied) ins.push(`${crF.money(denied.amount, 0)} (${crPl(denied.count, "claim")}) sits in denied status and needs appeals or corrected claims before it can be collected.`);
+  // only actions the claims really have (with no action on file it read "The most common action is (blank)")
+  const actNamed = actItems.filter((x) => x.key);
+  if (actNamed[0]) ins.push(`The most common action is ${actNamed[0].label} (${crF.pct(actNamed[0].share, 0)} of ${ofBal})${actNamed[1] ? `, then ${actNamed[1].label} (${crF.pct(actNamed[1].share, 0)})` : ""}.`);
+  if (twoSnapshots) { const prevOwed = owedOf(prevSet), anyCredit = credit || prevOwed.length < prevSet.length;
+    ins.push(...crMovers(R, owedSet, prevOwed, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: anyCredit ? "money owed" : "inventory balance" })); ins.push(...crMovers(R, owedSet, prevOwed, statusField, ds, { measure: "amount", noun: "status", share: false, newItems: true })); }
+  const headline = payerItems[0] ? `${payerItems[0].label} holds ${crF.pct(payerItems[0].share, 0)} of ${ofOpen}` : "Inventory breakdown";
   return { title: "Inventory breakdown", headline, sub: `Payers, status and actions · ${curLabel.replace(/^AR · /, "open AR at ")}`, watermark: "PAYERS", kpis, cards, insights: ins,
     slicers: ["payerKey", "bucket", statusField, "action"].filter((f) => curSet.some((r) => r[f])), claims: crClaims(ds, ds.cells ? [] : curSet, "inventory"), unfiltered: true };
 }
@@ -7500,25 +7524,27 @@ function crBuildSubmission(c) {
   crAddCard(cards, crCardBar(c, "carrier", "Submission mode", { role: "submission", cols: 4, measure: "amount", rowFilter: only, sub: "Charges submitted" }));
   if (notSub.length) { const reasons = crAgg(notSub, "comment", { labels: { comment: {} } }).slice(0, 5); cards.push({ id: "sub.notsub", title: "Not submitted: reasons", sub: `${crPl(notSub.length, "claim")} could not be submitted`, cols: 12, type: "table", rows: reasons.map((x) => [crTrunc(x.key || "No reason given", 120), crF.int(x.count), crF.money(x.amount, 0)]), head: ["Reason", "Claims", "Charges"] }); }
   const payers = crAgg(submitted, "payerKey", ds), top = payers[0], ins = [], pw = crPrevWord(R);
-  ins.push(`${crF.int(submitted.length)} claims worth ${crF.money(amt, 0)} were submitted in ${crRangeLabel(c.range)}${wd ? `, an average of ${crPerDay(submitted.length, wd)} claims per working day` : ""}${submitted.length ? ` and ${crF.money(amt / submitted.length, 0)} per claim` : ""}.`);
-  if (top) ins.push(`${top.label} received ${crF.pct(top.share, 0)} of submissions (${crF.int(top.count)} claims)${payers[1] ? `, followed by ${payers[1].label} at ${crF.pct(payers[1].share, 0)}` : ""}.`);
-  if (oldest && newest) { const lag = submitted.filter((r) => r.dos && lagOf(r) > 45).length; ins.push(`Service dates range from ${crF.date(oldest)} to ${crF.date(newest)}; ${lag ? `${crF.int(lag)} claims (${crF.pct(lag / submitted.length, 0)}) were over 45 days old when billed, which eats into filing limits` : "everything was billed within 45 days of service"}.`); }
+  ins.push(`${crPl(submitted.length, "claim")} worth ${crF.money(amt, 0)} ${submitted.length === 1 ? "was" : "were"} submitted in ${crRangeLabel(c.range)}${wd ? `, an average of ${crPerDay(submitted.length, wd)} claims per working day` : ""}${submitted.length ? ` and ${crF.money(amt / submitted.length, 0)} per claim` : ""}.`);
+  if (top) ins.push(`${top.label} received ${crF.pct(top.share, 0)} of submissions (${crPl(top.count, "claim")})${payers[1] ? `, followed by ${payers[1].label} at ${crF.pct(payers[1].share, 0)}` : ""}.`);
+  if (oldest && newest) { const lag = submitted.filter((r) => r.dos && lagOf(r) > 45).length; ins.push(`Service dates range from ${crF.date(oldest)} to ${crF.date(newest)}; ${lag ? `${crPl(lag, "claim")} (${crF.pct(lag / submitted.length, 0)}) ${lag === 1 ? "was" : "were"} over 45 days old when billed, which eats into filing limits` : "everything was billed within 45 days of service"}.`); }
   if (prevSub) { const h = crHeadline(R, "Submissions", submitted.length, prevSub.length, crF.int, { plural: true }); if (h) ins.push(h + (prevSub.length ? ` Charges went from ${crF.money(crSum(prevSub, (r) => r.amount), 0)} to ${crF.money(amt, 0)}.` : "")); ins.push(...crMovers(R, submitted, prevSub, "payerKey", ds, { noun: "payer", shareOf: "submissions" })); }
-  if (notSub.length) { const r0 = crAgg(notSub, "comment", { labels: { comment: {} } })[0]; ins.push(`${crF.int(notSub.length)} claims (${crF.money(crSum(notSub, (r) => r.amount), 0)}) are still not submitted${r0 && r0.key ? `; the main blocker is "${crTrunc(r0.key, 90)}"` : ""}.`); }
+  if (notSub.length) { const r0 = crAgg(notSub, "comment", { labels: { comment: {} } })[0]; ins.push(`${crPl(notSub.length, "claim")} (${crF.money(crSum(notSub, (r) => r.amount), 0)}) ${notSub.length === 1 ? "is" : "are"} still not submitted${r0 && r0.key ? `; the main blocker is "${crTrunc(r0.key, 90)}"` : ""}.`); }
   if (dup.length) ins.push(`${crF.int(dup.length)} duplicate claims were identified and held back from submission.`);
-  return { title: "Submission", headline: `${crF.int(submitted.length)} claims submitted, ${crF.money(amt, 0)} billed`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "SUBMISSION", kpis, cards, insights: ins,
+  return { title: "Submission", headline: `${crPl(submitted.length, "claim")} submitted, ${crF.money(amt, 0)} billed`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "SUBMISSION", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "workBy"].filter((f) => rowsAll.some((r) => r[f])), claims: crClaims(ds, all, "submission") };
 }
 function crBuildRejection(c) {
   const R = c.R, ds = c.ds("rejection"); if (!ds) return null;
-  const all = c.rows("rejection", null), subRows = c.ds("submission") ? c.rows("submission", null).filter((r) => crSubState(r) === "submitted") : [];
-  // A share of this period's submissions, with the same filter. Rejections of claims sent earlier can outnumber them: no rate then.
-  const base = subRows.length || (c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : 0), more = !!base && all.length > base;
-  const rate = base && !more ? all.length / base : null;
+  // A share of this period's submissions, with the same filter (of the claims worked only for a client with no Submission records at all).
+  // Rejections of claims sent earlier can outnumber them, or come in a period with no submission: no rate then.
+  const subDs = c.ds("submission"), all = c.rows("rejection", null), subRows = subDs ? c.rows("submission", null).filter((r) => crSubState(r) === "submitted") : [];
+  const base = subDs ? subRows.length : c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : 0, more = !!base && all.length > base;
+  const rate = base && !more ? all.length / base : null, noun = subDs ? "submitted" : "worked";
+  const none = subDs && !base ? (Object.values(c.sel || {}).some((x) => x && x.size) ? "no submissions match these filters this period" : "no submissions this period (these were submitted earlier)") : "";
   const prev = c.hasPrev("rejection") ? c.prev("rejection") : null;
   const kpis = [
     crKpi("Rejected claims", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
-    crKpi("Rejection rate", rate == null ? "–" : crF.pct(rate, 1), { sub: more ? `more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} this period` : subRows.length ? `of ${crF.int(subRows.length)} submitted` : c.ds("worked") ? "of worked claims" : "", upGood: false }),
+    crKpi("Rejection rate", rate == null ? "–" : crF.pct(rate, 1), { sub: more ? `more than the ${crF.int(base)} ${noun} this period` : none || (subDs ? `of ${crF.int(base)} submitted` : c.ds("worked") ? "of worked claims" : ""), upGood: false }),
     crKpi("Rejected amount", crF.moneyK(crSum(all, (r) => r.amount)), { sub: crMoneySub(crSum(all, (r) => r.amount)) }),
   ];
   const cards = [];
@@ -7526,14 +7552,14 @@ function crBuildRejection(c) {
   crAddCard(cards, crCardBar(c, "status", "Rejection reasons", { role: "rejection", cols: 6, emph: true, maxRows: 10, sub: "Top 80% of rejections highlighted" }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action wise breakdown", { role: "rejection", cols: 12, maxRows: 6 }));
   const ins = [], reasons = crAgg(all, "status", ds), acts = crAgg(all, "action", ds);
-  ins.push(`${crF.int(all.length)} claims were rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} in the period (some were submitted earlier)` : ""}.`);
+  ins.push(`${crPl(all.length, "claim")} ${all.length === 1 ? "was" : "were"} rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${noun} in the period (some were submitted earlier)` : none ? `; ${none}` : ""}.`);
   if (reasons[0]) ins.push(`The leading rejection reason is ${reasons[0].label} (${crF.pct(reasons[0].share, 0)})${reasons[1] ? `, followed by ${reasons[1].label} (${crF.pct(reasons[1].share, 0)})` : ""}.`);
   if (ds.dateField) { const byDay = new Map(); for (const r of all) { const d = r[ds.dateField]; if (!d) continue; const k = crF.iso(d); let e = byDay.get(k); if (!e) { e = { d, rows: [] }; byDay.set(k, e); } e.rows.push(r); }
     const days = [...byDay.values()].sort((a, b) => b.rows.length - a.rows.length || a.d - b.d).slice(0, 3);
     if (days.length) ins.push(`Most rejections came on ${days.map((e) => `${crF.date(e.d)} (${crF.int(e.rows.length)}: ${crAgg(e.rows, "status", ds).slice(0, 2).map((x) => `${x.label} ${crF.int(x.count)}`).join(", ")})`).join("; ")}.`); }
   const resub = acts.find((x) => /rebill|resubmit|corrected|sent/.test(x.key)); if (resub) ins.push(`${crF.pct(resub.share, 0)} of rejected claims were already corrected and resubmitted (${resub.label}).`);
   if (prev) { const h = crHeadline(R, "Rejections", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); ins.push(...crMovers(R, all, prev, "status", ds, { noun: "reason", share: false, newItems: true })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { noun: "payer", shareOf: "rejections" })); }
-  return { title: "Rejections", headline: `${crF.int(all.length)} claims rejected${rate != null ? `, ${crF.pct(rate, 1)} of submissions` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)}${ds.derivedFrom ? " · from the AR work entries" : ""}`, watermark: "REJECTION", kpis, cards, insights: ins,
+  return { title: "Rejections", headline: `${crPl(all.length, "claim")} rejected${rate != null ? `, ${crF.pct(rate, 1)} of ${subDs ? "submissions" : "the claims worked"}` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)}${ds.derivedFrom ? " · from the AR work entries" : ""}`, watermark: "REJECTION", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "rejection") };
 }
 function crBuildPayment(c) {
@@ -7576,38 +7602,42 @@ function crBuildAR(c) {
   const kpis = [
     crKpi("Claims worked", crF.int(all.length), { sub: entries.length !== all.length ? `${crF.int(entries.length)} entries` : "", delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
     crKpi("Amount worked", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), fmt: crF.moneyK }),
-    crKpi("Confirmed paid", crF.pct(crPctOf(paid.length, all.length), 0), { sub: `${crF.int(paid.length)} claims`, delta: prev ? crPtDelta(crPctOf(paid.length, all.length), crPctOf(pPaidN, prev.length)) : null }),
-    crKpi("Denied", crF.pct(crPctOf(den.length, all.length), 0), { sub: `${crF.int(den.length)} claims`, upGood: false, delta: prev ? crPtDelta(crPctOf(den.length, all.length), crPctOf(pDenN, prev.length)) : null }),
+    crKpi("Confirmed paid", crF.pct(crPctOf(paid.length, all.length), 0), { sub: crPl(paid.length, "claim"), delta: prev ? crPtDelta(crPctOf(paid.length, all.length), crPctOf(pPaidN, prev.length)) : null }),
+    crKpi("Denied", crF.pct(crPctOf(den.length, all.length), 0), { sub: crPl(den.length, "claim"), upGood: false, delta: prev ? crPtDelta(crPctOf(den.length, all.length), crPctOf(pDenN, prev.length)) : null }),
   ];
   if (wd) kpis.push(crKpi("Per working day", crPerDay(all.length, wd), { sub: `${wd} working days${crSoFar(c.range) < c.range.end ? " so far" : ""}` }));
   const cards = [];
-  crAddCard(cards, crCardBar(c, "bucket", "Aging wise production", { role: "worked", cols: 6, type: "col", prev: true }), 1);
-  crAddCard(cards, crCardBar(c, "purviewStatus", "Status wise breakdown", { role: "worked", cols: 6, measure: "amount", maxRows: 8 }), 1);
-  crAddCard(cards, crCardBar(c, "action", "Action required", { role: "worked", cols: 6, measure: "amount", maxRows: 8 }), 1);
-  crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "worked", cols: 6, measure: "amount", prev: true, maxRows: 8 }), 1);
+  // the charts count claims like the KPIs above (a claim worked twice is one claim, at its latest entry), so they add up to them
+  crAddCard(cards, crCardBar(c, "bucket", "Aging wise production", { role: "worked", cols: 6, type: "col", prev: true, claims: true }), 1);
+  crAddCard(cards, crCardBar(c, "purviewStatus", "Status wise breakdown", { role: "worked", cols: 6, measure: "amount", maxRows: 8, claims: true }), 1);
+  crAddCard(cards, crCardBar(c, "action", "Action required", { role: "worked", cols: 6, measure: "amount", maxRows: 8, claims: true }), 1);
+  crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "worked", cols: 6, measure: "amount", prev: true, maxRows: 8, claims: true }), 1);
   const ins = [], pw = crPrevWord(R);
-  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crF.int(entries.length)} entries` : ""}.`);
+  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} ${all.length === 1 ? "was" : "were"} worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crF.int(entries.length)} entries` : ""}.`);
   const outcomes = crAgg(all, "purviewStatus", ds); if (outcomes.length) ins.push(`Outcomes: ${outcomes.slice(0, 4).map((o) => `${o.label} ${crF.pct(o.share, 0)}`).join(", ")}.`);
-  const buckets = crAgg(all, "bucket", ds, { measure: "amount" }), old = buckets.filter((x) => x.lo >= 181); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the amount worked sits in claims older than 180 days; timely filing and appeal limits are the main risk there.`);
-  const acts = crAgg(all, "action", ds); if (acts[0]) ins.push(`The most common action was ${acts[0].label} (${crF.pct(acts[0].share, 0)})${acts[1] ? `, then ${acts[1].label} (${crF.pct(acts[1].share, 0)})` : ""}.`);
-  const sts = crAgg(all, "status", ds, { measure: "amount" }); if (sts[0]) ins.push(`By status, ${sts[0].label} carries the largest amount worked (${crF.money(sts[0].amount, 0)}, ${crF.pct(sts[0].share, 0)}).`);
+  const buckets = crAgg(all, "bucket", ds, { measure: "amount" }), old = buckets.filter((x) => x.lo >= 181 && x.lo < 9999); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the amount worked sits in claims older than 180 days; timely filing and appeal limits are the main risk there.`);
+  // only actions and statuses the entries really have (never "(blank)")
+  const acts = crAgg(all, "action", ds).filter((x) => x.key); if (acts[0]) ins.push(`The most common action was ${acts[0].label} (${crF.pct(acts[0].share, 0)})${acts[1] ? `, then ${acts[1].label} (${crF.pct(acts[1].share, 0)})` : ""}.`);
+  const sts = crAgg(all, "status", ds, { measure: "amount" }).filter((x) => x.key); if (sts[0]) ins.push(`By status, ${sts[0].label} carries the largest amount worked (${crF.money(sts[0].amount, 0)}, ${crF.pct(sts[0].share, 0)}).`);
   if (prev) {
     const h = crHeadline(R, "Production", all.length, prev.length, crF.int, { up: "is up", down: "is down" }); if (h) ins.push(h);
     const pPaid = crPctOf(pPaidN, prev.length), cPaid = crPctOf(paid.length, all.length), pDen = crPctOf(pDenN, prev.length), cDen = crPctOf(den.length, all.length);
     if (pPaid != null && cPaid != null) ins.push(`Confirmed paid moved from ${crF.pct(pPaid, 0)} to ${crF.pct(cPaid, 0)} of claims worked, and denied from ${crF.pct(pDen, 0)} to ${crF.pct(cDen, 0)}.`);
     ins.push(...crMovers(R, all, prev, "bucket", ds, { noun: "aging bucket", share: false })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "amount worked" }));
   }
-  return { title: "AR production", headline: `${crF.int(all.length)} claims worked, ${crF.pct(crPctOf(paid.length, all.length), 0)} confirmed paid`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "AR", kpis, cards, insights: ins,
+  return { title: "AR production", headline: `${crPl(all.length, "claim")} worked, ${crF.pct(crPctOf(paid.length, all.length), 0)} confirmed paid`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "AR", kpis, cards, insights: ins,
     slicers: ["payerKey", "bucket", "purviewStatus", "action", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "worked") };
 }
 const crPtDelta = (cur, prev) => (cur == null || prev == null ? null : { cur, prev, diff: cur - prev, pct: null, pts: true });
 function crTopDenials(reasons) {
   // the 80% rule with a sanity cap: more than 6 reasons to reach 80% shows the top 5, fewer than 3 shows the top 3
   const n80 = reasons.filter((x) => x.emph).length;
-  if (reasons.length <= 3) return { rows: reasons.slice(), basis: reasons.length ? `all ${reasons.length} denial reason${reasons.length === 1 ? "" : "s"}` : "no denials", label: `Top ${reasons.length}` };
-  if (n80 >= 3 && n80 <= 6) return { rows: reasons.filter((x) => x.emph), basis: `the ${n80} reasons that together reach 80% of denied dollars`, label: "Top 80%" };
-  if (n80 < 3) return { rows: reasons.slice(0, 3), basis: `the top 3 denial reasons (80% of denied dollars is reached with ${n80 === 1 ? "one reason" : "two reasons"}, so the next ones are included)`, label: "Top 3" };
-  return { rows: reasons.slice(0, 5), basis: `the top 5 denial reasons (reaching 80% of denied dollars would need ${n80} reasons)`, label: "Top 5" };
+  // name: the set in a heading ("Top denial", "Top 3 denials"); lead: how a sentence starts ("The top reason covers")
+  const words = (label, n) => ({ label, name: n === 1 ? "Top denial" : label + " denials", lead: n === 1 ? "The top reason covers" : `The ${label.toLowerCase()} reasons cover` });
+  if (reasons.length <= 3) return { rows: reasons.slice(), basis: !reasons.length ? "no denials" : reasons.length === 1 ? "the one denial reason" : reasons.length === 2 ? "both denial reasons" : "all 3 denial reasons", ...words(`Top ${reasons.length}`, reasons.length) };
+  if (n80 >= 3 && n80 <= 6) return { rows: reasons.filter((x) => x.emph), basis: `the ${n80} reasons that together reach 80% of denied dollars`, ...words("Top 80%", n80) };
+  if (n80 < 3) return { rows: reasons.slice(0, 3), basis: `the top 3 denial reasons (80% of denied dollars is reached with ${n80 === 1 ? "one reason" : "two reasons"}, so the next ones are included)`, ...words("Top 3", 3) };
+  return { rows: reasons.slice(0, 5), basis: `the top 5 denial reasons (reaching 80% of denied dollars would need ${n80} reasons)`, ...words("Top 5", 5) };
 }
 function crBuildDenials(c) {
   const R = c.R, ds = c.ds("denial"); if (!ds) return null;
@@ -7617,24 +7647,24 @@ function crBuildDenials(c) {
   const kpis = [
     crKpi("Denied claims", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
     crKpi("Denied amount", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), upGood: false, fmt: crF.moneyK }),
-    crKpi("Denial rate", rate == null ? "–" : crF.pct(rate, 1), { sub: workedN ? `of ${crF.int(workedN)} claims worked` : "", upGood: false, delta: prev && prevWorkedN ? crPtDelta(rate, prev.length / prevWorkedN) : null }),
+    crKpi("Denial rate", rate == null ? "–" : crF.pct(rate, 1), { sub: workedN ? `of ${crPl(workedN, "claim")} worked` : "", upGood: false, delta: prev && prevWorkedN ? crPtDelta(rate, prev.length / prevWorkedN) : null }),
   ];
   const reasons = crEmph80(crAgg(all, "status", ds, { measure: "amount" })); crMarkSel(reasons, c.sel.status);
   const tops = crTopDenials(reasons), cards = [];
   cards.push({ id: "den.reason", title: "Denial reasons", sub: "Top 80% of denied dollars highlighted", cols: 6, type: "hbar", dim: "status", dimLabel: "Reason", items: reasons, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, emphasis: true, maxRows: 9,
-    callout: reasons.length ? `<b>${crEsc(tops.label)} denials</b>: ${crEsc(crListNames(tops.rows, 5))}.` : "" });
+    callout: reasons.length ? `<b>${crEsc(tops.name)}</b>: ${crEsc(crListNames(tops.rows, 5))}.` : "" });
   crAddCard(cards, crCardBar(c, "payerKey", "Payer wise breakdown", { role: "denial", cols: 6, measure: "amount", prev: true, maxRows: 9 }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action taken on denials", { role: "denial", cols: 12, measure: "amount", maxRows: 6 }));
   const ins = [];
-  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were denied in ${crRangeLabel(c.range)}${rate != null ? `, ${crF.pct(rate, 1)} of the claims worked` : ""}.`);
-  if (reasons[0]) ins.push(`${reasons[0].label} is the biggest denial reason at ${crF.money(reasons[0].amount, 0)} (${crF.pct(reasons[0].share, 0)} of denied dollars, ${crF.int(reasons[0].count)} claims).`);
-  if (tops.rows.length) ins.push(`${tops.label === "Top 80%" ? `${tops.rows.length} reasons explain ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount` : `The ${tops.label.toLowerCase()} reasons cover ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount`}: ${crListNames(tops.rows, 5)}. The RCA page covers each of them.`);
+  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} ${all.length === 1 ? "was" : "were"} denied in ${crRangeLabel(c.range)}${rate != null ? `, ${crF.pct(rate, 1)} of the claims worked` : ""}.`);
+  if (reasons[0]) ins.push(`${reasons[0].label} is the biggest denial reason at ${crF.money(reasons[0].amount, 0)} (${crF.pct(reasons[0].share, 0)} of denied dollars, ${crPl(reasons[0].count, "claim")}).`);
+  if (tops.rows.length) ins.push(`${tops.label === "Top 80%" ? `${tops.rows.length} reasons explain ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount` : `${tops.lead} ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount`}: ${crListNames(tops.rows, 5)}. The RCA page covers ${tops.rows.length === 1 ? "it" : "each of them"}.`);
   const payers = crAgg(all, "payerKey", ds, { measure: "amount" }); if (payers[0]) ins.push(`${payers[0].label} accounts for ${crF.pct(payers[0].share, 0)} of denied dollars.`);
   const acts = crAgg(all, "action", ds), appeal = acts.filter((x) => /appeal|recon|reprocess|corrected|rebill/.test(x.key)); if (appeal.length) ins.push(`${crF.pct(crSum(appeal, (x) => x.share), 0)} of denials have already been challenged (${crListNames(appeal, 3)}).`);
   const adj = acts.filter((x) => /adjust|write ?off/.test(x.key)); if (adj.length) ins.push(`${crF.pct(crSum(adj, (x) => x.share), 0)} were sent for adjustment as non collectible.`);
   if (prev) { const h = crHeadline(R, "Denied claims", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h + ` Denied dollars went from ${crF.money(crSum(prev, (r) => r.amount), 0)} to ${crF.money(amt, 0)}.`);
     ins.push(...crMovers(R, all, prev, "status", ds, { measure: "amount", noun: "reason", share: false, newItems: true })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "denied dollars" })); }
-  return { title: "Denials", headline: `${crF.int(all.length)} claims denied, ${crF.money(amt, 0)}${rate != null ? ` (${crF.pct(rate, 1)} of claims worked)` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)} · from the AR work entries`, watermark: "DENIALS", kpis, cards, insights: ins,
+  return { title: "Denials", headline: `${crPl(all.length, "claim")} denied, ${crF.money(amt, 0)}${rate != null ? ` (${crF.pct(rate, 1)} of claims worked)` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)} · from the AR work entries`, watermark: "DENIALS", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "bucket", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "denial") };
 }
 function crBuildRCA(c) {
@@ -7645,9 +7675,9 @@ function crBuildRCA(c) {
     return { key: x.key, reason: x.label, count: x.count, amount: x.amount, share: x.share, prevCount: p ? p.count : (prevAgg ? 0 : null), prevAmount: p ? p.amount : (prevAgg ? 0 : null), payers: payers.slice(0, 2).map((y) => `${y.label} ${crF.pct(y.share, 0)}`).join(", "), actions: crAgg(sub, "action", ds).slice(0, 1).map((y) => y.label).join(", ") }; });
   const covered = crSum(tops.rows, (x) => x.share), ins = [];
   ins.push(`This table covers ${tops.basis}${tops.rows.length ? `, ${crF.pct(covered, 0)} of the ${crF.money(crSum(all, (r) => r.amount), 0)} denied in ${crRangeLabel(c.range)}` : ""}. Claim counts, amounts and payer mix come from the data; the Issue / RCA and Mitigation plan are written by our team.`);
-  if (prev) for (const r of rows) { if (r.prevCount == null) continue; const d = crDelta(r.count, r.prevCount); if (!d) continue; if (r.prevCount === 0) ins.push(`${r.reason} is new this period (${crF.int(r.count)} claims, ${crF.money(r.amount, 0)}).`); else if (Math.abs(d.pct) >= 0.25) ins.push(`${r.reason} ${d.diff > 0 ? "rose" : "fell"} ${crF.pct(Math.abs(d.pct), 0)} against the ${crPrevWord(R)} (${crF.int(r.prevCount)} to ${crF.int(r.count)} claims).`); }
+  if (prev) for (const r of rows) { if (r.prevCount == null) continue; const d = crDelta(r.count, r.prevCount); if (!d) continue; if (r.prevCount === 0) ins.push(`${r.reason} is new this period (${crPl(r.count, "claim")}, ${crF.money(r.amount, 0)}).`); else if (Math.abs(d.pct) >= 0.25) ins.push(`${r.reason} ${d.diff > 0 ? "rose" : "fell"} ${crF.pct(Math.abs(d.pct), 0)} against the ${crPrevWord(R)} (${crPl(r.prevCount, "claim")} to ${crPl(r.count, "claim")}).`); }
   return { title: "Top denials: RCA & mitigation plan", headline: tops.rows.length ? `${tops.rows.length === 1 ? "One reason makes" : crF.int(tops.rows.length) + " reasons make"} up ${crF.pct(covered, 0)} of denied dollars` : "No denials in this period",
-    sub: `${R.client} · ${crRangeLabel(c.range)} · ${tops.rows.length ? tops.label + " denials by denied dollars" : ""}`, watermark: "RCA", kpis: [], cards: [{ id: "rca.table", title: "", cols: 12, type: "rca", rows, hasPrev: !!prev }], insights: ins, slicers: [] };
+    sub: `${R.client} · ${crRangeLabel(c.range)} · ${tops.rows.length ? tops.name + " by denied dollars" : ""}`, watermark: "RCA", kpis: [], cards: [{ id: "rca.table", title: "", cols: 12, type: "rca", rows, hasPrev: !!prev }], insights: ins, slicers: [] };
 }
 function crBuildCA(c) {
   const R = c.R, ds = c.ds("clientAssistance"); if (!ds) return null;
@@ -7656,7 +7686,7 @@ function crBuildCA(c) {
     crKpi("Claims needing the client", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
     crKpi("Amount on hold", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), upGood: false, fmt: crF.moneyK }),
   ];
-  const old = all.filter((r) => r.bucketLo >= 121); if (all.length) kpis.push(crKpi("Older than 120 days", crF.pct(old.length / all.length, 0), { sub: `${crF.int(old.length)} claims at filing risk`, upGood: false }));
+  const old = all.filter((r) => crOlder(r, 121)); if (all.length) kpis.push(crKpi("Older than 120 days", crF.pct(old.length / all.length, 0), { sub: `${crPl(old.length, "claim")} at filing risk`, upGood: false }));
   const open = all.filter((r) => r.open === true); if (open.length) kpis.push(crKpi("Still open", crF.int(open.length), { sub: "requests waiting on you" }));
   const cards = [];
   crAddCard(cards, crCardBar(c, "status", "What is needed", { role: "clientAssistance", cols: 6, measure: "amount", maxRows: 9 }), 1);
@@ -7664,12 +7694,12 @@ function crBuildCA(c) {
   crAddCard(cards, crCardBar(c, "payerKey", "Payer wise breakdown", { role: "clientAssistance", cols: 6, measure: "amount", type: "col" }), 1);
   crAddCard(cards, crCardBar(c, "bucket", "Aging of pending items", { role: "clientAssistance", cols: 6, type: "col" }), 1);
   const ins = [];
-  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} needed input from the client in ${crRangeLabel(c.range)}${open.length ? `; ${crF.int(open.length)} are still waiting` : ""}.`);
-  const st = crAgg(all, "status", ds, { measure: "amount" }); if (st[0]) ins.push(`The largest group is ${st[0].label}: ${crF.int(st[0].count)} claims, ${crF.money(st[0].amount, 0)}.`);
+  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} needed input from the client in ${crRangeLabel(c.range)}${open.length ? `; ${crF.int(open.length)} are still waiting` : ""}.`);
+  const st = crAgg(all, "status", ds, { measure: "amount" }); if (st[0]) ins.push(`The largest group is ${st[0].label}: ${crPl(st[0].count, "claim")}, ${crF.money(st[0].amount, 0)}.`);
   const act = crAgg(all, "action", ds); if (act[0]) ins.push(`Where they stand: ${act.slice(0, 3).map((x) => `${x.label} (${crF.int(x.count)})`).join(", ")}.`);
   if (old.length) ins.push(`${crF.int(old.length)} of these claims are already past 120 days from the date of service; a response this ${R.range.kind === "week" ? "week" : "month"} avoids timely filing and appeal limit losses.`);
   if (prev) { const h = crHeadline(R, "Client assistance items", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); ins.push(...crMovers(R, all, prev, "status", ds, { noun: "status", share: false, newItems: true })); }
-  return { title: "Client assistance", headline: `${crF.int(all.length)} claims need the client, ${crF.money(amt, 0)} on hold`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "CLIENT", kpis, cards, insights: ins,
+  return { title: "Client assistance", headline: `${crPl(all.length, "claim")} ${all.length === 1 ? "needs" : "need"} the client, ${crF.money(amt, 0)} on hold`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "CLIENT", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "bucket", "dept"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "clientAssistance") };
 }
 /* EV: Third Eye's EV page (verifications, insurance wise, type / status) from the uploaded EV production file */
@@ -7684,11 +7714,11 @@ function crBuildEV(c) {
   const cards = [];
   crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "ev", cols: 6, prev: true, maxRows: 12 }), 1);
   crAddCard(cards, crCardBar(c, "status", "Verification type / status", { role: "ev", cols: 6, type: "col" }), 1);
-  const ins = [`${crF.int(all.length)} eligibility verifications were completed in ${crRangeLabel(c.range)}${wd ? `, about ${crPerDay(all.length, wd)} a working day` : ""}.`];
+  const ins = [`${crPl(all.length, "eligibility verification")} ${all.length === 1 ? "was" : "were"} completed in ${crRangeLabel(c.range)}${wd ? `, about ${crPerDay(all.length, wd)} a working day` : ""}.`];
   const st = crAgg(all, "status", ds); if (st[0]) ins.push(`${st[0].label} made up ${crF.pct(st[0].share, 0)} of verifications.`);
   const py = crAgg(all, "payerKey", ds); if (py[0]) ins.push(`${py[0].label} was checked most: ${crF.int(py[0].count)} verifications (${crF.pct(py[0].share, 0)}).`);
   if (prev) { const h = crHeadline(R, "Verifications", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); }
-  return { title: `${crPeriodWord(R)} EV report`, headline: `${crF.int(all.length)} eligibility verifications`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "EV", kpis, cards, insights: ins,
+  return { title: `${crPeriodWord(R)} EV report`, headline: crPl(all.length, "eligibility verification"), sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "EV", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "ev") };
 }
 /* the executive summary: the headline numbers from the pages, the six-month trend, what we need from the client, the focus */
@@ -7696,7 +7726,8 @@ function crBuildExec(c, raw) {
   const R = c.R, DS = c.DS;
   const inv = crInvSets({ ...c, sel: {} }), amtCur = crSum(inv.curSet, (r) => r.amount), amtPrev = crSum(inv.prevSet, (r) => r.amount);
   const over = (set) => crOwed(set, 91), o90 = crOverShare(inv.curSet, 91), o90p = inv.twoSnapshots ? crOverShare(inv.prevSet, 91) : null;
-  const c0 = { ...c, sel: {} }, posted = (rows) => rows.filter((r) => /posted/.test(r.status || "")), paidOf = (r) => (r.paid != null ? r.paid : r.amount) || 0;
+  // the summary is always the whole client: a context of its own without the page filters (both periods)
+  const c0 = crCtx(DS, R, "exec", {}), posted = (rows) => rows.filter((r) => /posted/.test(r.status || "")), paidOf = (r) => (r.paid != null ? r.paid : r.amount) || 0;
   const pay = c0.ds("payment") ? posted(c0.rowsAll("payment")) : [], payP = c0.ds("payment") && c0.hasPrev("payment") ? posted(c0.prev("payment")) : null;
   const coll = crSum(pay, paidOf), collP = payP ? crSum(payP, paidOf) : null;
   const wkE = c0.ds("worked") ? c0.rowsAll("worked") : [], wkPE = c0.hasPrev("worked") ? c0.prev("worked") : null, wd = crWorkingDaysIn(R.range);
@@ -7705,11 +7736,11 @@ function crBuildExec(c, raw) {
   const subs = c0.ds("submission") ? c0.rowsAll("submission").filter((r) => crSubState(r) === "submitted") : [], rej = c0.ds("rejection") ? c0.rowsAll("rejection") : [];
   const spark = (raw.trend || []).filter((t) => t.ar != null).map((t) => t.ar);
   const kpis = [
-    crKpi("AR balance", crF.money(amtCur, 0), { sub: inv.twoSnapshots ? `from ${crF.money(amtPrev, 0)}` : `${crF.int(crN(inv.curSet))} claims`, delta: inv.twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK, spark: spark.length >= 3 ? spark : null }),
+    crKpi("AR balance", crF.money(amtCur, 0), { sub: inv.twoSnapshots ? `from ${crF.money(amtPrev, 0)}` : crPl(crN(inv.curSet), "claim"), delta: inv.twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK, spark: spark.length >= 3 ? spark : null }),
     crKpi("Collected", crF.money(coll, 0), { sub: collP != null ? `from ${crF.money(collP, 0)}` : `${crF.int(pay.length)} payment lines`, delta: collP != null ? crDelta(coll, collP) : null, fmt: crF.moneyK }),
     crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: `${crF.money(over(inv.curSet), 0)} of AR`, delta: o90 != null && o90p != null ? crPtDelta(o90, o90p) : null, upGood: false }),
     crKpi("Claims worked", crF.int(wk.length), { sub: wd ? `${crPerDay(wk.length, wd)} a working day` : "", delta: wkP ? crDelta(wk.length, wkP.length) : null, fmt: crF.int }),
-    crKpi("Denial rate", dr == null ? "–" : crF.pct(dr, 1), { sub: `${crF.int(den.length)} claims`, delta: dr != null && drP != null ? crPtDelta(dr, drP) : null, upGood: false }),
+    crKpi("Denial rate", dr == null ? "–" : crF.pct(dr, 1), { sub: crPl(den.length, "claim"), delta: dr != null && drP != null ? crPtDelta(dr, drP) : null, upGood: false }),
     crKpi("Claims submitted", crF.int(subs.length), { sub: subs.length && rej.length <= subs.length ? `${crF.pct(rej.length / subs.length, 1)} rejected · ${crF.money(crSum(subs, (r) => r.amount), 0)} billed` : `${crF.int(rej.length)} rejected${subs.length ? " · " + crF.money(crSum(subs, (r) => r.amount), 0) + " billed" : ""}` }),
   ];
   const ins = [];
@@ -7724,10 +7755,11 @@ function crBuildExec(c, raw) {
   const openN = crSum(raw.asks || [], (a) => a.n), oldest = (raw.asks || []).map((a) => a.since).filter(Boolean).sort()[0];
   // the focus for the next period, from the numbers (the team edits it)
   const focus = [];
-  if (den.length) { const t = crAgg(den, "status", DS.worked, { measure: "amount" })[0]; if (t) focus.push(`Work the ${crF.int(t.count)} "${t.label}" denials (${crF.money(t.amount, 0)}) to appeal or correction.`); }
-  const yearOld = inv.curSet.filter((r) => r.bucketLo >= 361); if (yearOld.length) focus.push(`Clear ${crF.int(crN(yearOld))} claims over 360 days (${crF.money(crSum(yearOld, (r) => r.amount), 0)}) before filing limits close.`);
-  const rejOpen = rej.filter((r) => !/corrected|resubmit/.test(r.action || "")); if (rejOpen.length) focus.push(`Correct and resubmit ${crF.int(rejOpen.length)} rejected claims still open.`);
-  if (openN) focus.push(`Close the ${crF.int(openN)} requests waiting on the client${oldest ? " (oldest since " + crF.dateShort(crD(oldest)) + ")" : ""}.`);
+  if (den.length) { const t = crAgg(den, "status", DS.worked, { measure: "amount" })[0]; if (t) focus.push(`Work the ${crF.int(t.count)} "${t.label}" ${t.count === 1 ? "denial" : "denials"} (${crF.money(t.amount, 0)}) to appeal or correction.`); }
+  // money owed over 360 days: a claim whose age is known (no age is not over 360) and not a credit balance
+  const yearOld = inv.curSet.filter((r) => crOlder(r, 361) && Number(r.amount) > 0); if (yearOld.length) focus.push(`Clear ${crPl(crN(yearOld), "claim")} over 360 days (${crF.money(crSum(yearOld, (r) => r.amount), 0)}) before filing limits close.`);
+  const rejOpen = rej.filter((r) => !/corrected|resubmit/.test(r.action || "")); if (rejOpen.length) focus.push(`Correct and resubmit ${crF.int(rejOpen.length)} rejected ${rejOpen.length === 1 ? "claim" : "claims"} still open.`);
+  if (openN) focus.push(`Close the ${crPl(openN, "request")} waiting on the client${oldest ? " (oldest since " + crF.dateShort(crD(oldest)) + ")" : ""}.`);
   return { title: "Executive summary", headline: `${R.periodName} at a glance`, sub: `${R.client} · ${crRangeLabel(R.range)}${R.compare ? ", compared with the " + crPrevWord(R) : ""}`, watermark: "SUMMARY", kpis, cards: [], insights: ins,
     exec: { asks, openN, oldest, focus: focus.slice(0, 4), trend: raw.trend || [] }, slicers: [] };
 }
@@ -7866,10 +7898,15 @@ function crDonut(o) {
   return s + `</div></div>`;
 }
 function crItemTable(o) {
-  const { items, measureLabel = "Claims", fmtV = crF.num, secondary = null, dimLabel = "Category", dim } = o, total = crSum(items, (x) => x.value);
+  const { items, measureLabel = "Claims", fmtV = crF.num, secondary = null, dimLabel = "Category", dim } = o;
+  // a table is the exact view of its chart: money with its cents, and the Total row the sum of the rows as shown (whole dollars rounded
+  // row by row did not add up to a total rounded on its own)
+  const col = (f) => (f === crF.money || f === crF.moneyK ? { f: (v) => crF.money(v, 2), r: (v) => Math.round((Number(v) || 0) * 100) / 100 } : { f, r: (v) => v });
+  const c1 = col(fmtV), c2 = secondary ? col(secondary.fmt) : null;
+  const total = crSum(items, (x) => c1.r(x.value)), total2 = secondary ? crSum(items, (x) => c2.r(x[secondary.key])) : 0;
   let s = `<div class="crc-tbl"><table><thead><tr><th>${crEsc(dimLabel)}</th><th class="n">${crEsc(measureLabel)}</th>${secondary ? `<th class="n">${crEsc(secondary.label)}</th>` : ""}<th class="n">Share</th></tr></thead><tbody>`;
-  for (const x of items) s += `<tr ${x.isOther ? "" : crAct(dim, x.key)} class="${x.dim ? "dimrow" : ""}"><td>${crEsc(x.label)}</td><td class="n">${crEsc(fmtV(x.value))}</td>${secondary ? `<td class="n">${crEsc(secondary.fmt(x[secondary.key]))}</td>` : ""}<td class="n">${crEsc(crF.pct(total ? x.value / total : 0, 1))}</td></tr>`;
-  return s + `<tr class="total"><td>Total</td><td class="n">${crEsc(fmtV(total))}</td>${secondary ? `<td class="n">${crEsc(secondary.fmt(crSum(items, (x) => x[secondary.key])))}</td>` : ""}<td class="n">100%</td></tr></tbody></table></div>`;
+  for (const x of items) s += `<tr ${x.isOther ? "" : crAct(dim, x.key)} class="${x.dim ? "dimrow" : ""}"><td>${crEsc(x.label)}</td><td class="n">${crEsc(c1.f(x.value))}</td>${secondary ? `<td class="n">${crEsc(c2.f(x[secondary.key]))}</td>` : ""}<td class="n">${crEsc(crF.pct(total ? x.value / total : 0, 1))}</td></tr>`;
+  return s + `<tr class="total"><td>Total</td><td class="n">${crEsc(c1.f(total))}</td>${secondary ? `<td class="n">${crEsc(c2.f(total2))}</td>` : ""}<td class="n">100%</td></tr></tbody></table></div>`;
 }
 /* the six-month trend on the executive summary: AR at each month end (line) and what was collected (columns) */
 function crTrend6(trend, width, height) {
@@ -8062,7 +8099,9 @@ function crHasPage(DS, pid) {
   if (pid === "cover" || pid === "exec") return true;
   if (pid === "inventory" || pid === "inventory2") return !!(DS.inventory && DS.inventory.recs.length);
   const role = { ev: "ev", submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
-  return !!crDerived(DS, role);
+  if (!crDerived(DS, role)) return false;
+  // rows of the period before alone (fetched for the comparison) do not make a page: it is greyed out and stays out of the PDF
+  return !DS._period || crCtx(DS, { range: DS._period, compare: false }, pid, {}).rowsAll(role).length > 0;
 }
 /* the claims behind what the page shows (current filters), with search and CSV */
 const CR_COL_LABEL = { invoice: "Claim", dos: "DOS", bucket: "Age group", payerKey: "Payer", amount: "Amount", purviewStatus: "Status", status: "Reason / sub-status", action: "Action", workDate: "Date", workBy: "Worked by",
@@ -8173,18 +8212,28 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
     [clientId, locId, periodKey], !!clientId);
   const raw = q.data && q.data.client && q.data.client.id === clientId && q.data.period_key === periodKey ? q.data : null;
   const DS = useMemo(() => (raw ? crDatasets(raw) : null), [raw]);
-  // the team's words on each page, saved a moment after a change
+  // the team's words on each page, saved a moment after a change. A save names the saved copy it was made on (the page's _at), so one
+  // made on a copy someone else changed since is refused instead of wiping their change; the report then reloads and shows it.
   const [edits, setEdits] = useState({});
-  useEffect(() => { setEdits(raw ? raw.edits || {} : {}); }, [raw]);
+  const own = useRef({}), chain = useRef({}), gen = useRef({});
+  useEffect(() => { setEdits(raw ? raw.edits || {} : {}); own.current = {}; }, [raw]);
   const [saved, setSaved] = useState(null);
   const timers = useRef({});
   const saveEd = (pid, data) => {
     setEdits((e) => ({ ...e, [pid]: data }));
     clearTimeout(timers.current[pid]);
-    timers.current[pid] = setTimeout(async () => {
-      const { _by, _at, ...clean } = data || {};
-      try { const r = await rpc("creport.save", { client_id: clientId, location_id: locId || undefined, period_key: periodKey, page_id: pid, data: clean }); setSaved({ at: r.at, by: r.by }); }
-      catch (e) { toast(e.message, "err"); }
+    timers.current[pid] = setTimeout(() => {
+      const { _by, _at, ...clean } = data || {}, g = gen.current[pid] || 0;
+      // one save at a time per page; this screen's own saves carry the copy forward (a change made while the last save was on its way)
+      chain.current[pid] = (chain.current[pid] || Promise.resolve()).then(async () => {
+        if ((gen.current[pid] || 0) !== g) return;   // made on the copy that was just refused: the page is reloading
+        let base = _at || null; for (let k = pid + ":" + base; own.current[k] != null; k = pid + ":" + base) base = own.current[k];
+        try {
+          const r = await rpc("creport.save", { client_id: clientId, location_id: locId || undefined, period_key: periodKey, page_id: pid, data: clean, base_at: base });
+          own.current[pid + ":" + base] = r.at; setSaved({ at: r.at, by: r.by });
+          setEdits((e) => (e[pid] === data ? { ...e, [pid]: { ...data, _at: r.at, _by: r.by } } : e));
+        } catch (e) { toast(e.message, "err"); if (e.status === 409) { gen.current[pid] = g + 1; clearTimeout(timers.current[pid]); q.reload(); } }
+      });
     }, 600);
   };
   // the cross-filter (one set for every page, or one per page), the # / $ switch and the table view per chart
@@ -8243,7 +8292,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
   const scale = Math.min(1, stageW / CR_W);
   const step = (n) => { if (ptype === "week") setAnchor((a) => crAddD(crWS(a), 7 * n)); else if (ptype === "month") setAnchor((a) => crAddM(crMS(a), n)); else { const r = crShift(range, n); setCustom({ from: crF.iso(r.start), to: crF.iso(r.end) }); } };
   const pIdx = included.findIndex((p) => p.id === page), numOf = (pid) => included.findIndex((p) => p.id === pid) + 1;
-  const togglePdf = (pid) => saveEd("_pages", { off: off.includes(pid) ? off.filter((x) => x !== pid) : [...off, pid] });
+  const togglePdf = (pid) => saveEd("_pages", { ...(edits._pages || {}), off: off.includes(pid) ? off.filter((x) => x !== pid) : [...off, pid] });
   const docTitle = `${rep.client} - ${rep.reportName.replace(" AR report", " AR Report")} - ${rep.periodLabel}${locName ? " - " + locName : ""}`;
   const pickLogo = async ({ bytes, name }) => {
     try { const logo = await crLogoFromBytes(bytes, name); await rpc("clients.setLogo", { client_id: clientId, logo }); toast("Logo saved: it shows on the cover and every page."); setLogoOpen(false); q.reload(); }
@@ -8285,7 +8334,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
     const invNote = !inv ? "" : inv.source === "live" ? "today's inventory" : inv.source === "snapshot" ? "kept at " + crF.date(crD(inv.as_of)) : "rebuilt from the claims' history for " + crF.date(crD(inv.as_of));
     const SRC = [["submission", "Submission", "Submission desk"], ["rejection", "Rejections", "Rejections desk"], ["payment", "Payment posting", "Posting desk"], ["inventory", "AR inventory", "inventory uploads"], ["ar", "AR production", "billers' entries"], ["ca", "Client assistance", "requests to the client"]];
     return (
-      <div className="stack crx crx-setup" style={{ gap: 12 }}>
+      <div key="setup" className="stack crx crx-setup" style={{ gap: 12 }}>
         <div className="card"><div className="row between" style={{ gap: 12, flexWrap: "wrap" }}>
           <div><h2 style={{ margin: 0 }}>New client report · {client.name}</h2><div className="sub">Add what Brahmastra does not have, pick the dates, then create the dashboard.</div></div>
           {made.length > 0 && <div className="small">Made before: {made.map((m, i) => <React.Fragment key={m.period_key}>{i ? " · " : ""}<button type="button" className="btn link" style={{ padding: 0, fontWeight: 700 }} onClick={() => openMade(m.period_key)}>{crRangeLabel(m.r)}</button></React.Fragment>)}</div>}
@@ -8318,10 +8367,12 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
       </div>
     );
   }
+  // the executive summary is always the whole client, so it never carries the filter label
   const slideFor = (pid, s, m) => pid === "cover" ? <CrCover rep={rep} pages={included} mode={m} /> : <CrSlide page={CR_PAGE_BY[pid]} model={pid === page && s === sel ? model : buildModel(pid, s)} rep={rep} n={numOf(pid) || 1} total={included.length || 1}
-    mode={m} ed={edits[pid]} onEd={(d) => saveEd(pid, d)} tools={tools} filterText={filterText(s)} />;
+    mode={m} ed={edits[pid]} onEd={(d) => saveEd(pid, d)} tools={tools} filterText={pid === "exec" ? "" : filterText(s)} />;
+  // its own key: the start screen and the dashboard never share a DOM node (the hover tip's hand-set display would carry over)
   return (
-    <div className="stack crx" style={{ gap: 12 }}>
+    <div key="dash" className="stack crx" style={{ gap: 12 }}>
       <div className="card crx-bar">
         <b className="crx-made">{crRangeLabel(range)}</b>
         <span className="muted small">{compare ? "compared with " + crRangeLabel(prevRange) : "no comparison"}{locName ? " · " + locName : ""}{DS && DS.ev ? " · EV from the uploaded file" : ""}</span>

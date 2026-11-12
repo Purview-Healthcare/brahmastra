@@ -216,6 +216,8 @@ const EXTRA_COLUMNS = {
     ["kind", "TEXT NOT NULL DEFAULT 'external'"], ["error_by_id", "TEXT"], ["error_by_name", "TEXT NOT NULL DEFAULT ''"], ["error_dow", "TEXT NOT NULL DEFAULT ''"],
     ["location_id", "TEXT"], ["location_name", "TEXT NOT NULL DEFAULT ''"], ["channels", "TEXT NOT NULL DEFAULT ''"], ["review_on", "TEXT NOT NULL DEFAULT ''"], ["rework", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
+  // the money owed (positive balances, credits left out) and its over-90 part, for the over-90 share on the trend; empty on readings kept before
+  client_snapshots: [["ar_owed", "REAL"], ["over90_owed", "REAL"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
     ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
     // Who does payment posting / submission for this client: a person (with a backup), the client itself, or the biller.
@@ -2498,6 +2500,7 @@ async function audit(env, user, action, clientId, detail) {
 }
 /* ---- client health (Client 360, portfolio) ---- */
 const OVER90_TARGET = 15;   // % of AR over 90 days that counts as healthy
+const CALL_LOG_MAX = 2000;  // characters in one client call log entry (the page counts them as they are typed)
 const MONTHEND_STEPS = [
   ["inventory", "Inventory uploaded", 1, true], ["internal", "Internal reports reviewed", 2, false], ["sla_inventory", "AR Inventory sent to the SLA scorecard", 2, true],
   ["pack", "Client pack built", 3, false], ["sla", "SLA scored and reasons noted", 4, false], ["sent", "Pack sent to the client", 5, false]];   // key, label, due (working day of next month), can tick by itself
@@ -2560,15 +2563,16 @@ async function digestData(env, clientId, wk) {
   const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.from - 1));
   // a past week's digest: AR as it stood at that week's end (the day's snapshot), not today's
   const endSnap = digestWeek(Date.now()).week === wk.week ? null
-    : await one(env, "SELECT day, ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
+    : await one(env, "SELECT day, ar_balance, over90_balance, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
   const prevWorked = await one(env, "SELECT COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, wk.from - 7 * 86400000, wk.from);
   const people = await all(env, `SELECT n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
     WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 12`, clientId, wk.from, wk.to);
   const esc = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND escalated_at BETWEEN ? AND ?", clientId, wk.from, wk.to);
   return {
     client: o.client, health: o.health, reasons: o.reasons,
-    ar: endSnap ? { now: endSnap.ar_balance, over90: endSnap.over90_balance, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: endSnap.ar_balance ? Math.round(endSnap.over90_balance / endSnap.ar_balance * 1000) / 10 : 0,
-        target: o.ar.target, owed: endSnap.ar_balance, over90_owed: endSnap.over90_balance, as_of: endSnap.day }
+    // that week's money owed (credits left out); a reading kept before the money owed was kept falls back to the net figures
+    ar: endSnap ? (() => { const owed = endSnap.ar_owed != null ? endSnap.ar_owed : endSnap.ar_balance, o90 = endSnap.over90_owed != null ? endSnap.over90_owed : endSnap.over90_balance;
+        return { now: endSnap.ar_balance, over90: o90, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: owed ? Math.round(o90 / owed * 1000) / 10 : 0, target: o.ar.target, owed, over90_owed: o90, as_of: endSnap.day }; })()
       : { now: o.ar.balance, over90: o.ar.over90, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: o.ar.over90_pct, target: o.ar.target, owed: o.ar.owed || 0, over90_owed: o.ar.over90_owed || 0 },
     collected: o.collected, worked: { n: o.worked.entries, people: o.worked.people, prev: (prevWorked && prevWorked.n) || 0 }, team: people,
     sla: o.sla, escalations: { open: o.escalations.open, late: o.escalations.late, raised: (esc && esc.n) || 0 }, missed: o.missed,
@@ -2768,20 +2772,22 @@ function digestDue(now) {
   const d = new Date(now + IST_MIN * 60000), h = d.getUTCHours() + d.getUTCMinutes() / 60;
   return d.getUTCDay() === 1 && h >= DIGEST_HOURS[0] && h < DIGEST_HOURS[1];
 }
-/* Today's AR per client, kept once a day (the last write of the day wins), for the six-month trend. */
+/* Today's AR per client, kept once a day (the last write of the day wins), for the six-month trend. The money owed (credits left out)
+   and its over-90 part are kept too: the trend's over-90 share is of the money owed, as on the Dashboard and Client 360. */
 async function snapshotClients(env) {
   const now = Date.now(), day = istISO(now), today = day;
-  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at)
+  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, ar_owed, over90_owed, at)
     SELECT client_id, ?, COALESCE(SUM(balance), 0), COUNT(*), COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0), SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END),
-      COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0), ?
+      COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0), COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN age > 90 AND balance > 0 THEN balance ELSE 0 END), 0), ?
     FROM (SELECT client_id, balance, CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END AS age
           FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id
     ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = excluded.ar_balance, ar_claims = excluded.ar_claims, over90_balance = excluded.over90_balance,
-      over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, at = excluded.at`, day, now, today);
+      over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, ar_owed = excluded.ar_owed, over90_owed = excluded.over90_owed, at = excluded.at`, day, now, today);
   // A client whose last claims closed still gets today's row (nothing open; a client with no claims yet gets none), so an older snapshot is not read as today's.
-  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at)
-    SELECT id, ?, 0, 0, 0, 0, 0, ? FROM clients WHERE active = 1 AND id IN (SELECT client_id FROM claims) AND id NOT IN (SELECT client_id FROM claims WHERE state IN ${WORKABLE})
-    ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = 0, ar_claims = 0, over90_balance = 0, over90_claims = 0, over120_balance = 0, at = excluded.at`, day, now);
+  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, ar_owed, over90_owed, at)
+    SELECT id, ?, 0, 0, 0, 0, 0, 0, 0, ? FROM clients WHERE active = 1 AND id IN (SELECT client_id FROM claims) AND id NOT IN (SELECT client_id FROM claims WHERE state IN ${WORKABLE})
+    ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = 0, ar_claims = 0, over90_balance = 0, over90_claims = 0, over120_balance = 0, ar_owed = 0, over90_owed = 0, at = excluded.at`, day, now);
   await snapshotInventory(env, day, now);
 }
 /* The client report's month against month needs the inventory as it stood at each period end: kept here as cells (location,
@@ -5261,8 +5267,10 @@ const OPS = {
           AND ((h.status = 'complete' AND h.done_at BETWEEN ? AND ?) OR (h.status <> 'complete' AND h.created_at BETWEEN ? AND ?)) LIMIT 60000`, clientId, ...la, A, B, A, B),
       all(env, `SELECT h.claim_id, h.status, h.created_at, h.done_at, h.done_by_name, h.proof_json, h.reason, c.claim_no, c.account_no, c.dos, c.payer, c.billed, c.balance, COALESCE(c.location_id, '') AS loc
         FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = 'rejection' AND h.client_id = ? AND h.created_at BETWEEN ? AND ?${lw} LIMIT 60000`, clientId, A, B, ...la),
+      // every request that overlaps the two periods: asked by the end, and still waiting or answered (or done) after the start, however long ago it was asked
       all(env, `SELECT h.claim_id, h.dept, h.status, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_answered_at, h.done_at, h.chase_at, c.claim_no, c.account_no, c.dos, c.age_days, c.payer, c.balance, COALESCE(c.location_id, '') AS loc
-        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.paused_at IS NOT NULL AND (h.status = 'client' OR h.paused_at BETWEEN ? AND ?)${lw} LIMIT 20000`, clientId, A, B, ...la),
+        FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.paused_at IS NOT NULL AND h.paused_at <= ?
+          AND (h.status = 'client' OR COALESCE(h.client_answered_at, h.done_at, h.paused_at) >= ?)${lw} LIMIT 20000`, clientId, B, A, ...la),
     ]);
     const no = (r) => r.claim_no || r.account_no || "";
     const HO_STATE = { complete: "Done", pending: "Pending", assigned: "Being worked", client: "Waiting on the client", back: "Back with AR", assistance: "Back with AR", rejected: "Sent back" };
@@ -5330,7 +5338,9 @@ const OPS = {
       period: { from, to, prev_from: pfrom, prev_to: pto }, data, trend, asks, edits, ev_files: evFiles, made, can_edit: canEditClient(user, clientId), prepared_by: user.name || "" };
   },
   /* A supervisor's words on a report page (title, insights, RCA and plan, the asks, the focus, which pages print), kept for the
-     client, period and location and shared with everyone who opens that report. */
+     client, period and location and shared with everyone who opens that report. A save says which saved copy of the page it was
+     made on (base_at: the copy's time, or none when the page had no saved words yet). When someone else saved the page since,
+     it is refused, so nobody's change is lost without a word: the page then reloads and shows theirs. */
   "creport.save": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
     if (user.role !== "supervisor") throw denied("The Client 360 report is for team leads and above.");
@@ -5342,11 +5352,18 @@ const OPS = {
     const loc = payload.location_id ? str(payload.location_id, 60) : "";
     const json = JSON.stringify(payload.data && typeof payload.data === "object" ? payload.data : {});
     if (json.length > 40000) throw bad("That is too much text for one page.");
-    const now = Date.now();
-    await run(env, `INSERT INTO creport_edits (client_id, period_key, loc, page_id, json, by_name, at) VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT (client_id, period_key, loc, page_id) DO UPDATE SET json = excluded.json, by_name = excluded.by_name, at = excluded.at`, clientId, periodKey, loc, pageId, json, user.name || "", now);
+    const base = payload.base_at == null || payload.base_at === "" ? null : num(payload.base_at, -1);
+    const at = base == null ? Date.now() : Math.max(Date.now(), base + 1), by = user.name || "";
+    const r = base == null
+      ? await run(env, `INSERT INTO creport_edits (client_id, period_key, loc, page_id, json, by_name, at) VALUES (?,?,?,?,?,?,?) ON CONFLICT (client_id, period_key, loc, page_id) DO NOTHING`,
+        clientId, periodKey, loc, pageId, json, by, at)
+      : await run(env, "UPDATE creport_edits SET json = ?, by_name = ?, at = ? WHERE client_id = ? AND period_key = ? AND loc = ? AND page_id = ? AND at = ?", json, by, at, clientId, periodKey, loc, pageId, base);
+    if (!changesOf(r)) {
+      const cur = await one(env, "SELECT by_name, at FROM creport_edits WHERE client_id = ? AND period_key = ? AND loc = ? AND page_id = ?", clientId, periodKey, loc, pageId);
+      throw new ApiError(409, `${(cur && cur.by_name) || "Someone else"} changed this page${cur ? " at " + hhmmIST(cur.at) + " IST" : ""} after you opened it, so your change was not saved. The page now shows theirs: make your change again.`);
+    }
     await audit(env, user, "creport.edit", clientId, `${pageId} · ${periodKey}${loc ? " · location" : ""}`);
-    return { ok: true, at: now, by: user.name || "" };
+    return { ok: true, at, by };
   },
   /* EV production for the client report. Brahmastra does not do eligibility checks, so the team uploads the EV file from
      OneDrive; the browser reads it and sends only the columns the report uses (no patient names). A file replaces what
@@ -5420,22 +5437,26 @@ const OPS = {
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const from = num(payload.from_ms, now - 30 * 86400000), to = num(payload.to_ms, now), span = Math.max(86400000, to - from);
     const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END";
-    const ar = await one(env, `SELECT COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0) AS o90, SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END) AS o90n,
+    // over 90 and over 120 are of the money owed: credit balances are left out (the Dashboard's rule), so a tile's dollars and its share are the same money
+    const ar = await one(env, `SELECT COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, SUM(CASE WHEN age > 90 AND balance > 0 THEN 1 ELSE 0 END) AS o90n,
         COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS balp, COALESCE(SUM(CASE WHEN age > 90 AND balance > 0 THEN balance ELSE 0 END), 0) AS o90p,
-        COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0) AS o120 FROM (SELECT balance, ${ageSql} AS age FROM claims WHERE client_id = ? AND state IN ${WORKABLE})`, today, clientId);
+        COALESCE(SUM(CASE WHEN age > 120 AND balance > 0 THEN balance ELSE 0 END), 0) AS o120 FROM (SELECT balance, ${ageSql} AS age FROM claims WHERE client_id = ? AND state IN ${WORKABLE})`, today, clientId);
     // a month ago, from the snapshots, for the change
     const monthAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(now - 30 * 86400000));
-    const snaps = await all(env, `SELECT day, ar_balance, over90_balance, ar_claims FROM client_snapshots WHERE client_id = ? AND day >= ? ORDER BY day`, clientId, istISO(now - 190 * 86400000));
+    const snaps = await all(env, `SELECT day, ar_balance, over90_balance, ar_claims, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day >= ? ORDER BY day`, clientId, istISO(now - 190 * 86400000));
     const byMonth = new Map(); for (const sn of snaps) byMonth.set(sn.day.slice(0, 7), sn);
-    const trend = [...byMonth.entries()].slice(-6).map(([m, sn]) => ({ month: m, ar: sn.ar_balance, over90: sn.over90_balance, pct: sn.ar_balance ? Math.round(sn.over90_balance / sn.ar_balance * 1000) / 10 : 0, claims: sn.ar_claims, day: sn.day }));
+    // the over-90 share of the money owed, as on the tile (a reading kept before the money owed was kept falls back to the net figures)
+    const trend = [...byMonth.entries()].slice(-6).map(([m, sn]) => { const owed = sn.ar_owed != null, o90 = owed ? sn.over90_owed : sn.over90_balance, base = owed ? sn.ar_owed : sn.ar_balance;
+      return { month: m, ar: sn.ar_balance, over90: o90, pct: base ? Math.round(o90 / base * 1000) / 10 : 0, claims: sn.ar_claims, day: sn.day }; });
     const paid = async (a, b) => (await one(env, `SELECT COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt, COUNT(*) AS n FROM handoffs WHERE client_id = ? AND dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ?`, clientId, a, b));
     const coll = await paid(from, to), collPrev = await paid(from - span, from);
     const waiting = await all(env, `SELECT h.id, h.dept, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.chase_at, c.claim_no, c.patient, c.balance
       FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client'${deskDepts(user) ? ` AND h.dept IN (${deskDepts(user).map(() => "?").join(",")})` : ""} ORDER BY h.paused_at ASC LIMIT 100`, clientId, ...(deskDepts(user) || []));
     const replyAvg = async (cid) => { const r = await one(env, `SELECT AVG(client_answered_at - COALESCE(client_sent_at, paused_at)) AS ms, COUNT(*) AS n FROM handoffs WHERE client_answered_at IS NOT NULL AND client_answered_at > ?${cid ? " AND client_id = ?" : ""}`, now - 90 * 86400000, ...(cid ? [cid] : [])); return r && r.n ? { days: Math.round(r.ms / 864000) / 100, n: r.n } : null; };
-    const reasons = await all(env, `SELECT COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, COUNT(DISTINCT n.claim_id) AS n, COALESCE(SUM(c.balance), 0) AS bal
+    // each claim once per reason: a claim denied twice in the dates is one claim and its balance once
+    const reasons = await all(env, `SELECT reason, COUNT(*) AS n, COALESCE(SUM(bal), 0) AS bal FROM (SELECT COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, n.claim_id, MAX(c.balance) AS bal
       FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ? AND COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Denied', 'Claim Rejected')
-      GROUP BY reason ORDER BY bal DESC LIMIT 6`, clientId, from, to);
+      GROUP BY reason, n.claim_id) GROUP BY reason ORDER BY bal DESC LIMIT 6`, clientId, from, to);
     const lim = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows.filter((r) => r.client_id === clientId);
     const tfl = lim.reduce((a, r) => ({ soon_bal: a.soon_bal + r.soon_bal, soon_n: a.soon_n + r.soon_n, past_bal: a.past_bal + r.past_bal, past_n: a.past_n + r.past_n }), { soon_bal: 0, soon_n: 0, past_bal: 0, past_n: 0 });
     const esc = (await trackerEsc(env, clientId)).get(clientId) || { n: 0, late: 0 };
@@ -5457,7 +5478,7 @@ const OPS = {
     return {
       client: { id: c.id, name: c.name, code: c.code, active: !!c.active, created_at: c.created_at, team, locations: locs },
       raci, health, reasons: reasonsOut.slice(0, 4),
-      ar: { balance: ar.bal, claims: ar.n, over90: ar.o90, over90_claims: ar.o90n || 0, over90_pct: pct, over120: ar.o120, target: OVER90_TARGET, month_ago: monthAgo ? monthAgo.ar_balance : null,
+      ar: { balance: ar.bal, claims: ar.n, over90: ar.o90p || 0, over90_claims: ar.o90n || 0, over90_pct: pct, over120: ar.o120, target: OVER90_TARGET, month_ago: monthAgo ? monthAgo.ar_balance : null,
         owed: ar.balp || 0, over90_owed: ar.o90p || 0 },
       collected: { amount: coll.amt, n: coll.n, prev: collPrev.amt },
       waiting: { rows: waiting.map((w) => ({ ...w, days: Math.floor((now - (w.client_sent_at || w.paused_at || now)) / 86400000), sent: !!w.client_sent_at, dept_label: DEPT_LABEL[w.dept] || w.dept })),
@@ -5473,7 +5494,9 @@ const OPS = {
     const clientId = str(payload.client_id, 60);
     editableOr(user, clientId);
     const kind = ["call", "email", "meeting", "note", "next"].includes(payload.kind) ? payload.kind : "note";
-    const text = str(payload.text, 2000).trim();
+    // never cut a note short without a word: a longer one is refused and the person shortens it or splits it
+    const text = (typeof payload.text === "string" ? payload.text : str(payload.text, 4000)).trim();
+    if (text.length > CALL_LOG_MAX) throw bad(`This entry is ${text.length.toLocaleString("en-US")} characters; the call log keeps up to ${CALL_LOG_MAX.toLocaleString("en-US")}. Shorten it, or add the rest as a second entry.`);
     if (!commentOk(text)) throw bad("Write what was said or decided, a few words at least.");
     const next = isoDate(payload.next_on) || "";
     if (kind === "next" && !next) throw bad("Pick the date of the next call.");
@@ -5489,6 +5512,7 @@ const OPS = {
     editableOr(user, l.client_id);
     if (l.by_id !== user.id && !(user.role === "supervisor" && !isSME(user))) throw denied("Only the person who wrote it or a team lead can remove it.");
     await run(env, "DELETE FROM client_log WHERE id = ?", l.id);
+    await audit(env, user, "client.logRemove", l.client_id, `${l.kind} by ${l.by_name || "someone"} on ${istISO(l.at)}: ${String(l.text || "").slice(0, 80)}`);
     return { ok: true };
   },
   "monthend.set": async ({ env, user, payload }) => {
@@ -5498,7 +5522,12 @@ const OPS = {
     if (!step) throw bad("Pick the month and the step.");
     const month = okMonth(payload.month, istISO(Date.now())) ? payload.month : null;
     if (!month) throw bad("Pick a month from January to December, not later than this month.");
-    if (payload.done === false) { await run(env, "DELETE FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]); return { ok: true }; }
+    if (payload.done === false) {
+      const was = await one(env, "SELECT done_at FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]);
+      await run(env, "DELETE FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]);
+      if (was && was.done_at) await audit(env, user, "monthend." + step[0], clientId, monthName(month) + " · marked not done");
+      return { ok: true };
+    }
     let score = null;
     if (step[0] === "sla") {
       score = payload.score == null || payload.score === "" || typeof payload.score === "boolean" ? NaN : Number(payload.score);
@@ -6732,17 +6761,26 @@ const OPS = {
       return { scope, header: WORKBOOK_HEADER, rows };
     }
     const dept = scope === "pp" ? "posting" : "submission";
-    const hs = await all(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.billed, c.balance, cl.name AS client_name, l.name AS location_name
+    const hs = await all(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.billed, c.balance${scope === "sub" ? ", c.raw_json" : ""}, cl.name AS client_name, l.name AS location_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
       WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY h.done_at LIMIT 60000`, dept, from, to, ...args, ...scopeArgs(user));
+    // what the desk person entered goes along, under the column names Third Eye reads (an amount not entered stays empty)
     const header = scope === "pp"
-      ? ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "DOS", "Billed Amount", "Check Number", "Paid Amount", "Posted", "Comment"]
-      : ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "Service Date", "Billed Amount", "Status", "Submission Type", "Comment"];
+      ? ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "DOS", "Billed Amount", "Check Number", "Check Date",
+        "Allowed Amount", "Paid Amount", "Posted", "Other Adjustment", "Adjustment Reason", "Deductible", "Co-insurance", "Co-pay", "Patient Responsibility", "Write-off", "Comment"]
+      : ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "Service Date", "Billed Amount", "Status", "Submission Type", "Type", "Claim Type", "Comment"];
+    const nv = (v) => (v == null || v === "" ? "" : Number(v));
     const rows = hs.map((h) => {
       const p = person(h.done_by, h.done_by_name), proof = jsonObj(h.proof_json);
-      return scope === "pp"
-        ? [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, proof.ref || "", proof.amount == null ? "" : proof.amount, proof.amount == null ? "" : proof.amount, h.note || ""]
-        : [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "", [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
+      if (scope === "pp") {
+        // patient responsibility: deductible + co-insurance + co-pay, as in the Payment posting file
+        const pr = [proof.deductible, proof.coinsurance, proof.copay].some((v) => v != null && v !== "") ? Math.round(((Number(proof.deductible) || 0) + (Number(proof.coinsurance) || 0) + (Number(proof.copay) || 0)) * 100) / 100 : "";
+        return [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, proof.ref || "",
+          isoDate(proof.check_date) || "", nv(proof.allowed), nv(proof.amount), nv(proof.amount), nv(proof.adjustment), proof.adj_reason || "", nv(proof.deductible), nv(proof.coinsurance), nv(proof.copay), pr, nv(proof.writeoff), h.note || ""];
+      }
+      // Type left empty in the form is the Type in the client's inventory file; the claim type defaults to the one the AR biller's action says (the Submission file's rule)
+      return [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "",
+        proof.type || rawPick(jsonObj(h.raw_json), "Type"), proof.claim_type || claimTypeOf(h.saag_action), [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
     });
     return { scope, header, rows };
   },

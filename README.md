@@ -156,16 +156,18 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 - a health line (**On track / Needs attention / At risk**) with the plain reasons: over-90 above the 15% target, SLA
   below 90%, claims past or near timely filing, escalations over 24 hours, old requests waiting on the client,
   many missed tasks;
-- AR balance (against a month ago), over 90 days, the SLA score ticked at month-end, collected (from payment posting
+- AR balance (against a month ago), over 90 days (a share of the money owed, its dollars the same money: credit balances
+  are left out, as on the Dashboard), the SLA score ticked at month-end, collected (from payment posting
   hand-offs, against the period before), dollars waiting on the client, dollars at timely-filing risk;
-- AR and the over-90 share by month (Brahmastra keeps one reading a day, so the trend fills in by itself);
-- denial and rejection reasons from billers' entries, in dollars;
+- AR and the over-90 share of the money owed by month (Brahmastra keeps one reading a day, so the trend fills in by itself);
+- denial and rejection reasons from billers' entries, in dollars (each claim's balance once, however often it was worked);
 - every request waiting on the client, how long, whether it was sent, and the client's average reply time;
 - escalations, missed tasks, entries made, RACI;
 - the **month-end checklist** (inventory uploaded, internal reports reviewed, AR Inventory sent to the SLA
   scorecard, client pack built, SLA scored with its score, pack sent), each with a due working day of the next
   month; inventory and the scorecard step tick by themselves;
-- the **client call log**: calls, emails, meetings, notes and the next call with what to prepare.
+- the **client call log**: calls, emails, meetings, notes and the next call with what to prepare (up to 2,000 characters
+  an entry: the box counts them, and a longer entry is refused, never cut).
 
 **Client call pack (PDF)** prints the page or saves it as a PDF for the meeting. Changes to the log and the
 month-end checklist are kept in the audit trail.
@@ -194,23 +196,28 @@ changed and keeps working on its own address. Team leads and above, for their ow
 **Pages** (1280 x 720, like slides), in this order everywhere (the pages list, Present and the PDF): Cover (with the
 client's logo), Executive summary, EV, Submission, Rejections, Payment posting, Inventory analysis, Inventory
 breakdown, AR production, Denials, Top denials: RCA and Client assistance. A page with nothing in the period shows
-greyed out in the list and stays out of the PDF.
+greyed out in the list and stays out of the PDF and Present (the period before alone, which the comparison reads,
+does not count).
 
 **Where the figures come from**
 
 | Page | From |
 |---|---|
-| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, and Future DOS for a date of service typed in the future), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
-| AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet* |
-| Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof) |
-| Client assistance | requests sent to the client, with their reason and whether they were answered |
+| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, Future DOS for a date of service typed in the future, and Unknown age for a claim with no date of service or age), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
+| AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet*; a claim worked twice counts once, at its latest entry, in the KPIs and the charts |
+| Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof); the rejection rate is of the claims submitted in the period (of the claims worked for a client with no Submission records), and a period with no submission has no rate |
+| Client assistance | requests sent to the client, with their reason and whether they were answered; a request counts in every period it was waiting, however long ago it was sent |
 | EV | the EV production file uploaded on the start screen (verifications, insurance wise, verification type or status) |
-| Executive summary | the headline of each page and the six-month AR and collections trend |
+| Executive summary | the headline of each page and the six-month AR and collections trend; always the whole client (the page filters do not apply to it) |
 
 **Inventory at a past date.** Brahmastra keeps a snapshot of every client's open inventory (every hour and after
 each upload; month ends and Sundays are kept, other days for 45 days). Today's inventory is live.
 For a date before the snapshots started, the inventory is rebuilt from the claims' history (claims loaded by then
 that had not yet been closed, excluded or sent to a desk) and the page says so.
+
+**Money owed, as on the Dashboard.** Over 90 days, older than 120 or 360 days and every share of money on the
+inventory pages (age groups, payers, status, actions) are of the money owed: credit balances are left out (the page
+says how much), a Future DOS claim is owed but never old, and a claim with no age is never counted as old.
 
 **Third Eye's rules, kept as they are:** periods by month, week (Monday to Sunday) or custom dates, each compared
 with the period of the same length before it; working days Monday to Friday; payer names merged across spellings;
@@ -220,13 +227,16 @@ the Pareto rule (the reasons that make 80% are highlighted, the long tail folds 
 
 **Interactive, like Power BI.** Hover any bar for its figures; click a bar, a slice or a row to filter the page
 (Shift+click adds to the filter), or use the filter buttons; **Same filters on every page** keeps them when you
-change page. Each chart switches between claims (#) and dollars ($) and can show its table. **Claims behind this
+change page. Each chart switches between claims (#) and dollars ($) and can show its table (amounts with their
+cents, so its Total is the sum of the rows shown). **Claims behind this
 view**, under the page, lists them with search and CSV; click one to open the claim.
 
 **Editing (team leads and up).** Click any title or insight line to change it, remove a line or add your own; fill
 the RCA and the plan per denial reason, the asks of the client and the focus for next period. Edits are kept in
 Brahmastra for that client, period and location, so the whole team sees the same report, and each save is in the
-audit trail. Untick a page under **In PDF** to leave it out of the PDF and Present. **View as client** hides the editing.
+audit trail. Nobody's change is lost to someone else's later save: when another team lead saved the same page after you
+opened it, your change is not saved, the page says who changed it and when, and shows their version so you can make yours
+again. Untick a page under **In PDF** to leave it out of the PDF and Present. **View as client** hides the editing.
 **Add the client's logo** takes a PNG, JPG or WebP from the Purviewautomate OneDrive (shrunk to a small image).
 
 **Present** shows the ticked pages full screen (arrow keys move, C clears the filters, Esc leaves).
@@ -936,7 +946,9 @@ status opens a person's allocations, and a team lead who works claims gets **Wor
 
 **Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:
 - *Internal reports*: Brahmastra's production (and the roster) loads into the Production Sheet box when the page
-  opens and whenever the work, client or dates change.
+  opens and whenever the work, client or dates change. Payment posting rows carry what the poster entered (check /
+  EFT date, allowed, paid, adjustment and its reason, deductible, co-insurance, co-pay, patient responsibility,
+  write-off) and Submission rows their Type and Claim Type, under the column names Third Eye reads.
 - *SLA*: when a client's upload page is open in the scorecard, today's AR Inventory for the Brahmastra client
   of the same name is added to it, and the scorecard shows it in its "Check these before they are applied" list,
   so nothing is calculated until someone presses apply.
