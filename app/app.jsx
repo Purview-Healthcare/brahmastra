@@ -8307,6 +8307,12 @@ function drTokenEnd(tok) {
   try { const p = String(tok || "").split(".")[0].replace(/-/g, "+").replace(/_/g, "/"); return Number(atob(p).split("|")[2]) || 0; } catch (e) { return 0; }
 }
 /* A new Drishti session for the signed-in person, left where the Drishti page reads it on every call it makes. */
+/* Why Drishti could not be opened signed in, and what to do. Drishti's own sign-in is not used inside Brahmastra, so this never
+   points to it; when Drishti's server does not answer (502), Drishti's page below cannot reach it either: Load again later. */
+function drSsoNote(sso) {
+  if (!sso || sso.state !== "error") return "";
+  return (sso.msg || "Drishti did not answer.") + (sso.status === 502 ? " Use Load again (the ↻ button above) in a minute." : "");
+}
 async function drishtiSignIn() {
   const r = await rpc("reports.drishtiSession");
   try { localStorage.setItem(DRISHTI_TOKEN_KEY, r.token); } catch (e) {}
@@ -8423,7 +8429,7 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
       {pick == null && <><div className="card rh-bar">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => { setF({ client_id: v, location_id: "" }); setSaved(null); }} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
         <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>
-        <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : <><i className="rh-dot wait" />Sign in below</>}</div>
+        <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : sso.state === "error" ? <><i className="rh-dot off" />Not signed in to Drishti</> : <><i className="rh-dot wait" />Sign in below</>}</div>
       </div>
       <div className="rh-status">
         {saved ? <span><i className="rh-dot" />{saved.name} · {fmtInt(saved.n)} claims · saved {saved.at} to {saved.folders.join(" and ")}</span>
@@ -8436,7 +8442,7 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
       {fed && fed.state === "error" && <div className="alert warn mb rh-note">The AR Inventory could not be added by itself: {fed.msg}</div>}
       {sso.state === "ok" && sso.created && <div className="alert info mb">Your scorecard account was made from your Brahmastra profile, under your reporting manager. From now on it opens signed in.</div>}
       {sso.state === "off" && <div className="alert info mb">The scorecard will open signed in once single sign-in is switched on (a one-time setting). Until then, sign in below.</div>}
-      {sso.state === "error" && <div className="alert warn mb"><b>Drishti could not be opened signed in.</b> {sso.msg} You can still sign in below.</div>}</>}
+      {sso.state === "error" && <div className="alert warn mb"><b>Drishti could not be opened signed in.</b> {drSsoNote(sso)}</div>}</>}
       <EmbedPanel frame={frame} frameRef={frameRef} title="Drishti" ready={sso.state !== "loading"} waitLabel="Signing you in…" more={more} pick={pick} setPick={setPick}>{children}</EmbedPanel>
     </div>
   );

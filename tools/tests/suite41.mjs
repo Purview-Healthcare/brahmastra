@@ -241,6 +241,20 @@ S("G-08: Drishti's 12-hour session is made again when it is near its end");
   ok("G-08: an unreadable token counts as ended (so it is made again)", app.drTokenEnd("") === 0 && app.drTokenEnd("x.y") === 0);
 }
 
+S("G-09: Drishti not answering: the SLA tab does not send people to a sign-in that cannot work");
+{ drDown = true;
+  const e = await T(() => A("reports.drishtiSession"));
+  ok("G-09: signing in to Drishti fails with a 502 that says only what happened", !e.ok && e.status === 502 && e.e === "Drishti's server did not answer.", e);
+  const note = app.drSsoNote({ state: "error", status: e.status, msg: e.e });
+  ok("G-09: the SLA tab says Drishti's server did not answer and to use Load again in a minute, not 'sign in below'", note === "Drishti's server did not answer. Use Load again (the ↻ button above) in a minute." && !/sign in below/i.test(note), note);
+  const other = app.drSsoNote({ state: "error", status: 400, msg: "Nobody you report to in Brahmastra is a manager in Drishti yet, so Drishti cannot place you. Ask Drishti's Admin to add your manager on Drishti's People tab." });
+  ok("G-09: any other reason is said as it is, without pointing to Drishti's own sign-in either", /^Nobody you report to/.test(other) && !/sign in below|Load again/i.test(other), other);
+  ok("G-09: nothing to say when Drishti opened signed in", app.drSsoNote({ state: "ok" }) === "");
+  drDown = false; await fresh();
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("G-09: no SLA tab wording sends people to sign in below when the sign-in failed", !/You can still sign in below/.test(src) && /sso\.state === "error" \? <><i className="rh-dot off" \/>Not signed in to Drishti/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

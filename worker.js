@@ -6606,7 +6606,7 @@ const OPS = {
     const api = env.DRISHTI_API || DRISHTI_API_DEFAULT;
     const call = async (body) => {
       let r; try { r = await fetchT(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
-      catch (e) { throw new ApiError(502, "Drishti's server did not answer. Try again in a minute."); }
+      catch (e) { throw new ApiError(502, "Drishti's server did not answer."); }
       let j = null; try { j = await r.json(); } catch (e) {}
       if (!j) throw new ApiError(502, "Drishti's server sent an answer Brahmastra could not read.");
       if (!j.ok) throw new ApiError(j.code === "auth" ? 503 : 400, j.code === "auth" ? "Drishti did not accept Brahmastra's sign-in. The DRISHTI_TOKEN_SECRET does not match Drishti's TOKEN_SECRET." : "Drishti: " + (j.error || "it refused."));
@@ -6636,7 +6636,7 @@ const OPS = {
       const role = asManager ? "manager" : /\bsme\b/i.test(user.designation || "") ? "sme" : /team lead|\btl\b/i.test(user.designation || "") ? "tl" : "supervisor";
       await call({ a: "signup", email, name: user.name || email, role, managerId, password: randomHex(24) });
       du = await find(); created = true;
-      if (!du) throw new ApiError(502, "Drishti created the account but did not list it. Try again.");
+      if (!du) throw new ApiError(502, "Drishti made the account but did not list it.");
     }
     return { token: await drishtiToken(env, du.id, du.role), name: du.name, role: du.role, created };
   },
