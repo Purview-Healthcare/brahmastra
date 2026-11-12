@@ -873,7 +873,7 @@ function Bars({ rows, labelOf, valueOf, fmt = fmtMoney, subOf, onClick, isOn, co
   const max = Math.max(1, ...rows.map((r) => valueOf(r)));
   const total = sum(rows, (r) => valueOf(r)) || 0;
   const totalN = countOf ? sum(rows, (r) => countOf(r) || 0) : 0;
-  const tip = (r) => { const v = valueOf(r); const pct = total ? Math.round(v / total * 100) : 0; const n = countOf ? countOf(r) : null; return `${labelOf(r)}\n${fmt(v)} · ${pct}% of the balance shown${n != null ? `\n${fmtInt(n)} claims · ${totalN ? Math.round(n / totalN * 100) : 0}% of the claims shown` : ""}${onClick ? "\nClick to filter the whole dashboard to this; click again to clear." : ""}`; };
+  const tip = (r) => { const v = valueOf(r); const pct = total ? Math.round(v / total * 100) : 0; const n = countOf ? countOf(r) : null; return `${labelOf(r)}\n${fmt(v)} · ${pct}% of the balance shown${n != null ? `\n${plural(n, "claim")} · ${totalN ? Math.round(n / totalN * 100) : 0}% of the claims shown` : ""}${onClick ? "\nClick to filter the whole dashboard to this; click again to clear." : ""}`; };
   const anyOn = isOn && rows.some((r) => isOn(r));
   return (
     <div className="stack" style={{ gap: 6 }}>
@@ -1356,7 +1356,7 @@ function SettingsView({ me, setMe, ctx }) {
               : (me.source !== "roster" && !(me.projects || []).length) ? <div className="small mt8">This account was <b>added by hand with no projects</b>, so it sees every client. Give it projects in Team to narrow it, or sign in with your roster account.</div>
               : <>
                 <div className="small mt8"><b>Your projects{(me.scope_projects || []).length > (me.projects || []).length ? " and your span's" : ""}:</b> {((me.scope_projects || []).length ? me.scope_projects : (me.projects || []).map((p) => p.name || p)).filter(Boolean).join("; ") || "none yet"}</div>
-                <div className="small mt8"><b>Clients that open for you ({(ctx.clients || []).length}):</b> {(ctx.clients || []).map((c) => c.name).join(", ") || "none matched yet (ask your team lead to map your project to a client)"}</div>
+                <div className="small mt8"><b>Clients that open for you ({(ctx.clients || []).length}):</b> {(ctx.clients || []).map((c) => c.name).join(", ") || (me.role === "supervisor" ? "none matched yet (match your roster project to its client when Brahmastra asks after you sign in, or ask the admin)" : "none matched yet (ask your team lead to map your project to a client)")}</div>
               </>}
             <div className="tiny muted mt8">Billers and team leads see their own projects' clients, managers everything under them in the hierarchy, the VP and admins everything. A client outside your span can be shared with you from its client card (view only or can edit).</div>
           </div>
@@ -1369,14 +1369,14 @@ function SettingsView({ me, setMe, ctx }) {
             </div>
           </div>
           <div className="card set-sec" id="set-profile">
-            <h2>My profile</h2><div className="sub">From the Purview Shastra roster. If something is wrong, ask your team lead or the admin to correct it on the roster.</div>
+            <h2>My profile</h2><div className="sub">From the Purview Shastra roster. If something is wrong, {me.is_admin ? "correct it in Purview Shastra" : me.role === "supervisor" ? "ask your manager or the admin to correct it on the roster" : "ask your team lead or the admin to correct it on the roster"}.</div>
             <dl className="cv-kv">
               <dt>Name</dt><dd>{me.name}</dd><dt>Email</dt><dd>{me.email}</dd>
               <dt>Emp ID</dt><dd>{me.emp_id || dash}</dd><dt>Designation</dt><dd>{me.designation || me.position || dash}</dd>
               <dt>Department</dt><dd>{me.department || dash}{me.departments_also ? <span className="muted" style={{ fontWeight: 400 }}> · also {me.departments_also}</span> : null}</dd><dt>Brahmastra role</dt><dd>{roleLabel(me)}</dd>
               <dt>Reports to</dt><dd>{me.reports_to_name || dash}</dd><dt>Shift</dt><dd>{me.shift || dash}</dd>
               <dt>{lead ? "Projects I lead" : "My projects"}</dt><dd>{myClients.length ? myClients.join(", ") : dash}</dd><dt>Status</dt><dd>{me.roster_status || "Production"}</dd>
-              {!lead && <><dt>Daily target</dt><dd>{me.capacity ? me.capacity + " claims a day" : dash}</dd></>}
+              {!lead && <><dt>Daily target</dt><dd>{me.capacity ? plural(me.capacity, "claim") + " a day" : dash}</dd></>}
               <dt>Date of joining</dt><dd>{me.doj ? fmtDate(me.doj) : dash}</dd>
               <dt>Member since</dt><dd>{me.created_at ? new Date(me.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : dash}</dd>
             </dl>
@@ -1803,14 +1803,14 @@ function OverdueModal({ ctx, clientId, locId, onClose, onChanged }) {
   const toggle = (id) => { const n = new Set(chosen); if (n.has(id)) n.delete(id); else n.add(id); setSel(n); };
   const assign = async () => {
     setBusy(true);
-    try { const r = await rpc("alloc.reassign", { ids: [...chosen], user_id: user }); toast(`${fmtInt(r.changed)} claims assigned.`); onChanged(); onClose(); }
+    try { const r = await rpc("alloc.reassign", { ids: [...chosen], user_id: user }); toast(`${plural(r.changed, "claim")} assigned.`); onChanged(); onClose(); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const billers = ctx.users.filter((u) => u.active);
   return (
     <Modal title="Overdue follow-ups" sub="The follow-up date passed and nobody has made a new entry. Pick who works them; they go to the top of that person's list." onClose={onClose} wide
-      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><div className="row"><Combo sm width={240} value={user} onChange={setUser} placeholder="Assign to…" options={billers.map((u) => ({ id: u.id, label: u.name + (u.role === "supervisor" ? " (TL)" : "") }))} /><button className="btn primary" disabled={busy || !user || !chosen.size} onClick={assign}>{busy ? "Assigning…" : `Assign ${fmtInt(chosen.size)} claims`}</button></div></>}>
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><div className="row"><Combo sm width={240} value={user} onChange={setUser} placeholder="Assign to…" options={billers.map((u) => ({ id: u.id, label: u.name + (u.role === "supervisor" ? " (TL)" : "") }))} /><button className="btn primary" disabled={busy || !user || !chosen.size} onClick={assign}>{busy ? "Assigning…" : `Assign ${plural(chosen.size, "claim")}`}</button></div></>}>
       <ErrorBox error={q.error} />
       {!q.data && !q.error && <Spinner />}
       {q.data && (
@@ -2154,7 +2154,7 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td><span className={"badge " + (TS_STATUS_TONE[r.status] || "gray")}>{r.status}</span></td>
                   <td>{rampCell(r)}</td>
                   <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.count_done + " of " + Math.round(r.target_done) + " to yesterday" : r.count_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.count_today ? " · " + r.count_today + " today" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div>
-                    {(r.attain_basis === "done" ? r.task_items_done : r.task_items_today) > 0 && r.attain != null && <div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " claims + " + r.task_items_done + " task items" : r.worked_today + " claims + " + r.task_items_today + " task items"}</div>}</td>
+                    {(r.attain_basis === "done" ? r.task_items_done : r.task_items_today) > 0 && r.attain != null && <div className="tiny muted">{r.attain_basis === "done" ? plural(r.worked_done, "claim") + " + " + plural(r.task_items_done, "task item") : plural(r.worked_today, "claim") + " + " + plural(r.task_items_today, "task item")}</div>}</td>
                   <td className="num">{r.task_items ? <><b>{fmtInt(r.task_items)}</b> <span className="tiny muted">items</span><div className="tiny muted">{plural(r.tasks_worked || 0, "task")}{r.tasks_completed ? " · " + r.tasks_completed + " completed" : ""}</div></> : <span className="muted">0</span>}</td>
                   <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
                   <td className="num">{floorCell(r, d.floor_source)}</td><td className="num">{idleCell(r)}</td><td className="num">{breakCell(r)}</td>
@@ -2230,7 +2230,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
       {overdueOpen && <OverdueModal ctx={ctx} clientId={clientId} locId={locId} onClose={() => setOverdueOpen(false)} onChanged={() => stats.reload()} />}
       {d && d.overdue && d.overdue.n > 0 && (
         <div className="row between mt8" style={{ borderLeft: "4px solid var(--red)", background: "var(--red-soft)", borderRadius: 8, padding: "8px 12px" }}>
-          <div className="small"><b style={{ color: "var(--red-ink)" }}>{fmtInt(d.overdue.n)} claims are past their follow-up date with no new entry</b> · {fmtMoney(d.overdue.amt)}. They sit with nobody until a biller gets them again.</div>
+          <div className="small"><b style={{ color: "var(--red-ink)" }}>{plural(d.overdue.n, "claim is", "claims are")} past {d.overdue.n === 1 ? "its" : "their"} follow-up date with no new entry</b> · {fmtMoney(d.overdue.amt)}. {d.overdue.n === 1 ? "It sits with nobody until a biller gets it again." : "They sit with nobody until a biller gets them again."}</div>
           <div className="row"><button className="btn sm" onClick={() => openClaims({ overdue: true })}>See them</button><button className="btn sm primary" onClick={() => setOverdueOpen(true)}>Assign to a biller</button></div>
         </div>
       )}
@@ -2275,7 +2275,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
           <div className="card"><h3>By client and location</h3><div className="sub mb">Where the inventory stands at each location. Click a row to focus the dashboard on it.</div>
             <div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Location</th><th className="r">Unassigned</th><th className="r">On desks</th><th className="r">Worked, awaiting follow-up</th><th className="r">In process</th><th className="r">Overdue</th><th className="r">Closed</th><th className="r">Workable $</th></tr></thead>
               <tbody>{(d.by_location || []).map((r, i) => { const on = clientId === r.client_id && (locId || "") === (r.location_id || ""); return (
-                <tr key={i} className="click" style={on ? { background: "var(--soft)" } : undefined} title={`${r.client_name}${r.location_name ? " · " + r.location_name : ""}\n${fmtInt(r.n)} claims on file · ${fmtMoney(r.amt)} workable\nClick to focus the dashboard here; click again to go back.`} onClick={() => { if (on) { setClientId(""); setLocId(""); } else { setClientId(r.client_id); setLocId(r.location_id || ""); } }}>
+                <tr key={i} className="click" style={on ? { background: "var(--soft)" } : undefined} title={`${r.client_name}${r.location_name ? " · " + r.location_name : ""}\n${plural(r.n, "claim")} on file · ${fmtMoney(r.amt)} workable\nClick to focus the dashboard here; click again to go back.`} onClick={() => { if (on) { setClientId(""); setLocId(""); } else { setClientId(r.client_id); setLocId(r.location_id || ""); } }}>
                   <td><b>{r.client_name}</b></td><td>{r.location_name || <span className="muted">(no location)</span>}</td>
                   <td className="num" title={fmtMoney(r.open_amt)}>{fmtInt(r.open_n)}</td><td className="num" title={fmtMoney(r.desk_amt)}>{fmtInt(r.desk_n)}</td><td className="num" title={fmtMoney(r.worked_amt)}>{fmtInt(r.worked_n)}</td><td className="num" title={fmtMoney(r.process_amt)}>{fmtInt(r.process_n || 0)}</td>
                   <td className="num" style={r.overdue_n ? { color: "var(--red-ink)", fontWeight: 700 } : undefined}>{fmtInt(r.overdue_n)}</td><td className="num" title={fmtMoney(r.closed_amt)}>{fmtInt(r.closed_n)}</td><td className="num">{fmtMoney(r.amt)}</td>
@@ -2447,7 +2447,7 @@ function DeskClaimsView({ ctx, me }) {
           <thead><tr><th>Claim #</th><th>Patient</th><th>DOS</th><th>Payer</th><th className="num">Balance</th><th>State</th><th>With</th></tr></thead>
           <tbody>{rows.map((c) => <tr key={c.id} className="click" onClick={() => setOpen(c.id)}><td className="mono">{c.claim_no}</td><td className="phi">{c.patient}</td><td>{fmtDate(c.dos)}</td><td>{c.payer}</td><td className="num">{fmtMoney(c.balance, 2)}</td><td className="small">{c.state}</td><td className="small">{c.assigned_name || "–"}</td></tr>)}</tbody></table></div>
           {!q.data ? <Spinner label="Loading…" /> : !rows.length ? <Empty>No claims match.</Empty> : null}
-          {q.data && q.data.total > rows.length && <div className="row between mt8"><span className="tiny muted">{fmtInt(q.data.total)} claims</span><span><button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button> <button className="btn sm" disabled={page * 50 >= q.data.total} onClick={() => setPage(page + 1)}>Next</button></span></div>}
+          {q.data && q.data.total > rows.length && <div className="row between mt8"><span className="tiny muted">{plural(q.data.total, "claim")}</span><span><button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button> <button className="btn sm" disabled={page * 50 >= q.data.total} onClick={() => setPage(page + 1)}>Next</button></span></div>}
         </div></>}
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
     </div>
@@ -2516,14 +2516,14 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
     try { await rpc("locations.save", { client_id: c.id, name }); setLocName({ ...locName, [c.id]: "" }); toast("Location added."); reload(); } catch (e) { toast(e.message, "err"); }
   };
   const toggleLoc = async (l) => { try { await rpc("locations.save", { id: l.id, name: l.name, active: !l.active }); reload(); } catch (e) { toast(e.message, "err"); } };
-  const makeFolders = async (c) => { setBusy(true); try { const r = await rpc("clients.setupFolders", c ? { client_id: c.id } : {}); toast(r.failed.length ? `Folders made for ${r.done}; not for ${r.failed.length}: ${r.failed[0].error}` : c ? "Folders made in OneDrive for " + c.name + "." : `Folders made in OneDrive for ${r.done} clients.`, r.failed.length ? "err" : "ok"); reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const makeFolders = async (c) => { setBusy(true); try { const r = await rpc("clients.setupFolders", c ? { client_id: c.id } : {}); toast(r.failed.length ? `Folders made for ${r.done}; not for ${r.failed.length}: ${r.failed[0].error}` : c ? "Folders made in OneDrive for " + c.name + "." : `Folders made in OneDrive for ${plural(r.done, "client")}.`, r.failed.length ? "err" : "ok"); reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const wbStatus = (id) => (ctx.settings && ctx.settings["workbook_status:" + id]) || null;
   /* No workbook link: Brahmastra keeps the month's Production file in the Purviewautomate OneDrive by itself. */
   const [del, setDel] = useState(null);
   const [delTyped, setDelTyped] = useState("");
   const doDelete = async () => {
     setBusy(true);
-    try { const r = await rpc("clients.delete", { id: del.id, confirm: delTyped.trim() }); toast(`${r.name} deleted with ${fmtInt(r.claims)} claims.`); setDel(null); setDelTyped(""); setEdit(null); reload(); }
+    try { const r = await rpc("clients.delete", { id: del.id, confirm: delTyped.trim() }); toast(`${r.name} deleted with ${plural(r.claims, "claim")}.`); setDel(null); setDelTyped(""); setEdit(null); reload(); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
@@ -2766,7 +2766,7 @@ function OneDrivePicker({ folderLink, onPick, onClose, accept = isSheetFile, wha
         <ErrorBox error={err} />
         {busy && <Spinner label={busy} />}
         {!busy && <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th>Name</th><th>Modified</th><th>By</th><th className="r">Size</th></tr></thead>
-          <tbody>{items.map((it) => <tr key={it.id} className="click" onClick={() => click(it)}><td>{it.folder ? "📁 " : "📄 "}{it.name}{it.folder && it.folder.childCount != null ? <span className="tiny muted"> · {it.folder.childCount} items</span> : null}</td><td className="small">{it.lastModifiedDateTime ? fmtWhen(Date.parse(it.lastModifiedDateTime)) : ""}</td><td className="small">{itemSummary(it).modifiedBy}</td><td className="num">{it.file ? fmtBytes(it.size) : ""}</td></tr>)}
+          <tbody>{items.map((it) => <tr key={it.id} className="click" onClick={() => click(it)}><td>{it.folder ? "📁 " : "📄 "}{it.name}{it.folder && it.folder.childCount != null ? <span className="tiny muted"> · {plural(it.folder.childCount, "item")}</span> : null}</td><td className="small">{it.lastModifiedDateTime ? fmtWhen(Date.parse(it.lastModifiedDateTime)) : ""}</td><td className="small">{itemSummary(it).modifiedBy}</td><td className="num">{it.file ? fmtBytes(it.size) : ""}</td></tr>)}
             {!items.length && <tr><td colSpan={4}><Empty>{"No folders or " + what + " files here."}</Empty></td></tr>}</tbody></table></div>}
         <div className="tiny muted">{what === "spreadsheet" ? "Only folders and Excel/CSV files are listed." : "Only folders and " + what + " files are listed."} Click a file and it is read on the spot; nothing is written back to OneDrive.</div>
       </div>
@@ -2871,7 +2871,7 @@ function ShastraSync({ data, onDone }) {
         <div><h3>Purview Shastra</h3>
           <div className="small muted">{!data.connected ? "Not connected yet. Once the SHASTRA_FEED_KEY secret is added, the roster updates by itself every hour."
             : !last ? "Connected. The first update runs within the hour, or click Sync now."
-            : last.ok ? <>Updated by itself every hour · last {fmtWhen(last.at)}{last.by && last.by !== "hourly" ? " (by " + last.by + ")" : ""} · {fmtInt(last.people)} people{last.new + last.updated + last.deactivated ? <> · {last.new} joined, {last.updated} changed, {last.deactivated} left</> : " · no changes"}{last.removed ? <> · {last.removed} old roster {last.removed === 1 ? "entry" : "entries"} removed</> : null}</>
+            : last.ok ? <>Updated by itself every hour · last {fmtWhen(last.at)}{last.by && last.by !== "hourly" ? " (by " + last.by + ")" : ""} · {plural(last.people, "person", "people")}{last.new + last.updated + last.deactivated ? <> · {last.new} joined, {last.updated} changed, {last.deactivated} left</> : " · no changes"}{last.removed ? <> · {last.removed} old roster {last.removed === 1 ? "entry" : "entries"} removed</> : null}</>
             : <span style={{ color: "var(--red-ink)" }}>Last try {fmtWhen(last.at)} did not work: {last.error}</span>}</div></div>
         <div className="row">{log.length > 0 && <button className="btn sm" onClick={() => setOpen(!open)}>{open ? "Hide changes" : "What changed"}</button>}
           <button className="btn primary" disabled={!data.connected || busy} onClick={sync}>{busy ? "Syncing…" : "Sync now"}</button></div>
@@ -2963,7 +2963,7 @@ function LocationsView({ ctx, reload, go, embedded }) {
     try {
       const team = get(r).team;
       const res = await autoAllocate({ ctx, client: { ...r.client, team: r.loc ? r.client.team : team }, loc: r.loc ? { ...r.loc, team } : null });
-      toast(res.applied ? `Assigned ${fmtInt(res.applied)} claims: ` + res.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)}`).join(", ") : "Nothing to assign: " + (res.reason || "no open claims") + ".");
+      toast(res.applied ? `Assigned ${plural(res.applied, "claim")}: ` + res.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)}`).join(", ") : "Nothing to assign: " + (res.reason || "no open claims") + ".");
     } catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
@@ -3061,12 +3061,12 @@ function DetailsReport({ ctx, go }) {
     let uploadId = null, tot = { rows: 0, matched: 0, updated: 0, fields: {} };
     try {
       for (let i = 0; i < rows.length; i += 1000) {
-        setBusy(`Filling details… ${fmtInt(Math.min(rows.length, i + 1000))} of ${fmtInt(rows.length)} rows`);
+        setBusy(`Filling details… ${fmtInt(Math.min(rows.length, i + 1000))} of ${plural(rows.length, "row")}`);
         const r = await rpc("inventory.enrich", { client_id: clientId, location_id: locId || undefined, upload_id: uploadId, file_name: file.name, purpose, note, overwrite, rows: rows.slice(i, i + 1000) });
         uploadId = r.upload_id; tot = { rows: tot.rows + r.rows, matched: tot.matched + r.matched, updated: tot.updated + r.updated, fields: r.fields };
       }
       setResult({ ...tot, upload_id: uploadId }); hist.reload();
-      toast(`${fmtInt(tot.updated)} claims filled from ${file.name}.`);
+      toast(`${plural(tot.updated, "claim")} filled from ${file.name}.`);
     } catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
@@ -3092,7 +3092,7 @@ function DetailsReport({ ctx, go }) {
         <div className="row mt8" style={{ gap: 10, flexWrap: "wrap" }}>
           <button className="btn" onClick={() => inputRef.current && inputRef.current.click()}>📄 {file ? "Pick another report" : "Pick the report (Excel or CSV)"}</button>
           <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
-          {file && table && <span className="small">{file.name} · {fmtInt(table.rows.length)} rows · {fmtInt(keyed)} with a claim # or account #</span>}
+          {file && table && <span className="small">{file.name} · {plural(table.rows.length, "row")} · {fmtInt(keyed)} with a claim # or account #</span>}
         </div>
         {table && <>
           <div className="b small mt16 mb">Columns in this report</div>
@@ -3110,8 +3110,8 @@ function DetailsReport({ ctx, go }) {
             {!clientId && <span className="small muted">Pick the client.</span>}{clientId && !purpose && <span className="small muted">Pick why you are uploading it.</span>}
           </div>
         </>}
-        {result && <div className="alert info mt16"><b>{fmtInt(result.updated)} claims filled</b> from {fmtInt(result.matched)} of {fmtInt(result.rows)} rows. {Object.entries(result.fields || {}).map(([k, n]) => `${DETAIL_FIELD_LABEL[k] || "other columns"}: ${fmtInt(n)}`).join(" · ")}
-          {result.rows - result.matched > 0 && <> · <b>{fmtInt(result.rows - result.matched)} rows matched no claim</b> <button className="btn sm link" onClick={() => downloadText(toCSV(lastUnmatched, [{ key: "claim_no", label: "Claim #" }, { key: "account_no", label: "Account #" }, { key: "patient", label: "Patient" }]), "unmatched-rows.csv")}>Download them</button></>}
+        {result && <div className="alert info mt16"><b>{plural(result.updated, "claim")} filled</b> from {fmtInt(result.matched)} of {plural(result.rows, "row")}. {Object.entries(result.fields || {}).map(([k, n]) => `${DETAIL_FIELD_LABEL[k] || "other columns"}: ${fmtInt(n)}`).join(" · ")}
+          {result.rows - result.matched > 0 && <> · <b>{plural(result.rows - result.matched, "row")} matched no claim</b> <button className="btn sm link" onClick={() => downloadText(toCSV(lastUnmatched, [{ key: "claim_no", label: "Claim #" }, { key: "account_no", label: "Account #" }, { key: "patient", label: "Patient" }]), "unmatched-rows.csv")}>Download them</button></>}
           {" "}<button className="btn sm link" onClick={() => go("claims", { clientId })}>See the claims</button></div>}
       </div>
       <div className="card tight">
@@ -3291,8 +3291,8 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       {step === 2 && table && (
         <div className="stack">
           <div className="row between">
-            <div className="small"><b>{file.name}</b> · {fmtInt(table.rows.length)} rows{built ? <> · <b>{fmtInt(built.summary.included)} claims</b> found</> : null}</div>
-            {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({fmtInt(s.rows.length)} rows)</option>)}</select></Field>}
+            <div className="small"><b>{file.name}</b> · {plural(table.rows.length, "row")}{built ? <> · <b>{plural(built.summary.included, "claim")}</b> found</> : null}</div>
+            {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({plural(s.rows.length, "row")})</option>)}</select></Field>}
           </div>
           <div className="grid g3">
             <ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={(v) => { setLocId(v); if (v) setLocMode("pick"); }} />
@@ -3328,7 +3328,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           )}
           {!mapping.balance && <div className="alert warn">No Balance column: every claim will be treated as a small balance and land in the Low tier.</div>}
           {locMode === "file" && !mapping.location && <div className="alert warn">You chose to split by the file's Location column, but none is mapped. Map it, or pick one location.</div>}
-          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!client || !mappingOk || !built || !built.summary.included || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : !client ? "Pick the client to load" : `Load ${built ? fmtInt(built.summary.included) : ""} claims`}</button></div>
+          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!client || !mappingOk || !built || !built.summary.included || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : !client ? "Pick the client to load" : `Load ${built ? plural(built.summary.included, "claim") : "claims"}`}</button></div>
         </div>
       )}
       {step === 4 && (
@@ -3337,7 +3337,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           {result && (
             <>
               <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
-              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {fmtInt(r.assigned.applied)} claims allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
+              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
             </>
           )}
@@ -3353,7 +3353,7 @@ function ReviewStep({ built, kind, onBack, onLoad, busy }) {
   return (
     <div className="stack">
       <div className="grid g4">
-        <Kpi label="Claims to load" value={fmtInt(s.included)} sub={`${fmtInt(s.rowsRead)} rows read · ${fmtInt(s.linesRolled)} service lines rolled up`} tone="accent" />
+        <Kpi label="Claims to load" value={fmtInt(s.included)} sub={`${plural(s.rowsRead, "row")} read · ${plural(s.linesRolled, "service line")} rolled up`} tone="accent" />
         <Kpi label="Workable balance" value={fmtMoney(s.amount)} sub={`average ${fmtMoney(s.cut.avg)} · High tier above ${fmtMoney(s.cut.high)}`} />
         <Kpi label="Excluded" value={fmtInt(exclRows.reduce((n, [, v]) => n + v.n, 0))} sub={exclRows.map(([k, v]) => `${k}: ${v.n}`).join(" · ") || "nothing excluded"} />
         <Kpi label={kind === "worked" ? "With a date worked" : "Patients with 3+ claims"} value={kind === "worked" ? fmtInt(built.claims.filter((c) => c.last_worked_on).length) : fmtInt(s.patientsWith3Plus)} sub={kind === "worked" ? "follow-up dates set from it" : "batching opportunity"} />
@@ -3367,7 +3367,7 @@ function ReviewStep({ built, kind, onBack, onLoad, busy }) {
       <div><div className="b small mb">Preview: top of the work order (highest priority first)</div>
         <div className="table-wrap" style={{ maxHeight: 360 }}><table className="t"><thead><tr><th>Claim #</th><th>Patient</th><th>Payer</th><th>DOS</th><th className="r">Age</th><th className="r">Balance</th><th>Tier</th><th>Status</th><th>Why this order</th></tr></thead>
           <tbody>{preview.map((c, i) => <tr key={i}><td className="mono small">{c.claim_no || "–"}</td><td>{c.patient}</td><td>{c.payer}</td><td className="small">{fmtDate(c.dos)}</td><td className="num">{c.age_days ?? "–"}</td><td className="num">{fmtMoney(c.balance)}</td><td><TierBadge tier={c.tier} /></td><td><ClassBadge cls={c.status_class} /></td><td className="small muted">{c.priority_reason}</td></tr>)}</tbody></table></div></div>
-      <div className="row between"><button className="btn" onClick={onBack} disabled={busy}>Back</button><button className="btn primary" onClick={onLoad} disabled={busy || !s.included}>{busy ? "Loading…" : `Load ${fmtInt(s.included)} claims`}</button></div>
+      <div className="row between"><button className="btn" onClick={onBack} disabled={busy}>Back</button><button className="btn primary" onClick={onLoad} disabled={busy || !s.included}>{busy ? "Loading…" : `Load ${plural(s.included, "claim")}`}</button></div>
     </div>
   );
 }
@@ -3386,7 +3386,7 @@ function BatchesTable({ ctx, onRefresh }) {
     <div className="card stack">
       <div className="row between"><h2>Upload history</h2><div className="row"><div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div><button className="btn sm" disabled={!clientId || busy} title="Find claims loaded twice (same claim number written differently, or same patient and date of service) and merge them" onClick={checkDup}>Merge duplicate claims</button></div></div>
       {dup && (
-        <Confirm title={dup.duplicates ? `Merge ${fmtInt(dup.duplicates)} duplicate claims?` : "No duplicates found"} text={dup.duplicates ? `${fmtInt(dup.duplicates)} claims are copies of ${fmtInt(dup.groups)} claims already on file (same claim number written differently, or same patient and date of service). Each copy's notes, work history and biller move onto the original, and the copy is removed.` : "Every claim of this client is unique."} confirmLabel={dup.duplicates ? "Merge" : "OK"} onYes={dup.duplicates ? doDedupe : () => setDup(null)} onNo={() => setDup(null)} busy={busy} />
+        <Confirm title={dup.duplicates ? `Merge ${plural(dup.duplicates, "duplicate claim")}?` : "No duplicates found"} text={dup.duplicates ? `${plural(dup.duplicates, "claim is a copy", "claims are copies")} of ${plural(dup.groups, "claim")} already on file (same claim number written differently, or same patient and date of service). Each copy's notes, work history and biller move onto the original, and the copy is removed.` : "Every claim of this client is unique."} confirmLabel={dup.duplicates ? "Merge" : "OK"} onYes={dup.duplicates ? doDedupe : () => setDup(null)} onNo={() => setDup(null)} busy={busy} />
       )}
       <ErrorBox error={q.error} />
       <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client · location</th><th>Kind</th><th>File</th><th>By</th><th className="r">Rows</th><th className="r">New</th><th className="r">Refreshed</th><th className="r">Reopened</th><th className="r">Closed</th><th className="r">Excluded</th><th></th></tr></thead>
@@ -3469,7 +3469,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   const bulk = async (label, fn) => {
     if (!sel.size) return;
     setBusy(true);
-    try { const r = await fn([...sel]); toast(`${label}: ${fmtInt(r.changed || r.applied || 0)} claims.`); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
+    try { const r = await fn([...sel]); toast(`${label}: ${plural(r.changed || r.applied || 0, "claim")}.`); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const sortBy = (k) => { if (f.sort === k) set("dir", f.dir === "asc" ? "desc" : "asc"); else setF((x) => ({ ...x, sort: k, dir: k === "patient" || k === "payer" ? "asc" : "desc", page: 1 })); };
@@ -3525,7 +3525,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
           {f.stage ? <label className="check small"><input type="checkbox" checked onChange={() => set("stage", "")} /> {(INV_STAGES.find(([k]) => k === f.stage) || [])[1]}</label> : null}
           <label className="check small"><input type="checkbox" checked={f.escalated} onChange={(e) => set("escalated", e.target.checked)} /> Escalated</label>
           <span style={{ flex: 1 }} />
-          {q.data && <span className="small muted">{fmtInt(q.data.total)} claims · {fmtMoney(q.data.amount)}</span>}
+          {q.data && <span className="small muted">{plural(q.data.total, "claim")} · {fmtMoney(q.data.amount)}</span>}
         </div>
       </div>
       {sel.size > 0 && (
@@ -3581,7 +3581,7 @@ function PriorityModal({ ids, rows, onClose, onDone }) {
   };
   const LEVELS = [["top", "⇈ Top: work first", "goes to the top of the biller's list and of the next allocation"], ["high", "↑ Raise", "ahead of similar claims"], ["low", "↓ Lower", "behind other claims until you change it back"], ["", "⟲ Automatic", "back to the score from age, value and status"]];
   return (
-    <Modal title={"Change priority · " + (one ? (one.claim_no || one.patient || "claim") : ids.length + " claims")} sub={one ? [one.patient, one.payer, "score now " + one.priority + (one.priority_set_label ? " (" + one.priority_set_label + ")" : "")].filter(Boolean).join(" · ") : "The reason is saved on each claim."} onClose={onClose} narrow
+    <Modal title={"Change priority · " + (one ? (one.claim_no || one.patient || "claim") : plural(ids.length, "claim"))} sub={one ? [one.patient, one.payer, "score now " + one.priority + (one.priority_set_label ? " (" + one.priority_set_label + ")" : "")].filter(Boolean).join(" · ") : "The reason is saved on each claim."} onClose={onClose} narrow
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={go} disabled={busy || !ok}>{busy ? "Saving…" : "Save priority"}</button></>}>
       <div className="stack">
         <div className="field"><span>New priority</span>
@@ -3931,7 +3931,7 @@ function TaskFormModal({ ctx, clientId, task, onClose, onDone }) {
       footer={<div className="row between" style={{ width: "100%", gap: 8, alignItems: "center" }}><span className="small muted">{missing.length ? "Still needed: " + missing.join(", ") + "." : ""}</span>
         <div className="row" style={{ gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || missing.length > 0}>{busy ? "Saving…" : edit ? "Save changes" : "Assign task" + (people.length > 1 ? " to " + people.length + " people" : "")}</button></div></div>}>
       <div className="stack" style={{ gap: 12 }}>
-        {edit ? <div className="small muted">{task.client_name || "Internal"} · <ScopeBadge s={task.scope} />{task.source ? " · received from " + task.source.toLowerCase() : ""} · {fmtInt(task.count)} items</div> : <>
+        {edit ? <div className="small muted">{task.client_name || "Internal"} · <ScopeBadge s={task.scope} />{task.source ? " · received from " + task.source.toLowerCase() : ""} · {plural(task.count, "item")}</div> : <>
           <div className="grid g2">
             <Field label="Client" hint="Optional: leave it on No client for an internal task"><Combo value={f.client_id} options={clientOpts} placeholder="No client (internal task)" onChange={(v) => set("client_id", v || "")} /></Field>
             <FieldGroup label="Received from" hint="Optional"><div className="seg2">{["Client", "Manager", "Internal"].map((s) => <button key={s} type="button" className={f.source === s ? "on" : ""} onClick={() => set("source", f.source === s ? "" : s)}>{s}</button>)}</div></FieldGroup>
@@ -4043,7 +4043,7 @@ function TeamTasksView({ ctx, me, clientId, params, refreshAttention, refreshTas
   return (
     <>
       <div className="grid g4">
-        <Kpi label="Open" value={fmtInt(st.open || 0)} sub={fmtInt(st.items_left || 0) + " items left · " + plural(st.people || 0, "person", "people")} tone="accent" onClick={() => { setView("open"); setPick(""); }} on={view === "open" && !pick} />
+        <Kpi label="Open" value={fmtInt(st.open || 0)} sub={plural(st.items_left || 0, "item") + " left · " + plural(st.people || 0, "person", "people")} tone="accent" onClick={() => { setView("open"); setPick(""); }} on={view === "open" && !pick} />
         <Kpi label={"Due in the next " + ((d && d.due_soon_hours) || 4) + " hours"} value={fmtInt(st.due_soon || 0)} tone={st.due_soon ? "warn" : ""} sub={st.due_soon ? "still within the TAT" : "none"} />
         <Kpi label="Past TAT" value={fmtInt(st.late || 0)} tone={st.late ? "bad" : ""} sub={st.late ? "at the top: chase these first" : "none"} onClick={() => { setView("open"); setPick(pick === "late" ? "" : "late"); }} on={pick === "late"} title="Show only the tasks past their TAT" />
         <Kpi label="Done · 7 days" value={fmtInt(st.done_7 || 0)} tone="good" sub={st.done_7 ? st.done_7_in_tat + " of " + st.done_7 + " within TAT" : "none yet"} onClick={() => { setView("done"); setPick(""); }} on={view === "done"} />
@@ -4153,7 +4153,7 @@ function MyTasksView({ ctx, me, params, refreshTasks }) {
     <div className="stack">
       <div><h1>My tasks</h1><div className="sub">Tasks your team lead gave you, with the TAT in working hours (Monday to Friday). Update the count as you go and mark Completed when all are done; your team lead gets a notice each time.</div></div>
       <div className="grid g4">
-        <Kpi label="To do" value={fmtInt(st.todo || 0)} sub={fmtInt(st.items_left || 0) + " items left"} tone="accent" onClick={() => setTab("todo")} on={tab === "todo"} />
+        <Kpi label="To do" value={fmtInt(st.todo || 0)} sub={plural(st.items_left || 0, "item") + " left"} tone="accent" onClick={() => setTab("todo")} on={tab === "todo"} />
         <Kpi label="Due today" value={fmtInt(st.due_today || 0)} tone={st.due_today ? "warn" : ""} sub={st.due_today ? "finish these today" : "none"} />
         <Kpi label="Past TAT" value={fmtInt(st.late || 0)} tone={st.late ? "bad" : ""} sub={st.late ? "update these first" : "none"} />
         <Kpi label="Done · 7 days" value={fmtInt(st.done_7 || 0)} tone="good" sub={st.done_7 ? st.done_7_in_tat + " of " + st.done_7 + " within TAT" : "none yet"} onClick={() => setTab("done")} on={tab === "done"} />
@@ -4435,7 +4435,7 @@ function DigestDashboard({ params, go }) {
         <div className={R.esc && R.esc.n ? "r" : "g"}><b>{R.esc ? R.esc.n + " · " + (R.esc.internal || 0) : "–"}</b><span>external · internal escalations{R.esc ? " · " + R.esc.month : ""} · target 0</span></div>
         <div><b>{money(R.ar)}</b><span>AR{R.ar_ago != null ? (R.ar_ago <= 0 ? " · down " : " · up ") + money(Math.abs(R.ar_ago)) : ""}</span></div>
         <div className={R.pct > R.target ? "r" : ""}><b>{R.pct}%</b><span>over 90 · target {R.target}%</span></div>
-        <div><b>{money(R.coll)}</b><span>collected · {fmtInt(R.work)} entries</span></div>
+        <div><b>{money(R.coll)}</b><span>collected · {plural(R.work, "entry", "entries")}</span></div>
       </div>
       {R.tat && Object.values(R.tat).some(Boolean) && <div className="dd-tat-all">TAT last week (working hours, Monday to Friday): {[["posting", "Payment posting"], ["submission", "Submission"], ["attention", "Needs attention"]].filter(([k]) => R.tat[k]).map(([k, l]) =>
         <span key={k}>{l} <b className={R.tat[k].pct >= 100 ? "teal-ink" : R.tat[k].pct >= 90 ? "amber-ink" : "red-ink"}>{R.tat[k].pct}%</b> <span className="muted">({R.tat[k].met} of {R.tat[k].due})</span></span>)}</div>}
@@ -4451,7 +4451,7 @@ function DigestDashboard({ params, go }) {
             <div className="dd-mini">
               <div><b>{money(c.ar.now)}</b><span>AR{c.ar.week_ago != null ? (c.ar.now <= c.ar.week_ago ? " · down " : " · up ") + money(Math.abs(c.ar.now - c.ar.week_ago)) : ""}</span></div>
               <div><b className={c.ar.over90_pct > c.ar.target ? "red-ink" : ""}>{c.ar.over90_pct}%</b><span>over 90</span></div>
-              <div><b>{money(c.collected.amount)}</b><span>collected · {fmtInt(c.worked.n)} entries</span></div>
+              <div><b>{money(c.collected.amount)}</b><span>collected · {plural(c.worked.n, "entry", "entries")}</span></div>
             </div>
             {c.card && c.card.scopes.length > 0 && <div className="dd-scopes">{c.card.scopes.map((x) => <span key={x.name}>{drDot(x.band)}{x.name} {x.pct == null ? "–" : x.pct + "%"}</span>)}</div>}
             {c.tat && <div className={"dd-esc " + (c.tat.worst ? (c.tat.worst.missed > 2 ? "r" : "a") : "g")}>TAT last week: {c.tat.parts.map((x, i) => <span key={x.k}>{i ? " · " : ""}{x.label} <b>{x.pct}%</b> ({x.met} of {x.due})</span>)}
@@ -5582,7 +5582,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
       <div className="group">
         <div className="gt row" style={{ gap: 8 }}><span className="stepn">1</span>SAAG entry</div>
         {sugRows.length > 0 && !saag.status && <div className="row" style={{ gap: 6, flexWrap: "wrap", margin: "2px 0 8px" }}><span className="tiny muted">Used most {sug.data.scope === "payer" ? "for " + claim.payer : "at this client"}:</span>
-          {sugRows.map((x, i) => <button key={i} type="button" className="chip" title={"Picked " + x.n + " times in the last 90 days"} onClick={() => pickSug(x)}>{x.status} › {x.sub_status} › {x.action} <span className="tiny muted">({x.n})</span></button>)}</div>}
+          {sugRows.map((x, i) => <button key={i} type="button" className="chip" title={"Picked " + plural(x.n, "time") + " in the last 90 days"} onClick={() => pickSug(x)}>{x.status} › {x.sub_status} › {x.action} <span className="tiny muted">({x.n})</span></button>)}</div>}
         <div className="grid g4">
           <Field label="Status">{sel(saag.status, pickStatus, SAAG.statuses, "Pick a status…")}</Field>
           <Field label="Sub-status">{sel(saag.sub_status, pickSub, subs, saag.status ? "Pick a sub-status…" : "Pick a status first", !saag.status)}</Field>
@@ -5844,7 +5844,7 @@ function AllocateView({ ctx, params, go, embedded }) {
     try {
       let total = 0;
       for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: clientId, location_id: locId || undefined, strategy, assignments: part, summary: { perUser: plan.perUser, leftover: plan.leftover, filters } }); total += r.applied; }
-      setApplied(total); toast(`Assigned ${fmtInt(total)} claims.`);
+      setApplied(total); toast(`Assigned ${plural(total, "claim")}.`);
       setPlan(null); stats.reload(); loadPool();
     } catch (e) { toast(e.message, "err"); }
     setApplying(false);
@@ -5876,7 +5876,7 @@ function AllocateView({ ctx, params, go, embedded }) {
                 <div className="pill-list">{payersAll.slice(0, 14).map((p) => { const any = Object.keys(filters.payers).length; const on = any ? !!filters.payers[p.payer] : true; return <button key={p.payer} className={"chip " + (on ? "on" : "")} onClick={() => { const np = { ...filters.payers }; if (!any) { payersAll.forEach((x) => { np[x.payer] = true; }); } np[p.payer] = !on; if (Object.values(np).every((v) => v)) setFilters({ ...filters, payers: {} }); else setFilters({ ...filters, payers: np }); }}>{p.payer} <span className="muted">{fmtInt(p.n)} · {fmtMoney(p.amt)}</span></button>; })}
                   {Object.keys(filters.payers).length > 0 && <button className="btn sm link" onClick={() => setFilters({ ...filters, payers: {} })}>all payers</button>}</div></div>
               <div className="row"><span className="small b">Minimum balance</span><input className="input sm" type="number" style={{ width: 110 }} value={filters.minBalance} onChange={(e) => setFilters({ ...filters, minBalance: e.target.value })} /><span className="small muted">Low-tier claims (under $100) are clean-up work and score half; leave them in or filter them out.</span></div>
-              <div className="alert info"><b>{fmtInt(sel.length)} claims · {fmtMoney(sum(sel, (c) => c.balance))}</b> selected to go out · High {fmtInt(sel.filter((c) => c.tier === "High").length)} · near filing limit (75–90d) {fmtInt(sel.filter((c) => c.age_days >= 75 && c.age_days <= 90).length)} · rejected/denied {fmtInt(sel.filter((c) => c.status_class === "rejected" || c.status_class === "denied").length)} · AR follow-ups after submission {fmtInt(sel.filter(afterSubmission).length)}</div>
+              <div className="alert info"><b>{plural(sel.length, "claim")} · {fmtMoney(sum(sel, (c) => c.balance))}</b> selected to go out · High {fmtInt(sel.filter((c) => c.tier === "High").length)} · near filing limit (75–90d) {fmtInt(sel.filter((c) => c.age_days >= 75 && c.age_days <= 90).length)} · rejected/denied {fmtInt(sel.filter((c) => c.status_class === "rejected" || c.status_class === "denied").length)} · AR follow-ups after submission {fmtInt(sel.filter(afterSubmission).length)}</div>
             </div>
             <div className="card stack">
               <div className="row between"><h3>2 · Who works it</h3>{clientId && go && <button className="btn sm" onClick={() => go("clients", { client_id: clientId, focus: "people" })} title="Opens this client's card, where its people are added or taken off">Change people on the client card</button>}</div>
@@ -5892,13 +5892,13 @@ function AllocateView({ ctx, params, go, embedded }) {
           </div>
           {plan && (
             <div className="card stack">
-              <div className="row between"><h3>4 · Preview</h3><span className="small muted">{fmtInt(plan.assignments.length)} claims go out · {fmtInt(plan.leftover)} stay in the pool ({fmtMoney(plan.leftoverAmt)}) for lack of capacity</span></div>
+              <div className="row between"><h3>4 · Preview</h3><span className="small muted">{plural(plan.assignments.length, "claim goes", "claims go")} out · {fmtInt(plan.leftover)} stay in the pool ({fmtMoney(plan.leftoverAmt)}) for lack of capacity</span></div>
               <div className="table-wrap"><table className="t"><thead><tr><th>Team member</th><th className="r">Claims</th><th className="r">Capacity</th><th className="r">Balance</th><th className="r">High tier</th><th className="r">Near TFL</th><th className="r">Batches</th><th>Top payers</th></tr></thead>
                 <tbody>{plan.perUser.map((u) => <tr key={u.id}><td><b>{u.name}</b></td><td className="num">{fmtInt(u.count)}</td><td className="num">{fmtInt(u.capacity)}</td><td className="num">{fmtMoney(u.amt)}</td><td className="num">{fmtInt(u.high)}</td><td className="num">{fmtInt(u.urgent)}</td><td className="num">{fmtInt(u.batches)}</td><td className="small">{u.topPayers.join(", ")}</td></tr>)}</tbody></table></div>
-              <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPlan(null)}>Discard</button><button className="btn primary" disabled={applying || !plan.assignments.length} onClick={apply}>{applying ? "Assigning…" : `Assign ${fmtInt(plan.assignments.length)} claims`}</button></div>
+              <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPlan(null)}>Discard</button><button className="btn primary" disabled={applying || !plan.assignments.length} onClick={apply}>{applying ? "Assigning…" : `Assign ${plural(plan.assignments.length, "claim")}`}</button></div>
             </div>
           )}
-          {applied != null && typeof applied === "number" && <div className="alert info"><b>{fmtInt(applied)} claims assigned.</b> Team members see them on their My queue screen in priority order. <button className="btn link sm" onClick={() => go("claims", { clientId })}>Browse the claims</button></div>}
+          {applied != null && typeof applied === "number" && <div className="alert info"><b>{plural(applied, "claim")} assigned.</b> Team members see them on their My queue screen in priority order. <button className="btn link sm" onClick={() => go("claims", { clientId })}>Browse the claims</button></div>}
           <div className="card">
             <div className="row between"><h3>Currently on desks for this client</h3><span className="small muted">Claims a person has not finished can be returned to the pool.</span></div>
             <div className="table-wrap"><table className="t"><thead><tr><th>Team member</th><th className="r">Assigned</th><th className="r">In progress</th><th className="r">Worked</th><th className="r">On desk $</th><th></th></tr></thead>
@@ -6427,7 +6427,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
       </>}
       {outFor && <Modal title={"Out today · " + outFor.r.name} narrow onClose={() => setOutFor(null)} footer={<><button className="btn" onClick={() => setOutFor(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => setOut(outFor.r, true, outFor.reason)}>Mark out</button></>}>
         <div className="stack"><Field label="Reason (optional)"><Combo value={outFor.reason} onChange={(v) => setOutFor({ ...outFor, reason: v })} placeholder="Pick or leave empty…" options={["Leave", "Sick", "Half day", "Training", "Other work"].map((x) => ({ id: x, label: x }))} /></Field>
-          <div className="small muted">Then use Rebalance to hand their {outFor.r.on_desk} claims to the people in today. A half day counts 4 hours of floor time on Team status.</div></div></Modal>}
+          <div className="small muted">Then use Rebalance to hand their {plural(outFor.r.on_desk, "claim")} to the people in today. A half day counts 4 hours of floor time on Team status.</div></div></Modal>}
       {claim && <ClaimDrawer id={claim} ctx={ctx} me={me} onClose={() => setClaim(null)} onChanged={() => q.reload()} />}
     </div>
   );
@@ -6452,10 +6452,10 @@ function CoachDrawer({ userId, onClose }) {
           <Kpi label="Carried over" value={<span className={d.carried ? "amber-ink" : ""}>{d.carried}</span>} sub="allocated over a day ago" />
           <Kpi label="Flagged by billers" value={d.escalations} sub="for the team lead" />
           <Kpi label="Handed back" value={<span className={d.handed_back ? "amber-ink" : ""}>{d.handed_back}</span>} sub={"of " + d.handoffs_sent + " sent to posting / submission"} />
-          <Kpi label="Note length" value={d.note_len} sub={"characters on average" + (d.out_days ? " · " + d.out_days + " days out" : "")} />
+          <Kpi label="Note length" value={d.note_len} sub={"characters on average" + (d.out_days ? " · " + plural(d.out_days, "day") + " out" : "")} />
         </div>
         <div className="card tight"><div className="b small mb">Entries a day, last 30 days</div>
-          {d.days.length ? <div className="coach-days">{slots.map((x) => <div key={x.day} title={fmtDate(x.day) + ": " + x.work + " entries" + (x.skips ? ", " + x.skips + " skipped" : "")}><i style={{ height: (x.work ? Math.max(2, x.work / maxDay * 100) : 0) + "%", background: x.work >= d.person.capacity ? "var(--teal)" : x.work >= d.person.capacity * 0.8 ? "#E8A13C" : "#C94F4F" }} /></div>)}
+          {d.days.length ? <div className="coach-days">{slots.map((x) => <div key={x.day} title={fmtDate(x.day) + ": " + plural(x.work, "entry", "entries") + (x.skips ? ", " + x.skips + " skipped" : "")}><i style={{ height: (x.work ? Math.max(2, x.work / maxDay * 100) : 0) + "%", background: x.work >= d.person.capacity ? "var(--teal)" : x.work >= d.person.capacity * 0.8 ? "#E8A13C" : "#C94F4F" }} /></div>)}
             <span className="coach-target" style={{ bottom: d.person.capacity / maxDay * 100 + "%" }} title={"target " + d.person.capacity} /></div> : <Empty>No entries in the last 30 days.</Empty>}
           {d.statuses.length > 0 && <div className="tiny muted mt8">Most entered: {d.statuses.map((x) => x.status + " (" + x.n + ")").join(" · ")}. QA scores are in Sasha's Third Eye › Internal reports.</div>}</div>
         <div className="card tight"><div className="row between"><div className="b small">1:1 notes</div><span className="tiny muted">seen by team leads and up, never by the biller</span></div>
@@ -6590,7 +6590,7 @@ function InventoryStatusTab(props) {
               <div><b>{pc.days_to_clear == null ? "–" : pc.days_to_clear}</b><small>days to clear</small></div></div>
               <div><div><b>{fmtInt(pc.to_work)}</b> claims still to work</div><div className="small muted">{pc.per_day} a day · {plural(pc.people, "person", "people")} · {plural(d.wd_left, "working day")} left this month</div>
                 {pc.days_to_clear == null ? <span className="badge gray mt8">No work in the last 2 weeks</span> : pc.days_to_clear <= d.wd_left ? <span className="badge green mt8">On track · {plural(d.wd_left - pc.days_to_clear, "day")} spare</span> : <span className="badge red mt8">{plural(pc.days_to_clear - d.wd_left, "day")} short</span>}
-                {!clientId && (() => { const late = d.clients.filter((c) => c.days_to_clear != null && c.days_to_clear > d.wd_left); return late.length ? <div className="small muted mt8">Not on track: {late.slice(0, 3).map((c) => c.client + " (" + c.days_to_clear + " days)").join(", ")}{late.length > 3 ? " +" + (late.length - 3) : ""}</div> : null; })()}</div></div></div>
+                {!clientId && (() => { const late = d.clients.filter((c) => c.days_to_clear != null && c.days_to_clear > d.wd_left); return late.length ? <div className="small muted mt8">Not on track: {late.slice(0, 3).map((c) => c.client + " (" + plural(c.days_to_clear, "day") + ")").join(", ")}{late.length > 3 ? " +" + (late.length - 3) : ""}</div> : null; })()}</div></div></div>
           <div className="card"><span className="inv-lbl">SLA checks · today</span> <span className="small muted">· from the inventory</span>
             {!d.clients.length ? <Empty>No clients yet, so there is nothing to check.</Empty> : <table className="inv-ck"><thead><tr><th>Check</th><th className="r">Now</th><th>Target</th><th></th></tr></thead>
               <tbody>{d.checks.map((c) => <tr key={c.key}><td>{c.name}</td><td className={"r b " + (c.ok ? "teal-ink" : c.warn ? "amber-ink" : "red-ink")}>{c.now}</td><td className="muted">{c.target}</td>
@@ -6675,7 +6675,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
               <td className="num">{r.missed || "–"}</td>
               <td className="small">{r.waiting ? <>{fmtMoney(r.waiting.bal)} · {r.waiting.n}<div className="tiny muted">oldest {r.waiting.oldest} d</div></> : "–"}</td>
               <td className="num">{r.tfl_soon_n || r.tfl_past_n ? <span className="red-ink">{fmtMoney(r.tfl_soon)}</span> : "–"}{r.tfl_past_n ? <div className="tiny red-ink">{r.tfl_past_n} past</div> : null}</td>
-              <td className="small">{r.days_to_clear != null ? <><b className={r.days_to_clear > 20 ? "red-ink" : r.days_to_clear > 10 ? "amber-ink" : ""}>{plural(r.days_to_clear, "day")}</b><div className="tiny muted">{fmtInt(r.to_work)} claims · {r.per_day}/day · {r.people} people</div></> : <span className="tiny muted">{r.to_work ? fmtInt(r.to_work) + " claims, no work in 2 weeks" : "nothing to work"}</span>}</td>
+              <td className="small">{r.days_to_clear != null ? <><b className={r.days_to_clear > 20 ? "red-ink" : r.days_to_clear > 10 ? "amber-ink" : ""}>{plural(r.days_to_clear, "day")}</b><div className="tiny muted">{plural(r.to_work, "claim")} · {r.per_day}/day · {plural(r.people, "person", "people")}</div></> : <span className="tiny muted">{r.to_work ? plural(r.to_work, "claim") + ", no work in 2 weeks" : "nothing to work"}</span>}</td>
               <td className="small">{ago(r.last_inventory)}</td>
             </tr>))}</tbody></table></div></div></>}
         <ClaimsSection compact ctx={ctx} go={go} clientId={clientId} setClientId={setClientId} locId="" setLocId={() => {}} leadId={leadId} leadName={leadName} rangeMs={ms} rangeLabel={rangeText(dr)} />
@@ -6802,7 +6802,7 @@ function ClientView({ ctx, me, go, params }) {
         <div style={{ minWidth: 0 }}>
           <div className="row no-print" style={{ gap: 8, marginBottom: 6 }}><span style={{ minWidth: 260 }}><Combo value={cid} onChange={(v) => { if (v) { setCid(v); setMissing(false); } }} clearable={false} options={active.map((c) => ({ id: c.id, label: c.name + (c.code ? " (" + c.code + ")" : "") }))} /></span></div>
           <h1 style={{ margin: 0 }}>{d ? d.client.name : "Client 360"} {d && d.client.code && <span className="badge ink" style={{ fontSize: 12, verticalAlign: "middle" }}>{d.client.code}</span>}</h1>
-          {d && <div className="sub">{[d.raci && d.raci.a.length ? "Team lead " + d.raci.a.map((p) => p.name).join(", ") : "", d.raci && d.raci.c.length ? "Manager " + d.raci.c.map((p) => p.name).join(", ") : "", d.client.team ? d.client.team + " billers" : "", d.client.locations.join(", ")].filter(Boolean).join(" · ")}</div>}
+          {d && <div className="sub">{[d.raci && d.raci.a.length ? "Team lead " + d.raci.a.map((p) => p.name).join(", ") : "", d.raci && d.raci.c.length ? "Manager " + d.raci.c.map((p) => p.name).join(", ") : "", d.client.team ? plural(d.client.team, "biller") : "", d.client.locations.join(", ")].filter(Boolean).join(" · ")}</div>}
         </div>
         <div className="row no-print" style={{ gap: 8, flexWrap: "wrap" }}><DateRange value={dr} onChange={setDr} label="" /><button className="btn" onClick={() => window.print()} title="Print this page, or save it as a PDF for the client call">⬇ Client call pack (PDF)</button>
           <button className="btn c3-report" onClick={() => go("dashboard", { tab: "report", client_id: cid })} title="The client's report pack, on the Dashboard: its pages, charts and the PDF">Client 360 report ›</button></div>
@@ -6816,15 +6816,15 @@ function ClientView({ ctx, me, go, params }) {
           <Kpi label="Over 90 days" value={<span className={d.ar.over90_pct > d.ar.target ? "red-ink" : "teal-ink"}>{d.ar.over90_pct}%</span>} sub={"target ≤ " + d.ar.target + "% · " + fmtMoney(d.ar.over90)} />
           <Kpi label="SLA score" value={d.sla ? <span className={d.sla.score < 90 ? "amber-ink" : "teal-ink"}>{d.sla.score}%</span> : "–"} sub={d.sla ? <>{monthLabel(d.sla.month)}{d.sla.prev != null ? <> · <span className={"c3-d " + (d.sla.score >= d.sla.prev ? "up" : "dn")}>{d.sla.score >= d.sla.prev ? "▲" : "▼"} {Math.abs(Math.round((d.sla.score - d.sla.prev) * 10) / 10)}</span></> : null}</> : "tick SLA scored below"} />
           <Kpi label={"Collected · " + rangeText(dr)} value={<span className="teal-ink">{fmtMoney(d.collected.amount)}</span>} sub={<>{delta(d.collected.amount, d.collected.prev) || fmtInt(d.collected.n) + " postings"}{d.collected.prev ? " vs the period before" : ""}</>} />
-          <Kpi label="Waiting on client" value={<span className={d.waiting.rows.length ? "amber-ink" : ""}>{fmtMoney(d.waiting.balance)}</span>} sub={d.waiting.rows.length ? d.waiting.rows.length + " requests · oldest " + d.waiting.oldest + " days" : "nothing waiting"} />
-          <Kpi label="Timely filing risk" value={<span className={d.tfl.soon_n || d.tfl.past_n ? "red-ink" : ""}>{fmtMoney(d.tfl.soon_bal)}</span>} sub={d.tfl.soon_n + " claims in 30 days" + (d.tfl.past_n ? " · " + d.tfl.past_n + " past (" + fmtMoney(d.tfl.past_bal) + ")" : "")} />
+          <Kpi label="Waiting on client" value={<span className={d.waiting.rows.length ? "amber-ink" : ""}>{fmtMoney(d.waiting.balance)}</span>} sub={d.waiting.rows.length ? plural(d.waiting.rows.length, "request") + " · oldest " + plural(d.waiting.oldest, "day") : "nothing waiting"} />
+          <Kpi label="Timely filing risk" value={<span className={d.tfl.soon_n || d.tfl.past_n ? "red-ink" : ""}>{fmtMoney(d.tfl.soon_bal)}</span>} sub={plural(d.tfl.soon_n, "claim") + " in 30 days" + (d.tfl.past_n ? " · " + d.tfl.past_n + " past (" + fmtMoney(d.tfl.past_bal) + ")" : "")} />
         </div>
         <div className="c3-g2">
           <div className="card"><div className="row between"><h3 className="c3-h">AR and over-90 · by month</h3><span className="tiny muted">bars: AR balance · line: % over 90 days</span></div>
             {d.trend.length >= 2 ? <><TrendChart trend={d.trend} /><div className="tiny muted">{(() => { const a = d.trend[0], b = d.trend[d.trend.length - 1]; return (b.ar < a.ar ? "AR is falling" : b.ar > a.ar ? "AR is rising" : "AR is flat") + (b.pct > a.pct ? ", and what is left is getting older: the over-90 share went from " + a.pct + "% to " + b.pct + "%." : ", and the over-90 share went from " + a.pct + "% to " + b.pct + "%."); })()}</div></>
               : <Empty>The trend fills in by itself: Brahmastra keeps one reading a day{d.first_snapshot ? " (first on " + fmtDate(d.first_snapshot) + ")" : ""}, and shows one point a month from the second month on.</Empty>}</div>
           <div className="card"><div className="row between"><h3 className="c3-h">Denial and rejection reasons · {rangeText(dr)}</h3><span className="tiny muted">from billers' entries</span></div>
-            {d.reasons_top.length ? <Bars rows={d.reasons_top} labelOf={(r) => r.reason} valueOf={(r) => r.bal} countOf={(r) => r.n} subOf={(r) => fmtInt(r.n) + " claims"} /> : <Empty>No denied or rejected entries in these dates.</Empty>}</div>
+            {d.reasons_top.length ? <Bars rows={d.reasons_top} labelOf={(r) => r.reason} valueOf={(r) => r.bal} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} /> : <Empty>No denied or rejected entries in these dates.</Empty>}</div>
         </div>
         <div className="c3-g2">
           <div className="card"><div className="row between"><h3 className="c3-h">Waiting on the client</h3><span className="tiny muted">chased 3 working days after it is sent to the client</span></div>
@@ -6833,12 +6833,12 @@ function ClientView({ ctx, me, go, params }) {
                 <td className="small">{w.sent ? (w.client_sent_by_name || "") + (w.client_sent_how ? " · " + w.client_sent_how : "") : <span className="badge gray">not sent yet</span>}</td>
                 <td><span className={"badge " + (w.days >= 5 ? "red" : w.days >= 3 ? "amber" : "gray")}>{w.days} day{w.days === 1 ? "" : "s"}{w.chase_at && w.chase_at < Date.now() ? " · chased" : ""}</span></td><td className="mono small">{fmtMoney(w.balance)}</td></tr>)}</tbody></table></div>
               : <Empty>Nothing is waiting on the client.</Empty>}
-            <div className="tiny muted mt8">{d.waiting.reply ? "Average client reply, last 90 days: " + d.waiting.reply.days + " days (" + d.waiting.reply.n + " answered)" : "Reply times show once the client answers a few requests."}{d.waiting.reply_all ? " · all clients: " + d.waiting.reply_all.days + " days" : ""}</div></div>
+            <div className="tiny muted mt8">{d.waiting.reply ? "Average client reply, last 90 days: " + plural(d.waiting.reply.days, "day") + " (" + d.waiting.reply.n + " answered)" : "Reply times show once the client answers a few requests."}{d.waiting.reply_all ? " · all clients: " + d.waiting.reply_all.days + " days" : ""}</div></div>
           <div className="card"><h3 className="c3-h">Team and follow-through · {rangeText(dr)}</h3>
             <div className="c3-line"><span title="Client escalations in the Escalation tracker">Client escalations open</span><span><b>{d.escalations.open}</b> {d.escalations.late ? <span className="badge red">{d.escalations.late} over 24 h</span> : null}</span></div>
             <div className="c3-line"><span>Missed tasks · AR</span><span><b>{d.missed.ar}</b> <span className="tiny muted">allocated, not worked</span></span></div>
             <div className="c3-line"><span>Missed tasks · posting / submission</span><span><b>{d.missed.posting + d.missed.submission}</b> <span className="tiny muted">past the TAT</span></span></div>
-            <div className="c3-line"><span>Entries made</span><span><b>{fmtInt(d.worked.entries)}</b> <span className="tiny muted">by {d.worked.people} people</span></span></div>
+            <div className="c3-line"><span>Entries made</span><span><b>{fmtInt(d.worked.entries)}</b> <span className="tiny muted">by {plural(d.worked.people, "person", "people")}</span></span></div>
             <div className="c3-line"><span>Over 120 days</span><span><b>{fmtMoney(d.ar.over120)}</b></span></div>
             {d.raci && <div className="tiny muted mt8">RACI: R {d.raci.r.slice(0, 2).map((p) => p.name).join(", ")}{d.raci.r.length > 2 ? " +" + (d.raci.r.length - 2) : ""} · A {d.raci.a.map((p) => p.name).join(", ") || "–"} · C {d.raci.c.map((p) => p.name).join(", ") || "–"} · I {d.raci.i.map((p) => p.name).join(", ")} <button className="btn link sm no-print" onClick={() => go("raci")}>edit</button></div>}</div>
         </div>
@@ -7122,11 +7122,11 @@ function QualityPage({ ctx, me, onHow, lockScope }) {
       </div>
       <div className="rh-status">
         <span><i className={"rh-dot" + (done && done.n ? "" : done ? " wait" : " off")} />{done && done.n ? <>Production from Brahmastra · {fmtInt(done.n)} {done.n === 1 ? "entry" : "entries"} · {done.at}</> : done ? "No Brahmastra entries for these dates" : busy ? "Loading Brahmastra's production…" : "Production loads by itself"}</span>
-        <label className="check small" style={{ gap: 6 }}><input type="checkbox" checked={f.roster} onChange={(e) => setF({ ...f, roster: e.target.checked })} />{done && done.people ? <>Roster · {fmtInt(done.people)} people</> : "Load the team roster too"}</label>
+        <label className="check small" style={{ gap: 6 }}><input type="checkbox" checked={f.roster} onChange={(e) => setF({ ...f, roster: e.target.checked })} />{done && done.people ? <>Roster · {plural(done.people, "person", "people")}</> : "Load the team roster too"}</label>
         <span><i className="rh-dot off" />QA tracker: pick it in the QA Sheet box below, from {rc.folder("QA tracker")}</span>
       </div>
       {done && <div className="alert info mb rh-note"><b>{done.n ? "Already filled from Brahmastra." : "Nothing from Brahmastra for these dates."}</b> {done.n
-        ? <>The Production Sheet below holds Brahmastra's {fmtInt(done.n)} {done.n === 1 ? "entry" : "entries"} for {TE_SCOPES.find(([k]) => k === scope)[1]}, {client ? client.name : "all your clients"}, {rangeText(f.range)}{done.people ? <>, with the roster ({fmtInt(done.people)} people)</> : null}. To use a different file, choose it in the Production Sheet box below; changing the work, client or dates here loads Brahmastra's again.</>
+        ? <>The Production Sheet below holds Brahmastra's {fmtInt(done.n)} {done.n === 1 ? "entry" : "entries"} for {TE_SCOPES.find(([k]) => k === scope)[1]}, {client ? client.name : "all your clients"}, {rangeText(f.range)}{done.people ? <>, with the roster ({plural(done.people, "person", "people")})</> : null}. To use a different file, choose it in the Production Sheet box below; changing the work, client or dates here loads Brahmastra's again.</>
         : <>Choose a Production Sheet in the box below, or change the dates here.</>}</div>}
       <EmbedPanel frame={frame} frameRef={frameRef} title="Internal reports" onLoad={() => setDone(null)} />
     </div>
@@ -7421,9 +7421,9 @@ function crBuildInventory(c) {
   const red = amtPrev ? 1 - amtCur / amtPrev : null;
   const o90 = crOverShare(curSet, 91), o90p = crOverShare(prevSet, 91);
   const kpis = [
-    crKpi(prevLabel, crF.money(amtPrev, 0), { sub: `${crF.int(nPrev)} claims` }),
+    crKpi(prevLabel, crF.money(amtPrev, 0), { sub: crPl(nPrev, "claim") }),
     crKpi(red != null && red >= 0 ? "Reduction" : "Change", red == null ? "–" : crF.pct(Math.abs(red), 1), { sub: red == null ? "" : `${crF.money(Math.abs(amtPrev - amtCur), 0)} ${red >= 0 ? "off the open AR" : "added"}${nPrev !== nCur ? " · " + crPl(Math.abs(nPrev - nCur), "claim") : ""}`, accent: true }),
-    crKpi(curLabel, crF.money(amtCur, 0), { sub: `${crF.int(nCur)} claims`, delta: twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK }),
+    crKpi(curLabel, crF.money(amtCur, 0), { sub: crPl(nCur, "claim"), delta: twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK }),
     crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: o90p == null ? "of the open balance" : `was ${crF.pct(o90p, 1)}`, delta: o90 != null && o90p != null ? { cur: o90, prev: o90p, diff: o90 - o90p, pct: null, pts: true } : null, upGood: false }),
   ];
   const bP = crAgg(prevSet, "bucket", ds, { measure: "amount" }), bC = crAgg(curSet, "bucket", ds, { measure: "amount" }), bPc = crAgg(prevSet, "bucket", ds), bCc = crAgg(curSet, "bucket", ds);
@@ -7441,8 +7441,8 @@ function crBuildInventory(c) {
   if (moves.length) cards.push({ id: "inv.moves", title: "Where the claims went", sub: `Claims open at ${prevLabel.replace(/^AR · /, "")}, by their latest step · AR close: closed by AR or sent for posting · a submitted claim comes back to AR for follow-up`, cols: 12, type: "table",
     head: ["", ...moves.map((x) => x.label)], rows: [["Claims", ...moves.map((x) => crF.int(x.n))], ["Amount", ...moves.map((x) => crF.money(x.amt, 0))]] });
   const ins = [], pw = crPrevWord(R);
-  if (red != null) ins.push(twoSnapshots ? `The AR inventory ${red >= 0 ? "came down" : "went up"} by ${crF.pct(Math.abs(red), 0)} against the ${pw}: ${crF.money(amtPrev, 0)} (${crF.int(nPrev)} claims) to ${crF.money(amtCur, 0)} (${crF.int(nCur)} claims).`
-    : `Of the ${crF.money(amtPrev, 0)} received (${crF.int(nPrev)} claims), ${crF.money(amtPrev - amtCur, 0)} has been closed and ${crF.money(amtCur, 0)} across ${crF.int(nCur)} claims is still open, a ${crF.pct(Math.max(0, red), 0)} reduction.`);
+  if (red != null) ins.push(twoSnapshots ? `The AR inventory ${red >= 0 ? "came down" : "went up"} by ${crF.pct(Math.abs(red), 0)} against the ${pw}: ${crF.money(amtPrev, 0)} (${crPl(nPrev, "claim")}) to ${crF.money(amtCur, 0)} (${crPl(nCur, "claim")}).`
+    : `Of the ${crF.money(amtPrev, 0)} received (${crPl(nPrev, "claim")}), ${crF.money(amtPrev - amtCur, 0)} has been closed and ${crF.money(amtCur, 0)} across ${crPl(nCur, "claim")} is still open, a ${crF.pct(Math.max(0, red), 0)} reduction.`);
   // with the "Where the claims went" table, two lighter lines give way so the page prints at a readable size
   const cnt = crDelta(nCur, nPrev); if (cnt && cnt.diff && twoSnapshots && !moves.length) ins.push(`Claim count ${cnt.diff >= 0 ? "rose" : "fell"} from ${crF.int(nPrev)} to ${crF.int(nCur)} (${crPl(Math.abs(cnt.diff), "claim")} ${cnt.diff > 0 ? "more" : "fewer"}), so the average open claim is now ${crF.money(nCur ? amtCur / nCur : 0, 0)}${nPrev ? ` against ${crF.money(amtPrev / nPrev, 0)} before` : ""}.`);
   const cntOf = (k) => (redCnt.find((x) => x.key === k) || {}).value || 0;
@@ -7460,15 +7460,15 @@ function crBuildInventoryNow(c, ds, curSet, noPrev) {
   const R = c.R; if (!ds) return null;
   const amt = crSum(curSet, (r) => r.amount), n = crN(curSet), o90 = crOverShare(curSet, 91), o120 = crOverShare(curSet, 121);
   const bC = crAgg(curSet, "bucket", ds, { measure: "amount" }); crMarkSel(bC, c.sel.bucket);
-  const kpis = [crKpi("Open AR", crF.money(amt, 0), { sub: `${crF.int(n)} claims`, accent: true }),
+  const kpis = [crKpi("Open AR", crF.money(amt, 0), { sub: crPl(n, "claim"), accent: true }),
     crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: `${crF.money(crOwed(curSet, 91), 0)} of the money owed`, upGood: false })];
   const cards = [{ id: "inv.bucket.now", title: "Aging of the open AR", sub: "Balance by age of claim", cols: 12, type: "col", dim: "bucket", dimLabel: "Aging bucket", items: bC, measure: "amount", measureLabel: "Amount",
     fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 14 }];
-  const ins = [`The open AR is ${crF.money(amt, 0)} across ${crF.int(n)} claims.`];
+  const ins = [`The open AR is ${crF.money(amt, 0)} across ${crPl(n, "claim")}.`];
   ins.push(noPrev ? "There is no month-end inventory before this one to compare with: the reduction shows from the next report." : "Compare is off: this page shows the open AR only.");
   const top = bC.slice().sort((a, b) => b.value - a.value)[0]; if (top) ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of the open balance.`);
   if (o120) ins.push(`${crF.pct(o120, 0)} of the money owed is older than 120 days; timely filing and appeal limits make this the priority slice.`);
-  return { title: "Inventory analysis", headline: `${crF.money(amt, 0)} open across ${crF.int(n)} claims`, sub: `Open AR by age of claim · ${R.client}`, watermark: "INVENTORY", kpis, cards, insights: ins,
+  return { title: "Inventory analysis", headline: `${crF.money(amt, 0)} open across ${crPl(n, "claim")}`, sub: `Open AR by age of claim · ${R.client}`, watermark: "INVENTORY", kpis, cards, insights: ins,
     slicers: ["payerKey", "bucket", "purviewStatus", "action"].filter((f) => curSet.some((r) => r[f])), claims: crClaims(ds, ds.cells ? [] : curSet, "inventory"), unfiltered: true };
 }
 function crBuildInventory2(c) {
@@ -7482,7 +7482,7 @@ function crBuildInventory2(c) {
   const statusField = curSet.some((r) => r.purviewStatus) ? "purviewStatus" : curSet.some((r) => r.pmsStatus) ? "pmsStatus" : "status";
   const stAll = crAgg(curSet, statusField, ds, { measure: "amount" }), stItems = crFold(stAll, 6); crMarkSel(stItems, c.sel[statusField]);
   const actItems = crAgg(curSet, "action", ds, { measure: "amount" }); crMarkSel(actItems, c.sel.action);
-  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: `${crF.int(crN(curSet))} claims`, accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold ${share80} of the balance` : "" })];
+  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: crPl(crN(curSet), "claim"), accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold ${share80} of the balance` : "" })];
   if (payerItems[0]) kpis.push(crKpi("Largest payer", crF.pct(payerItems[0].share, 0), { sub: payerItems[0].label }));
   if (stAll[0]) kpis.push(crKpi("Top status", crF.pct(stAll[0].share, 0), { sub: stAll[0].label }));
   const cards = [
@@ -7495,9 +7495,9 @@ function crBuildInventory2(c) {
   // the real share the top payers hold (88%, not the 80% line they cross), so it matches the chart and the amount
   const top80 = payerItems.filter((x) => x.emph);
   if (payerItems.length) ins.push(`${crListNames(top80)} ${n80 === 1 ? "holds" : "hold"} ${crF.pct(crSum(top80, (x) => x.share), 0)} of the open balance (${crF.money(crSum(top80, (x) => x.amount), 0)}), so payer level follow up with ${n80 === 1 ? "this payer" : "these payers"} moves most of the money.`);
-  if (payerItems[0]) ins.push(`${payerItems[0].label} alone carries ${crF.pct(payerItems[0].share, 0)} (${crF.int(payerItems[0].count)} claims, ${crF.money(payerItems[0].amount, 0)})${payerItems[1] ? `; ${payerItems[1].label} follows with ${crF.pct(payerItems[1].share, 0)}` : ""}.`);
+  if (payerItems[0]) ins.push(`${payerItems[0].label} alone carries ${crF.pct(payerItems[0].share, 0)} (${crPl(payerItems[0].count, "claim")}, ${crF.money(payerItems[0].amount, 0)})${payerItems[1] ? `; ${payerItems[1].label} follows with ${crF.pct(payerItems[1].share, 0)}` : ""}.`);
   if (stAll.length) ins.push(`Status mix: ${stAll.slice(0, 4).map((s) => `${s.label} ${crF.pct(s.share, 0)}`).join(", ")}.`);
-  const denied = stAll.find((s) => /deni/.test(s.key)); if (denied) ins.push(`${crF.money(denied.amount, 0)} (${crF.int(denied.count)} claims) sits in denied status and needs appeals or corrected claims before it can be collected.`);
+  const denied = stAll.find((s) => /deni/.test(s.key)); if (denied) ins.push(`${crF.money(denied.amount, 0)} (${crPl(denied.count, "claim")}) sits in denied status and needs appeals or corrected claims before it can be collected.`);
   if (actItems[0]) ins.push(`The most common action is ${actItems[0].label} (${crF.pct(actItems[0].share, 0)} of the balance)${actItems[1] ? `, then ${actItems[1].label} (${crF.pct(actItems[1].share, 0)})` : ""}.`);
   if (twoSnapshots) { ins.push(...crMovers(R, curSet, prevSet, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "inventory balance" })); ins.push(...crMovers(R, curSet, prevSet, statusField, ds, { measure: "amount", noun: "status", share: false, newItems: true })); }
   const headline = payerItems[0] ? `${payerItems[0].label} holds ${crF.pct(payerItems[0].share, 0)} of the open balance` : "Inventory breakdown";
@@ -7528,13 +7528,13 @@ function crBuildSubmission(c) {
   crAddCard(cards, crCardBar(c, "carrier", "Submission mode", { role: "submission", cols: 4, measure: "amount", rowFilter: only, sub: "Charges submitted" }));
   if (notSub.length) { const reasons = crAgg(notSub, "comment", { labels: { comment: {} } }).slice(0, 5); cards.push({ id: "sub.notsub", title: "Not submitted: reasons", sub: `${crPl(notSub.length, "claim")} could not be submitted`, cols: 12, type: "table", rows: reasons.map((x) => [crTrunc(x.key || "No reason given", 120), crF.int(x.count), crF.money(x.amount, 0)]), head: ["Reason", "Claims", "Charges"] }); }
   const payers = crAgg(submitted, "payerKey", ds), top = payers[0], ins = [], pw = crPrevWord(R);
-  ins.push(`${crF.int(submitted.length)} claims worth ${crF.money(amt, 0)} were submitted in ${crRangeLabel(c.range)}${wd ? `, an average of ${crPerDay(submitted.length, wd)} claims per working day` : ""}${submitted.length ? ` and ${crF.money(amt / submitted.length, 0)} per claim` : ""}.`);
-  if (top) ins.push(`${top.label} received ${crF.pct(top.share, 0)} of submissions (${crF.int(top.count)} claims)${payers[1] ? `, followed by ${payers[1].label} at ${crF.pct(payers[1].share, 0)}` : ""}.`);
-  if (oldest && newest) { const lag = submitted.filter((r) => r.dos && lagOf(r) > 45).length; ins.push(`Service dates range from ${crF.date(oldest)} to ${crF.date(newest)}; ${lag ? `${crF.int(lag)} claims (${crF.pct(lag / submitted.length, 0)}) were over 45 days old when billed, which eats into filing limits` : "everything was billed within 45 days of service"}.`); }
+  ins.push(`${crPl(submitted.length, "claim")} worth ${crF.money(amt, 0)} ${submitted.length === 1 ? "was" : "were"} submitted in ${crRangeLabel(c.range)}${wd ? `, an average of ${crPerDay(submitted.length, wd)} claims per working day` : ""}${submitted.length ? ` and ${crF.money(amt / submitted.length, 0)} per claim` : ""}.`);
+  if (top) ins.push(`${top.label} received ${crF.pct(top.share, 0)} of submissions (${crPl(top.count, "claim")})${payers[1] ? `, followed by ${payers[1].label} at ${crF.pct(payers[1].share, 0)}` : ""}.`);
+  if (oldest && newest) { const lag = submitted.filter((r) => r.dos && lagOf(r) > 45).length; ins.push(`Service dates range from ${crF.date(oldest)} to ${crF.date(newest)}; ${lag ? `${crPl(lag, "claim")} (${crF.pct(lag / submitted.length, 0)}) ${lag === 1 ? "was" : "were"} over 45 days old when billed, which eats into filing limits` : "everything was billed within 45 days of service"}.`); }
   if (prevSub) { const h = crHeadline(R, "Submissions", submitted.length, prevSub.length, crF.int, { plural: true }); if (h) ins.push(h + (prevSub.length ? ` Charges went from ${crF.money(crSum(prevSub, (r) => r.amount), 0)} to ${crF.money(amt, 0)}.` : "")); ins.push(...crMovers(R, submitted, prevSub, "payerKey", ds, { noun: "payer", shareOf: "submissions" })); }
-  if (notSub.length) { const r0 = crAgg(notSub, "comment", { labels: { comment: {} } })[0]; ins.push(`${crF.int(notSub.length)} claims (${crF.money(crSum(notSub, (r) => r.amount), 0)}) are still not submitted${r0 && r0.key ? `; the main blocker is "${crTrunc(r0.key, 90)}"` : ""}.`); }
+  if (notSub.length) { const r0 = crAgg(notSub, "comment", { labels: { comment: {} } })[0]; ins.push(`${crPl(notSub.length, "claim")} (${crF.money(crSum(notSub, (r) => r.amount), 0)}) ${notSub.length === 1 ? "is" : "are"} still not submitted${r0 && r0.key ? `; the main blocker is "${crTrunc(r0.key, 90)}"` : ""}.`); }
   if (dup.length) ins.push(`${crF.int(dup.length)} duplicate claims were identified and held back from submission.`);
-  return { title: "Submission", headline: `${crF.int(submitted.length)} claims submitted, ${crF.money(amt, 0)} billed`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "SUBMISSION", kpis, cards, insights: ins,
+  return { title: "Submission", headline: `${crPl(submitted.length, "claim")} submitted, ${crF.money(amt, 0)} billed`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "SUBMISSION", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "workBy"].filter((f) => rowsAll.some((r) => r[f])), claims: crClaims(ds, all, "submission") };
 }
 function crBuildRejection(c) {
@@ -7554,14 +7554,14 @@ function crBuildRejection(c) {
   crAddCard(cards, crCardBar(c, "status", "Rejection reasons", { role: "rejection", cols: 6, emph: true, maxRows: 10, sub: "Top 80% of rejections highlighted" }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action wise breakdown", { role: "rejection", cols: 12, maxRows: 6 }));
   const ins = [], reasons = crAgg(all, "status", ds), acts = crAgg(all, "action", ds);
-  ins.push(`${crF.int(all.length)} claims were rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} in the period (some were submitted earlier)` : ""}.`);
+  ins.push(`${crPl(all.length, "claim was", "claims were")} rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} in the period (some were submitted earlier)` : ""}.`);
   if (reasons[0]) ins.push(`The leading rejection reason is ${reasons[0].label} (${crF.pct(reasons[0].share, 0)})${reasons[1] ? `, followed by ${reasons[1].label} (${crF.pct(reasons[1].share, 0)})` : ""}.`);
   if (ds.dateField) { const byDay = new Map(); for (const r of all) { const d = r[ds.dateField]; if (!d) continue; const k = crF.iso(d); let e = byDay.get(k); if (!e) { e = { d, rows: [] }; byDay.set(k, e); } e.rows.push(r); }
     const days = [...byDay.values()].sort((a, b) => b.rows.length - a.rows.length || a.d - b.d).slice(0, 3);
     if (days.length) ins.push(`Most rejections came on ${days.map((e) => `${crF.date(e.d)} (${crF.int(e.rows.length)}: ${crAgg(e.rows, "status", ds).slice(0, 2).map((x) => `${x.label} ${crF.int(x.count)}`).join(", ")})`).join("; ")}.`); }
   const resub = acts.find((x) => /rebill|resubmit|corrected|sent/.test(x.key)); if (resub) ins.push(`${crF.pct(resub.share, 0)} of rejected claims were already corrected and resubmitted (${resub.label}).`);
   if (prev) { const h = crHeadline(R, "Rejections", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); ins.push(...crMovers(R, all, prev, "status", ds, { noun: "reason", share: false, newItems: true })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { noun: "payer", shareOf: "rejections" })); }
-  return { title: "Rejections", headline: `${crF.int(all.length)} claims rejected${rate != null ? `, ${crF.pct(rate, 1)} of submissions` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)}${ds.derivedFrom ? " · from the AR work entries" : ""}`, watermark: "REJECTION", kpis, cards, insights: ins,
+  return { title: "Rejections", headline: `${crPl(all.length, "claim")} rejected${rate != null ? `, ${crF.pct(rate, 1)} of submissions` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)}${ds.derivedFrom ? " · from the AR work entries" : ""}`, watermark: "REJECTION", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "rejection") };
 }
 function crBuildPayment(c) {
@@ -7602,10 +7602,10 @@ function crBuildAR(c) {
   const paid = all.filter((r) => paidIds.has(r.id || r.invoice || r._i)), den = all.filter((r) => denIds.has(r.id || r.invoice || r._i));
   const pPaidN = prevE ? crIdsOf(prevE.filter(crIsPaid)).size : 0, pDenN = prevE ? crIdsOf(prevE.filter(crIsDenied)).size : 0;
   const kpis = [
-    crKpi("Claims worked", crF.int(all.length), { sub: entries.length !== all.length ? `${crF.int(entries.length)} entries` : "", delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
+    crKpi("Claims worked", crF.int(all.length), { sub: entries.length !== all.length ? crPl(entries.length, "entry", "entries") : "", delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
     crKpi("Amount worked", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), fmt: crF.moneyK }),
-    crKpi("Confirmed paid", crF.pct(crPctOf(paid.length, all.length), 0), { sub: `${crF.int(paid.length)} claims`, delta: prev ? crPtDelta(crPctOf(paid.length, all.length), crPctOf(pPaidN, prev.length)) : null }),
-    crKpi("Denied", crF.pct(crPctOf(den.length, all.length), 0), { sub: `${crF.int(den.length)} claims`, upGood: false, delta: prev ? crPtDelta(crPctOf(den.length, all.length), crPctOf(pDenN, prev.length)) : null }),
+    crKpi("Confirmed paid", crF.pct(crPctOf(paid.length, all.length), 0), { sub: crPl(paid.length, "claim"), delta: prev ? crPtDelta(crPctOf(paid.length, all.length), crPctOf(pPaidN, prev.length)) : null }),
+    crKpi("Denied", crF.pct(crPctOf(den.length, all.length), 0), { sub: crPl(den.length, "claim"), upGood: false, delta: prev ? crPtDelta(crPctOf(den.length, all.length), crPctOf(pDenN, prev.length)) : null }),
   ];
   if (wd) kpis.push(crKpi("Per working day", crPerDay(all.length, wd), { sub: `${wd} working days${crSoFar(c.range) < c.range.end ? " so far" : ""}` }));
   const cards = [];
@@ -7614,7 +7614,7 @@ function crBuildAR(c) {
   crAddCard(cards, crCardBar(c, "action", "Action required", { role: "worked", cols: 6, measure: "amount", maxRows: 8 }), 1);
   crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "worked", cols: 6, measure: "amount", prev: true, maxRows: 8 }), 1);
   const ins = [], pw = crPrevWord(R);
-  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crF.int(entries.length)} entries` : ""}.`);
+  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} ${all.length === 1 ? "was" : "were"} worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crPl(entries.length, "entry", "entries")}` : ""}.`);
   const outcomes = crAgg(all, "purviewStatus", ds); if (outcomes.length) ins.push(`Outcomes: ${outcomes.slice(0, 4).map((o) => `${o.label} ${crF.pct(o.share, 0)}`).join(", ")}.`);
   const buckets = crAgg(all, "bucket", ds, { measure: "amount" }), old = buckets.filter((x) => x.lo >= 181); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the amount worked sits in claims older than 180 days; timely filing and appeal limits are the main risk there.`);
   const acts = crAgg(all, "action", ds); if (acts[0]) ins.push(`The most common action was ${acts[0].label} (${crF.pct(acts[0].share, 0)})${acts[1] ? `, then ${acts[1].label} (${crF.pct(acts[1].share, 0)})` : ""}.`);
@@ -7625,7 +7625,7 @@ function crBuildAR(c) {
     if (pPaid != null && cPaid != null) ins.push(`Confirmed paid moved from ${crF.pct(pPaid, 0)} to ${crF.pct(cPaid, 0)} of claims worked, and denied from ${crF.pct(pDen, 0)} to ${crF.pct(cDen, 0)}.`);
     ins.push(...crMovers(R, all, prev, "bucket", ds, { noun: "aging bucket", share: false })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "amount worked" }));
   }
-  return { title: "AR production", headline: `${crF.int(all.length)} claims worked, ${crF.pct(crPctOf(paid.length, all.length), 0)} confirmed paid`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "AR", kpis, cards, insights: ins,
+  return { title: "AR production", headline: `${crPl(all.length, "claim")} worked, ${crF.pct(crPctOf(paid.length, all.length), 0)} confirmed paid`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "AR", kpis, cards, insights: ins,
     slicers: ["payerKey", "bucket", "purviewStatus", "action", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "worked") };
 }
 const crPtDelta = (cur, prev) => (cur == null || prev == null ? null : { cur, prev, diff: cur - prev, pct: null, pts: true });
@@ -7645,7 +7645,7 @@ function crBuildDenials(c) {
   const kpis = [
     crKpi("Denied claims", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
     crKpi("Denied amount", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), upGood: false, fmt: crF.moneyK }),
-    crKpi("Denial rate", rate == null ? "–" : crF.pct(rate, 1), { sub: workedN ? `of ${crF.int(workedN)} claims worked` : "", upGood: false, delta: prev && prevWorkedN ? crPtDelta(rate, prev.length / prevWorkedN) : null }),
+    crKpi("Denial rate", rate == null ? "–" : crF.pct(rate, 1), { sub: workedN ? `of ${crPl(workedN, "claim")} worked` : "", upGood: false, delta: prev && prevWorkedN ? crPtDelta(rate, prev.length / prevWorkedN) : null }),
   ];
   const reasons = crEmph80(crAgg(all, "status", ds, { measure: "amount" })); crMarkSel(reasons, c.sel.status);
   const tops = crTopDenials(reasons), cards = [];
@@ -7654,15 +7654,15 @@ function crBuildDenials(c) {
   crAddCard(cards, crCardBar(c, "payerKey", "Payer wise breakdown", { role: "denial", cols: 6, measure: "amount", prev: true, maxRows: 9 }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action taken on denials", { role: "denial", cols: 12, measure: "amount", maxRows: 6 }));
   const ins = [];
-  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were denied in ${crRangeLabel(c.range)}${rate != null ? `, ${crF.pct(rate, 1)} of the claims worked` : ""}.`);
-  if (reasons[0]) ins.push(`${reasons[0].label} is the biggest denial reason at ${crF.money(reasons[0].amount, 0)} (${crF.pct(reasons[0].share, 0)} of denied dollars, ${crF.int(reasons[0].count)} claims).`);
+  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} ${all.length === 1 ? "was" : "were"} denied in ${crRangeLabel(c.range)}${rate != null ? `, ${crF.pct(rate, 1)} of the claims worked` : ""}.`);
+  if (reasons[0]) ins.push(`${reasons[0].label} is the biggest denial reason at ${crF.money(reasons[0].amount, 0)} (${crF.pct(reasons[0].share, 0)} of denied dollars, ${crPl(reasons[0].count, "claim")}).`);
   if (tops.rows.length) ins.push(`${tops.label === "Top 80%" ? `${tops.rows.length} reasons explain ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount` : `The ${tops.label.toLowerCase()} reasons cover ${crF.pct(crSum(tops.rows, (x) => x.share), 0)} of the denied amount`}: ${crListNames(tops.rows, 5)}. The RCA page covers each of them.`);
   const payers = crAgg(all, "payerKey", ds, { measure: "amount" }); if (payers[0]) ins.push(`${payers[0].label} accounts for ${crF.pct(payers[0].share, 0)} of denied dollars.`);
   const acts = crAgg(all, "action", ds), appeal = acts.filter((x) => /appeal|recon|reprocess|corrected|rebill/.test(x.key)); if (appeal.length) ins.push(`${crF.pct(crSum(appeal, (x) => x.share), 0)} of denials have already been challenged (${crListNames(appeal, 3)}).`);
   const adj = acts.filter((x) => /adjust|write ?off/.test(x.key)); if (adj.length) ins.push(`${crF.pct(crSum(adj, (x) => x.share), 0)} were sent for adjustment as non collectible.`);
   if (prev) { const h = crHeadline(R, "Denied claims", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h + ` Denied dollars went from ${crF.money(crSum(prev, (r) => r.amount), 0)} to ${crF.money(amt, 0)}.`);
     ins.push(...crMovers(R, all, prev, "status", ds, { measure: "amount", noun: "reason", share: false, newItems: true })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "denied dollars" })); }
-  return { title: "Denials", headline: `${crF.int(all.length)} claims denied, ${crF.money(amt, 0)}${rate != null ? ` (${crF.pct(rate, 1)} of claims worked)` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)} · from the AR work entries`, watermark: "DENIALS", kpis, cards, insights: ins,
+  return { title: "Denials", headline: `${crPl(all.length, "claim")} denied, ${crF.money(amt, 0)}${rate != null ? ` (${crF.pct(rate, 1)} of claims worked)` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)} · from the AR work entries`, watermark: "DENIALS", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "bucket", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "denial") };
 }
 function crBuildRCA(c) {
@@ -7673,7 +7673,7 @@ function crBuildRCA(c) {
     return { key: x.key, reason: x.label, count: x.count, amount: x.amount, share: x.share, prevCount: p ? p.count : (prevAgg ? 0 : null), prevAmount: p ? p.amount : (prevAgg ? 0 : null), payers: payers.slice(0, 2).map((y) => `${y.label} ${crF.pct(y.share, 0)}`).join(", "), actions: crAgg(sub, "action", ds).slice(0, 1).map((y) => y.label).join(", ") }; });
   const covered = crSum(tops.rows, (x) => x.share), ins = [];
   ins.push(`This table covers ${tops.basis}${tops.rows.length ? `, ${crF.pct(covered, 0)} of the ${crF.money(crSum(all, (r) => r.amount), 0)} denied in ${crRangeLabel(c.range)}` : ""}. Claim counts, amounts and payer mix come from the data; the Issue / RCA and Mitigation plan are written by our team.`);
-  if (prev) for (const r of rows) { if (r.prevCount == null) continue; const d = crDelta(r.count, r.prevCount); if (!d) continue; if (r.prevCount === 0) ins.push(`${r.reason} is new this period (${crF.int(r.count)} claims, ${crF.money(r.amount, 0)}).`); else if (Math.abs(d.pct) >= 0.25) ins.push(`${r.reason} ${d.diff > 0 ? "rose" : "fell"} ${crF.pct(Math.abs(d.pct), 0)} against the ${crPrevWord(R)} (${crF.int(r.prevCount)} to ${crF.int(r.count)} claims).`); }
+  if (prev) for (const r of rows) { if (r.prevCount == null) continue; const d = crDelta(r.count, r.prevCount); if (!d) continue; if (r.prevCount === 0) ins.push(`${r.reason} is new this period (${crPl(r.count, "claim")}, ${crF.money(r.amount, 0)}).`); else if (Math.abs(d.pct) >= 0.25) ins.push(`${r.reason} ${d.diff > 0 ? "rose" : "fell"} ${crF.pct(Math.abs(d.pct), 0)} against the ${crPrevWord(R)} (${crF.int(r.prevCount)} to ${crPl(r.count, "claim")}).`); }
   return { title: "Top denials: RCA & mitigation plan", headline: tops.rows.length ? `${tops.rows.length === 1 ? "One reason makes" : crF.int(tops.rows.length) + " reasons make"} up ${crF.pct(covered, 0)} of denied dollars` : "No denials in this period",
     sub: `${R.client} · ${crRangeLabel(c.range)} · ${tops.rows.length ? tops.label + " denials by denied dollars" : ""}`, watermark: "RCA", kpis: [], cards: [{ id: "rca.table", title: "", cols: 12, type: "rca", rows, hasPrev: !!prev }], insights: ins, slicers: [] };
 }
@@ -7684,7 +7684,7 @@ function crBuildCA(c) {
     crKpi("Claims needing the client", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
     crKpi("Amount on hold", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), upGood: false, fmt: crF.moneyK }),
   ];
-  const old = all.filter((r) => r.bucketLo >= 121); if (all.length) kpis.push(crKpi("Older than 120 days", crF.pct(old.length / all.length, 0), { sub: `${crF.int(old.length)} claims at filing risk`, upGood: false }));
+  const old = all.filter((r) => r.bucketLo >= 121); if (all.length) kpis.push(crKpi("Older than 120 days", crF.pct(old.length / all.length, 0), { sub: `${crPl(old.length, "claim")} at filing risk`, upGood: false }));
   const open = all.filter((r) => r.open === true); if (open.length) kpis.push(crKpi("Still open", crF.int(open.length), { sub: "requests waiting on you" }));
   const cards = [];
   crAddCard(cards, crCardBar(c, "status", "What is needed", { role: "clientAssistance", cols: 6, measure: "amount", maxRows: 9 }), 1);
@@ -7692,12 +7692,12 @@ function crBuildCA(c) {
   crAddCard(cards, crCardBar(c, "payerKey", "Payer wise breakdown", { role: "clientAssistance", cols: 6, measure: "amount", type: "col" }), 1);
   crAddCard(cards, crCardBar(c, "bucket", "Aging of pending items", { role: "clientAssistance", cols: 6, type: "col" }), 1);
   const ins = [];
-  ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} needed input from the client in ${crRangeLabel(c.range)}${open.length ? `; ${crF.int(open.length)} are still waiting` : ""}.`);
-  const st = crAgg(all, "status", ds, { measure: "amount" }); if (st[0]) ins.push(`The largest group is ${st[0].label}: ${crF.int(st[0].count)} claims, ${crF.money(st[0].amount, 0)}.`);
+  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} needed input from the client in ${crRangeLabel(c.range)}${open.length ? `; ${crF.int(open.length)} are still waiting` : ""}.`);
+  const st = crAgg(all, "status", ds, { measure: "amount" }); if (st[0]) ins.push(`The largest group is ${st[0].label}: ${crPl(st[0].count, "claim")}, ${crF.money(st[0].amount, 0)}.`);
   const act = crAgg(all, "action", ds); if (act[0]) ins.push(`Where they stand: ${act.slice(0, 3).map((x) => `${x.label} (${crF.int(x.count)})`).join(", ")}.`);
   if (old.length) ins.push(`${crF.int(old.length)} of these claims are already past 120 days from the date of service; a response this ${R.range.kind === "week" ? "week" : "month"} avoids timely filing and appeal limit losses.`);
   if (prev) { const h = crHeadline(R, "Client assistance items", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); ins.push(...crMovers(R, all, prev, "status", ds, { noun: "status", share: false, newItems: true })); }
-  return { title: "Client assistance", headline: `${crF.int(all.length)} claims need the client, ${crF.money(amt, 0)} on hold`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "CLIENT", kpis, cards, insights: ins,
+  return { title: "Client assistance", headline: `${crPl(all.length, "claim needs", "claims need")} the client, ${crF.money(amt, 0)} on hold`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "CLIENT", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "bucket", "dept"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "clientAssistance") };
 }
 /* EV: Third Eye's EV page (verifications, insurance wise, type / status) from the uploaded EV production file */
@@ -7733,11 +7733,11 @@ function crBuildExec(c, raw) {
   const subs = c0.ds("submission") ? c0.rowsAll("submission").filter((r) => crSubState(r) === "submitted") : [], rej = c0.ds("rejection") ? c0.rowsAll("rejection") : [];
   const spark = (raw.trend || []).filter((t) => t.ar != null).map((t) => t.ar);
   const kpis = [
-    crKpi("AR balance", crF.money(amtCur, 0), { sub: inv.twoSnapshots ? `from ${crF.money(amtPrev, 0)}` : `${crF.int(crN(inv.curSet))} claims`, delta: inv.twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK, spark: spark.length >= 3 ? spark : null }),
+    crKpi("AR balance", crF.money(amtCur, 0), { sub: inv.twoSnapshots ? `from ${crF.money(amtPrev, 0)}` : crPl(crN(inv.curSet), "claim"), delta: inv.twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK, spark: spark.length >= 3 ? spark : null }),
     crKpi("Collected", crF.money(coll, 0), { sub: collP != null ? `from ${crF.money(collP, 0)}` : `${crF.int(pay.length)} payment lines`, delta: collP != null ? crDelta(coll, collP) : null, fmt: crF.moneyK }),
     crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: `${crF.money(over(inv.curSet), 0)} of AR`, delta: o90 != null && o90p != null ? crPtDelta(o90, o90p) : null, upGood: false }),
     crKpi("Claims worked", crF.int(wk.length), { sub: wd ? `${crPerDay(wk.length, wd)} a working day` : "", delta: wkP ? crDelta(wk.length, wkP.length) : null, fmt: crF.int }),
-    crKpi("Denial rate", dr == null ? "–" : crF.pct(dr, 1), { sub: `${crF.int(den.length)} claims`, delta: dr != null && drP != null ? crPtDelta(dr, drP) : null, upGood: false }),
+    crKpi("Denial rate", dr == null ? "–" : crF.pct(dr, 1), { sub: crPl(den.length, "claim"), delta: dr != null && drP != null ? crPtDelta(dr, drP) : null, upGood: false }),
     crKpi("Claims submitted", crF.int(subs.length), { sub: subs.length && rej.length <= subs.length ? `${crF.pct(rej.length / subs.length, 1)} rejected · ${crF.money(crSum(subs, (r) => r.amount), 0)} billed` : `${crF.int(rej.length)} rejected${subs.length ? " · " + crF.money(crSum(subs, (r) => r.amount), 0) + " billed" : ""}` }),
   ];
   const ins = [];
@@ -7753,7 +7753,7 @@ function crBuildExec(c, raw) {
   // the focus for the next period, from the numbers (the team edits it)
   const focus = [];
   if (den.length) { const t = crAgg(den, "status", DS.worked, { measure: "amount" })[0]; if (t) focus.push(`Work the ${crF.int(t.count)} "${t.label}" denials (${crF.money(t.amount, 0)}) to appeal or correction.`); }
-  const yearOld = inv.curSet.filter((r) => r.bucketLo >= 361); if (yearOld.length) focus.push(`Clear ${crF.int(crN(yearOld))} claims over 360 days (${crF.money(crSum(yearOld, (r) => r.amount), 0)}) before filing limits close.`);
+  const yearOld = inv.curSet.filter((r) => r.bucketLo >= 361); if (yearOld.length) focus.push(`Clear ${crPl(crN(yearOld), "claim")} over 360 days (${crF.money(crSum(yearOld, (r) => r.amount), 0)}) before filing limits close.`);
   const rejOpen = rej.filter((r) => !/corrected|resubmit/.test(r.action || "")); if (rejOpen.length) focus.push(`Correct and resubmit ${crF.int(rejOpen.length)} rejected claims still open.`);
   if (openN) focus.push(`Close the ${crF.int(openN)} requests waiting on the client${oldest ? " (oldest since " + crF.dateShort(crD(oldest)) + ")" : ""}.`);
   return { title: "Executive summary", headline: `${R.periodName} at a glance`, sub: `${R.client} · ${crRangeLabel(R.range)}${R.compare ? ", compared with the " + crPrevWord(R) : ""}`, watermark: "SUMMARY", kpis, cards: [], insights: ins,
@@ -8526,11 +8526,11 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
         <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : <><i className="rh-dot wait" />Sign in below</>}</div>
       </div>
       <div className="rh-status">
-        {saved ? <span><i className="rh-dot" />{saved.name} · {fmtInt(saved.n)} claims · saved {saved.at} to {saved.folders.join(" and ")}</span>
+        {saved ? <span><i className="rh-dot" />{saved.name} · {plural(saved.n, "claim")} · saved {saved.at} to {saved.folders.join(" and ")}</span>
           : <span><i className="rh-dot off" />{f.client_id ? "AR Inventory goes to " + rc.folder("SLA & KPI") : "Pick a client to put its AR Inventory report in OneDrive"}</span>}
         <span>Then below: Upload from OneDrive, and pick it with the period's other files</span>
       </div>
-      {fed && fed.state === "ok" && <div className="alert info mb rh-note"><b>Already added from Brahmastra.</b> Today's AR Inventory for {fed.client} ({fmtInt(fed.n)} claims, {fed.at}) is in {fed.dName}'s uploads below, matched to its slot for you to check before anything is calculated. To use a different file, upload it in the same box and it takes its place.</div>}
+      {fed && fed.state === "ok" && <div className="alert info mb rh-note"><b>Already added from Brahmastra.</b> Today's AR Inventory for {fed.client} ({plural(fed.n, "claim")}, {fed.at}) is in {fed.dName}'s uploads below, matched to its slot for you to check before anything is calculated. To use a different file, upload it in the same box and it takes its place.</div>}
       {fed && fed.state === "pick" && <div className="alert warn mb rh-note">{fed.dName ? <><b>{fed.dName}</b> is not a Brahmastra client name I can match.</> : null} Pick its client above and its AR Inventory goes into the uploads below by itself.</div>}
       {fed && fed.state === "none" && <div className="alert info mb rh-note">{fed.client} has no open AR in Brahmastra today, so nothing was added. Upload the AR Inventory below if you have it.</div>}
       {fed && fed.state === "error" && <div className="alert warn mb rh-note">The AR Inventory could not be added by itself: {fed.msg}</div>}
@@ -8574,7 +8574,7 @@ function TeamDesk({ ctx, from, to, rangeLabel, fixedUser }) {
     <div className="stack">
       <div className="grid g4">
         <Kpi label="On desks" value={fmtInt(all.filter((r) => r.assigned_to && r.state !== "closed").length)} sub={"allocated, " + rangeLabel} tone="accent" />
-        <Kpi label="Worked" value={fmtInt(count("worked"))} sub={fmtInt(all.reduce((n, r) => n + (r.entries || 0), 0)) + " entries"} tone="good" />
+        <Kpi label="Worked" value={fmtInt(count("worked"))} sub={plural(all.reduce((n, r) => n + (r.entries || 0), 0), "entry", "entries")} tone="good" />
         <Kpi label="Not worked yet" value={fmtInt(count("waiting"))} sub={all.filter((r) => r.st.label === "Follow-up overdue").length + " with the follow-up overdue"} tone={count("waiting") ? "warn" : undefined} />
         <Kpi label="Closed" value={fmtInt(count("closed"))} sub="resolved in the period" />
       </div>
@@ -8904,7 +8904,7 @@ function ReportsView({ ctx, from, to, embedded }) {
           <Kpi label="Entries" value={fmtInt(rows.length)} sub={`${fmtInt(claims)} distinct claims`} tone="accent" />
           <Kpi label="Balance touched" value={fmtMoney(sum(rows.filter((r) => r.kind === "work"), (r) => r.balance))} sub="sum over worked entries" />
           <Kpi label="Resolved now" value={fmtInt(new Set(rows.filter((r) => r.state === "closed").map((r) => r.claim_id || r.id)).size)} sub="claims now closed, each counted once" tone="good" />
-          <Kpi label="Top SAAG status" value={byStatus[0] ? byStatus[0].key : "–"} sub={byStatus[0] ? fmtInt(byStatus[0].n) + " entries · " + fmtMoney(byStatus[0].amt) : ""} />
+          <Kpi label="Top SAAG status" value={byStatus[0] ? byStatus[0].key : "–"} sub={byStatus[0] ? plural(byStatus[0].n, "entry", "entries") + " · " + fmtMoney(byStatus[0].amt) : ""} />
         </div>
       )}
       <div className="card tight">
@@ -9049,7 +9049,7 @@ function QueueView({ ctx, me, go, refreshTasks }) {
           <Combo sm width={140} value={f.saag_bucket} onChange={(v) => set("saag_bucket", v)} placeholder="Any bucket" options={[{ id: "", label: "Any bucket" }, ...BUCKETS4.map((b) => ({ id: b, label: b }))]} />
           <Combo sm width={150} value={f.state} onChange={(v) => set("state", v)} placeholder="Any state" options={[{ id: "", label: "Any state" }, { id: "assigned", label: "Not worked" }, { id: "in_progress", label: "Open now" }, { id: "completed", label: "Worked today" }, { id: "closed", label: "Closed today" }]} />
           {Object.values(f).some((v) => v !== "") && <button className="btn sm link" onClick={() => setF(EMPTY_F)}>clear</button>}
-          <span style={{ flex: 1 }} /><span className="small muted">{fmtInt(rows.length)} claims · {fmtMoney(sum(rows, (r) => r.balance))}</span>
+          <span style={{ flex: 1 }} /><span className="small muted">{plural(rows.length, "claim")} · {fmtMoney(sum(rows, (r) => r.balance))}</span>
         </div>
         <ErrorBox error={list.error} />
         <div className="table-wrap"><table className="t"><thead><tr>{qSort.Th("due", "Due")}{qSort.Th("claim_no", "Claim #")}{qSort.Th("patient", "Patient")}{qSort.Th("payer", "Payer")}{qSort.Th("provider", "Provider")}{qSort.Th("cpt", "CPT")}{qSort.Th("dos", "DOS")}{qSort.Th("age_days", "Age", "r")}{qSort.Th("balance", "Balance", "r")}{qSort.Th("tier", "Tier")}{qSort.Th("file_status", "File status")}{qSort.Th("saag", "SAAG")}{qSort.Th("bucket", "Bucket")}{qSort.Th("follow_up_on", "Follow-up")}{qSort.Th("state", "State")}</tr></thead>

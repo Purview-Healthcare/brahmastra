@@ -202,6 +202,28 @@ const loose = (src) => (src.match(/toLocale(?:Date|Time)?String\((?:undefined|\[
 ok("H-08: no money, number, date or time on the page follows the browser's language (every call names en-US)", loose(SRC) === 0 && /const LOC = "en-US";/.test(SRC), loose(SRC));
 ok("H-08: nor the server's own figures (the demo builds them in the browser): Drishti KPI values and typed counts", loose(fs.readFileSync(REPO + "/worker.js", "utf8")) === 0);
 
+S("Wording: a count of 1 reads in the singular; a team lead is not told to ask their team lead (H-12)");
+ok("H-12: Inventory status: 1 claim is past its follow-up date (and it sits with nobody until a biller gets it again)",
+  /\{plural\(d\.overdue\.n, "claim is", "claims are"\)\} past \{d\.overdue\.n === 1 \? "its" : "their"\} follow-up date/.test(SRC) && /"It sits with nobody until a biller gets it again\."/.test(SRC) && !/claims are past their follow-up date/.test(SRC));
+const sv = fnSrc("SettingsView");
+ok("H-12: Settings for a team lead whose project matches no client: match it when Brahmastra asks, or ask the admin (a biller is still told to ask their team lead)",
+  /me\.role === "supervisor" \? "none matched yet \(match your roster project to its client when Brahmastra asks after you sign in, or ask the admin\)" : "none matched yet \(ask your team lead/.test(sv));
+ok("H-12: Settings > My profile: a team lead asks their manager or the admin to correct the roster (the admin corrects it in Purview Shastra)",
+  /me\.is_admin \? "correct it in Purview Shastra" : me\.role === "supervisor" \? "ask your manager or the admin to correct it on the roster"/.test(sv));
+ok("H-12: the page writes counts with plural(): 1 claim, 2 claims", ev(`[plural(1, "claim"), plural(2, "claim"), plural(1, "claim is", "claims are"), plural(1, "entry", "entries"), plural(0, "person", "people")].join("|")`) === "1 claim|2 claims|1 claim is|1 entry|0 people");
+// (a count shown only when it is more than one, like " to " + people.length + " people" after people.length > 1, is right as it is)
+const slips = (SRC.replace(/people\.length > 1 \? " to " \+ people\.length \+ " people"/g, "").match(/(fmtInt\([^()]*(\([^()]*\))*[^()]*\)\}?|\.length \+ "|\.n \+ ") ?(claims|items|entries|people|rows|requests)\b/g) || []);
+ok("H-12: no count on the page is written next to a fixed plural word (\"1 claims\", \"1 items\", \"1 entries\", \"1 people\"...)", !slips.length, slips.slice(0, 6));
+const rslips = SRC.match(/\$\{crF\.int\([^}]*\)\} (claims|entries)\b/g) || [];
+ok("H-12 (same slip): the client report's sentences use its plural helper too (\"1 claim was rejected\", \"1 claim needs the client\")", !rslips.length && /crPl\(all\.length, "claim was", "claims were"\)\} rejected/.test(SRC) && /crPl\(all\.length, "claim needs", "claims need"\)\} the client/.test(SRC), rslips.slice(0, 4));
+ok("H-12 (same slip): the report's plural helper: 1 claim, 3 claims, 1 entry", ev(`[crPl(1, "claim"), crPl(3, "claim"), crPl(1, "entry", "entries")].join("|")`) === "1 claim|3 claims|1 entry");
+const WK = fs.readFileSync(REPO + "/worker.js", "utf8");
+ok("H-12 (same slip): Team status suggestions on the server: \"1 claim left over\", \"1 claim + 1 task item\"", /nWord\(r\.left, "claim"\)\} left over/.test(WK) && /\$\{nWord\(claims, "claim"\)\} \+ \$\{nWord\(items, "task item"\)\}/.test(WK));
+const cl0 = (await A("clients.list")).clients[0], who = (await A("users.list")).users.find((u) => u.role === "user" && u.active);
+r = await T(() => A("tasks.create", { client_id: cl0.id, scope: "AR follow-up", title: "Recheck one denial (made up)", description: "Made-up task.", source: "Client", tat: { kind: "24" }, count: 1, people: [{ user_id: who.id, share: 1 }] }));
+const tAudit = (await rig.backend.env.DB.prepare("SELECT detail FROM audit_log WHERE action = 'task.create' ORDER BY at DESC LIMIT 1").bind().all()).results[0];
+ok("H-12 (same slip): the audit trail of a task for one item says \"1 item\"", r.ok && tAudit && / · 1 item · /.test(tAudit.detail) && !/1 items/.test(tAudit.detail), [r.e, tAudit]);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

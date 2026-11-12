@@ -2058,7 +2058,7 @@ async function syncShastra(env, by) {
   // A short or empty answer is a fault on the way, not half the company leaving: nothing is applied.
   const active = await one(env, "SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1");
   if (!rows.length || (active && active.n >= 20 && rows.length < active.n * 0.5)) {
-    const error = `Shastra sent ${rows.length} people while ${active ? active.n : 0} are active here, so nothing was changed.`;
+    const error = `Shastra sent ${rows.length === 1 ? "1 person" : rows.length + " people"} while ${active ? active.n : 0} are active here, so nothing was changed.`;
     await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error });
     throw new ApiError(502, error);
   }
@@ -3011,10 +3011,11 @@ function teamSuggestions(rows) {
   const item = (r, seen, todo) => ({ user_id: r.id, who: r.name, lead: r.lead_name || "", seen, do: todo });
   const flagged = new Set();
   const nDays = (n) => n + (n === 1 ? " day" : " days");
+  const nWord = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   const hm = (m) => { m = Math.round(m || 0); const h = Math.floor(m / 60), mm = m % 60; return h ? h + " h" + (mm ? " " + String(mm).padStart(2, "0") + " m" : "") : mm + " m"; };
   const floorSeen = (r) => `On the floor ${hm(r.on_floor_done_min)} of ${hm(r.floor_needed_done_min)} needed up to yesterday (short ${hm(r.floor_short_min)})`;
   // claims worked and team task items done both count toward the attainment
-  const what = (claims, items) => (items ? `${claims} claims + ${items} task items` : "claims");
+  const what = (claims, items) => (items ? `${nWord(claims, "claim")} + ${nWord(items, "task item")}` : "claims");
   const attainSeen = (r) => r.attain_basis === "done"
     ? `Attainment ${r.attain}% (${r.count_done != null ? r.count_done : r.worked_done} of ${Math.round(r.target_done)}${r.task_items_done ? "" : " claims"} up to yesterday${r.task_items_done ? ": " + what(r.worked_done, r.task_items_done) : ""})`
     : `Attainment ${r.attain}% today (${r.count_today != null ? r.count_today : r.worked_today} of ${Math.round(r.target_today)}${r.task_items_today ? ": " + what(r.worked_today, r.task_items_today) : " claims"})`;
@@ -3036,11 +3037,11 @@ function teamSuggestions(rows) {
   }
   for (const r of rows) {
     if (r.status === "Production" && r.attain != null && r.attain_basis === "done" && r.target_done >= r.capacity && r.attain >= 60 && r.attain < PERF_MARK) { week.push(item(r, attainSeen(r), "Check their claim mix and notes; agree a daily number for next week.")); flagged.add(r.id); }
-    if (r.ramp.flag === "soon") { week.push(item(r, `${r.status}, due in production ${fmtD(r.ramp.due)} (${r.ramp.days === 0 ? "today" : nDays(r.ramp.days)})${r.ramp.extended ? ", the date agreed" : ""}`, `Plan the move: about ${Math.round(r.capacity * 0.85)} claims a day by ${fmtD(r.ramp.due)}; check in before then.`)); flagged.add(r.id); }
+    if (r.ramp.flag === "soon") { week.push(item(r, `${r.status}, due in production ${fmtD(r.ramp.due)} (${r.ramp.days === 0 ? "today" : nDays(r.ramp.days)})${r.ramp.extended ? ", the date agreed" : ""}`, `Plan the move: about ${nWord(Math.round(r.capacity * 0.85), "claim")} a day by ${fmtD(r.ramp.due)}; check in before then.`)); flagged.add(r.id); }
     if (r.floor === "short" && r.on_floor_done_min >= r.floor_needed_done_min * 0.75) { week.push(item(r, floorSeen(r), "Remind them of the 8-hour rule and check their punch-ins and breaks in Purview Shastra.")); flagged.add(r.id); }
     if (r.idle_done_min != null && r.on_floor_done_min > 0 && r.idle_done_min >= 60 && r.idle_done_min >= r.on_floor_done_min * 0.1) { week.push(item(r, `Idle ${hm(r.idle_done_min)} of ${hm(r.on_floor_done_min)} on the floor up to yesterday (Shastra Guard)`, "Ask what keeps them idle: an empty desk, system trouble, or waiting on someone.")); flagged.add(r.id); }
     if ((r.days_unplanned || 0) >= 2) { week.push(item(r, `Out ${r.days_unplanned} days in these dates (absent, sick or marked out)`, "A short check-in on attendance.")); flagged.add(r.id); }
-    if (r.left_high > 0 && r.left_high < 3) { week.push(item(r, `${r.left} claims left over, ${r.left_high} high priority`, "Clear the high priority ones first tomorrow.")); flagged.add(r.id); }
+    if (r.left_high > 0 && r.left_high < 3) { week.push(item(r, `${nWord(r.left, "claim")} left over, ${r.left_high} high priority`, "Clear the high priority ones first tomorrow.")); flagged.add(r.id); }
   }
   for (const r of rows) {
     if (flagged.has(r.id) || r.status !== "Production" || r.attain == null || r.attain < 100 || r.floor === "short") continue;
@@ -4368,7 +4369,7 @@ const OPS = {
     const res = await shareEqually(env, user, src, { live, today, via: "not logged in", reason: payload.mark_out === false ? "reallocated" : "not logged in today" });
     if (payload.mark_out !== false) await run(env, `INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,'out',?,?,?) ON CONFLICT (user_id, day) DO UPDATE SET status = 'out', reason = excluded.reason, by_name = excluded.by_name, at = excluded.at`,
       id, today, "Not logged in to Shastra", user.name || "", Date.now());
-    if (res.moved || payload.mark_out !== false) await audit(env, user, "team.rebalance", null, `${src.name} (not logged in): ${res.moved} claims shared equally` + (res.to.length ? " to " + res.to.map((x) => x.name + " " + x.count).join(", ") : "") + (res.left ? `; ${res.left} stayed` : ""));
+    if (res.moved || payload.mark_out !== false) await audit(env, user, "team.rebalance", null, `${src.name} (not logged in): ${res.moved} claim${res.moved === 1 ? "" : "s"} shared equally` + (res.to.length ? " to " + res.to.map((x) => x.name + " " + x.count).join(", ") : "") + (res.left ? `; ${res.left} stayed` : ""));
     return { moved: res.moved, left: res.left, to: res.to.map(({ name, count }) => ({ name, count })), marked_out: payload.mark_out !== false };
   },
   "notify.seen": async ({ env, user, payload }) => {
@@ -4383,7 +4384,7 @@ const OPS = {
     const src = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active).find((u) => u.id === from);
     if (!src) throw denied("That person is not in your team.");
     const res = await shareEqually(env, user, src, { live: await shastraLive(env), today, via: "rebalance", reason: "out today" });
-    if (res.moved) await audit(env, user, "team.rebalance", null, `${src.name}: ${res.moved} claims shared equally to ` + res.to.map((x) => x.name + " " + x.count).join(", "));
+    if (res.moved) await audit(env, user, "team.rebalance", null, `${src.name}: ${res.moved} claim${res.moved === 1 ? "" : "s"} shared equally to ` + res.to.map((x) => x.name + " " + x.count).join(", "));
     return { moved: res.moved, left: res.left, to: res.to.map(({ name, count }) => ({ name, count })) };
   },
   /* Coaching: one biller's last 30 days and the team lead's 1:1 notes. */
@@ -7436,7 +7437,7 @@ const OPS = {
       env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'created',?,?)").bind(uuid(), id, user.id, user.name || "", `Gave it to ${shares}, TAT ${due.tat_hours} working hours.`, now),
     ]);
     await saveTaskFiles(env, id, null, files, user, now);
-    await audit(env, user, "task.create", cid || null, `${scope} · ${count} items · ${shares} · due ${istWhen(due.due_at)}`);
+    await audit(env, user, "task.create", cid || null, `${scope} · ${count} item${count === 1 ? "" : "s"} · ${shares} · due ${istWhen(due.due_at)}`);
     return { task: { id, due_at: due.due_at, tat_hours: due.tat_hours } };
   },
   "tasks.get": async ({ env, user, payload }) => {
@@ -7550,7 +7551,7 @@ const OPS = {
       env.DB.prepare("UPDATE team_tasks SET status = 'closed', closed_at = ?, closed_by_name = ?, hold_until = NULL, updated_at = ? WHERE id = ?").bind(now, user.name || "", now, t.id),
       env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'close',?,?)").bind(uuid(), t.id, user.id, user.name || "", comment || "Closed the task.", now),
     ]);
-    await audit(env, user, "task.close", t.client_id || null, `${t.scope} · ${t.count_total} items`);
+    await audit(env, user, "task.close", t.client_id || null, `${t.scope} · ${t.count_total} item${t.count_total === 1 ? "" : "s"}`);
     return { ok: true };
   },
   /* Edit or reassign: the name, description and due time; each person's share (never below what they have done); add people;
