@@ -381,6 +381,21 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-12: another client's task stays", t2 && (await n("SELECT COUNT(*) AS n FROM team_tasks WHERE id = ?", t2)) === 1);
 }
 
+{
+  S("E-14: Search finds the claims on a Payment posting or Submission person's desk");
+  const { w, claim } = await postingWorld();
+  const PA = await w.firstIn("Pavan Poster"), BE = await w.firstIn("Bela Agent"), SA = await w.firstIn("Sahil Submitter"), CY = await w.firstIn("Cyra Agent");
+  const patient = (await w.row("SELECT patient FROM claims WHERE id = ?", claim.id)).patient;
+  const found = async (who, q) => (await who("search.global", { q })).claims.some((x) => x.id === claim.id);
+  ok("E-14: the posting person finds the claim on their desk by its number", await found(PA, claim.claim_no));
+  ok("E-14: and by the patient's name", await found(PA, patient));
+  const lakeClaim = await w.row("SELECT id, claim_no FROM claims WHERE client_id = ? LIMIT 1", w.lake.id);
+  ok("E-14: the posting person does not find another client's claim", !(await PA("search.global", { q: lakeClaim.claim_no })).claims.some((x) => x.id === lakeClaim.id));
+  ok("E-14: another biller, a Submission person not on it, and another client's biller still find nothing", !(await found(BE, claim.claim_no)) && !(await found(SA, claim.claim_no)) && !(await found(CY, claim.claim_no)));
+  const opened = await w.T(() => PA("claims.get", { id: claim.id }));
+  ok("E-14: what Search finds, the person can open", opened.ok, opened.e);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -399,7 +399,8 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
 - **Search** (top right, or **Ctrl+K** / **Cmd+K** anywhere): type part of a page name, a client (opens its
   Client 360), a biller (opens their coaching card), or a claim number, account number or patient name. Arrow keys
   and Enter, Esc to close. Team leads find claims on the clients they lead; billers find only claims on their list
-  or that they worked.
+  or that they worked, and Payment posting and Submission people also the claims on their desk and of the clients
+  they are responsible for.
 - **The bell** lists what needs you now, each line opening the page that deals with it. Team leads: escalations
   (red after 24 hours), client requests to send, missed tasks, claims on the desks of people out today, month-end
   steps past due, hand-offs on their desk. Billers: their list for today, escalations their team lead answered

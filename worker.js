@@ -4498,12 +4498,16 @@ const OPS = {
     const q = str(payload.q, 80).trim().replace(/[%_\\]/g, "");
     if (q.length < 2) return { claims: [] };
     const like = "%" + q + "%", sup = user.role === "supervisor";
+    // A biller or desk person finds what they may open: their list, what they worked, the claims on their desk (hand-offs they
+    // lead, back up or were given) and the claims of a client they are responsible for.
+    const rc = sup ? [] : [...(user.resp_clients || [])];
+    const mine = "c.assigned_to = ? OR c.last_worked_by = ? OR c.id IN (SELECT claim_id FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?)" + (rc.length ? ` OR c.client_id IN (${rc.map(() => "?").join(",")})` : "");
     const rows = await all(env, `SELECT c.id, c.client_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.assigned_to, c.last_worked_by, c.handoff_status,
         cl.name AS client_name, u.name AS assigned_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?) AND (${sup ? "1 = 1" + scopeSql(user, "c.client_id") : "c.assigned_to = ? OR c.last_worked_by = ?"} OR ${POSTED_CLOSED_SQL})
+      WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?) AND (${sup ? "1 = 1" + scopeSql(user, "c.client_id") : mine} OR ${POSTED_CLOSED_SQL})
       ORDER BY CASE WHEN c.claim_no = ? OR c.account_no = ? THEN 0 ELSE 1 END, CASE WHEN c.state IN ('open','assigned','in_progress') THEN 0 ELSE 1 END, c.balance DESC LIMIT 40`,
-      like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id]), q, q);
-    const ok = rows.filter((c) => leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c)).slice(0, 8);
+      like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id, user.id, user.id, user.id, ...rc]), q, q);
+    const ok = (sup ? rows.filter((c) => leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c)) : rows).slice(0, 8);
     return { claims: ok.map(({ assigned_to, last_worked_by, handoff_status, ...c }) => ({ ...c, posted: handoff_status === "posted" && c.state === "closed" })) };
   },
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
