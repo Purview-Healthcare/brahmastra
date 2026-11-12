@@ -224,6 +224,48 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-10: switching someone off still signs them out and frees their claims", r.ok && (await w.U("Bela Agent")).active === 0, r);
 }
 
+/* ================= D-02: only the admin makes someone a team lead ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, lake } = w;
+  const TI = await w.c("Tina Lead"), MO = await w.c("Mona Manager"), SI = await w.c("Sima Expert"), VE = await w.c("Vera Vice");
+  const roleOf = async (n) => (await w.U(n)).role;
+
+  S("D-02: a team lead cannot give anyone the team lead role");
+  let r = await T(() => TI("users.save", { id: id["Dev Agent"], first_name: "Dev", last_name: "Agent", role: "supervisor" }));
+  ok("D-02: a team lead cannot make their biller (who also works another client) a team lead", refused(r, /Only the admin can make someone a team lead/) && (await roleOf("Dev Agent")) === "user", [r, await roleOf("Dev Agent")]);
+  const DV = await w.c("Dev Agent");
+  r = await T(() => DV("claims.list", { client_id: lake.id }));
+  ok("D-02: so that biller gets no team lead view of the other client", !r.ok && r.status === 403, r);
+  r = await T(() => MO("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", role: "supervisor" }));
+  ok("D-02: a manager cannot either", refused(r, /Only the admin can make someone a team lead/) && (await roleOf("Arun Agent")) === "user", r);
+  r = await T(() => VE("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", role: "supervisor" }));
+  ok("D-02: nor the VP: only the admin", refused(r, /Only the admin can make someone a team lead/) && (await roleOf("Arun Agent")) === "user", r);
+  ok("D-02: nothing went to the audit trail as a role change", !(await w.audits("user.save")).some((a) => /role user → supervisor/.test(a.detail)));
+  r = await T(() => TI("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", designation: "Biller", role: "user", capacity: 33 }));
+  ok("D-02: a team lead still saves the rest of a biller's profile (the role left as it is)", r.ok && r.r.user.capacity === 33 && r.r.user.role === "user", r);
+  r = await T(() => TI("users.save", { id: id["Tina Lead"], first_name: "Tina", last_name: "Lead", designation: "TL", role: "supervisor", capacity: 20 }));
+  ok("D-02: and their own, as a team lead", r.ok && r.r.user.role === "supervisor", r);
+
+  S("D-02: the SME designation (and its limits) is not taken off by the SME or their team lead");
+  r = await T(() => SI("users.save", { id: id["Sima Expert"], first_name: "Sima", last_name: "Expert", role: "supervisor", designation: "TL" }));
+  ok("D-02: an SME cannot make themselves a TL on their own profile", refused(r, /Only the admin can change an SME's designation/) && (await w.U("Sima Expert")).designation === "SME", [r, (await w.U("Sima Expert")).designation]);
+  r = await T(() => SI("clients.accessSave", { client_id: sun.id, user_id: id["Cyra Agent"], level: "edit" }));
+  ok("D-02: so an SME still cannot share a client", refused(r, /team leads and up/), r);
+  r = await T(() => TI("users.save", { id: id["Sima Expert"], first_name: "Sima", last_name: "Expert", role: "supervisor", designation: "TL" }));
+  ok("D-02: their team lead cannot take the SME designation off either", refused(r, /Only the admin can change an SME's designation/), r);
+  r = await T(() => SI("users.save", { id: id["Sima Expert"], first_name: "Sima", last_name: "Expert", role: "supervisor", designation: "SME", capacity: 12 }));
+  ok("D-02: an SME still saves their own profile with the designation as it is", r.ok && r.r.user.capacity === 12, r);
+
+  S("D-02: the admin still changes roles, and it is in the audit trail");
+  r = await T(() => A("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", role: "supervisor" }));
+  ok("D-02: the admin makes a biller a team lead", r.ok && (await roleOf("Arun Agent")) === "supervisor" && (await w.audits("user.save")).some((a) => /Arun Agent · role user → supervisor/.test(a.detail)), [r, await w.audits("user.save")]);
+  r = await T(() => A("users.save", { id: id["Sima Expert"], first_name: "Sima", last_name: "Expert", role: "supervisor", designation: "TL" }));
+  ok("D-02: and changes an SME's designation", r.ok && (await w.U("Sima Expert")).designation === "TL", r);
+  r = await T(() => MO("users.save", { id: id["Tina Lead"], first_name: "Tina", last_name: "Lead", designation: "TL", role: "user" }));
+  ok("D-02: taking the team lead role off someone who reports to you stays as it was (not a way up)", r.ok && (await roleOf("Tina Lead")) === "user", r);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

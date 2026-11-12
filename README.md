@@ -120,7 +120,9 @@ sign-in), then **Clients** and **Inventory**.
 
 The roster comes only from Purview Shastra (below); there is no file upload. People are
 matched by Emp ID (then email, then name) and their department, projects, manager, status
-and date of joining are kept. People are changed in Shastra, not in Brahmastra.
+and date of joining are kept. People are changed in Shastra, not in Brahmastra: a team lead
+can correct a team member's details on Team until the next roster load, but only the admin
+can make someone a team lead or change an SME's designation.
 
 - Agents become billers; SMEs, Team Leads and Sr Team Leads become team leads
   for their own projects; Assistant Managers, Managers and Sr Managers become

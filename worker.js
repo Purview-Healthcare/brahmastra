@@ -3760,12 +3760,15 @@ const OPS = {
       // A new email: for someone the roster had no (or a wrong) address for.
       const newEmail = payload.email != null ? mailClean(payload.email) : ex.email;
       // Not the admin: you change only people who report up to you (or billers and desk people on your projects), never your own
-      // projects or manager, an email only where it is missing, and projects only from your own.
+      // projects or manager, an email only where it is missing, projects only from your own, and nobody's role up to team lead.
       if (!user.is_admin) {
         const keys = (l) => [...new Set(l.map((x) => projKey(x.name)))].sort().join("|");
         if (ex.id === user.id) { if ((projects && keys(projects) !== keys(jsonList(ex.projects_json))) || (reportsTo !== undefined && reportsTo !== (ex.reports_to || null))) throw denied("Ask the admin to change your own projects or who you report to."); }
         else if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can change a team lead or manager.");
         if (newEmail !== ex.email && ex.email && !ex.email_missing) throw denied("Only the admin can change an email address.");
+        // Roles come from Purview Shastra: only the admin makes someone a team lead, or takes the SME designation (and its limits) off.
+        if (role === "supervisor" && ex.role !== "supervisor") throw denied("Only the admin can make someone a team lead. Roles come from Purview Shastra.");
+        if (isSME(ex) && !isSME({ ...ex, designation })) throw denied("Only the admin can change an SME's designation. Designations come from Purview Shastra.");
         if (projects && user.scope) { const mine = new Set((user.scope_projects || []).map(projKey)); const extra = projects.filter((x) => !mine.has(projKey(x.name)));
           if (extra.length) throw denied("You can only give people your own projects. Not yours: " + extra.map((x) => x.name).join(", ") + "."); }
       }
