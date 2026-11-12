@@ -5942,7 +5942,7 @@ function TeamView({ ctx, reload, me }) {
       {codeFor && (
         <Modal title={"Sign-in code for " + codeFor.user.name} onClose={() => setCodeFor(null)} narrow footer={<button className="btn primary" onClick={() => setCodeFor(null)}>Done</button>}>
           <div className="stack">
-            <div>Pass this to <b>{codeFor.user.name}</b> ({codeFor.email}). On the sign-in screen they choose "Sign in with a code", enter their email, then this code. It works for {codeFor.expires_in_min} minutes and replaces any code emailed earlier.</div>
+            <div>Pass this to <b>{codeFor.user.name}</b> ({codeFor.email}). On the sign-in screen they choose "Sign in with a code", enter their email, then this code. It works for {codeFor.expires_in_min} minutes, once.</div>
             <div className="pre mono" style={{ fontSize: 26, textAlign: "center", letterSpacing: 8 }}>{codeFor.code}</div>
             <button className="btn sm" onClick={() => { navigator.clipboard && navigator.clipboard.writeText(codeFor.code).then(() => toast("Copied.")); }}>Copy</button>
           </div>

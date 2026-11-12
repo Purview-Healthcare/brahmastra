@@ -463,6 +463,71 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-05: the VP reads the audit trail; a team lead and a manager do not", (await T(() => VE("audit.list", {}))).ok && !(await T(() => TI("audit.list", {}))).ok && !(await T(() => MO("audit.list", {}))).ok);
 }
 
+/* ================= D-07: asking for codes, signed out, cannot cancel or block someone's codes ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, anon } = w;
+  const real = Date.now; let t = real();
+  const step = (sec = 46) => { t += sec * 1000; };   // 46 s: just past the 45-second pause
+  Date.now = () => t;
+  try {
+    S("D-07: a new request does not cancel the code already in the mailbox");
+    const mine = await anon("auth.adminCode", {});           // the admin presses Access Admin (the demo shows the code; live emails it)
+    step(); const other = await anon("auth.adminCode", {});  // someone else, signed out, asks again
+    let r = await T(() => anon("auth.adminVerify", { user_id: mine.user_id, code: mine.demo_code }));
+    ok("D-07: the admin's code still signs them in after someone else asked for another", r.ok && r.r.user.is_admin === true, r);
+    r = await T(() => anon("auth.adminVerify", { user_id: mine.user_id, code: other.demo_code }));
+    ok("D-07: that sign-in used up every code still valid: the other one no longer works", !r.ok && /expired or was never sent/.test(r.e), r);
+    r = await T(() => anon("auth.adminVerify", { user_id: mine.user_id, code: mine.demo_code }));
+    ok("D-07: and a code works once", !r.ok, r);
+
+    S("D-07: ten requests in an hour do not lock the admin out");
+    let newest = null;
+    for (let i = 0; i < 8; i++) { step(); newest = await anon("auth.adminCode", {}); }   // with the two above: 10 in the hour
+    step(); r = await T(() => anon("auth.adminCode", {}));
+    ok("D-07: the eleventh request says a code sent a few minutes ago still works", !r.ok && r.status === 429 && /still works/.test(r.e), r);
+    r = await T(() => anon("auth.adminVerify", { user_id: mine.user_id, code: newest.demo_code }));
+    ok("D-07: and the newest code in the mailbox does sign the admin in", r.ok && r.r.user.is_admin === true, r);
+    step(11 * 60);                                            // every code has run out; still inside the hour of the ten
+    r = await T(() => anon("auth.adminCode", {}));
+    ok("D-07: once none is valid any more a new code is sent, although ten were asked in the hour", r.ok && /^\d{6}$/.test(r.r.demo_code), r);
+    r = await T(() => anon("auth.adminVerify", { user_id: mine.user_id, code: r.r.demo_code }));
+    ok("D-07: it signs the admin in", r.ok, r);
+
+    S("D-07: the same for a person's emailed code, and a team lead's code");
+    const TI = await w.c("Tina Lead");
+    const c1 = await anon("auth.sendOtp", { email: "arun" + D });
+    step(); const c2 = await anon("auth.sendOtp", { email: "arun" + D });
+    const c3 = await TI("users.loginCode", { id: id["Arun Agent"] });
+    ok("D-07: three codes for one person, all different", new Set([c1.demo_code, c2.demo_code, c3.code]).size === 3);
+    r = await T(() => anon("auth.verifyOtp", { email: "arun" + D, code: c1.demo_code }));
+    ok("D-07: the first emailed code still works after a second request and a team lead's code", r.ok && r.r.user.id === id["Arun Agent"], r);
+    r = await T(() => anon("auth.verifyOtp", { email: "arun" + D, code: c3.code }));
+    ok("D-07: after that sign-in the team lead's code is used up too", !r.ok, r);
+    r = await T(() => anon("auth.verifyOtp", { email: "bela" + D, code: c2.demo_code }));
+    ok("D-07: a code never works for another email", !r.ok, r);
+
+    S("D-07: the guess limits stay");
+    const b1 = await anon("auth.sendOtp", { email: "bela" + D });
+    step(); const b2 = await anon("auth.sendOtp", { email: "bela" + D });
+    const wrong = (x) => String((Number(x) + 1) % 900000 + 100000) === b1.demo_code || String((Number(x) + 1) % 900000 + 100000) === b2.demo_code ? "100001" : String((Number(x) + 1) % 900000 + 100000);
+    const bad5 = [];
+    for (let i = 0; i < 5; i++) bad5.push(await T(() => anon("auth.verifyOtp", { email: "bela" + D, code: wrong(b1.demo_code) })));
+    ok("D-07: five wrong codes are refused, the fifth says too many", bad5.every((x) => !x.ok && x.status === 401) && /doesn't match/.test(bad5[0].e) && /Too many wrong codes/.test(bad5[4].e), bad5.map((x) => x.e));
+    const k1 = await T(() => anon("auth.verifyOtp", { email: "bela" + D, code: b1.demo_code })), k2 = await T(() => anon("auth.verifyOtp", { email: "bela" + D, code: b2.demo_code }));
+    ok("D-07: a wrong code counts against every code still valid: two codes do not give ten guesses", !k1.ok && !k2.ok, [k1, k2]);
+    for (let i = 0; i < 8; i++) { step(); await anon("auth.sendOtp", { email: "bela" + D }); }   // 10 in the hour, with wrong codes typed in it
+    step(11 * 60);
+    r = await T(() => anon("auth.sendOtp", { email: "bela" + D }));
+    ok("D-07: after ten codes and a wrong guess in the hour no more are sent until the hour is over", !r.ok && r.status === 429 && /Too many codes requested/.test(r.e), r);
+    step(50 * 60);
+    r = await T(() => anon("auth.sendOtp", { email: "bela" + D }));
+    ok("D-07: after the hour a code goes out again", r.ok, r);
+    r = await T(() => anon("auth.sendOtp", { email: "bela" + D }));
+    ok("D-07: the 45-second pause between emailed codes stays", !r.ok && r.status === 429 && /less than a minute ago/.test(r.e), r);
+  } finally { Date.now = real; }
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

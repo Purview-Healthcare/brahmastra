@@ -1441,15 +1441,22 @@ async function syncEntryToWorkbook(env, claimId, by, extra) {
 }
 const otpCode = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0] % 900000)); };
 const otpHash = (env, email, code) => sha256Hex(`otp:${email}:${code}:${env.PEPPER || DEFAULT_PEPPER}`);
+/* Anyone can ask for a code in someone's name without signing in (Access Admin, Sign in with a code), so asking must never take a
+   code away from the person or lock them out: a new code does not cancel the ones still valid (checkOtp takes any of them, once),
+   and the hourly limit below still lets a code out when none is valid any more. */
 async function issueOtp(env, email, purpose, data, { byTeamLead = false } = {}) {
   const now = Date.now();
-  const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM otps WHERE email = ? AND created_at > ?", email, now - 3600000);
+  const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last, COALESCE(SUM(tries), 0) AS tries, COALESCE(SUM(CASE WHEN consumed = 0 AND expires_at >= ? THEN 1 ELSE 0 END), 0) AS live FROM otps WHERE email = ? AND created_at > ?", now, email, now - 3600000);
   // The 45-second pause protects the mailbox; a team lead reading the code off the screen does not need it.
   if (!byTeamLead && recent && recent.last && now - recent.last < 45000) throw new ApiError(429, "A code was sent less than a minute ago. Check your inbox (and spam), then try again.");
-  if (recent && recent.n >= 10) throw new ApiError(429, "Too many codes requested for this email in the last hour. Try again later.");
+  // At most 10 an hour. After that a new one goes out only when none is still valid and nobody typed a wrong code in the hour: the
+  // person always has a code that works or can get one, and the number of guesses an hour stays what it was.
+  if (recent && recent.n >= 10) {
+    if (recent.live > 0) throw new ApiError(429, "A code sent to this email in the last few minutes still works. Use the newest one (check spam too).");
+    if (recent.tries > 0) throw new ApiError(429, "Too many codes requested for this email in the last hour. Try again later.");
+  }
   const code = otpCode();
   await env.DB.batch([
-    env.DB.prepare("UPDATE otps SET consumed = 1 WHERE email = ? AND consumed = 0").bind(email),
     env.DB.prepare("INSERT INTO otps (id, email, code_hash, purpose, data_json, created_at, expires_at) VALUES (?,?,?,?,?,?,?)").bind(uuid(), email, await otpHash(env, email, code), purpose, JSON.stringify(data || {}), now, now + OTP_TTL_MS),
     env.DB.prepare("DELETE FROM otps WHERE expires_at < ?").bind(now - 86400000),
   ]);
@@ -1465,15 +1472,18 @@ async function deliverOtp(env, email, code, purpose) {
 }
 async function checkOtp(env, email, code) {
   const now = Date.now();
-  const row = await one(env, "SELECT * FROM otps WHERE email = ? AND consumed = 0 ORDER BY created_at DESC LIMIT 1", email);
-  if (!row || row.expires_at < now) throw new ApiError(401, "That code has expired or was never sent. Request a new one.");
-  const ok = sameHash(await otpHash(env, email, String(code || "").replace(/\s/g, "")), row.code_hash);
-  if (!ok) {
-    const tries = row.tries + 1;
-    await run(env, "UPDATE otps SET tries = ?, consumed = CASE WHEN ? >= ? THEN 1 ELSE consumed END WHERE id = ?", tries, tries, OTP_MAX_TRIES, row.id);
-    throw new ApiError(401, tries >= OTP_MAX_TRIES ? "Too many wrong codes. Request a new one." : "That code doesn't match. Check the latest email and try again.");
+  // Every code still valid for this email works (a new request does not cancel the one already in the mailbox).
+  const live = await all(env, "SELECT * FROM otps WHERE email = ? AND consumed = 0 AND expires_at >= ? ORDER BY created_at DESC LIMIT 20", email, now);
+  if (!live.length) throw new ApiError(401, "That code has expired or was never sent. Request a new one.");
+  const hash = await otpHash(env, email, String(code || "").replace(/\s/g, ""));
+  const row = live.find((r) => sameHash(hash, r.code_hash));
+  if (!row) {
+    // a wrong code counts against every code still valid, so more codes never mean more guesses; each is dead after 5
+    await run(env, "UPDATE otps SET tries = tries + 1, consumed = CASE WHEN tries + 1 >= ? THEN 1 ELSE consumed END WHERE email = ? AND consumed = 0 AND expires_at >= ?", OTP_MAX_TRIES, email, now);
+    throw new ApiError(401, live.every((r) => r.tries + 1 >= OTP_MAX_TRIES) ? "Too many wrong codes. Request a new one." : "That code doesn't match. Check the latest email and try again.");
   }
-  await run(env, "UPDATE otps SET consumed = 1 WHERE id = ?", row.id);
+  // one sign-in uses up every code still valid for this email
+  await run(env, "UPDATE otps SET consumed = 1 WHERE email = ? AND consumed = 0", email);
   let data = {}; try { data = JSON.parse(row.data_json || "{}"); } catch {}
   return { purpose: row.purpose, data };
 }

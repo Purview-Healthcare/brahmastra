@@ -752,7 +752,11 @@ Worker's `ALLOWED_DOMAINS` variable can tighten it). Passwords are hashed in
 the browser and hashed again on the server with a per-user salt and the
 `PEPPER` secret. Codes are six digits, hashed on the server, valid for ten
 minutes, five attempts, at most one per 45 seconds and ten per hour per
-email. Sessions last at least 24 hours after the last use and extend while in use.
+email. Asking for a new code does not cancel one that is still valid: any of
+them works, once, and signing in uses them all up. After ten in an hour a new
+one is still sent when none is valid any more and nobody typed a wrong code in
+that hour, so nobody can lock a person (or the admin) out by asking for codes
+in their name. Sessions last at least 24 hours after the last use and extend while in use.
 
 **Email delivery** (needed for codes in production). Set these on the Worker:
 
