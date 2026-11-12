@@ -8695,10 +8695,10 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
         <button className="btn sm primary" onClick={openInputs} title="Drishti's page: upload the period's reports or type a value">Reports →</button>
       </div>
       {!clientId ? <div className="card"><Empty>Pick a client to see its scorecard.</Empty></div> : q.error ? <ErrorBox error={q.error} /> : !d ? <div className="card"><Spinner label="Reading Drishti's scorecard…" /></div>
-        : d.state === "off" ? <div className="alert warn">Drishti's scorecard is not connected yet: the Worker secret DRISHTI_TOKEN_SECRET is not set (README › Drishti opens signed in). Until then, use <b>Inputs (Drishti)</b>.</div>
+        : d.state === "off" ? <div className="alert warn">Drishti's scorecard is not connected yet: the Worker secret DRISHTI_TOKEN_SECRET is not set (README › Drishti opens signed in). Until then, open Drishti's own pages with <b>Reports →</b> and read the scores there.</div>
         : d.state === "error" ? <div className="alert err">{drReadNote(d)}</div>
-        : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it in <b>Inputs (Drishti)</b>.</div>
-        : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports in <b>Inputs (Drishti)</b> and it shows here.</div>
+        : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it on Drishti's <b>Clients</b> tab.</div>
+        : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports with <b>Reports →</b> and it shows here.</div>
         : <>
           {d.stale && <div className="alert warn">{drStaleNote(d)}</div>}
           {fellBack && <div className="alert info">Drishti has no {fellBack === "month" ? "monthly" : fellBack === "week" ? "weekly" : fellBack} scorecard for <b>{first}</b>, so its {d.period.kind === "week" ? "weeks are" : d.period.kind === "month" ? "months are" : "periods are"} shown.</div>}

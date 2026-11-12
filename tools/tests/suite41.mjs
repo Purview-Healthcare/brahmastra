@@ -255,6 +255,13 @@ S("G-09: Drishti not answering: the SLA tab does not send people to a sign-in th
   ok("G-09: no SLA tab wording sends people to sign in below when the sign-in failed", !/You can still sign in below/.test(src) && /sso\.state === "error" \? <><i className="rh-dot off" \/>Not signed in to Drishti/.test(src));
 }
 
+S("G-10: the scorecard's messages name what is on the screen");
+{ const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("G-10: nothing sends people to Inputs (Drishti), a tab that is not there any more", !/Inputs \(Drishti\)/.test(src));
+  ok("G-10: a client Drishti does not know: add it on Drishti's Clients tab (one of Drishti's tabs in the tab row)", /or add it on Drishti's <b>Clients<\/b> tab\./.test(src));
+  ok("G-10: no scored period, or not connected: the Reports → button, which is on the scorecard", /Upload the period's reports with <b>Reports →<\/b> and it shows here\./.test(src) && /open Drishti's own pages with <b>Reports →<\/b>/.test(src) && />Reports →<\/button>/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
