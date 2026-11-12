@@ -297,6 +297,40 @@ await part("C-22 / D-13: a hand-off can be given only to people of its desk who 
   await call(TI, "clients.accessRemove", { client_id: sun.id, user_id: U("Lex Lakepost").id });
 });
 
+await part("C-05: a hand-off waiting on the client follows a new responsible person", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const setDesk = (dept, lead, backup = null) => A("clients.saveResponsibility", { client_id: sun.id, dept, mode: "person", lead: U(lead).id, backup: backup ? U(backup).id : null });
+  await setDesk("posting", "Pia Poster");
+  const [a, b, d] = await give("Arun Agent", 3);
+  for (const id of [a, b]) { await call(AR, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(AR, id, SAAG.post); }
+  const waiting = await openH(a, "posting"), plain = await openH(b, "posting");
+  await call(PI, "handoffs.close", { id: waiting.id, outcome: "client", reason: "Need EOB / ERA from the client", note: "Asked the office for the EOB copy" });
+  const n0 = (await call(PI, "handoffs.count")).n;
+  await setDesk("posting", "Otto Poster");
+  const lead = async (id) => (await row1("SELECT lead_id FROM handoffs WHERE id = ?", id)).lead_id;
+  ok("C-05: the open hand-off and the one waiting on the client both move to the new Payment posting person", (await lead(plain.id)) === U("Otto Poster").id && (await lead(waiting.id)) === U("Otto Poster").id, [await lead(plain.id), await lead(waiting.id)]);
+  ok("C-05: ...the new person sees it under Waiting on client", (await call(OT, "handoffs.list", { view: "client" })).rows.some((r) => r.id === waiting.id));
+  ok("C-05: ...it is off the old person's list and badge", !(await call(PI, "handoffs.list", { view: "client" })).rows.some((r) => r.id === waiting.id) && (await call(PI, "handoffs.count")).n <= n0 - 2, [n0, (await call(PI, "handoffs.count")).n]);
+  ok("C-05: ...and the new person can resume it when the client answers", (await T(() => call(OT, "handoffs.close", { id: waiting.id, outcome: "resume", note: "The office sent the EOB" }))).ok && (await row1("SELECT status FROM handoffs WHERE id = ?", waiting.id)).status === "pending");
+  // Submission the same way, and a recheck waiting on the client follows a new follow-up person
+  await save(AR, d, SAAG.resub);
+  const hs = await openH(d, "submission");
+  await call(QU, "handoffs.close", { id: hs.id, outcome: "client", reason: "Need signature or documents", note: "Need the signed form from the office" });
+  await setDesk("submission", "Rex Reject");
+  ok("C-05: Submission: the hand-off waiting on the client moves to the new Submission person", (await lead(hs.id)) === U("Rex Reject").id, await lead(hs.id));
+  await call(RX, "handoffs.close", { id: hs.id, outcome: "resume", note: "Form received" });
+  await submitIt(RX, d);
+  setNow(IST(2026, 11, 12, 12, 0));
+  const rc = await openH(d, "subcheck");
+  await call(RX, "handoffs.close", { id: rc.id, outcome: "client", reason: "Need signature or documents", note: "The payer asks for the signed form again" });
+  await A("clients.saveResponsibility", { client_id: sun.id, dept: "subcheck", mode: "person", lead: U("Quin Submit").id });
+  const rc2 = await row1("SELECT lead_id, assigned_to, status FROM handoffs WHERE id = ?", rc.id);
+  ok("C-05: a recheck waiting on the client moves to the new follow-up person", rc2.lead_id === U("Quin Submit").id && rc2.assigned_to === U("Quin Submit").id && rc2.status === "client", rc2);
+  // back to the usual desks for the sections after this one
+  await sql("UPDATE clients SET submission_check_mode = '', submission_check_person = NULL WHERE id = ?", sun.id);
+  await setDesk("posting", "Pia Poster", "Otto Poster"); await setDesk("submission", "Quin Submit");
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

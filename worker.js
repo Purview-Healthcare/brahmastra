@@ -2845,10 +2845,11 @@ async function nameSignInOk(env, u) { if (u.email_missing) return; const block =
 
 const andList = (xs) => (xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
 const namesOf = async (env, ids) => { const u = [...new Set(ids.filter(Boolean))]; return new Map(u.length ? (await all(env, `SELECT id, name FROM users WHERE id IN (${u.map(() => "?").join(",")})`, ...u)).map((r) => [r.id, r.name]) : []); };
-/* Open hand-offs follow a new posting / submission / rejections person or follow-up checker. */
+/* Open hand-offs follow a new posting / submission / rejections person or follow-up checker: the ones waiting on the client too
+   (they are still open: the new person sees them under Waiting on client and resumes them when the client answers). */
 async function followHandoffs(env, clientId, dept, lead, backup) {
-  if (dept === "subcheck") { if (lead) await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned')", lead, lead, clientId); return; }
-  if (lead && dept !== "ar") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned')", lead, backup || null, clientId, dept);
+  if (dept === "subcheck") { if (lead) await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned','client')", lead, lead, clientId); return; }
+  if (lead && dept !== "ar") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned','client')", lead, backup || null, clientId, dept);
 }
 /* A client profile from the setup form: scope of work, a daily target and a responsible person for each, who
    rechecks submissions. Everything is required; the message lists what is missing. */
