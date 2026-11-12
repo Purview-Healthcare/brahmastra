@@ -232,7 +232,8 @@ inventory pages (age groups, payers, status, actions) are of the money owed: cre
 says how much), a Future DOS claim is owed but never old, and a claim with no age is never counted as old.
 
 **Third Eye's rules, kept as they are:** periods by month, week (Monday to Sunday) or custom dates, each compared
-with the period of the same length before it; working days Monday to Friday; payer names merged across spellings;
+with the period of the same length before it; working days Monday to Friday (here with the Shastra holidays left out
+too, as the TAT clock counts them); payer names merged across spellings;
 the Pareto rule (the reasons that make 80% are highlighted, the long tail folds into *Other*); the movers insights
 (a change counts at 3 claims or $500 and 5% of the total); the top denial set for the RCA (the 80% set when it has
 3 to 6 reasons, else the top 3 or 5); closed, rejected, denied and paid read the same way as Third Eye reads them.
@@ -306,7 +307,8 @@ entries before the shift time too, as Team status and My day do (a night shift's
 and **Client 360 report** (pick the client, then its report pack: the *Dashboard › Client 360 report* section
 above). Team status and Inventory status share the filters client, **team lead** (managers and up) and the dates:
 **Today, This week, This month, Custom**. Every page takes today, its weeks and months and the latest date it allows
-from India's clock (IST), whatever the computer's own time zone.
+from India's clock (IST), whatever the computer's own time zone, and shows times (notes, history, last entry, the
+downloads) in India's time too.
 
 **Team status** is Sasha's Third Eye's Team Status, built from Brahmastra's own entries and the Purview Shastra
 roster, grouped by team lead (no Emp ID):
@@ -327,7 +329,8 @@ roster, grouped by team lead (no Emp ID):
   **Task items** and **Tasks completed**, and its count for the attainment is claims plus task items.
 - **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** comes from Purview Shastra (finished
   shifts with breaks taken out; a shift still open counts up to now) and shows **met** or **short** on the finished
-  days. **Idle** is what Shastra Guard saw while the person was punched in, breaks left out: no movement plus screen
+  days. A day Shastra has not answered for (it was down) is not judged: it shows as **not known**, never as 0 hours,
+  and is left out of the floor time needed. **Idle** is what Shastra Guard saw while the person was punched in, breaks left out: no movement plus screen
   locked (the split is in the tooltip and the CSV). **Breaks** is the break time Shastra recorded on the days with
   floor time, with the average a day and the days over the hour Shastra allows (the KPI and the CSV carry it
   too). People with no attendance in Shastra for the dates, or no Guard
