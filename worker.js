@@ -3582,7 +3582,7 @@ const OPS = {
     const email = mailClean(payload.email);
     if (!mailOk(email)) throw bad("Enter your email address.");
     const u = await one(env, "SELECT id, active, role, source, email, email_missing FROM users WHERE email = ?", email);
-    if (!u) throw new ApiError(404, "No Brahmastra account uses that email. Ask your team lead to add you, or create a team lead account.");
+    if (!u) throw new ApiError(404, "No Brahmastra account uses that email. People come from the Purview Shastra roster: ask your team lead.");
     if (!u.active) throw new ApiError(403, "This account is switched off. Ask your team lead.");
     const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     const code = await issueOtp(env, email, "login", {});
@@ -3854,7 +3854,7 @@ const OPS = {
     const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
-    if (ex.id === user.id) throw bad("To delete your own account, use Delete my account in the menu.");
+    if (ex.id === user.id) throw bad("You can't delete your own account.");
     if (ex.role === "supervisor" && ex.active) {
       const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", ex.id);
       if (!n.n) throw bad("Keep at least one active team lead.");

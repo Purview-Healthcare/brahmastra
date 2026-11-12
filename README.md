@@ -101,9 +101,11 @@ Commit and push; GitHub Pages (or Cloudflare Pages) serves it. The site needs
 
 ### 3. First sign-in
 
-Sign in with the bootstrap team lead, open **Team** and create the billers
-(each gets a temporary password shown once; they choose their own on first
-sign-in), then **Clients** and **Inventory**.
+Sign in as the admin (**Access Admin**, a code to the admin mailbox) or with the
+bootstrap team lead, connect Purview Shastra (**Straight from Purview Shastra**
+below) so everyone comes in from the roster, then add **Clients** and upload
+**Inventory**. Nobody is added by hand on the Team screen: people find their name
+on the sign-in screen and choose their own password the first time.
 
 ## How it works
 
@@ -715,22 +717,22 @@ again for newer days after 10 minutes. Until the function is added, Team status 
 
 ### Accounts and sign-in
 
-- **Billers** are created by a team lead on the Team screen (first name, last
-  name, work email, designation, role) and sign in with a **one-time code
-  emailed to them every time** (Sign in with a code → Send me a code → enter
-  the six digits). A team lead can optionally give them a temporary password
-  too, or issue a sign-in code from the Team list when an email is slow.
-- **Deleting accounts**: a team lead deletes a team member from the Team list
-  (Delete). Anyone can delete their own account from the account menu (Delete
-  my account, confirmed by typing the email). Claims on that person's desk go
+- **People come from Purview Shastra** (the roster, above): there is no sign-up,
+  and team leads do not add or remove people. Only the admin can add someone by
+  hand on the Team screen.
+- **Signing in**: people find their name on the sign-in screen. The first time, a
+  one-time code goes to their official email (or their team lead gives them one
+  from the Team list when there is no usable email) and they choose a password;
+  after that they sign in with their name and password. **Email code** (a code to
+  their email each time) and **Email & password** work too.
+- A team lead can give someone on their team a sign-in code when an email is
+  slow, or reset their password, from the Team list (**Sign-in code**, **Reset
+  password**).
+- **Deleting accounts**: only the admin deletes an account, from the Team list
+  (**Delete**); nobody deletes their own account. Claims on that person's desk go
   back to the pool and their open hand-offs go to the backup, as when someone is
   switched off; their notes stay in the claim history. The last active team
-  lead cannot be deleted.
-- **Team leads** create their own account from the sign-in screen (Create a
-  team lead account: first name, last name, work email, designation from the
-  list SME / TL / Sr TL / Assistant Manager / Manager / Sr Manager, and a
-  password). A code sent to the email confirms it. They can then sign in with
-  the password or with a code.
+  lead cannot be deleted. People who leave are switched off by the roster sync.
 - Anyone signed in with a code can set or change a password from the menu
   without typing the old one.
 

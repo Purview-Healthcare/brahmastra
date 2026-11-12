@@ -316,6 +316,26 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-08: no backup: the delete still works and the account is gone", r.ok && !(await w.row("SELECT id FROM users WHERE id = ?", pavan.id)), r.e);
 }
 
+{
+  S("E-09 and D-12: README says what the app does about accounts (only the admin adds or deletes; no sign-up, no self delete)");
+  const readme = fs.readFileSync(REPO + "/README.md", "utf8").replace(/\s+/g, " ");
+  const gone = [/a team lead deletes a team member/i, /Anyone can delete their own account/i, /Team leads\*\* create their own account/i, /Billers\*\* are created by a team lead/i, /open \*\*Team\*\* and create the billers/i, /Create a team lead account/i];
+  ok("E-09/D-12: README no longer describes Delete my account, team lead sign-up, or team leads adding or deleting people", gone.every((re) => !re.test(readme)), gone.filter((re) => re.test(readme)).map(String));
+  ok("E-09/D-12: README says only the admin deletes an account and people come from Purview Shastra", /only the admin deletes an account/.test(readme) && /nobody deletes their own account/.test(readme) && /People come from Purview Shastra/.test(readme) && /Only the admin can add someone by hand/.test(readme));
+  const w = await world();
+  const TI = await w.firstIn("Tina Lead"), AR = await w.firstIn("Arun Agent");
+  const bela = await w.U("Bela Agent");
+  const rs = [await w.T(() => TI("users.delete", { id: bela.id })), await w.T(() => AR("auth.deleteMyAccount", { confirm: "arun@purview-healthcare.com" })),
+    await w.T(() => w.as(null)("auth.signup", { email: "x.y@purview-healthcare.com", first_name: "X", last_name: "Y", designation: "TL", passHash: "a".repeat(64) })),
+    await w.T(() => TI("users.save", { first_name: "New", last_name: "Biller", email: "new.biller@purview-healthcare.com", role: "user" }))];
+  ok("E-09/D-12: the app still refuses all four (nobody gained a right)", rs.every((r) => !r.ok), rs.map((r) => r.e));
+  const me = (await w.A("auth.me")).user;
+  const self = await w.T(() => w.A("users.delete", { id: me.id }));
+  ok("E-09: the admin deleting their own account is told plainly (no Delete my account to point to)", !self.ok && self.e === "You can't delete your own account.", self.e);
+  const otp = await w.T(() => w.as(null)("auth.sendOtp", { email: "nobody.here@purview-healthcare.com" }));
+  ok("D-12: an email with no account points to the roster, not to a sign-up", !otp.ok && /Purview Shastra roster/.test(otp.e) && !/create a team lead account/i.test(otp.e), otp.e);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
