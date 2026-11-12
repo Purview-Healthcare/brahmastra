@@ -1830,6 +1830,9 @@ const mailClean = (e) => String(e || "").trim().toLowerCase();
 const mailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 const str = (v, max = 4000) => (v == null ? "" : String(v)).slice(0, max);
 const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+/* A whole number typed in a box, from lo to hi. Anything else (empty, a fraction, out of range) is refused with msg,
+   never saved as some other number. */
+const wholeIn = (v, lo, hi, msg) => { const s = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : ""; if (!/^\d+$/.test(s) || Number(s) < lo || Number(s) > hi) throw bad(msg); return Number(s); };
 const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 // A real calendar date only: "2026-02-30" or "2026-13-01" would roll over in Date and give NULL in julianday().
 const isoDate = (v) => { const s = String(v || ""); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ""; const t = Date.parse(s + "T00:00:00Z"); return isFinite(t) && new Date(t).toISOString().slice(0, 10) === s ? s : ""; };
@@ -3730,7 +3733,8 @@ const OPS = {
     const first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
     const name = fullName(first, last, str(payload.name, 120).trim());
     const designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
-    const capacity = Math.max(1, Math.min(500, Math.round(num(payload.capacity, 35))));
+    // Claims per day: a whole number from 1 to 500, refused otherwise; when it is not sent it stays as it is (35 for someone new)
+    const capacityOr = (keep) => (payload.capacity == null ? keep : wholeIn(payload.capacity, 1, 500, "Claims per day must be a whole number from 1 to 500."));
     const active = payload.active === false ? 0 : 1;
     // People come from Purview Shastra; only the admin adds someone by hand.
     if (!payload.id && !user.is_admin) throw denied("People come from Purview Shastra. Use Sync from Purview Shastra on the Team tab, or ask the admin.");
@@ -3752,6 +3756,7 @@ const OPS = {
         if (projects && user.scope) { const mine = new Set((user.scope_projects || []).map(projKey)); const extra = projects.filter((x) => !mine.has(projKey(x.name)));
           if (extra.length) throw denied("You can only give people your own projects. Not yours: " + extra.map((x) => x.name).join(", ") + "."); }
       }
+      const capacity = capacityOr(ex.capacity);
       if (newEmail !== ex.email) {
         if (!mailOk(newEmail)) throw bad("Enter a valid email address.");
         if (await one(env, "SELECT id FROM users WHERE email = ? AND id <> ?", newEmail, ex.id)) throw bad("That email already has an account.");
@@ -3779,6 +3784,7 @@ const OPS = {
     if (!first || !last) throw bad("Enter the person's first and last name.");
     const dup = await one(env, "SELECT id FROM users WHERE email = ?", email);
     if (dup) throw bad("That email already has an account.");
+    const capacity = capacityOr(35);
     const id = uuid(), salt = randomHex(16);
     const hash = isHash(payload.passHash) ? await makeHash(env, salt, payload.passHash) : "";
     await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -5385,13 +5391,15 @@ const OPS = {
     const name = str(payload.name, 160).trim();
     if (!name) throw bad("Give the client a name.");
     const code = str(payload.code, 20).trim().toUpperCase();
-    const fu = Math.max(1, Math.min(365, Math.round(num(payload.follow_up_days, 30))));
+    // The default follow-up: whole days from 1 to 365, refused otherwise; when it is not sent it stays as it is (30 for a new client)
+    const fuOr = (keep) => (payload.follow_up_days == null ? keep : wholeIn(payload.follow_up_days, 1, 365, "The default follow-up must be a whole number of days from 1 to 365."));
     const active = payload.active === false ? 0 : 1;
     const link = workbookLinkOf(payload.workbook_link);
     if (payload.id) {
       const ex = await one(env, "SELECT * FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
       editableOr(user, ex.id);
+      const fu = fuOr(Number(ex.follow_up_days) || 30);
       const changes = [];
       if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);
       if ((ex.code || "") !== code) changes.push(`code ${ex.code || "none"} → ${code || "none"}`);
@@ -5416,6 +5424,7 @@ const OPS = {
     }
     // Team leads and above add clients (SMEs and billers cannot). Someone with a span gets edit access to the client they add, so it opens for them.
     if (user.scope && (user.role !== "supervisor" || isSME(user))) throw denied("Adding a client is for team leads and above. Ask your team lead.");
+    const fu = fuOr(30);
     // A new client needs its whole profile: scope of work, locations, targets, the people responsible.
     const locNames = [...new Set((Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter(Boolean))].slice(0, 50);
     const p = await checkProfile(env, payload.profile, { isNew: true, locations: locNames.length });

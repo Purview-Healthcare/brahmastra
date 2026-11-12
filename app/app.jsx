@@ -166,6 +166,9 @@ function randomPassword() { const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQ
 const firstNameOf = (u) => { const n = (u && (u.name || u.email) || "").trim(); const f = n.split(/[\s@._-]+/)[0] || "there"; return f.charAt(0).toUpperCase() + f.slice(1); };
 const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 const plural = (n, w, ws) => `${fmtInt(n)} ${n === 1 ? w : (ws || w + "s")}`;
+/* A box that takes a whole number from lo to hi (Claims per day, the default follow-up): anything else is refused with a
+   plain message, as the server refuses it, never saved as another number. */
+const wholeIn = (v, lo, hi) => { const s = String(v == null ? "" : v).trim(); return /^\d+$/.test(s) && Number(s) >= lo && Number(s) <= hi; };
 const normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f ? f(x) : x) || 0), 0);
 const by = (arr, keyFn) => { const m = new Map(); arr.forEach((x) => { const k = keyFn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }); return m; };
@@ -2287,6 +2290,7 @@ const profileFrom = (c) => {
 function profileMissing(f, locCount) {
   const m = [];
   if (!f.name.trim()) m.push("client name");
+  if (!wholeIn(f.follow_up_days, 1, 365)) m.push("a default follow-up of 1 to 365 days");
   if (!f.scope.length) m.push("scope of work");
   if (!locCount) m.push("a location");
   for (const s of f.scope) {
@@ -2336,7 +2340,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
           <div className="grid g3">
             <Field label="Client name"><input className="input" value={f.name} onChange={(e) => set({ name: e.target.value })} autoFocus={isNew} placeholder="e.g. Dr. Montella Eye Care" /></Field>
             <Field label="Short code" hint="Shown on badges and reports"><input className="input" value={f.code} maxLength={12} onChange={(e) => set({ code: e.target.value.toUpperCase() })} /></Field>
-            <Field label="Default follow-up (days)"><input className="input" type="number" min={1} max={365} value={f.follow_up_days} onChange={(e) => set({ follow_up_days: e.target.value })} /></Field>
+            <Field label="Default follow-up (days)" hint={wholeIn(f.follow_up_days, 1, 365) ? "1 to 365" : <span className="red-ink">A whole number of days from 1 to 365.</span>}><input className="input" type="number" min={1} max={365} step={1} value={f.follow_up_days} onChange={(e) => set({ follow_up_days: e.target.value })} /></Field>
           </div>
           {!isNew && <label className="check mt8"><input type="checkbox" checked={!!f.active} onChange={(e) => set({ active: e.target.checked })} /> Active (inactive clients are hidden from uploads and allocation)</label>}
         </Step>
@@ -6000,7 +6004,7 @@ function TeamView({ ctx, reload, me }) {
       </div>
       {delFor && <Confirm title={"Delete " + delFor.name + "?"} text="Their sign-in is removed and they are signed out. Claims on their desk go back to the pool. Notes they wrote stay in the claim history." confirmLabel="Delete" danger busy={busy} onYes={doDelete} onNo={() => setDelFor(null)} />}
       {edit && (
-        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || (!edit.id && !String(edit.last_name || "").trim()) || ((!edit.id || edit.email) && !mailOk(edit.email))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
+        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || (!edit.id && !String(edit.last_name || "").trim()) || ((!edit.id || edit.email) && !mailOk(edit.email)) || !wholeIn(edit.capacity, 1, 500)} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
           <div className="stack">
             <div className="grid g2">
               <Field label="First name"><input className="input" value={edit.first_name} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} autoFocus /></Field>
@@ -6017,7 +6021,7 @@ function TeamView({ ctx, reload, me }) {
             {edit.id && <PersonClientAccess userId={edit.id} ctx={ctx} me={me} />}
             <Field label="Reports to"><Combo value={edit.reports_to || ""} onChange={(v) => setEdit({ ...edit, reports_to: v })} placeholder="Nobody here" options={[{ id: "", label: "Nobody here" }, ...ctx.users.filter((u) => u.id !== edit.id && u.role === "supervisor").map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))]} /></Field>
             {edit.id && <div className="tiny muted">People from the roster: changes here last until the next roster load, which shows any difference before applying.</div>}
-            <Field label="Claims per day" hint="Default capacity for allocation"><input className="input" type="number" min={1} max={500} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></Field>
+            <Field label="Claims per day" hint={wholeIn(edit.capacity, 1, 500) ? "1 to 500 · the default for allocation" : <span className="red-ink">Claims per day must be a whole number from 1 to 500.</span>}><input className="input" type="number" min={1} max={500} step={1} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></Field>
             {edit.id && <label className="check"><input type="checkbox" checked={!!edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active (inactive people cannot sign in or receive claims)</label>}
             {!edit.id && <label className="check"><input type="checkbox" checked={!!edit.tempPw} onChange={(e) => setEdit({ ...edit, tempPw: e.target.checked })} /> Also give them a temporary password (shown once)</label>}
             {!edit.id && <div className="small muted">They sign in with a one-time code sent to this email each time. If their email is slow, you can issue a code from the Team list.</div>}

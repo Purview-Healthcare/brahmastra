@@ -59,6 +59,43 @@ ok("H-15: focus starts inside a pop-up that opens on top, and goes back where it
   /topLayer\(\) === el && !el\.contains\(document\.activeElement\)/.test(hook) && /opener\.focus\(/.test(hook) && /tabIndex=\{-1\}/.test(fnSrc("Modal")) && /tabIndex=\{-1\}/.test(fnSrc("ClaimDrawer")));
 ok("H-15: the focused pop-up box shows no outline of its own", /\.modal:focus,\.cmdk:focus,\.hist:focus\{outline:none\}/.test(HTML));
 
+S("Claims per day: a number outside 1 to 500 is refused, never saved as another number (H-11), and the default follow-up the same");
+const users0 = (await A("users.list")).users, biller = users0.find((u) => u.role === "user" && u.active);
+const capOf = async (id) => (await rig.backend.env.DB.prepare("SELECT capacity FROM users WHERE id = ?").bind(id).all()).results[0].capacity;
+const saveB = (cap) => T(() => A("users.save", { id: biller.id, first_name: biller.first_name || "Arun", last_name: biller.last_name || "Agent", designation: biller.designation, role: "user", active: true, ...(cap === undefined ? {} : { capacity: cap }) }));
+let r = await saveB(40);
+ok("H-11: 40 claims a day is saved as 40", r.ok && (await capOf(biller.id)) === 40, r);
+for (const v of [9999, 0, -3, 2.5, "1e3", "", " ", "abc", 501, "500.5"]) {
+  r = await saveB(v);
+  ok(`H-11: Claims per day ${JSON.stringify(v)} is refused with a plain message and nothing changes`, !r.ok && r.status === 400 && r.e === "Claims per day must be a whole number from 1 to 500." && (await capOf(biller.id)) === 40, [r, await capOf(biller.id)]);
+}
+r = await saveB("500");
+ok("H-11: 500 (typed in the box, so text) is saved as 500", r.ok && (await capOf(biller.id)) === 500, r);
+r = await saveB(undefined);
+ok("H-11: a save without Claims per day keeps it as it is (it used to become 35)", r.ok && (await capOf(biller.id)) === 500, [r, await capOf(biller.id)]);
+await saveB(35);
+r = await T(() => A("users.save", { first_name: "Nova", last_name: "Hand", email: "nova.hand@purview-healthcare.com", designation: "Biller", role: "user", capacity: 0, active: true }));
+ok("H-11: a new person with Claims per day 0 is refused and not created", !r.ok && /Claims per day must be a whole number from 1 to 500/.test(r.e || "") && !(await A("users.list")).users.some((u) => u.email === "nova.hand@purview-healthcare.com"), r);
+r = await T(() => A("users.save", { first_name: "Nova", last_name: "Hand", email: "nova.hand@purview-healthcare.com", designation: "Biller", role: "user", active: true }));
+ok("H-11: a new person without Claims per day starts at 35", r.ok && r.r.user.capacity === 35, r);
+ok("H-11: the page's own check: 1 to 500 whole numbers only", ev(`[wholeIn(35, 1, 500), wholeIn("500", 1, 500), wholeIn(" 7 ", 1, 500), wholeIn("9999", 1, 500), wholeIn("0", 1, 500), wholeIn("", 1, 500), wholeIn("2.5", 1, 500), wholeIn("1e3", 1, 500), wholeIn("-3", 1, 500), wholeIn(null, 1, 500)].join()`) === "true,true,true,false,false,false,false,false,false,false");
+const team = fnSrc("TeamView");
+ok("H-11: the box says the range (1 to 500), says what is wrong in plain words, and Save is off until it is right",
+  /"1 to 500 · the default for allocation"/.test(team) && /Claims per day must be a whole number from 1 to 500\./.test(team) && /!wholeIn\(edit\.capacity, 1, 500\)\} onClick=\{save\}/.test(team));
+const cl = (await A("clients.list")).clients[0];
+const fuOf = async () => (await rig.backend.env.DB.prepare("SELECT follow_up_days FROM clients WHERE id = ?").bind(cl.id).all()).results[0].follow_up_days;
+const saveC = (fu) => T(() => A("clients.save", { id: cl.id, name: cl.name, code: cl.code, active: true, ...(fu === undefined ? {} : { follow_up_days: fu }) }));
+r = await saveC(21);
+ok("H-11 (same mistake): a default follow-up of 21 days is saved as 21", r.ok && (await fuOf()) === 21, r);
+for (const v of [999, 0, "", 2.5]) {
+  r = await saveC(v);
+  ok(`H-11 (same mistake): a default follow-up of ${JSON.stringify(v)} is refused with a plain message and nothing changes`, !r.ok && r.e === "The default follow-up must be a whole number of days from 1 to 365." && (await fuOf()) === 21, [r, await fuOf()]);
+}
+r = await saveC(undefined);
+ok("H-11 (same mistake): a client save without the follow-up keeps it (it used to become 30)", r.ok && (await fuOf()) === 21, [r, await fuOf()]);
+ok("H-11 (same mistake): the client profile form says 1 to 365 and lists a wrong follow-up under Still needed",
+  /wholeIn\(f\.follow_up_days, 1, 365\)/.test(fnSrc("profileMissing")) && /"1 to 365"/.test(fnSrc("ClientProfileForm")));
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
