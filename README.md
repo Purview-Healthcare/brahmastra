@@ -682,7 +682,9 @@ their Open list as **Chase the client**.
 bar on every screen. A claim returned to AR 3 times is escalated to the AR team lead and listed for the
 department lead. Department dashboards show **Needs you now**, **why claims needed AR's help** (by reason and
 biller) and, for Submission, **rejections by code** (by code, client and biller). Rejected rechecks and
-resubmitted rejections carry a rejection code.
+resubmitted rejections carry a rejection code. Received, Submitted, Within TAT and the average count the desk's own
+tasks; the recheck after a submission is the same claim again, so it is not a second claim received and submitted
+(it still shows under Open now and Needs you now).
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once). Active AR agents on a project become
   that client's billers.

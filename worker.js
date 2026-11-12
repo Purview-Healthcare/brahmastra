@@ -6804,33 +6804,37 @@ const OPS = {
     }
     if (payload.client_id) { w.push("h.client_id = ?"); a.push(str(payload.client_id, 60)); }
     const W = w.join(" AND ");
-    const done = "h.status IN ('complete','assistance','rejected','back')";
-    const tot = await one(env, `SELECT SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
-        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
+    // What the desk received and finished is its own work: Payment posting, Submission and Rejections tasks. The recheck after a
+    // submission is the same claim again (did the payer accept it?), not a second claim received and submitted, as in the month's
+    // Submission TAT %. It still counts under Open now, Needs you now and the rejections by code.
+    const work = "h.dept <> 'subcheck'";
+    const done = `${work} AND h.status IN ('complete','assistance','rejected','back')`;
+    const tot = await one(env, `SELECT SUM(CASE WHEN ${work} AND h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
+        SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status = 'assistance' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
-        AVG(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
+        AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
         SUM(CASE WHEN h.status IN ('pending','assigned','client') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now,
         SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN c.balance ELSE 0 END) AS amount,
         SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_now, SUM(CASE WHEN h.status = 'back' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS back
       FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE ${W}`, from, to, from, to, from, to, from, to, from, to, from, to, now, from, to, from, to, ...a);
-    const byClient = await all(env, `SELECT cl.name AS client_name, SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
-        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
+    const byClient = await all(env, `SELECT cl.name AS client_name, SUM(CASE WHEN ${work} AND h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
+        SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now
       FROM handoffs h LEFT JOIN clients cl ON cl.id = h.client_id WHERE ${W} GROUP BY h.client_id ORDER BY overdue_now DESC, open_now DESC, cl.name`, from, to, from, to, from, to, now, ...a);
     const byPerson = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done,
-        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now,
-        AVG(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
-      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
+        AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
+      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
     // time to complete in working hours, as the TAT counts (a task sent Friday 18:00 and done Monday 10:00 took 16, not 64)
     const comp = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, CASE WHEN h.dept = 'subcheck' AND h.available_at IS NOT NULL THEN h.available_at ELSE h.created_at END AS st, h.done_at
-      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? LIMIT 20000`, ...a, from, to);
+      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? LIMIT 20000`, ...a, from, to);
     const whAvg = (xs) => (xs.length ? Math.round(xs.reduce((t, x) => t + workingHoursBetween(x.st, x.done_at), 0) / xs.length * 10) / 10 : null);
     if (tot) tot.avg_hours = whAvg(comp);
     for (const p of byPerson) p.avg_hours = whAvg(comp.filter((x) => x.name === p.name));
-    const ev = await all(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?) LIMIT 20000`, ...a, from, to, from, to);
+    const ev = await all(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND ${work} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?) LIMIT 20000`, ...a, from, to, from, to);
     const day = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10);
     const days = {};
     for (const e of ev) {

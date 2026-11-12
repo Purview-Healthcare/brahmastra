@@ -487,6 +487,30 @@ await part("C-15 / E-10 / D-06: text written to the OneDrive Excel files is neve
   ok("C-15: worker.js sends cell values to Graph only through writeRange", (src.match(/"PATCH",[^\n]*\{ values/g) || []).length === 1 && /const writeRange = [^\n]*row\.map\(xlText\)/.test(src), (src.match(/"PATCH",[^\n]*\{ values/g) || []).length);
 });
 
+await part("C-07: the 48-hour recheck is not a second claim received and submitted on the desk dashboard", async () => {
+  // a week of its own (Mon 16 Nov), so the dates of the dashboard hold only this section's work
+  setNow(IST(2026, 11, 16, 10, 0));
+  const dash = () => call(TI, "handoffs.dashboard", { dept: "submission", client_id: sun.id, from_ms: IST(2026, 11, 16, 0, 0), to_ms: Date.now() });
+  const open0 = (await dash()).totals.open_now || 0;
+  const [a, b] = await give("Arun Agent", 2);
+  await save(AR, a, SAAG.resub); await save(AR, b, SAAG.resub);
+  setNow(IST(2026, 11, 16, 14, 0));   // submitted after 4 working hours
+  await submitIt(QU, a); await submitIt(QU, b);
+  setNow(IST(2026, 11, 18, 15, 0));   // the rechecks opened at 14:00; the biller accepts one, the other is rejected again
+  await call(AR, "handoffs.close", { id: (await openH(a, "subcheck")).id, outcome: "complete", proof: { date: nowIso() }, note: "" });
+  let d = await dash(), t = d.totals;
+  ok("C-07: two claims sent and submitted, one recheck accepted: Received 2 and Submitted 2 (not 4 and 3)", t.received === 2 && t.completed === 2 && t.done === 2 && t.met === 2, { received: t.received, completed: t.completed, done: t.done, met: t.met });
+  ok("C-07: ...the average time to complete is the submissions' own (4 working hours)", t.avg_hours === 4, t.avg_hours);
+  ok("C-07: ...By person lists the Submission person, not the AR biller who accepted the recheck", !d.by_person.some((p) => p.name === "Arun Agent") && d.by_person.some((p) => p.name === "Quin Submit" && p.completed === 2 && p.done === 2 && p.avg_hours === 4), d.by_person);
+  const bc = d.by_client.find((x) => x.client_name === sun.name) || {};
+  ok("C-07: ...By client and By day count the same two", bc.received === 2 && bc.completed === 2 && bc.done === 2 && d.by_day.reduce((n, x) => n + x.received, 0) === 2 && d.by_day.reduce((n, x) => n + x.done, 0) === 2, [bc, d.by_day]);
+  ok("C-07: the recheck still open is still counted under Open now", t.open_now === open0 + 1, [open0, t.open_now]);
+  await call(AR, "handoffs.close", { id: (await openH(b, "subcheck")).id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy again" });
+  d = await dash(); t = d.totals;
+  ok("C-07: a recheck rejected again still shows as 'rejected on recheck' and in the rejections by code", t.rejected === 1 && d.rejections.total === 1 && d.rejections.by_code[0].name === "Taxonomy missing", [t.rejected, d.rejections]);
+  ok("C-07: ...and the Rejections task it opens is a claim received (the desk's own work)", t.received === 3 && t.completed === 2, { received: t.received, completed: t.completed });
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
