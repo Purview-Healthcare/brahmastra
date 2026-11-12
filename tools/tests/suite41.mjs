@@ -120,6 +120,15 @@ S("N-18: a client Drishti has only weeks for: its score is said to be a week's")
   await fresh();
 }
 
+S("N-19: README says what Inventory status shows");
+{ const rd = fs.readFileSync(REPO + "/README.md", "utf8"), a = rd.indexOf("#### Dashboard › Inventory status"), part = rd.slice(a, rd.indexOf("- **Managers side by side**", a));
+  ok("N-19: no 'pulling it down', 'KPIs in the red' or 'SLA score, average' column or tile there: the page has none", a > 0 && !/pulling it down|KPIs in the red|SLA score, average/i.test(part), part.slice(0, 200));
+  ok("N-19: it names what the page has: where the inventory stands, pace to clear, SLA checks, do these first, by client worst first", ["where the inventory stands", "pace to clear", "SLA checks", "do these first", "by client, worst"].every((x) => part.includes(x)), part.slice(0, 300));
+  ok("N-19 (N-18): and that a client Drishti has only weeks for shows the last week's score, said so", /only weeks for, it is the last week's score, and the page\s+says so/.test(part), part.slice(-400));
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("N-19: the page itself: the Portfolio table with its own SLA and Pulling it down columns is only used in its fixed form, which leaves them out", (src.match(/<ClientReportsTab /g) || []).length === 1 && /<ClientReportsTab \{\.\.\.props\} fixed=\{/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
