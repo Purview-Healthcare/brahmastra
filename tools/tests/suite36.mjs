@@ -159,6 +159,18 @@ S("B-12: Live status on a weekday Shastra holiday says it is a holiday, with its
   ok("B-12: a Saturday is still the weekend (no holiday), and a working day is neither", sat.weekend === true && !sat.holiday && tue.weekend === false && !tue.holiday, [sat.weekend, sat.holiday, tue.weekend, tue.holiday]);
 }
 
+S("B-05: the capacity pace leaves Shastra holidays out of the working days");
+{
+  // Lakeview: 30 entries on each of the 8 working days between Nov 3 and Nov 13 (Mon Nov 9 is Diwali)
+  for (const d of [3, 4, 5, 6, 10, 11, 12, 13]) await work("Lou Lake", IST(2026, 11, d, 11), 30, { client: "lake" });
+  const po = await at(IST(2026, 11, 16, 12), () => A("portfolio.overview", { today: D(16) })), lk = po.rows.find((x) => x.client_id === lake.id);
+  ok("B-05: the last 14 days are 9 working days (Diwali left out): Lakeview's pace is 240 / 9 = 26.7 a day", po.working_days === 9 && lk.per_day === 26.7 && lk.days_to_clear === Math.ceil(lk.to_work / (240 / 9)), { working_days: po.working_days, per_day: lk.per_day, days_to_clear: lk.days_to_clear, to_work: lk.to_work });
+  const inv = await at(IST(2026, 11, 16, 12), () => A("inventory.status", { client_id: lake.id, today: D(16) }));
+  ok("B-05: Inventory status shows the same pace", inv.clients[0].per_day === 26.7, inv.clients[0].per_day);
+  const tr = await at(IST(2026, 11, 10, 15), () => A("team.range", { from: D(9), to: D(10), today: D(10), tz_offset_min: 330 }));
+  ok("B-05: (same mistake in team.range) Diwali is not a working day there either: 1 working day, not 2", tr.workdays === 1, tr.workdays);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

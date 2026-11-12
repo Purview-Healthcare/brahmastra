@@ -4149,7 +4149,7 @@ const OPS = {
     const closed = await all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?
       AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la);
     const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN (${qs})`, from, to, ...ids);
-    const weekday = (d) => { const w = new Date(d + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6; };
+    const weekday = isWorkDay;   // Monday to Friday, not a Shastra holiday
     let workdays = 0; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) workdays++;
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x]));
     if (f.narrow) people = people.filter((u) => wk.has(u.id) || f.teamIds.has(u.id));
@@ -4803,9 +4803,10 @@ const OPS = {
     const esc = await trackerEsc(env);
     const tflRows = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows;
     const tfl = new Map(); for (const r of tflRows) { const t = tfl.get(r.client_id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 }; t.soon_n += r.soon_n; t.soon_bal += r.soon_bal; t.past_n += r.past_n; t.past_bal += r.past_bal; tfl.set(r.client_id, t); }
-    // capacity: entries a working day over the last 14 days, against the claims still to work
+    // capacity: entries a working day over the last 14 days, against the claims still to work (working days: Monday to Friday,
+    // Shastra holidays left out, as the TAT clock counts them)
     const since14 = now - 14 * 86400000;
-    let wd = 0; for (let t = since14; t < now; t += 86400000) { const w = new Date(t + IST_MIN * 60000).getUTCDay(); if (w !== 0 && w !== 6) wd++; }
+    let wd = 0; for (let t = since14; t < now; t += 86400000) if (isWorkDay(istISO(t))) wd++;
     const pace = mapOf(await all(env, `SELECT c.client_id, COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND n.created_at > ? GROUP BY c.client_id`, since14));
     const lastInv = mapOf(await all(env, `SELECT client_id, MAX(uploaded_at) AS at FROM batches WHERE undone_at IS NULL GROUP BY client_id`));
     const monthStart = payload.from_ms != null ? num(payload.from_ms, 0) : Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
