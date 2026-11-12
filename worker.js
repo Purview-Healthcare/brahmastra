@@ -2983,6 +2983,21 @@ async function billerFor(env, userId, clientId) {
   const sc = await scopeOf(env, u);
   return sc == null || sc.includes(clientId) ? u : null;
 }
+/* Who a hand-off may be given to (the same idea as billerFor, for the desks): the active people of its desk (Payment posting for a
+   posting hand-off; Submission for a submission, a rejection or a recheck) who can work the claim's client: it is in their
+   projects, they are set on it, or it is shared with them to edit (a view-only share is not enough). deskTeam reads everyone on
+   a desk once; onDeskFor answers for one hand-off. The Posting & submission tab offers exactly this list. */
+async function deskTeam(env) {
+  const out = [];
+  for (const row of await all(env, "SELECT * FROM users WHERE active = 1 ORDER BY name")) {
+    const u = publicUser(row), desk = userDesk(u);
+    if (!desk || u.is_admin) continue;
+    const scope = await scopeOf(env, u);
+    out.push({ id: u.id, name: u.name, desk, scope, view: u.scope_view_only || new Set() });
+  }
+  return out;
+}
+const onDeskFor = (m, dept, clientId) => (m.desk === "both" || m.desk === (dept === "posting" ? "posting" : "submission")) && (m.scope == null || (m.scope.includes(clientId) && !m.view.has(clientId)));
 const projKey = (n) => String(n || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const inScope = (user, clientId) => !user.scope || user.scope.includes(clientId);
 const canEditClient = (user, clientId) => inScope(user, clientId) && !(user.scope_view_only && user.scope_view_only.has(clientId));
@@ -6755,7 +6770,14 @@ const OPS = {
         SUM(CASE WHEN h.status = 'client' AND h.chase_at <= ${now} THEN 1 ELSE 0 END) AS chase_n,
         SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS done_n, SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS assist_n FROM handoffs h WHERE ${base}`, now, month, month, month, ...bargs);
-    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {}, hold_reasons: TAT_HOLD_REASONS };
+    // Who each hand-off can be given to, by client and desk ("<client id>|posting" or "|submission"): the rule handoffs.assign checks
+    const assignees = {};
+    if (out.some((r) => r.can_assign && (r.status === "pending" || r.status === "assigned"))) {
+      const team = await deskTeam(env);
+      for (const r of out) { const k = r.client_id + "|" + (r.dept === "posting" ? "posting" : "submission");
+        if (r.can_assign && !assignees[k]) assignees[k] = team.filter((m) => onDeskFor(m, r.dept, r.client_id)).map((m) => ({ id: m.id, name: m.name })); }
+    }
+    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {}, hold_reasons: TAT_HOLD_REASONS, assignees };
   },
   /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
   /* The Payment posting / Submission dashboard: what came in, what was done and how fast, by client, person and day. */
@@ -6858,6 +6880,10 @@ const OPS = {
     if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id)) throw denied("Only the department lead or backup assigns these.");
     const to = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", payload.user_id);
     if (!to) throw bad("Pick an active team member.");
+    // Being given a hand-off opens its claim to that person and lets them close it: only someone of this desk who can work the
+    // claim's client (the list the tab offers), the hand-off's own lead or backup, or the person assigning it (to themselves).
+    if (!(to.id === user.id || to.id === h.lead_id || to.id === h.backup_id || (await deskTeam(env)).some((m) => m.id === to.id && onDeskFor(m, h.dept, h.client_id))))
+      throw bad(`${to.name} cannot be given this hand-off: pick someone on ${DESK_NAME[h.dept === "posting" ? "posting" : "submission"]} who works this client.`);
     const now = Date.now();
     await env.DB.batch([
       env.DB.prepare("UPDATE handoffs SET status = 'assigned', assigned_to = ?, assigned_at = ? WHERE id = ?").bind(to.id, now, h.id),

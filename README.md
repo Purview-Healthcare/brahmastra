@@ -538,6 +538,10 @@ sends it back to the biller with a 15-day follow-up and always opens a **recheck
 whoever submitted:
 **Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
 
+**Assigning within the desk.** The lead or backup of a hand-off can give it to a person of the same desk (Payment
+posting; Submission for submissions, rejections and rechecks) who works that client. The list offers only those
+people, and the server refuses anyone else, since the person given a hand-off can open its claim and close it.
+
 **Filters.** Every lead and team member on Payment posting and Submission can narrow the list to one **client**
 and to the dates the claims were **sent to the desk** (All time, Today, This week, This month, Custom). The sent
 date is the day the AR biller saved the entry that sent the claim, so the same filter answers "what AR sent on

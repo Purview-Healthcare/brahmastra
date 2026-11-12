@@ -5134,7 +5134,8 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const pickCard = (k) => { setView("open"); setPick(pick === k ? "" : k); };
   const changed = () => { q.reload(); refreshHandoffs && refreshHandoffs(); };
   const assign = async (h, uid) => { if (!uid) return; setBusy(true); try { await rpc("handoffs.assign", { id: h.id, user_id: uid }); toast("Assigned."); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
-  const team = (d) => ctx.users.filter((u) => u.active && (d === "posting" ? /posting/i : /submission/i).test(u.department || ""));
+  // who a hand-off can be given to: the people of its desk who can work its client (the server's list, the same rule it checks), and me
+  const team = (h) => ((q.data && q.data.assignees) || {})[h.client_id + "|" + (h.dept === "posting" ? "posting" : "submission")] || [];
   const met = st.done_n ? Math.round((st.met || 0) / st.done_n * 100) : null;
   return (
     <div className="stack">
@@ -5182,7 +5183,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
               <td className="mono small">{h.claim_no || "–"}</td><td>{h.patient}</td><td className="small">{h.client_name}{h.location_name ? " · " + h.location_name : ""}</td><td className="small">{h.payer}</td><td className="num">{fmtMoney(h.balance)}</td>
               <td className="small">{h.created_by_name}<div className="tiny muted">{h.saag_action}</div></td>
               <td className="small">{isOpen && h.can_assign ? <Combo sm width={170} value={h.assigned_to || ""} onChange={(v) => assign(h, v)} placeholder="Assign to team…" disabled={busy}
-                  options={[...team(h.dept), ...ctx.users.filter((u) => u.id === me.id)].filter((u, i, a) => a.findIndex((x) => x.id === u.id) === i).map((u) => ({ id: u.id, label: u.id === me.id ? u.name + " (me)" : u.name }))} />
+                  options={[...team(h), ...ctx.users.filter((u) => u.id === me.id), ...(h.assigned_to && h.assigned_name ? [{ id: h.assigned_to, name: h.assigned_name }] : [])].filter((u, i, a) => a.findIndex((x) => x.id === u.id) === i).map((u) => ({ id: u.id, label: u.id === me.id ? u.name + " (me)" : u.name }))} />
                 : h.assigned_name || (isOpen ? <span className="muted">with {h.lead_name}</span> : h.done_by_name)}
                 {!isOpen && h.status === "complete" && <div className="tiny muted">{h.proof.ref}{h.proof.date ? " · " + fmtDate(h.proof.date) : ""}{h.proof.files && h.proof.files.length ? " · 📎 proof" : ""}</div>}
                 {!isOpen && (h.status === "assistance" || h.status === "rejected") && <div className="tiny" style={{ color: "var(--red-ink)" }}>{h.reason}</div>}</td>

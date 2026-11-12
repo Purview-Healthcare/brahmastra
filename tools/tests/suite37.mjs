@@ -257,6 +257,46 @@ await part("C-04: a team lead's Close, Exclude or Reopen does not reach a claim 
   ok("C-04: an excluded claim stays excluded when its recheck is marked Need assistance from AR", r.ok && (await claim(e)).state === "excluded" && (await claim(e)).state_reason === "Excluded by supervisor", await brief(e));
 });
 
+await part("C-22 / D-13: a hand-off can be given only to people of its desk who can work the client", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const [a, b] = await give("Arun Agent", 2);
+  await call(AR, "attachments.add", { claim_id: a, name: "eob.pdf", type: "application/pdf", data: PDF });
+  await save(AR, a, SAAG.post); await save(AR, b, SAAG.resub);
+  const hp = await openH(a, "posting"), hs = await openH(b, "submission");
+  const tryAssign = (who, h, name) => T(() => call(who, "handoffs.assign", { id: h.id, user_id: U(name).id }));
+  const before = await T(() => call(CY, "claims.get", { id: a }));
+  let r = await tryAssign(PI, hp, "Cyra Agent");
+  ok("C-22: the posting lead cannot give the hand-off to an AR biller of another client", !r.ok && /Cyra Agent cannot be given this hand-off/.test(r.e) && /Payment posting/.test(r.e), r);
+  ok("D-13: ...who still cannot open the claim", !before.ok && !(await T(() => call(CY, "claims.get", { id: a }))).ok && (await row1("SELECT assigned_to, status FROM handoffs WHERE id = ?", hp.id)).assigned_to == null);
+  r = await tryAssign(PI, hp, "Arun Agent");
+  ok("C-22: nor to an AR biller of the same client (not on the desk)", !r.ok, r);
+  r = await tryAssign(PI, hp, "Lex Lakepost");
+  ok("C-22: nor to a Payment posting person who works another client only", !r.ok, r);
+  r = await tryAssign(PI, hp, "Quin Submit");
+  ok("C-22: nor to someone on the other desk (Submission)", !r.ok, r);
+  // a view-only share of the client is not enough; a share to edit is
+  await call(TI, "clients.accessSave", { client_id: sun.id, user_id: U("Lex Lakepost").id, level: "view" });
+  r = await tryAssign(PI, hp, "Lex Lakepost");
+  ok("C-22: a view-only share of the client does not make someone assignable", !r.ok, r);
+  const list = await call(PI, "handoffs.list", {});
+  const offered = ((list.assignees || {})[sun.id + "|posting"] || []).map((u) => u.name).sort();
+  ok("C-22: the tab offers the desk's people on the client, the same rule the server checks", offered.join() === ["Otto Poster", "Pat Postlead", "Pia Poster"].join(), offered);
+  r = await tryAssign(PI, hp, "Otto Poster");
+  ok("C-22: a Payment posting person on the client can be given it", r.ok && (await row1("SELECT assigned_to, status FROM handoffs WHERE id = ?", hp.id)).assigned_to === U("Otto Poster").id, r);
+  ok("C-22: ...sees the claim and can complete it", (await T(() => call(OT, "claims.get", { id: a }))).ok && (await T(() => call(OT, "handoffs.close", { id: hp.id, outcome: "inprocess", note: "" }))).ok);
+  r = await tryAssign(PI, hp, "Pia Poster");
+  ok("C-22: the lead can take it herself", r.ok, r);
+  // Submission: its own people only
+  r = await tryAssign(QU, hs, "Pia Poster");
+  const r2 = await tryAssign(QU, hs, "Rex Reject");
+  ok("C-22: the Submission lead: a Payment posting person refused, a Submission person on the client accepted", !r.ok && /Submission/.test(r.e) && r2.ok, [r, r2]);
+  const offS = (((await call(QU, "handoffs.list", {})).assignees || {})[sun.id + "|submission"] || []).map((u) => u.name).sort();
+  ok("C-22: ...and the Submission tab offers Submission people on the client only", offS.join() === ["Quin Submit", "Rex Reject"].join(), offS);
+  const PT = await firstIn("Pat Postlead"), seen = await call(PT, "handoffs.list", {});
+  ok("C-22: someone who sees the hand-offs but cannot assign them (not the lead or backup) gets no list of people", seen.rows.some((h) => h.id === hp.id && !h.can_assign) && !Object.keys(seen.assignees || {}).length, seen.assignees);
+  await call(TI, "clients.accessRemove", { client_id: sun.id, user_id: U("Lex Lakepost").id });
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
