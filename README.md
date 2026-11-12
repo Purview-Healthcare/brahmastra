@@ -284,7 +284,9 @@ roster, grouped by team lead (no Emp ID):
 - **Attainment**: entries against the target (the daily target for each working day in the dates from the date of joining; a half day counts
   half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a Saturday
   worked, and Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
-  way does not count against anyone; with only today picked, it is today's. Production people under 90% are
+  way does not count against anyone; with only today picked, it is today's. A night shift (one that crosses midnight)
+  counts to the day it began, its hours and entries, until an hour and a half after it ends (05:00 IST at the earliest),
+  so that day is not finished while the shift is still running. Production people under 90% are
   **below the mark**; Training and OJT are **in ramp-up** and not judged against it. Claims worked and **team task
   items** done (Needs attention › Team tasks, below) both count toward it: the line under it says how many of each.
 - **Tasks**: the team task items each person marked done in the dates (by the day of the update, the night shift's early

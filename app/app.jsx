@@ -8824,14 +8824,17 @@ function MyRechecks({ ctx, me }) {
     </div>
   );
 }
-/* The working day as the server counts it (Live status, My day): it starts at 05:00 IST, so a night shift (18:30 to 03:30)
-   is one day and "Worked today" does not drop to 0 at midnight. */
-const bizDayBounds = () => { const now = Date.now(), ist = now + 330 * 60000; const start = now - (((ist - 5 * 3600000) % 86400000) + 86400000) % 86400000; return [start, start + 86400000 - 1]; };
+/* The working day My day counts: it starts at 05:00 IST, so a night shift (18:30 to 03:30) is one day and "Worked today" does
+   not drop to 0 at midnight. A night shift that ends later (22:30 to 07:30) keeps its day to an hour and a half after it ends,
+   as Team status and Live status count it. */
+const dayRollMin = (shift) => { const m = String(shift || "").match(/(\d{1,2})[:.](\d{2})\s*[-–to]+\s*(\d{1,2})[:.](\d{2})/i); if (!m) return 300;
+  const s = +m[1] * 60 + +m[2], e = +m[3] * 60 + +m[4]; return e < s ? Math.min(s, Math.max(300, e + 90)) : 300; };
+const bizDayBounds = (shift) => { const now = Date.now(), ist = now + 330 * 60000, roll = dayRollMin(shift) * 60000; const start = now - (((ist - roll) % 86400000) + 86400000) % 86400000; return [start, start + 86400000 - 1]; };
 function QueueView({ ctx, me, go, refreshTasks }) {
   const today = todayISO();
-  const [[from, to], setBizDay] = useState(bizDayBounds);
+  const [[from, to], setBizDay] = useState(() => bizDayBounds(me && me.shift));
   // Back on the tab after the day rolled over: count the new day.
-  useEffect(() => { const f = () => setBizDay((b) => { const n = bizDayBounds(); return n[0] === b[0] ? b : n; });
+  useEffect(() => { const f = () => setBizDay((b) => { const n = bizDayBounds(me && me.shift); return n[0] === b[0] ? b : n; });
     window.addEventListener("focus", f); document.addEventListener("visibilitychange", f); const t = setInterval(f, 5 * 60000);
     return () => { window.removeEventListener("focus", f); document.removeEventListener("visibilitychange", f); clearInterval(t); }; }, []);
   const summary = useRpc("queue.summary", { day_from_ms: from, day_to_ms: to }, [from]);

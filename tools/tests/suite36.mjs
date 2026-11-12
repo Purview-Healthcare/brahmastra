@@ -93,6 +93,44 @@ S("B-13: no target and no floor time before the date of joining");
   ok("B-13: the days before joining are not days out, and there is no Do today pointer about her", j.days_out === 0 && j.days_full === 3 && !r.suggestions.today.some((s) => s.who === "Jo Joiner"), { ...pick(j, ks), today: r.suggestions.today.filter((s) => s.who === "Jo Joiner") });
 }
 
+S("B-03: a night shift's work counts to the day it began, also when the shift ends after 05:00");
+{
+  // Walt (22:30 to 07:30) works 35 a night on Monday and Tuesday nights: 10 before midnight, 15 from 01:00, 10 from 05:30
+  for (const d of [2, 3]) { await work("Walt West", IST(2026, 11, d, 23), 10); await work("Walt West", IST(2026, 11, d + 1, 1), 15); await work("Walt West", IST(2026, 11, d + 1, 5, 30), 10); }
+  // Nell (18:30 to 03:30) works 35 a night too
+  for (const d of [2, 3]) { await work("Nell Night", IST(2026, 11, d, 19), 20); await work("Nell Night", IST(2026, 11, d + 1, 0, 30), 15); }
+  // a team task update at 06:00 on Wednesday, inside Tuesday night's shift; 2 entries at 09:30 Wednesday, after his day rolled
+  await sql("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, delta, at) VALUES ('s36u1', 's36t1', ?, 'Walt West', 'update', 5, ?)", U("Walt West").id, IST(2026, 11, 4, 6));
+  await work("Walt West", IST(2026, 11, 4, 9, 30), 2);
+  const r = await status(A, D(2), D(4), D(4), IST(2026, 11, 4, 15)), w = row(r, "Walt West"), n = row(r, "Nell Night");
+  const ks = ["worked_done", "target_done", "worked_today", "task_items_done", "task_items_today", "attain", "perf"];
+  ok("B-03: 22:30 to 07:30: the entries up to 07:30 count to the night before: 70 of 70 claims up to yesterday", w.worked_done === 70 && w.target_done === 70 && w.worked_today === 2, pick(w, ks));
+  ok("B-03: a team task update at 06:00 inside the night shift counts to the night before too", w.task_items_done === 5 && w.task_items_today === 0, pick(w, ks));
+  ok("B-03: 18:30 to 03:30 as before: 70 of 70, 100%", n.worked_done === 70 && n.target_done === 70 && n.attain === 100, pick(n, ks));
+  // My day for the same biller (the page's working day): Monday night's day runs to 09:00 on Tuesday
+  const md = await at(IST(2026, 11, 3, 8), async () => { const [f, t] = page('bizDayBounds("22:30-07:30")'); return { f, n: (await WW("queue.summary", { day_from_ms: f, day_to_ms: t })).done_today.n }; });
+  ok("B-03: (same mistake in My day) 22:30 to 07:30 at 08:00 Tuesday: worked today is the whole night (35), from 09:00 Monday", md.f === IST(2026, 11, 2, 9) && md.n === 35, { from: new Date(md.f).toISOString(), n: md.n });
+  const n1 = await at(IST(2026, 11, 3, 4), () => page('bizDayBounds("18:30-03:30")[0]')), d1 = await at(IST(2026, 11, 3, 8), () => page('bizDayBounds("09:00-18:00")[0]'));
+  ok("B-03: My day for 18:30 to 03:30 and for a day shift still starts at 05:00", n1 === IST(2026, 11, 2, 5) && d1 === IST(2026, 11, 3, 5), [new Date(n1).toISOString(), new Date(d1).toISOString()]);
+}
+
+S("B-14: a night shift still under way after midnight is not judged as a finished day");
+{
+  // Ola (18:30 to 03:30): 20 entries from 19:00 on Monday and 10 after midnight; Shastra shows her shift open, 6.5 h so far
+  await work("Ola Owl", IST(2026, 11, 2, 19), 20); await work("Ola Owl", IST(2026, 11, 3, 0, 10), 10, { stepMin: 4 });
+  await freshFloor([F("B9", D(2), "present", 390, { open: true })]);
+  // on her desk, not started: one claim given on Sunday, one at 19:00 on Monday (during her shift)
+  const setDesk = (id, ms) => sql("UPDATE claims SET state = 'assigned', assigned_to = ?, assigned_at = ?, started_at = NULL, follow_up_on = '', tier = 'Medium' WHERE id = ?", U("Ola Owl").id, ms, id);
+  await setDesk(sunClaims[200], IST(2026, 11, 1, 12)); await setDesk(sunClaims[201], IST(2026, 11, 2, 19));
+  const r = await status(A, D(2), D(3), D(3), IST(2026, 11, 3, 1)), o = row(r, "Ola Owl");
+  const ks = ["attain_basis", "count_done", "target_done", "count_today", "target_today", "attain", "perf", "floor", "left"];
+  ok("B-14: Tue 01:00, her Monday shift runs to 03:30: not judged yet (day under way), 30 of 35 so far", o.attain_basis === "today" && o.target_done === 0 && o.count_today === 30 && o.target_today === 35 && o.perf === "pending", pick(o, ks));
+  ok("B-14: her floor time is not judged either, and there are no pointers about her", o.floor === "pending" && !r.suggestions.today.concat(r.suggestions.week).some((s) => s.who === "Ola Owl"), { ...pick(o, ks), pointers: r.suggestions.today.concat(r.suggestions.week).filter((s) => s.who === "Ola Owl") });
+  ok("B-14: left over is the claim given before her working day (Sunday), not the one given during her shift", o.left === 1, pick(o, ks));
+  const o2 = row(await status(A, D(2), D(3), D(3), IST(2026, 11, 3, 6)), "Ola Owl");
+  ok("B-14: at 06:00 her Monday is finished and judged: 30 of 35 up to yesterday, 85.7%, below the mark", o2.attain_basis === "done" && o2.target_done === 35 && o2.count_done === 30 && o2.attain === 85.7 && o2.perf === "below", pick(o2, ks));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
