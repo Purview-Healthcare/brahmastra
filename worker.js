@@ -6376,7 +6376,7 @@ const OPS = {
 
   /* ---- attachments: files kept with a claim, next to its notes (EOBs, denial letters, portal screenshots) ---- */
   "attachments.add": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
+    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
     if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const name = str(payload.name, 200).replace(/[\\/\u0000-\u001f]/g, "_").trim();
@@ -6397,7 +6397,7 @@ const OPS = {
       env.DB.prepare("INSERT INTO attachments (id, claim_id, user_id, user_name, name, type, size, parts, created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(id, c.id, user.id, user.name, name, type, size, parts.length, now),
       env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
     ]);
-    return { attachment: { id, claim_id: c.id, user_id: user.id, user_name: user.name, name, type, size, created_at: now, deletable: true } };
+    return { attachment: { id, claim_id: c.id, user_id: user.id, user_name: user.name, name, type, size, created_at: now, deletable: !postedClosed(c) } };
   },
   "attachments.get": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
@@ -6411,8 +6411,10 @@ const OPS = {
   "attachments.delete": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
-    const ac = await one(env, "SELECT client_id FROM claims WHERE id = ?", a.claim_id);
+    const ac = await one(env, "SELECT client_id, state, handoff_status FROM claims WHERE id = ?", a.claim_id);
     if (!(ac && leadFor(user, ac.client_id)) && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
+    // a claim Posting closed is read only: the EOB and the proof its posting rests on stay with it (files can still be added)
+    if (postedClosed(ac)) throw bad("Posting closed this claim (the payment is posted): its files can no longer be removed.");
     await env.DB.batch([
       env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id),
       env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(a.id),
@@ -7976,7 +7978,7 @@ async function claimBundle(env, user, c, opts = {}) {
       LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
   const role = await handoffRole(env, user, c.id);
   const limits = payerKey(c.payer) ? await one(env, "SELECT tfl_days, afl_days, note, updated_at, updated_by_name FROM payer_limits WHERE client_id = ? AND payer_key = ?", c.client_id, payerKey(c.payer)) : null;
-  const attachments = files.map((a) => ({ ...a, deletable: leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
+  const attachments = files.map((a) => ({ ...a, deletable: !locked && (leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS)) }));
   // whether this client has an active Posting / Submission / Rejections person (the same rule as queue.complete): a claim sent
   // there leaves AR with no follow-up date until the desk is done
   const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")}, subcheck_hours FROM clients WHERE id = ?`, c.client_id);

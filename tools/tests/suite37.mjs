@@ -417,6 +417,23 @@ await part("C-09: a claim at a desk that the team lead's review gives to another
   ok("C-09: if the desk sends it back instead, it is first on the new biller's list and she is told", c.state === "assigned" && c.assigned_to === U("Bela Agent").id && c.first_up === 1 && (await rows("SELECT user_id FROM user_notices WHERE text LIKE '%back to you%'")).every((n) => n.user_id === U("Bela Agent").id), [await brief(e), await rows("SELECT user_id, text FROM user_notices")]);
 });
 
+await part("C-19: the files of a Posting Closed claim cannot be removed", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const [a, b] = await give("Arun Agent", 2);
+  const file = (await call(AR, "attachments.add", { claim_id: a, name: "eob.pdf", type: "application/pdf", data: PDF })).attachment;
+  const other = (await call(AR, "attachments.add", { claim_id: b, name: "eob.pdf", type: "application/pdf", data: PDF })).attachment;
+  await save(AR, a, SAAG.post);
+  await call(PI, "handoffs.close", { id: (await openH(a, "posting")).id, outcome: "complete", proof: { date: nowIso(), ref: "CHK-1", allowed: "100", paid: "80", adjustment: "20", files: ["eob.pdf"] }, note: "Posted" });
+  setNow(IST(2026, 11, 10, 15, 0));
+  const r1 = await T(() => call(AR, "attachments.delete", { id: file.id })), r2 = await T(() => call(TI, "attachments.delete", { id: file.id }));
+  ok("C-19: the biller who attached the EOB cannot remove it from a Posting Closed claim (same day)", !r1.ok && /its files can no longer be removed/.test(r1.e), r1);
+  ok("C-19: nor can the team lead", !r2.ok && /its files can no longer be removed/.test(r2.e), r2);
+  ok("C-19: the file is still there, and the claim page offers no Remove for it", (await rows("SELECT id FROM attachments WHERE id = ?", file.id)).length === 1 && (await call(TI, "claims.get", { id: a })).attachments.every((x) => x.deletable === false) && (await call(AR, "claims.get", { id: a })).attachments.every((x) => x.deletable === false));
+  const added = await T(() => call(AR, "attachments.add", { claim_id: a, name: "eob-page-2.pdf", type: "application/pdf", data: PDF }));
+  ok("C-19: a file can still be added to it, and that one cannot be removed either", added.ok && added.r.attachment.deletable === false && !(await T(() => call(AR, "attachments.delete", { id: added.r.attachment.id }))).ok, added);
+  ok("C-19: on a claim that is not Posting Closed a file is removed as before", (await call(AR, "claims.get", { id: b })).attachments.some((x) => x.id === other.id && x.deletable) && (await T(() => call(AR, "attachments.delete", { id: other.id }))).ok);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
