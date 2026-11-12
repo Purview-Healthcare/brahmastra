@@ -222,6 +222,41 @@ await part("C-12: an edit does not undo the team lead's Close or Exclude", async
   ok("C-12: and an edit into a closing entry still closes an open follow-up", r.ok && (await claim(d)).state === "closed" && (await claim(d)).state_reason === "Closed: Processing-Closed", await brief(d));
 });
 
+await part("C-04: a team lead's Close, Exclude or Reopen does not reach a claim a desk still has", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  await save(AR, a, SAAG.resub);
+  let r = await T(() => call(TI, "claims.setState", { ids: [a], state: "closed" }));
+  ok("C-04: Close on a claim that is with Submission is refused, and says who has it", !r.ok && /with Submission now/.test(r.e) && /finishes it or sends it back to AR/.test(r.e), r);
+  ok("C-04: ...the claim stays In process and its hand-off stays open on the desk", (await claim(a)).state === "in_process" && !!(await openH(a, "submission")) && (await call(QU, "handoffs.list", {})).rows.some((h) => h.claim_id === a), await brief(a));
+  r = await T(() => call(TI, "claims.setState", { ids: [a], state: "excluded" }));
+  const r2 = await T(() => call(TI, "claims.setState", { ids: [a], state: "open" }));
+  ok("C-04: Exclude and Reopen are refused the same way", !r.ok && /excluded once/.test(r.e) && !r2.ok && /reopened once/.test(r2.e) && (await claim(a)).state === "in_process" && (await claim(a)).assigned_to === U("Arun Agent").id, [r, r2]);
+  // several at once: the ones a desk has stay, the rest change, and the answer says how many stayed
+  await save(AR, b, SAAG.fu);
+  r = await T(() => call(TI, "claims.setState", { ids: [a, b], state: "closed" }));
+  ok("C-04: several at once: the free claim closes, the one with a desk stays, and the answer counts it", r.ok && r.r.changed === 1 && r.r.at_desk === 1 && (await claim(b)).state === "closed" && (await claim(a)).state === "in_process", r);
+  ok("C-04: ...and no 'State changed' line is written on the claim that stayed", !(await rows("SELECT id FROM claim_events WHERE claim_id = ? AND kind = 'state'", a)).length);
+  // once the desk sends it back, the team lead can close it
+  await call(QU, "handoffs.close", { id: (await openH(a, "submission")).id, outcome: "back", reason: "Missing claim data", note: "Need the NPI on line two" });
+  r = await T(() => call(TI, "claims.setState", { ids: [a], state: "closed" }));
+  ok("C-04: after the desk sends it back the team lead can close it", r.ok && r.r.changed === 1 && r.r.at_desk === 0 && (await claim(a)).state === "closed", r);
+  // a claim back with the biller, with only its recheck open, can be closed; the recheck then never opens it again
+  await save(AR, d, SAAG.resub); await submitIt(QU, d);
+  r = await T(() => call(TI, "claims.setState", { ids: [d], state: "closed" }));
+  ok("C-04: a claim back with the biller (only the recheck open) can be closed", r.ok && r.r.changed === 1 && (await claim(d)).state === "closed", r);
+  setNow(IST(2026, 11, 12, 12, 0));
+  r = await T(async () => call(QU, "handoffs.close", { id: (await openH(d, "subcheck")).id, outcome: "back", reason: "Payer has no record yet", note: "Payer portal shows no claim on file yet" }));
+  ok("C-04: ...and the recheck marked Need assistance from AR leaves it closed, with the team lead's reason", r.ok && (await claim(d)).state === "closed" && (await claim(d)).state_reason === "Closed by supervisor" && (await claim(d)).first_up === 0, await brief(d));
+  // an excluded claim is left alone by its recheck too
+  setNow(IST(2026, 11, 10, 11, 0));
+  await save(AR, e, SAAG.resub); await submitIt(QU, e);
+  await call(TI, "claims.setState", { ids: [e], state: "excluded" });
+  setNow(IST(2026, 11, 12, 13, 0));
+  r = await T(async () => call(QU, "handoffs.close", { id: (await openH(e, "subcheck")).id, outcome: "back", reason: "Payer has no record yet", note: "Payer portal shows no claim on file yet" }));
+  ok("C-04: an excluded claim stays excluded when its recheck is marked Need assistance from AR", r.ok && (await claim(e)).state === "excluded" && (await claim(e)).state_reason === "Excluded by supervisor", await brief(e));
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

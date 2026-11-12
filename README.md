@@ -491,6 +491,9 @@ locations): Need to Post / Posting Correction to Payment Posting; resubmissions 
 paper claims to Submission; a **Claim Rejected** entry, or a rejected recheck, to the
 client's **Rejections** person first (top of their list), else Submission. While it is
 there the claim is **In process** for AR (own dashboard card, off the biller's list).
+A team lead can close, exclude or reopen it once the desk finishes it or sends it back
+to AR, not while the desk still has it; and a claim that is closed or excluded is never
+opened again by a later desk step (a recheck marked Need assistance, for example).
 
 **Purview's workflow in the SAAG entry.** These actions set the effective status and the bucket
 themselves (the bucket is locked on the work form, with a "Workflow:" hint):

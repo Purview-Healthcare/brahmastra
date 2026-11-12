@@ -6009,14 +6009,25 @@ const OPS = {
     const reason = str(payload.reason, 200) || (state === "open" ? "Reopened by supervisor" : (state === "closed" ? "Closed by supervisor" : "Excluded by supervisor"));
     const now = Date.now();
     let changed = 0;
-    for (const part of chunks(ids, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
+    // A claim a desk still has (Payment posting, Submission or Rejections; waiting on the client too) keeps its state until the
+    // desk finishes it or sends it back to AR: the desk never works a claim AR closed, and its next step never opens one again.
+    // (The recheck after a submission is not a desk holding the claim: such a claim can be closed.)
+    const atDesk = new Map();
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT h.claim_id, h.dept FROM handoffs h JOIN claims c ON c.id = h.claim_id
+        WHERE h.claim_id IN (${part.map(() => "?").join(",")}) AND h.dept <> 'subcheck' AND h.status IN ('pending','assigned','client')${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user))) atDesk.set(r.claim_id, r.dept);
+    const todo = ids.filter((id) => !atDesk.has(id));
+    if (atDesk.size && !todo.length) { const verb = state === "closed" ? "closed" : state === "excluded" ? "excluded" : "reopened", d = DEPT_LABEL[[...atDesk.values()][0]];
+      throw bad(atDesk.size === 1 ? `This claim is with ${d} now. It can be ${verb} once ${d} finishes it or sends it back to AR.`
+        : `These ${atDesk.size} claims are with Payment Posting, Submission or Rejections now. They can be ${verb} once the desk finishes them or sends them back to AR.`); }
+    for (const part of chunks(todo, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
-    for (const chunk of chunks(ids, 60)) {
+    for (const chunk of chunks(todo, 60)) {
       const r = await run(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
         skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
       changed += changesOf(r);
     }
-    return { changed };
+    // at_desk: how many of the claims picked were left as they are because a desk has them
+    return { changed, at_desk: atDesk.size };
   },
 
   /* ---- allocation ---- */
