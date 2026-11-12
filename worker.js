@@ -3812,6 +3812,83 @@ const SETTINGS_OPEN = ["onedrive_folder"], SETTINGS_LEAD = ["onedrive_folder", "
 const SETTINGS_ADMIN_OWN = ["extra_emails", "roster_meta", "feedback_to"];
 const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$|roster_dup_emp$)/;
 
+/* ---- stack scoring rules: begin ----
+   The Stack report's scores, to the digit, exactly as the owner's April sheet works them out (do not "improve" them).
+   Only the bands and pure functions are in this block: tools/tests/suite44.mjs runs it on its own and checks every band
+   just below, at and just above each threshold. Percentages are fractions (1.1051 is 110.51%), time on system is minutes
+   a day, counts are days. A band [op, threshold, score] applies when the value is op the threshold; the first band from
+   the top that applies gives the score, otherwise the rule's "other". An empty value scores 0. */
+const STACK_RULES = {
+  // the associate (team member) stack: Productivity 10, Quality 10, Attendance 10, Others 5, TOS 5; Total 40
+  prod: { unit: "pct", bands: [[">=", 1.1051, 10], [">=", 0.9951, 8], [">=", 0.9551, 6], [">=", 0.9051, 4], [">=", 0.8451, 2]], other: 0 },
+  qual: { unit: "pct", bands: [[">=", 0.99, 10], [">=", 0.9451, 8], [">=", 0.9251, 6], [">=", 0.8951, 4], [">=", 0.8451, 2]], other: 0 },
+  // Attendance by AL + LWP, once LWP is under half a day (stackAttendance)
+  leave: { unit: "days", bands: [[">=", 6, 2], [">=", 5, 4], [">=", 4, 6], [">=", 3, 8]], other: 10 },
+  // late logins, and days the break ran over: none 1, one or two 0.5, more than two 0
+  count: { unit: "n", bands: [[">", 2, 0], [">=", 1, 0.5]], other: 1 },
+  pkt: { unit: "pct", bands: [[">=", 0.9951, 2], [">=", 0.9451, 1], [">=", 0.8951, 0.5]], other: 0 },
+  tos: { unit: "min", bands: [[">=", 479, 5], [">=", 450, 3]], other: 0 },
+  stack: { unit: "pct", bands: [[">=", 0.92, 5], [">=", 0.85, 4], [">=", 0.72, 3], [">=", 0.7, 2], [">=", 0.65, 1]], other: 0 },
+  // the team lead stack: Productivity 10, Quality 10, Shrinkage 10, Attrition 5, Adherence 5, Team handling 5, Client forefront 5,
+  // plus the Addition point; Percentage = Total / 50
+  tlProd: { unit: "pct", bands: [[">=", 0.9951, 10], [">=", 0.9451, 8], [">=", 0.8951, 6]], other: 0 },
+  tlQual: { unit: "pct", bands: [[">=", 0.99, 10], [">=", 0.9651, 8], [">=", 0.9451, 6]], other: 0 },
+  tlShrink: { unit: "pct", bands: [[">=", 0.16, 0], [">=", 0.1349, 2], [">=", 0.1149, 4], [">=", 0.0949, 6], [">=", 0.08, 8]], other: 10 },
+  tlAttr: { unit: "n", bands: [[">", 2, 0], [">=", 2, 3], [">=", 1, 4]], other: 5 },
+  tlAdh: { unit: "n", bands: [[">", 12, 0], [">=", 9, 3], [">=", 6, 4]], other: 5 },
+  tlStack: { unit: "pct", bands: [[">=", 0.96, 5], [">=", 0.91, 4], [">=", 0.86, 3], [">=", 0.81, 2], [">=", 0.76, 1]], other: 0 },
+};
+// LWP (leave without pay or absent) of half a day or more scores Attendance 0; the two totals are out of 40 and 50
+const STACK_LWP_ZERO = 0.5, STACK_OUT_OF = 40, STACK_TL_OUT_OF = 50;
+// a day whose breaks add up to more than this many minutes is a day the break ran over (one number, easy to change: the
+// owner has been asked for hers)
+const STACK_BREAK_LIMIT_MIN = 60;
+const stackNum = (v) => (v == null || v === "" || typeof v === "boolean" || !Number.isFinite(Number(v)) ? null : Number(v));
+// which band applies: its index, rule.bands.length for "other", -1 for an empty value
+const stackBandAt = (rule, v) => { const x = stackNum(v); if (x == null) return -1; const i = rule.bands.findIndex(([op, t]) => (op === ">" ? x > t : x >= t)); return i < 0 ? rule.bands.length : i; };
+const stackBand = (rule, v) => { const i = stackBandAt(rule, v); return i < 0 ? 0 : i < rule.bands.length ? rule.bands[i][2] : rule.other; };
+const stackAttendance = (al, lwp) => (lwp >= STACK_LWP_ZERO ? 0 : stackBand(STACK_RULES.leave, al + lwp));
+/* One associate's month. x: pct (Achieved / Expected), quality, al and lwp (days), late (late logins), brk (days the break ran
+   over), tp (Team player: true for Yes), pkt, tos (average minutes on the system a day). */
+function stackAssocScore(x) {
+  const R = STACK_RULES;
+  const prod = stackBand(R.prod, x.pct), qual = stackBand(R.qual, x.quality), att = stackAttendance(stackNum(x.al) || 0, stackNum(x.lwp) || 0);
+  const late = stackBand(R.count, stackNum(x.late) || 0), brk = stackBand(R.count, stackNum(x.brk) || 0), tp = x.tp ? 1 : 0, pkt = stackBand(R.pkt, x.pkt);
+  const others = late + brk + tp + pkt, tos = stackBand(R.tos, x.tos), total = prod + qual + att + others + tos, pct = total / STACK_OUT_OF;
+  return { prod, qual, att, late, brk, tp, pkt, others, tos, total, pct, stack: stackBand(R.stack, pct) };
+}
+/* One team lead's month. x: prod and quality (the team's averages), shrink (the members' average shrinkage), attrition (people
+   who left), adherence (the members' Total Adherence added up), th and cf (the five ticks of each, true for Yes), addition (the
+   average of the members' Stacks, added as it is). */
+function stackTlScore(x) {
+  const R = STACK_RULES;
+  const prod = stackBand(R.tlProd, x.prod), qual = stackBand(R.tlQual, x.quality), shrink = stackBand(R.tlShrink, x.shrink);
+  const attr = stackBand(R.tlAttr, x.attrition), adh = stackBand(R.tlAdh, x.adherence);
+  const th = (x.th || []).slice(0, 5).filter((v) => v === true).length, cf = (x.cf || []).slice(0, 5).filter((v) => v === true).length, add = stackNum(x.addition) || 0;
+  const total = prod + qual + shrink + attr + adh + th + cf + add, pct = total / STACK_TL_OUT_OF;
+  return { prod, qual, shrink, attr, adh, th, cf, add, total, pct, stack: stackBand(R.tlStack, pct) };
+}
+// the bands in plain words, for "How it is worked out" and the band that applied to someone
+const STACK_FMT = { pct: (v) => Math.round(v * 1e4) / 100 + "%", min: (m) => Math.floor(m / 60) + " h " + String(Math.round(m % 60)).padStart(2, "0") + " min", n: (v) => String(v), days: (v) => String(v) };
+const STACK_STEP = { pct: 0.0001, min: 1, n: 1, days: 0.5 };
+function stackBandTexts(rule) {
+  const f = STACK_FMT[rule.unit], step = STACK_STEP[rule.unit], unit = rule.unit === "days" ? " days" : "";
+  // the highest value that does not reach band b
+  const below = (b) => (b[0] === ">" ? b[1] : b[1] - step);
+  const out = rule.bands.map((b, i) => {
+    const lo = b[0] === ">" ? b[1] + step : b[1], hi = i ? below(rule.bands[i - 1]) : null;
+    const text = hi == null ? (b[0] === ">" ? "more than " + f(b[1]) : f(lo) + unit + " and above")
+      : Math.abs(lo - hi) < 1e-9 ? f(lo) + unit : rule.unit === "n" && hi - lo === 1 ? f(lo) + " or " + f(hi) : f(lo) + " to " + f(hi) + unit;
+    return { text, score: b[2] };
+  });
+  const top = below(rule.bands[rule.bands.length - 1]);
+  out.push({ text: rule.unit === "n" ? (top <= 0 ? "none" : "0 to " + f(top)) : "under " + f(rule.bands[rule.bands.length - 1][1]) + unit, score: rule.other });
+  return out;
+}
+function stackApplied(rule, v) { const i = stackBandAt(rule, v); if (i < 0) return "empty → 0"; const b = stackBandTexts(rule)[i]; return b.text + " → " + b.score; }
+const stackAttApplied = (al, lwp) => (lwp >= STACK_LWP_ZERO ? "LWP of half a day or more → 0" : "AL + LWP " + (al + lwp) + ": " + stackApplied(STACK_RULES.leave, al + lwp));
+/* ---- stack scoring rules: end ---- */
+
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
     email_from: env.EMAIL_PROVIDER ? String(env.EMAIL_FROM || "") : "", email_sender: env.EMAIL_PROVIDER === "graph" ? String(env.MS_SENDER || "") : "", designations: DESIGNATIONS,
