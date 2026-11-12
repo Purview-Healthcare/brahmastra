@@ -220,6 +220,22 @@ S("A-02: credit balances");
   ok("A-02: in the Submission file a client balance written 45.00CR is -45, and $1,035.50 stays 1035.5", iBal >= 0 && row[1][iBal] === -45 && row[2][iBal] === 1035.5, row && row.e ? row.e : row && row.slice(0, 3).map((x) => x[iBal]));
 }
 
+S("A-03: a claim is not a total row because a name starts with Total");
+{
+  const cl = await mkClient("Made-up Clinic S35 A03");
+  const HH = ["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"];
+  const up = await upload(cl, [HH,
+    ["9803001", "Test Patient One", "Total Health Plan", "09/15/2026", "1500.00", "Denied"], ["9803002", "Total, Tomas", "Aetna", "09/16/2026", "700.00", "Pending"],
+    ["9803003", "Test Patient Three", "Cigna", "09/17/2026", "300.00", "Pending"], ["9803004", "Test Patient Four", "Total Health Plan", "", "250.00", "Pending"],
+    ["Total", "", "", "", "2750.00", ""]]);
+  const got = (await claimsOf(cl)).map((c) => c.claim_no);
+  ok("A-03: claims with payer Total Health Plan (one with no DOS) and patient Total, Tomas load; only the Total row is skipped", ["9803001", "9803002", "9803003", "9803004"].every((n) => got.includes(n)) && got.length === 4 && up.built.summary.footer === 1 && up.r.inserted === 4,
+    [got, up.built.summary.footer, up.r.inserted]);
+  const b = build([HH, ["9803011", "Test Patient One", "Aetna", "09/15/2026", "100.00", "Pending"],
+    ["Grand Total: 3 claims", "", "", "", "100.00", ""], ["", "Sub total", "", "", "100.00", ""], ["3", "", "Totals", "", "100.00", ""], ["", "", "Total Aetna", "", "100.00", ""], ["", "TOTAL:", "", "", "100.00", ""]]);
+  ok("A-03: real footer rows are still skipped (Grand Total: 3 claims, Sub total, Totals beside a count, Total Aetna, TOTAL:)", b.claims.length === 1 && b.claims[0].claim_no === "9803011" && b.summary.footer + b.summary.blank === 5, [b.claims.map((c) => c.claim_no || c.patient || c.payer), b.summary.footer, b.summary.blank]);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

@@ -502,7 +502,12 @@ function buildClaims({ rows, mapping, kind, today }) {
   rows.forEach((r, i) => {
     const claim_no = txt(get(r, "claim_no")), patient = txt(get(r, "patient")), dos = dateOf.dos(get(r, "dos")), payer = txt(get(r, "payer"));
     if (!claim_no && !patient && !dos) { blank++; return; }
-    if (/^\s*(grand\s*|sub\s*)?totals?\b/i.test(claim_no) || /^\s*(grand\s*|sub\s*)?totals?\b/i.test(patient) || /^\s*(grand\s*|sub\s*)?totals?\b/i.test(payer)) { footer++; return; }
+    // A total / footer row: the claim, patient or payer cell is just "Total" ("Grand total", "Sub total:"), or it starts with Total
+    // and the row has no date of service and no claim number of its own. A claim whose payer is "Total Health Plan" or whose
+    // patient is "Total, Tomas" is a claim.
+    const startsTotal = (t) => /^\s*(grand\s*|sub\s*)?totals?\b/i.test(t), onlyTotal = (t) => /^\s*(grand\s*|sub\s*)?totals?\s*:?\s*$/i.test(t);
+    const cells = [claim_no, patient, payer], ownClaimNo = /\d/.test(claim_no) && !startsTotal(claim_no);
+    if (cells.some(onlyTotal) || (cells.some(startsTotal) && !dos && !ownClaimNo)) { footer++; return; }
     const line = {
       claim_no, patient, dos, payer, account_no: txt(get(r, "account_no")), cpt: txt(get(r, "cpt")), provider: txt(get(r, "provider")),
       billed: mapping.billed ? parseMoney(get(r, "billed")) : null, balance: hasBalance ? parseMoney(get(r, "balance")) : null,
