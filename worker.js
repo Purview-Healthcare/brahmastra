@@ -456,12 +456,13 @@ function rawPick(raw, ...names) {
   for (const n of names) { const v = m.get(normKey(n)); if (v) return v; }
   return "";
 }
-// an amount from the client's file; a credit (in brackets, or with a minus sign or CR before or after it: 45.00CR, CR 45.00) is negative
+// an amount from the client's file; a credit (in brackets, or with a minus sign, CR or the word Credit before or after it: 45.00CR,
+// CR 45.00, 45.00 Cr., 45.00 CREDIT) is negative
 const moneyCell = (v) => {
   if (v === "" || v == null) return "";
   if (typeof v === "number") return isFinite(v) ? Math.round(v * 100) / 100 : String(v);
-  const t = String(v).toUpperCase().replace(/[$,\s]/g, ""), credit = /^(\(|\u2212|CR)/.test(t) || /(-|\u2212|CR)$/.test(t);
-  const n = parseFloat(t.replace(/^(\(|\u2212|CR)/, ""));
+  const t = String(v).toUpperCase().replace(/[$,\s]/g, ""), credit = /^(\(|\u2212|CR)/.test(t) || /(-|\u2212|CR\.?|CREDIT)$/.test(t);
+  const n = parseFloat(t.replace(/^(\(|\u2212|CREDIT|CR)/, ""));
   return isFinite(n) ? Math.round((credit ? -Math.abs(n) : n) * 100) / 100 : String(v);
 };
 // the claim type the AR biller's SAAG action already says (editable in the form)
