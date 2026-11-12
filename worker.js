@@ -182,6 +182,13 @@ const SCHEMA = [
      delay_reason TEXT NOT NULL DEFAULT '', expected_on TEXT NOT NULL DEFAULT '', delay_by_name TEXT NOT NULL DEFAULT '', delay_at INTEGER, reason_asked_at INTEGER,
      created_at INTEGER NOT NULL, created_by TEXT, created_by_name TEXT NOT NULL DEFAULT '', updated_at INTEGER, updated_by_name TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_escalations ON escalations (client_id, sr)`,
+  /* Stack report: the values typed by hand (PKT, Team player, the manager's ticks, and the fallbacks where Brahmastra has
+     nothing), per person or team lead and month, with who typed them and when; and a locked month's rows as they were, one
+     snapshot per team (scope: the team lead's id, or "p:" and the person's id for someone with no team lead). */
+  `CREATE TABLE IF NOT EXISTS stack_typed (subject_id TEXT NOT NULL, month TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+     by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (subject_id, month, field))`,
+  `CREATE TABLE IF NOT EXISTS stack_locks (month TEXT NOT NULL, scope TEXT NOT NULL, rows_json TEXT NOT NULL DEFAULT '{}', by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
+     PRIMARY KEY (month, scope))`,
 ];
 
 /* Columns added after the first release. ensureReady() adds any that an
@@ -247,7 +254,10 @@ const EXTRA_COLUMNS = {
     ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"],
     // Where the email came from: 0 Purview Shastra (or an account made by hand), 1 typed in Brahmastra by the person or a team lead
     // where Shastra had none, 2 set by the admin. A typed one signs the person in here but never picks their Drishti account.
-    ["email_typed", "INTEGER NOT NULL DEFAULT 0"]],
+    ["email_typed", "INTEGER NOT NULL DEFAULT 0"],
+    // When the roster sync switched the person off (cleared if they come back): the Stack report's attrition dates a leaver by it
+    // when Shastra sends no exit date.
+    ["off_at", "INTEGER"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
   handoffs: [["available_at", "INTEGER"], ["paused_at", "INTEGER"], ["client_answered_at", "INTEGER"],
     // Need client assistance: who asked, the AR team lead who sent it to the client (how, when, comment), and when to chase the client.
@@ -2136,16 +2146,18 @@ async function importRoster(env, user, payload) {
       const [first, ...rest] = n.name.split(/\s+/);
       await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
     }
-    await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, email_typed = ?, shift = ?, city = ? WHERE id = ?`,
-      n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, id);
+    await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, email_typed = ?, shift = ?, city = ?,
+      off_at = CASE WHEN ? = 1 THEN NULL ELSE off_at END WHERE id = ?`,
+      n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, n.active ? 1 : 0, id);
     p.id = id;
-    if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+    // switched off now: the day is kept (the Stack report's attrition), as is everything else they did
+    if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); await run(env, "UPDATE users SET off_at = ? WHERE id = ?", now, id); }
     // Moved off AR in Shastra (to Payment posting or Submission): their AR claims go back to the pool, as when someone leaves.
     // Their desk hand-offs stay with them: the desk is still theirs.
     else if (n.active && p.match && isAR(p.match) && !isAR(n)) await run(env, "UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', updated_at = ? WHERE assigned_to = ? AND state IN ('assigned','in_progress')", Date.now(), id);
   }
   const off = [...leaving.map((u) => u.id), ...dropped];
-  for (const id of off) { await run(env, "UPDATE users SET active = 0 WHERE id = ?", id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+  for (const id of off) { await run(env, "UPDATE users SET active = 0, off_at = ? WHERE id = ?", now, id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
   const idByName = new Map(); plan.forEach((p) => { if (p.id) idByName.set(p.row.name.toLowerCase(), p.id); });
   for (const p of plan) if (p.id) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", idByName.get(String(p.row.reports_to || "").toLowerCase()) || null, p.id);
   await recomputeScopes(env);
@@ -3266,7 +3278,7 @@ async function dashTeamFilter(env, user, payload) {
   const all0 = await visibleUsers(env, user);
   const byId = new Map(all0.map((u) => [u.id, u]));
   // AR billers: people whose work is only Payment posting or Submission have their own desks and are left out here.
-  const billers = all0.filter((u) => u.role === "user" && u.active && (!String(u.department || "").trim() || isAR(u)));
+  const billers = all0.filter(isArBiller);
   const leadOf = (u) => { const l = u.reports_to && byId.get(u.reports_to); return l ? { id: l.id, name: l.name } : { id: "", name: "" }; };
   const canPickLead = isManagerUp(user);
   const counts = new Map();
@@ -3421,6 +3433,9 @@ async function recomputeScopes(env) {
 }
 /* Brahmastra works AR claims: the roster's AR department (main or "also in"). Posting, Submission, PCC and Eligibility come in later. */
 const isAR = (u) => /^ar$/i.test(String(u.department || "").trim()) || String(u.departments_also || "").split(/[;,]/).some((d) => /^ar$/i.test(d.trim()));
+/* The people Team status counts (an active AR biller; no department counts as AR): the Stack report reads their productivity
+   from Team status, and has it typed for everyone else. */
+const isArBiller = (u) => u.role === "user" && !!u.active && (!String(u.department || "").trim() || isAR(u));
 /* A client's billers = the people added by hand + every active roster AR Agent on one of its roster projects. */
 async function syncTeams(env) {
   const users = await all(env, "SELECT id, source, role, active, projects_json, department, departments_also FROM users");
@@ -3888,6 +3903,213 @@ function stackBandTexts(rule) {
 function stackApplied(rule, v) { const i = stackBandAt(rule, v); if (i < 0) return "empty → 0"; const b = stackBandTexts(rule)[i]; return b.text + " → " + b.score; }
 const stackAttApplied = (al, lwp) => (lwp >= STACK_LWP_ZERO ? "LWP of half a day or more → 0" : "AL + LWP " + (al + lwp) + ": " + stackApplied(STACK_RULES.leave, al + lwp));
 /* ---- stack scoring rules: end ---- */
+
+/* ---- Stack report (Dashboard › Stack report): a month's rows ----
+   Associates: every active biller (role user) who had joined by the last day counted, under the team lead they report to (as
+   Team status groups them). Productivity is Team status's own figure for the month (count_done of target_done from
+   team.status), so the two pages never disagree; someone Team status does not count (a desk person) has Achieved and Expected
+   typed. Attendance, late logins, breaks over and time on system come from Purview Shastra's days (floor_days); Quality, PKT and
+   Team player are typed. A team lead's row is worked out from their whole team, whoever looks at it. A month still under way
+   counts its finished days (up to yesterday), as Team status does.
+   Who sees what (decided by the owner): an associate only their own row of a locked month (stack.mine); a team lead the
+   associates of their own span, draft and locked, typing PKT, Team player and the fallbacks, and their own team lead row once
+   the month is locked; a manager and above the teams of their span, typing the ticks and locking the month; the admin
+   everything, and unlocking. Nobody else gets anything (SMEs included). */
+const STACK_TICKS = [["th1", "4 Quality sessions, with email"], ["th2", "One on One, with email"], ["th3", "Daily Huddle, with email"], ["th4", "Training: plan and conclusion with email"],
+  ["th5", "Issue Resolution, email"], ["cf1", "Emails being closed within TAT"], ["cf2", "Escalation Tracker maintained"], ["cf3", "Query Tracker maintained"], ["cf4", "Reports within TAT"],
+  ["cf5", "Monthend Reports shared"]];
+const STACK_FIELDS = { pkt: "PKT score", tp: "Team player", quality: "Quality %", achieved: "Achieved", expected: "Expected", attrition: "Attrition", ...Object.fromEntries(STACK_TICKS) };
+const STACK_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const stackMonthOk = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ""));
+const stackMonthEnd = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10); };
+const stackMonthAdd = (m, n) => { const [y, mo] = m.split("-").map(Number); return new Date(Date.UTC(y, mo - 1 + n, 1)).toISOString().slice(0, 7); };
+const stackMonthLabel = (m) => STACK_MONTHS[Number(m.slice(5, 7)) - 1] + " " + m.slice(0, 4);
+const stackShort = (iso) => STACK_MONTHS[Number(iso.slice(5, 7)) - 1].slice(0, 3) + " " + Number(iso.slice(8, 10));
+const stackCount = (n, w, ws) => n + " " + (n === 1 ? w : ws || w + "s");
+const isStackLead = (u) => !!u && u.role === "supervisor" && !isSME(u);
+// the whole floor as Team status shows it to the admin, for figures that must not depend on who looks
+const stackSys = () => ({ id: "", name: "Stack report", role: "supervisor", is_admin: true, access_all: true, scope: null });
+/* Shastra's attendance word for one day, the stack's way: approved leave (maternity and sabbatical too) and sick leave are AL, an
+   approved half day half a day of AL; leave without pay and absent are LWP, a half day without pay half a day of LWP; late is a
+   late login; present, overtime, week off, holiday, comp off and the rest are neither. */
+function stackDay(status) {
+  const s = String(status || "").trim().toLowerCase();
+  if (["late", "l"].includes(s)) return { late: 1 };
+  if (["half_day", "half-day", "hd"].includes(s)) return { al: 0.5 };
+  if (["half_day_lwp", "hd-lwp"].includes(s)) return { lwp: 0.5 };
+  if (["approved_leave", "leave", "al", "sick_leave", "sl", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { al: 1 };
+  if (["lwp", "absent", "a"].includes(s)) return { lwp: 1 };
+  return {};
+}
+/* People of each team who left in the month (by team lead): Shastra's exit date, else the day the roster sync switched them off.
+   Someone switched off with neither, whose last entry in Brahmastra falls in the month, may have left in it: then Brahmastra
+   cannot tell, and the manager types the count. */
+async function stackLeavers(env, users, first, last, cutoff) {
+  const out = new Map(), at = (lid) => { if (!out.has(lid)) out.set(lid, { n: 0, who: [], unknown: [] }); return out.get(lid); };
+  const undated = [];
+  for (const u of users) {
+    if (u.role !== "user" || !u.reports_to) continue;
+    const d = isoDate(u.exit_date) || (!u.active && u.off_at ? istISO(u.off_at) : "");
+    if (d) { if (d >= first && d <= cutoff) { const x = at(u.reports_to); x.n++; x.who.push({ name: u.name, day: d }); } }
+    else if (!u.active) undated.push(u);
+  }
+  if (undated.length) {
+    const lastEntry = new Map((await all(env, `SELECT n.user_id, MAX(n.created_at) AS at FROM notes n JOIN users u ON u.id = n.user_id
+      WHERE u.role = 'user' AND u.active = 0 AND COALESCE(u.exit_date, '') = '' AND u.off_at IS NULL GROUP BY n.user_id`)).map((x) => [x.user_id, x.at]));
+    for (const u of undated) { const ms = lastEntry.get(u.id), d = ms ? istISO(ms) : ""; if (d && d >= first && d <= last) at(u.reports_to).unknown.push(u.name); }
+  }
+  return out;
+}
+const stackAvg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+/* The month's rows for the whole floor, worked out now. today: India's date. */
+async function stackLive(env, month, today) {
+  const first = month + "-01", last = stackMonthEnd(month), through = last < today ? last : addDays(today, -1);
+  const out = { month, first, last, through, current: last >= today, rows: [], tls: [], floor: { state: "off", error: "", unknown: 0 } };
+  if (through < first) return out;
+  const users = await all(env, "SELECT * FROM users");
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const people = users.filter((u) => u.role === "user" && u.active && !(isoDate(u.doj) && u.doj > through));
+  if (!people.length) return out;
+  // Productivity: Team status's own figures for these dates (the finished days of a month under way)
+  const ts = await OPS["team.status"]({ env, user: stackSys(), payload: { from: first, to: last, today, tz_offset_min: IST_MIN } });
+  const tsBy = new Map((ts.rows || []).map((r) => [r.id, r]));
+  let fl; try { fl = await shastraFloor(env, first, through, today, IST_MIN); } catch (e) { fl = { state: "error", error: str(e && e.message, 200), byUser: new Map() }; }
+  let unknown = 0; if (fl.state === "ok") for (let d = first; d <= through; d = addDays(d, 1)) if (isWorkDay(d) && !(fl.known && fl.known.has(d))) unknown++;
+  out.floor = { state: fl.state, error: fl.error || "", unknown };
+  const typed = new Map((await all(env, "SELECT * FROM stack_typed WHERE month = ?", month)).map((t) => [t.subject_id + "|" + t.field, t]));
+  const T = (id, f) => { const t = typed.get(id + "|" + f); return t ? { v: t.value, note: t.note || "", by: t.by_name || "", at: t.at } : null; };
+  // Title: the person's project, by the client it is matched to
+  const projClient = new Map(); for (const c of await all(env, "SELECT name, roster_names_json FROM clients")) for (const n of jsonList(c.roster_names_json)) projClient.set(projKey(n), c.name);
+  const titleOf = (u) => { const p = jsonList(u.projects_json)[0], n = p && (p.name != null ? p.name : p); return n ? projClient.get(projKey(n)) || String(n) : ""; };
+  const R = STACK_RULES;
+  out.rows = people.map((u) => {
+    const doj = isoDate(u.doj), from = doj && doj > first ? doj : first, fd = fl.byUser ? fl.byUser.get(u.id) : null;
+    let working = 0, al = 0, lwp = 0, tosSum = 0, tosN = 0, seen = 0;
+    const alDays = [], lwpDays = [], lateDays = [], brkDays = [];
+    for (let d = from; d <= through; d = addDays(d, 1)) {
+      const wd = isWorkDay(d), x = fd && fd.get(d);
+      if (wd) working++;
+      if (!x) continue;
+      seen++;
+      const k = stackDay(x.status);
+      if (wd && k.al) { al += k.al; alDays.push([d, k.al]); }
+      if (wd && k.lwp) { lwp += k.lwp; lwpDays.push([d, k.lwp]); }
+      if (k.late) lateDays.push(d);
+      if ((x.break_min || 0) > STACK_BREAK_LIMIT_MIN) brkDays.push([d, x.break_min]);
+      // time on system: the finished days with time on floor (a shift still open is not over yet)
+      if (x.tof_min > 0 && !x.open) { tosSum += x.tof_min; tosN++; }
+    }
+    const t = tsBy.get(u.id), tracked = !!t, aT = tracked ? null : T(u.id, "achieved"), eT = tracked ? null : T(u.id, "expected");
+    const achieved = tracked ? t.count_done : stackNum(aT && aT.v), expected = tracked ? t.target_done : stackNum(eT && eT.v);
+    const pct = expected > 0 && achieved != null ? achieved / expected : null, present = working - al - lwp;
+    const qT = T(u.id, "quality"), quality = qT ? stackNum(qT.v) : null, pT = T(u.id, "pkt"), pkt = pT ? stackNum(pT.v) : null;
+    const tT = T(u.id, "tp"), tp = !(tT && tT.v === "no"), tos = tosN ? tosSum / tosN : null;
+    const s = stackAssocScore({ pct, quality, al, lwp, late: lateDays.length, brk: brkDays.length, tp, pkt, tos });
+    const l = u.reports_to ? byId.get(u.reports_to) : null;
+    return { id: u.id, name: u.name, emp_id: u.emp_id || "", doj: u.doj || "", title: titleOf(u), lead_id: l ? l.id : "", lead_name: l ? l.name : "", scope: l ? l.id : "p:" + u.id,
+      tracked, achieved, expected, pct, achieved_typed: aT, expected_typed: eT, present, avr_prod: present > 0 && achieved != null ? achieved / present : null,
+      avr_target: present > 0 && expected != null ? expected / present : null, quality, quality_from: qT ? "typed" : "", quality_typed: qT,
+      working, al, lwp, al_days: alDays, lwp_days: lwpDays, shrink: working > 0 ? 1 - present / working : null,
+      late: lateDays.length, late_days: lateDays, brk: brkDays.length, brk_days: brkDays, adherence: lateDays.length + brkDays.length,
+      tp, tp_typed: tT, pkt, pkt_typed: pT, tos, tos_days: tosN, shastra: fl.state !== "ok" ? fl.state : seen ? "ok" : "none", s,
+      why: { prod: stackApplied(R.prod, pct), qual: stackApplied(R.qual, quality), att: stackAttApplied(al, lwp), late: stackApplied(R.count, lateDays.length),
+        brk: stackApplied(R.count, brkDays.length), tp: tp ? "Yes → 1" : "No → 0", pkt: stackApplied(R.pkt, pkt), tos: stackApplied(R.tos, tos), stack: stackApplied(R.stack, s.pct) },
+      to_enter: [...(!tracked && (achieved == null || expected == null) ? ["prod"] : []), ...(quality == null ? ["quality"] : []), ...(pkt == null ? ["pkt"] : [])] };
+  });
+  // the team leads: each one's whole team
+  const leavers = await stackLeavers(env, users, first, last, last < today ? last : today);
+  const teams = new Map(); for (const r of out.rows) if (r.lead_id) { if (!teams.has(r.lead_id)) teams.set(r.lead_id, []); teams.get(r.lead_id).push(r); }
+  out.tls = [...teams].map(([lid, ms]) => {
+    const l = byId.get(lid) || {};
+    const pr = ms.map((m) => m.pct).filter((v) => v != null), qu = ms.map((m) => m.quality).filter((v) => v != null), sh = ms.map((m) => m.shrink).filter((v) => v != null);
+    const lv = leavers.get(lid) || { n: 0, who: [], unknown: [] }, aT = lv.unknown.length ? T(lid, "attrition") : null, attrition = aT ? stackNum(aT.v) : lv.n;
+    const ticks = Object.fromEntries(STACK_TICKS.map(([k]) => [k, T(lid, k)])), yes = (k) => !!(ticks[k] && ticks[k].v === "yes");
+    const prod = stackAvg(pr), quality = stackAvg(qu), shrink = stackAvg(sh), adherence = ms.reduce((a, m) => a + m.adherence, 0), addition = stackAvg(ms.map((m) => m.s.stack));
+    const s = stackTlScore({ prod, quality, shrink, attrition, adherence, th: [1, 2, 3, 4, 5].map((i) => yes("th" + i)), cf: [1, 2, 3, 4, 5].map((i) => yes("cf" + i)), addition });
+    return { id: lid, name: l.name || "", emp_id: l.emp_id || "", doj: l.doj || "", title: titleOf(l), scope: lid, team_n: ms.length,
+      prod, prod_n: pr.length, quality, qual_n: qu.length, shrink, shrink_n: sh.length, attrition, left: lv.who, left_unknown: lv.unknown, attrition_typed: aT, adherence, ticks, addition, s,
+      why: { prod: stackApplied(R.tlProd, prod), qual: stackApplied(R.tlQual, quality), shrink: stackApplied(R.tlShrink, shrink), attr: stackApplied(R.tlAttr, attrition),
+        adh: stackApplied(R.tlAdh, adherence), stack: stackApplied(R.tlStack, s.pct) },
+      to_enter: [...STACK_TICKS.filter(([k]) => !ticks[k]).map(([k]) => k), ...(lv.unknown.length && !aT ? ["attrition"] : [])] };
+  });
+  return out;
+}
+// a month's locks: scope → who locked it, when, and the rows as they were
+async function stackLocks(env, month) {
+  const out = new Map();
+  for (const x of await all(env, "SELECT scope, rows_json, by_id, by_name, at FROM stack_locks WHERE month = ?", month)) out.set(x.scope, { by: x.by_name, by_id: x.by_id, at: x.at, data: jsonObj(x.rows_json) });
+  return out;
+}
+const stackSpan = async (env, user) => new Set((await visibleUsers(env, user, "span")).map((u) => u.id));
+/* The month as one viewer sees it: locked teams from their snapshot, the rest worked out now. */
+async function stackView(env, user, span, month, today) {
+  const mgr = isManagerUp(user), admin = !!user.is_admin, locks = await stackLocks(env, month);
+  const first = month + "-01", last = stackMonthEnd(month), through = last < today ? last : addDays(today, -1);
+  const lockedIds = new Set(); for (const L of locks.values()) for (const r of L.data.rows || []) lockedIds.add(r.id);
+  // worked out now only when someone the viewer sees is still on a draft team
+  const seen = (await all(env, "SELECT id, reports_to, doj FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > through));
+  const live = seen.some((u) => !lockedIds.has(u.id) && !locks.has(u.reports_to || "p:" + u.id)) ? await stackLive(env, month, today) : null;
+  const rows = [], tls = [];
+  for (const L of locks.values()) {
+    for (const r of L.data.rows || []) if (span.has(r.id)) rows.push({ ...r, locked: true });
+    const t = L.data.lead; if (t && ((mgr && span.has(t.id)) || t.id === user.id)) tls.push({ ...t, locked: true });
+  }
+  if (live) {
+    for (const r of live.rows) if (span.has(r.id) && !lockedIds.has(r.id) && !locks.has(r.scope)) rows.push({ ...r, locked: false });
+    if (mgr) for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) tls.push({ ...t, locked: false });
+  }
+  // ranked by percentage, ties: higher productivity first
+  rows.sort((a, b) => b.s.pct - a.s.pct || (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct) || a.name.localeCompare(b.name));
+  rows.forEach((r, i) => { r.rank = i + 1; r.can_edit = !r.locked; });
+  tls.sort((a, b) => b.s.pct - a.s.pct || a.name.localeCompare(b.name));
+  tls.forEach((t, i) => { t.rank = i + 1; t.can_tick = !t.locked && mgr && (t.id !== user.id || admin); });
+  const scopes = new Set([...rows.map((r) => r.scope), ...tls.map((t) => t.scope)]), lockedShown = [...scopes].filter((s) => locks.has(s));
+  const lockers = []; for (const s of lockedShown) { const L = locks.get(s), x = lockers.find((y) => y.name === L.by); if (x) { x.teams++; x.at = Math.max(x.at, L.at); } else lockers.push({ name: L.by, at: L.at, teams: 1 }); }
+  // what a manager can still lock: the draft teams of their span
+  const lockable = live && mgr ? live.tls.filter((t) => span.has(t.id) && !locks.has(t.scope)).length + live.rows.filter((r) => !r.lead_id && span.has(r.id) && !locks.has(r.scope)).length : 0;
+  const te = { pkt: 0, quality: 0, prod: 0, ticks: 0, attrition: 0 };
+  for (const r of rows) if (!r.locked) for (const k of r.to_enter) te[k]++;
+  for (const t of tls) if (!t.locked) for (const k of t.to_enter) te[k === "attrition" ? "attrition" : "ticks"]++;
+  // each person's earlier locked months (up to five before this one), for "the person's last months"
+  const history = {};
+  for (const x of await all(env, "SELECT month, rows_json FROM stack_locks WHERE month < ? AND month >= ? ORDER BY month", month, stackMonthAdd(month, -5))) {
+    for (const r of jsonObj(x.rows_json).rows || []) if (span.has(r.id) && r.s) { const h = history[r.id] || (history[r.id] = []); if (!h.some((y) => y.month === x.month)) h.push({ month: x.month, stack: r.s.stack, pct: r.s.pct, total: r.s.total }); }
+  }
+  const snap = [...locks.values()][0];
+  return { month, label: stackMonthLabel(month), first, last, through, current: last >= today, over: last < today, rows, tls, history, to_enter: te,
+    lock: { teams: scopes.size, locked: lockedShown.length, by: lockers.sort((a, b) => b.teams - a.teams) },
+    manager: mgr, admin, me: user.id, can_lock: mgr && last < today && lockable > 0, lockable, can_unlock: admin && locks.size > 0,
+    floor: live ? live.floor : snap && snap.data.floor ? snap.data.floor : { state: "off", error: "", unknown: 0 }, ticks: STACK_TICKS, criteria: stackCriteria() };
+}
+/* "How it is worked out": the bands in plain words, from the rules themselves. */
+function stackCriteria() {
+  const W = (k) => stackBandTexts(STACK_RULES[k]).map((b) => b.text + ": " + b.score).join(" · ");
+  const th = STACK_TICKS.filter(([k]) => k[0] === "t").map((x) => x[1]).join("; "), cf = STACK_TICKS.filter(([k]) => k[0] === "c").map((x) => x[1]).join("; ");
+  return {
+    assoc: [
+      { name: "Productivity", max: 10, how: "Achieved / Expected for the month: the numbers Team status shows (claims worked and team task items done, against the daily target on the days in; a half day counts half; no target before the date of joining). Typed by the team lead for someone Brahmastra has no work numbers for.", bands: W("prod") },
+      { name: "Quality", max: 10, how: "The month's quality %, typed by the team lead.", bands: W("qual") },
+      { name: "Attendance", max: 10, how: "From Purview Shastra, on the working days (Monday to Friday, holidays left out, from the date of joining): approved and sick leave are AL (an approved half day 0.5), leave without pay and absent are LWP (a half day without pay 0.5). LWP of half a day or more scores 0; otherwise by AL + LWP.", bands: W("leave") },
+      { name: "Late login", max: 1, group: "Others", how: "The days Purview Shastra marks the person late.", bands: W("count") },
+      { name: "Breaks over", max: 1, group: "Others", how: "The days the breaks added up to more than " + STACK_BREAK_LIMIT_MIN + " minutes.", bands: W("count") },
+      { name: "Team player", max: 1, group: "Others", how: "Typed by the team lead; Yes unless they change it.", bands: "Yes: 1 · No: 0" },
+      { name: "PKT score", max: 2, group: "Others", how: "Typed by the team lead; empty counts as 0.", bands: W("pkt") },
+      { name: "Time on system", max: 5, how: "The average time on floor a day in Purview Shastra, over the finished days that have some.", bands: W("tos") },
+      { name: "Stack", max: 5, how: "The total out of 40 as a percentage.", bands: W("stack") },
+    ],
+    tl: [
+      { name: "Productivity", max: 10, how: "The average of the team members' productivity percentages.", bands: W("tlProd") },
+      { name: "Quality", max: 10, how: "The average quality % of the team members who have one.", bands: W("tlQual") },
+      { name: "Shrinkage", max: 10, how: "The average of the members' shrinkage (AL + LWP as a share of the working days).", bands: W("tlShrink") },
+      { name: "Attrition", max: 5, how: "People of the team who left in the month: the exit date in Purview Shastra, or the day the roster sync switched them off. Typed by the manager where Brahmastra cannot tell.", bands: W("tlAttr") },
+      { name: "Adherence", max: 5, how: "The members' late logins and breaks over, added up for the whole team.", bands: W("tlAdh") },
+      { name: "Team handling", max: 5, how: "Five ticks, 1 each, by the manager: " + th + ".", bands: "Yes: 1 · No or not ticked: 0" },
+      { name: "Client forefront", max: 5, how: "Five ticks, 1 each, by the manager: " + cf + ".", bands: "Yes: 1 · No or not ticked: 0" },
+      { name: "Addition point", max: 5, how: "The average of the team members' Stacks (0 to 5), added as it is.", bands: "" },
+      { name: "Stack", max: 5, how: "The total out of 50 as a percentage.", bands: W("tlStack") },
+    ],
+  };
+}
 
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
@@ -4746,6 +4968,120 @@ const OPS = {
     const who = await one(env, "SELECT name FROM users WHERE id = ?", id);
     await audit(env, user, "team.note", null, (who ? who.name : id) + ": " + [start ? "start " + start : "", end ? "end " + end : "", comment ? "comment: " + comment : ""].filter(Boolean).join(" · "));
     return { ok: true };
+  },
+  /* ---- Dashboard › Stack report (team leads and above; see stackView for who sees what) ----
+     A month's associate stack and team lead stack. With no month: the month before, until every team the viewer sees is
+     locked for it; then this month. */
+  "stack.month": async ({ env, user, payload }) => {
+    if (!isStackLead(user)) throw denied("The Stack report is for team leads and above.");
+    const today = istISO(Date.now()), cur = today.slice(0, 7), span = await stackSpan(env, user);
+    let month = payload.month ? str(payload.month, 10) : "";
+    if (month && !stackMonthOk(month)) throw bad("Pick a month.");
+    if (month > cur) throw bad(stackMonthLabel(month) + " has not started yet.");
+    if (!month) {
+      const prev = stackMonthAdd(cur, -1), locked = new Set((await all(env, "SELECT scope FROM stack_locks WHERE month = ?", prev)).map((x) => x.scope));
+      const mine = (await all(env, "SELECT id, reports_to FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id)).map((u) => u.reports_to || "p:" + u.id);
+      month = mine.length && mine.every((s) => locked.has(s)) ? cur : prev;
+    }
+    const v = await stackView(env, user, span, month, today);
+    const lockedMonths = new Map((await all(env, "SELECT month, COUNT(*) AS n FROM stack_locks GROUP BY month")).map((x) => [x.month, x.n]));
+    v.months = Array.from({ length: 13 }, (_, i) => stackMonthAdd(cur, -i)).map((m) => ({ month: m, label: stackMonthLabel(m), locked: lockedMonths.get(m) || 0 }));
+    return v;
+  },
+  /* A value typed on the Stack report: PKT, Team player (with a reason) and, where Brahmastra has nothing, Achieved and
+     Expected (someone Team status does not count) and Quality, by a team lead and above for the associates of their span; the
+     ten ticks and, where Brahmastra cannot tell, the attrition by a manager and above for the team leads of their span (not
+     their own). Never on a locked month. An empty value takes it back. */
+  "stack.save": async ({ env, user, payload }) => {
+    if (!isStackLead(user)) throw denied("The Stack report is for team leads and above.");
+    const today = istISO(Date.now()), month = str(payload.month, 10), field = str(payload.field, 20), id = str(payload.user_id, 60);
+    if (!stackMonthOk(month) || month > today.slice(0, 7)) throw bad("Pick a month that has started.");
+    if (!Object.prototype.hasOwnProperty.call(STACK_FIELDS, field)) throw bad("Pick what to type.");
+    const who = id ? await one(env, "SELECT * FROM users WHERE id = ?", id) : null;
+    if (!who) throw bad("Unknown person.");
+    if (!(await stackSpan(env, user)).has(id)) throw denied("That person is not in your span.");
+    const label = stackMonthLabel(month), locks = await stackLocks(env, month), first = month + "-01", last = stackMonthEnd(month);
+    // locked: the team's snapshot, or any snapshot of the month with this person in it
+    const isLocked = (scope) => locks.has(scope) || [...locks.values()].some((L) => (L.data.rows || []).some((r) => r.id === id));
+    if (field === "attrition" || /^(th|cf)[1-5]$/.test(field)) {
+      if (!isManagerUp(user)) throw denied("The ticks and the attrition are typed by the manager.");
+      if (id === user.id && !user.is_admin) throw denied("Your own ticks are typed by your manager.");
+      if (!(await one(env, "SELECT 1 AS x FROM users WHERE role = 'user' AND active = 1 AND reports_to = ? LIMIT 1", id))) throw bad(who.name + " has no team on the Stack report.");
+      if (isLocked(id)) throw bad(label + " is locked for " + who.name + "'s team: ask the admin to unlock it first.");
+      if (field === "attrition") {
+        const lv = (await stackLeavers(env, await all(env, "SELECT * FROM users"), first, last, last < today ? last : today)).get(id);
+        if (!lv || !lv.unknown.length) throw bad("Brahmastra counts who left " + who.name + "'s team itself (" + (lv ? lv.n : 0) + " in " + label + "), so it is not typed.");
+      }
+    } else {
+      if (who.role !== "user" || !who.active) throw bad(who.name + " is not an associate on the Stack report.");
+      if (isLocked(who.reports_to || "p:" + who.id)) throw bad(label + " is locked for " + who.name + ": ask the admin to unlock it first.");
+      if ((field === "achieved" || field === "expected") && isArBiller(who)) throw bad("Brahmastra works out " + who.name + "'s productivity (the same numbers as Team status), so it is not typed.");
+    }
+    const raw = payload.value == null ? "" : str(payload.value, 40).trim();
+    let value = "";
+    if (raw === "") value = "";
+    else if (field === "pkt" || field === "quality") {
+      const p = Number(raw.replace(/\s*%$/, ""));
+      if (!/^\d+(\.\d+)?\s*%?$/.test(raw) || !(p >= 0 && p <= 100)) throw bad(STACK_FIELDS[field] + " is a percentage from 0 to 100.");
+      value = String(Math.round(p * 100) / 10000);
+    } else if (field === "achieved" || field === "expected") {
+      const x = Number(raw);
+      if (!/^\d+(\.\d+)?$/.test(raw) || !(x >= 0 && x <= 100000) || (field === "expected" && x === 0)) throw bad(STACK_FIELDS[field] + " is a number" + (field === "expected" ? " above 0." : " from 0."));
+      value = String(Math.round(x * 100) / 100);
+    } else if (field === "attrition") {
+      if (!/^\d{1,3}$/.test(raw)) throw bad("Attrition is the number of people who left: 0 or more.");
+      value = String(Number(raw));
+    } else {
+      value = raw.toLowerCase();
+      if (value !== "yes" && value !== "no") throw bad(STACK_FIELDS[field] + " is Yes or No.");
+    }
+    const note = field === "tp" && value ? str(payload.note, 200).trim() : "", at = Date.now();
+    if (!value) await run(env, "DELETE FROM stack_typed WHERE subject_id = ? AND month = ? AND field = ?", id, month, field);
+    else await run(env, `INSERT INTO stack_typed (subject_id, month, field, value, note, by_id, by_name, at) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(subject_id, month, field) DO UPDATE SET value = excluded.value, note = excluded.note, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, month, field, value, note, user.id, user.name || "", at);
+    return { ok: true, field, value, note, by: user.name || "", at };
+  },
+  /* Lock the month (managers and above): every draft team of their span is saved as it is now (one snapshot per team), and from
+     then on shows that snapshot, its typed cells closed. Only once the month is over. */
+  "stack.lock": async ({ env, user, payload }) => {
+    if (!isStackLead(user) || !isManagerUp(user)) throw denied("Locking the month is for managers and above.");
+    const today = istISO(Date.now()), month = str(payload.month, 10);
+    if (!stackMonthOk(month)) throw bad("Pick a month.");
+    const label = stackMonthLabel(month);
+    if (stackMonthEnd(month) >= today) throw bad(label + " can be locked once it is over, from " + stackShort(addDays(stackMonthEnd(month), 1)) + ".");
+    const span = await stackSpan(env, user), locks = await stackLocks(env, month), live = await stackLive(env, month, today);
+    const teams = new Map();
+    for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) teams.set(t.scope, { lead: t, rows: [] });
+    for (const r of live.rows) { if (teams.has(r.scope)) teams.get(r.scope).rows.push(r); else if (!r.lead_id && span.has(r.id) && !locks.has(r.scope)) teams.set(r.scope, { lead: null, rows: [r] }); }
+    if (!teams.size) throw bad(locks.size ? "Every team you see is already locked for " + label + "." : "Nobody on the Stack report for " + label + ".");
+    const at = Date.now(), meta = { month, through: live.through, floor: live.floor };
+    await batchAll(env, [...teams].map(([scope, x]) => env.DB.prepare("INSERT OR IGNORE INTO stack_locks (month, scope, rows_json, by_id, by_name, at) VALUES (?,?,?,?,?,?)")
+      .bind(month, scope, JSON.stringify({ ...meta, lead: x.lead, rows: x.rows }), user.id, user.name || "", at)));
+    const people = [...teams.values()].reduce((n, x) => n + x.rows.length, 0), names = [...teams.values()].map((x) => (x.lead ? x.lead.name : x.rows[0].name));
+    await audit(env, user, "stack.lock", null, label + " locked: " + stackCount(teams.size, "team") + ", " + stackCount(people, "person", "people") + " (" + names.join(", ") + ")");
+    return { ok: true, locked: teams.size, people };
+  },
+  /* Unlock a month (the admin only, in the audit trail): every team of it is a draft again. */
+  "stack.unlock": async ({ env, user, payload }) => {
+    if (!user.is_admin) throw denied("Only the admin can unlock a month.");
+    const month = str(payload.month, 10);
+    if (!stackMonthOk(month)) throw bad("Pick a month.");
+    const label = stackMonthLabel(month), locks = await stackLocks(env, month);
+    if (!locks.size) throw bad(label + " is not locked.");
+    await run(env, "DELETE FROM stack_locks WHERE month = ?", month);
+    const by = [...new Set([...locks.values()].map((L) => L.by + " on " + stackShort(istISO(L.at))))];
+    await audit(env, user, "stack.unlock", null, label + " unlocked: " + stackCount(locks.size, "team") + " (locked by " + by.join(", ") + "); it is a draft again");
+    return { ok: true, unlocked: locks.size };
+  },
+  /* An associate's own stack (My day's My stack card): their rows of the locked months only, newest first. */
+  "stack.mine": async ({ env, user }) => {
+    const months = [];
+    for (const x of await all(env, "SELECT month, rows_json, by_name, at FROM stack_locks WHERE instr(rows_json, ?) > 0 ORDER BY month DESC LIMIT 40", JSON.stringify({ id: user.id }).slice(1, -1))) {
+      if (months.some((m) => m.month === x.month)) continue;
+      const row = (jsonObj(x.rows_json).rows || []).find((r) => r.id === user.id);
+      if (row) months.push({ month: x.month, label: stackMonthLabel(x.month), row, locked_by: x.by_name, locked_at: x.at });
+    }
+    return { months: months.slice(0, 12), criteria: months.length ? stackCriteria() : null };
   },
   /* The claims activity for the Dashboard's dates (the inventory figures themselves are always as of now). */
   "team.activity": async ({ env, user, payload }) => {
