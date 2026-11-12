@@ -2506,7 +2506,8 @@ const spanVisible = (user, s) => user.is_admin || user.access_all || (s.manager 
 async function digestData(env, clientId, wk) {
   const today = istISO(wk.to);
   const o = await OPS["client.overview"]({ env, user: DIGEST_SYSTEM, payload: { client_id: clientId, from_ms: wk.from, to_ms: wk.to, today, tz_offset_min: IST_MIN } });
-  const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 7 * 86400000));
+  // a week before: AR at the end of the Sunday before the digest week (so the week's own Monday counts in the change)
+  const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.from - 1));
   // a past week's digest: AR as it stood at that week's end (the day's snapshot), not today's
   const endSnap = digestWeek(Date.now()).week === wk.week ? null
     : await one(env, "SELECT day, ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));

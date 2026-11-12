@@ -171,6 +171,18 @@ S("B-05: the capacity pace leaves Shastra holidays out of the working days");
   ok("B-05: (same mistake in team.range) Diwali is not a working day there either: 1 working day, not 2", tr.workdays === 1, tr.workdays);
 }
 
+S("B-06: the Monday digest's AR a week before is the end of the Sunday before the digest week");
+{
+  // Lakeview's AR at the end of each day: Sun Nov 1 100,000; Mon Nov 2 (a new inventory) 150,000; then up 1,000 a day to 156,000
+  const ar = { 1: 100000, 2: 150000, 3: 151000, 4: 152000, 5: 153000, 6: 154000, 7: 155000, 8: 156000, 9: 156000 };
+  for (const [d, v] of Object.entries(ar)) await sql("INSERT OR REPLACE INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at) VALUES (?,?,?,?,?,?,?,?)", lake.id, D(+d), v, 10, 0, 0, 0, IST(2026, 11, +d, 23, 47));
+  const dash = await at(IST(2026, 11, 17, 10), async () => {
+    const first = await A("digest.dashboard", { week: D(9) });
+    for (const s of first.spans || []) { const r = await A("digest.dashboard", { span: s.key, week: D(9) }), c = (r.clients || []).find((x) => x.id === lake.id); if (c) return { week: r.week, ar: c.ar }; }
+    return null; });
+  ok("B-06: week of Nov 2 to Nov 8: AR 156,000 against 100,000 at the end of Sunday Nov 1 (up 56,000, Monday's inventory included)", !!dash && dash.week.first === D(2) && dash.ar.now === 156000 && dash.ar.week_ago === 100000, dash);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
