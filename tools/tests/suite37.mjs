@@ -789,6 +789,41 @@ await part("N-01: a team lead cannot unlock a claim Posting closed", async () =>
   ok("N-01: ...and no 'State changed' line on the posted claim", !(await rows("SELECT id FROM claim_events WHERE claim_id = ? AND kind = 'state'", d)).length);
 });
 
+await part("N-02: a rejected recheck with nobody to resubmit leaves a closed claim closed, and says where the rejection went", async () => {
+  setNow(IST(2027, 1, 11, 10, 0));
+  const CLOSE = { status: "Claim Paid", sub_status: "Already Posted", action: "Moved To Closed/Non Workable", bucket: "Closed", effective: "Processing-Closed" };
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  for (const id of [a, b, d, e]) { await save(AR, id, SAAG.resub); await submitIt(QU, id); }
+  // the team lead closes one, the biller closes one with a closing entry, the team lead excludes one; one stays with the biller
+  await call(TI, "claims.setState", { ids: [a], state: "closed" });
+  await call(AR, "queue.open", { id: b }); await call(AR, "queue.complete", { id: b, saag: CLOSE, note: NOTE("Already posted, nothing left to work"), rework: true });
+  await call(TI, "claims.setState", { ids: [d], state: "excluded" });
+  const before = { [a]: await claim(a), [b]: await claim(b), [d]: await claim(d) };
+  // nobody is set for Rejections or Submission any more
+  await sql("UPDATE clients SET rejection_mode = '', submission_mode = '' WHERE id = ?", sun.id);
+  try {
+    setNow(IST(2027, 1, 13, 12, 0));   // the rechecks opened at 10:00
+    const reject = async (id) => T(async () => call(QU, "handoffs.close", { id: (await openH(id, "subcheck")).id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy" }));
+    const ra = await reject(a), rb = await reject(b), rd = await reject(d), re = await reject(e);
+    const same = async (id) => { const c = await claim(id), c0 = before[id]; return c.state === c0.state && c.state_reason === c0.state_reason && c.follow_up_on === c0.follow_up_on && c.first_up === c0.first_up; };
+    ok("N-02: a claim the team lead closed stays closed, with its reason, when the recheck is rejected", ra.ok && await same(a) && (await claim(a)).state === "closed", await brief(a));
+    ok("N-02: a claim the biller closed with a closing entry stays closed", rb.ok && await same(b) && (await claim(b)).state === "closed", await brief(b));
+    ok("N-02: an excluded claim stays excluded", rd.ok && await same(d) && (await claim(d)).state === "excluded", await brief(d));
+    ok("N-02: the answer says where it went: nowhere, the claim stays closed (for the toast)", ra.r && ra.r.went === "kept" && rb.r.went === "kept" && rd.r.went === "kept", [ra.r, rb.r, rd.r]);
+    const ev = await row1("SELECT data_json FROM claim_events WHERE claim_id = ? AND kind = 'handoff_rejected' ORDER BY at DESC LIMIT 1", a);
+    ok("N-02: ...the history keeps the rejection and says the claim stays closed (not 'back on the biller's list')", ev && JSON.parse(ev.data_json).kept === "closed" && JSON.parse(ev.data_json).resent === false && (await row1("SELECT status FROM handoffs WHERE claim_id = ? AND dept = 'subcheck'", a)).status === "rejected", ev);
+    ok("N-02: a claim still with the biller goes back on the biller's list today, as before, and the answer says so", re.ok && re.r.went === "biller" && (await claim(e)).state === "assigned" && (await claim(e)).follow_up_on === nowIso(), [re.r, await brief(e)]);
+  } finally { await A("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "person", lead: U("Quin Submit").id }); await A("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "person", lead: U("Rex Reject").id }); }
+  // with a Rejections person set, an excluded claim also stays excluded (the Rejections task is still made), and the answer names the desk
+  setNow(IST(2027, 1, 18, 10, 0));
+  const [f] = await give("Arun Agent", 1);
+  await save(AR, f, SAAG.resub); await submitIt(QU, f);
+  await call(TI, "claims.setState", { ids: [f], state: "excluded" });
+  setNow(IST(2027, 1, 20, 12, 0));
+  const rf = await T(async () => call(QU, "handoffs.close", { id: (await openH(f, "subcheck")).id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy" }));
+  ok("N-02: with a Rejections person set: the Rejections task is made, an excluded claim stays excluded, and the answer says Rejections", rf.ok && rf.r.went === "rejection" && !!(await openH(f, "rejection")) && (await claim(f)).state === "excluded", [rf, await brief(f)]);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

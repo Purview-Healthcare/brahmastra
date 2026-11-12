@@ -7210,7 +7210,8 @@ const OPS = {
     // The status change runs first, and only while the hand-off still stands as this request found it (on the desk, or waiting
     // on the client), so two choices at once cannot both go through: the first one wins, whatever the two choices are.
     const STILL = h.status === "client" ? "status = 'client'" : "status IN ('pending','assigned')";
-    let guard = null, listed = false;
+    // went: where a rejected recheck went (rejection, submission, biller, or kept: the claim was already closed and stays so)
+    let guard = null, listed = false, went = "";
     if (outcome === "complete") {
       const p = payload.proof || {};
       // amounts: optional, a number when given (Paid is the "amount posted" the reports add up)
@@ -7286,14 +7287,18 @@ const OPS = {
         const due = addWorkingHours(now, tatHours(cl, "submission")), nd = toRej ? "rejection" : "submission", to = rej || sub;
         stmts.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, note, biller_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?)`)
           .bind(uuid(), c.id, h.client_id, nd, now, user.id, user.name, "Rejected: " + reason, due, to.lead, to.backup, note, h.biller_id || c.assigned_to || c.last_worked_by || null));
-        // A claim already closed (Payment posted meanwhile) stays closed: the Rejections hand-off is there, the claim is not reopened.
-        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '', updated_at = ? WHERE id = ? AND state <> 'closed'").bind("with_" + nd, IN_PROCESS, "With " + DEPT_LABEL[nd], now, c.id));
+        // A claim already closed (Posting, AR or the team lead closed it) or excluded stays as it is: the Rejections hand-off is there,
+        // the claim is not opened again.
+        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '', updated_at = ? WHERE id = ?" + KEEP).bind("with_" + nd, IN_PROCESS, "With " + DEPT_LABEL[nd], now, c.id));
+        went = nd;
       } else {
-        // Nobody set to resubmit: back to the biller today.
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned','closed') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`).bind(today, now, c.id));
+        // Nobody set to resubmit: back to the biller today; a claim already closed or excluded stays as it is (the rejection is on
+        // the recheck and in the claim history).
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ?${KEEP}`).bind(today, now, c.id));
+        went = kept ? "kept" : "biller";
       }
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `Submission rejected (${reason}): ${note}`, now));
-      stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "" }));
+      stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "", ...(kept ? { kept: c.state } : {}) }));
     } else if (outcome === "back") {
       // Need assistance from AR: back on the biller's list today with the reason (the 3rd return also goes to the team lead).
       const reason = str(payload.reason, 80).trim();
@@ -7376,7 +7381,7 @@ const OPS = {
     await env.DB.batch(stmts);
     if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id, outcome); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
     // listed: the claim went on a biller's list now (a team lead's review gave it to them while the desk had it)
-    return { ok: true, ...(listed ? { listed: true } : {}) };
+    return { ok: true, ...(listed ? { listed: true } : {}), ...(went ? { went } : {}) };
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
