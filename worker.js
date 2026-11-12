@@ -3855,8 +3855,8 @@ const STACK_RULES = {
 };
 // LWP (leave without pay or absent) of half a day or more scores Attendance 0; the two totals are out of 40 and 50
 const STACK_LWP_ZERO = 0.5, STACK_OUT_OF = 40, STACK_TL_OUT_OF = 50;
-// a day whose breaks add up to more than this many minutes is a day the break ran over (one number, easy to change: the
-// owner has been asked for hers)
+// a day whose breaks add up to more than this many minutes is a day the break ran over: the owner's daily break limit, 60
+// minutes as she confirmed it (one number, easy to change)
 const STACK_BREAK_LIMIT_MIN = 60;
 const stackNum = (v) => (v == null || v === "" || typeof v === "boolean" || !Number.isFinite(Number(v)) ? null : Number(v));
 // which band applies: its index, rule.bands.length for "other", -1 for an empty value

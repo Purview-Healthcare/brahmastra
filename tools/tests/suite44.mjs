@@ -109,7 +109,7 @@ ok("attrition", words("tlAttr") === "more than 2: 0 · 2: 3 · 1: 4 · none: 5",
 ok("adherence", words("tlAdh") === "more than 12: 0 · 9 to 12: 3 · 6 to 8: 4 · 0 to 5: 5", words("tlAdh"));
 ok("the band that applied: 113% is 110.51% and above, 99.5% is 95.51% to 99.5%, empty is 0", SC.stackApplied(R.prod, 1.13) === "110.51% and above → 10" && SC.stackApplied(R.prod, 0.995) === "95.51% to 99.5% → 6" && SC.stackApplied(R.pkt, null) === "empty → 0", [SC.stackApplied(R.prod, 1.13), SC.stackApplied(R.prod, 0.995)]);
 ok("attendance's band: half a day of LWP is 0 whatever the AL", SC.stackAttApplied(1, 0.5) === "LWP of half a day or more → 0" && SC.stackAttApplied(3, 0) === "AL + LWP 3: 3 to 3.5 days → 8", SC.stackAttApplied(3, 0));
-ok("the break limit is one number, 60 minutes", SC.STACK_BREAK_LIMIT_MIN === 60);
+ok("the break limit is one number: the owner's 60 minutes", SC.STACK_BREAK_LIMIT_MIN === 60);
 
 // ---- (2) the month from Brahmastra and Shastra, who sees and types what, the lock ----
 /* A made-up floor: Vida (VP) over Mona (Manager), over Tess (team lead, Sunrise) and Lara (team lead, Lakeview); Sid is Tess's SME.
