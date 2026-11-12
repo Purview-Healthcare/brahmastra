@@ -663,6 +663,19 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-11: keys that only look like toString are fine", r.ok, r);
 }
 
+/* ================= D-14: the idle sign-out counts real input in the embedded pages, not focus left there ================= */
+{
+  // The idle timer runs in the browser only; this reads the page's code (the browser check that clicks and waits is in the fix notes).
+  const fs = await import("fs");
+  const src = fs.readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  const hook = src.slice(src.indexOf("function useIdleSignOut"), src.indexOf("function useIdleSignOut") + 3500);
+  S("D-14: idle sign-out and the embedded Third Eye / SLA pages");
+  const tick = hook.slice(hook.indexOf("setInterval(() => {"), hook.indexOf("}, 1000);"));
+  ok("D-14: focus left inside an embedded page no longer counts as activity every second", tick.length > 100 && !/IFRAME|hasFocus/.test(tick) && !/hasFocus\(\)/.test(hook), tick.slice(0, 300));
+  ok("D-14: real input inside the embedded pages counts (mouse, keys, touch, wheel on the frame's own page)", /contentDocument/.test(hook) && /frameEvs\.forEach\(\(e\) => d\.addEventListener\(e, mark/.test(hook) && /"keydown"/.test(hook) && /"mousemove"/.test(hook));
+  ok("D-14: the built page carries the same code", fs.readFileSync(new URL("../../app/app.js", import.meta.url), "utf8").includes("contentDocument"));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

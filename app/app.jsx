@@ -1478,7 +1478,8 @@ function Bell({ notify, allowed, onGo }) {
     </div>
   );
 }
-/* Signed out after 5 minutes without a key, click, scroll or touch in any Brahmastra tab; a warning shows for the last minute. */
+/* Signed out after 24 hours without a key, click, scroll or touch in any Brahmastra tab (the embedded Third Eye and SLA pages
+   included); a warning shows for the last minute. */
 const IDLE_MIN = Number(window.BRAHMASTRA_IDLE_MIN) || 24 * 60, IDLE_WARN_SEC = Math.min(60, IDLE_MIN * 30), ACTIVE_KEY = "brahmastra2:active";
 function useIdleSignOut(on, signOut) {
   const [left, setLeft] = useState(null);
@@ -1490,16 +1491,30 @@ function useIdleSignOut(on, signOut) {
     const mark = () => { last = Date.now(); setLeft(null); if (last - wrote > 15000) { wrote = last; try { localStorage.setItem(ACTIVE_KEY, String(last)); } catch (e) {} } };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "wheel"];
     evs.forEach((e) => window.addEventListener(e, mark, { passive: true }));
+    // Working inside the embedded Sasha's Third Eye or SLA page counts too, but only real input there: their pages are on the same
+    // address as Brahmastra, so each page the frames load gets the same listeners (a scroll the page makes by itself does not
+    // count). Focus left in a frame is not activity. Clicking into a frame counts once (the window loses focus to it).
+    const frameEvs = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"], watched = new WeakSet(), docs = [];
+    const watchFrames = () => {
+      for (const f of document.getElementsByTagName("iframe")) {
+        let d = null; try { d = f.contentDocument; } catch (e) { d = null; }
+        if (!d || watched.has(d)) continue;
+        watched.add(d); docs.push(d);
+        frameEvs.forEach((e) => d.addEventListener(e, mark, { passive: true, capture: true }));
+      }
+    };
+    const intoFrame = () => { setTimeout(() => { if (document.activeElement && document.activeElement.tagName === "IFRAME") mark(); }, 0); };
+    window.addEventListener("blur", intoFrame);
     mark();
     const t = setInterval(() => {
-      // working inside the embedded Sasha's Third Eye or SLA page counts as activity too
-      if (document.hasFocus() && document.activeElement && document.activeElement.tagName === "IFRAME") mark();
+      watchFrames();
       let shared = 0; try { shared = Number(localStorage.getItem(ACTIVE_KEY)) || 0; } catch (e) {}
       const ms = IDLE_MIN * 60000 - (Date.now() - Math.max(last, shared));
       if (ms <= 0) { clearInterval(t); setLeft(null); Promise.resolve(out.current()).then(() => setTimeout(() => toast(`Signed out after ${IDLE_MIN < 1 ? "a while" : IDLE_MIN >= 60 ? Math.round(IDLE_MIN / 60) + " hours" : IDLE_MIN + " minutes"} without activity, to keep patient data safe.`), 100)); }
       else setLeft(ms <= IDLE_WARN_SEC * 1000 ? Math.ceil(ms / 1000) : null);
     }, 1000);
-    return () => { evs.forEach((e) => window.removeEventListener(e, mark)); clearInterval(t); };
+    return () => { evs.forEach((e) => window.removeEventListener(e, mark)); window.removeEventListener("blur", intoFrame); clearInterval(t);
+      docs.forEach((d) => { try { frameEvs.forEach((e) => d.removeEventListener(e, mark, { capture: true })); } catch (e) { /* the frame is gone */ } }); };
   }, [on]);
   return left;
 }
