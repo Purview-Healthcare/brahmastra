@@ -5082,7 +5082,7 @@ const OPS = {
     for (const x of await all(env, "SELECT month, rows_json, by_name, at FROM stack_locks WHERE instr(rows_json, ?) > 0 ORDER BY month DESC LIMIT 40", JSON.stringify({ id: user.id }).slice(1, -1))) {
       if (months.some((m) => m.month === x.month)) continue;
       const row = (jsonObj(x.rows_json).rows || []).find((r) => r.id === user.id);
-      if (row) months.push({ month: x.month, label: stackMonthLabel(x.month), row, locked_by: x.by_name, locked_at: x.at });
+      if (row) months.push({ month: x.month, label: stackMonthLabel(x.month), row: { ...row, locked: true }, locked_by: x.by_name, locked_at: x.at });
     }
     return { months: months.slice(0, 12), criteria: months.length ? stackCriteria() : null, lines: stackLines() };
   },

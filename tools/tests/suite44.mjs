@@ -323,7 +323,7 @@ ok("with October locked, the manager's page opens on November", mo.month === "20
 
 S("An associate's own stack: locked months only");
 let mine = await ASHA("stack.mine", {});
-ok("Asha sees her October: Stack 5, 37.5 of 40, locked by Mona Manager", mine.months.length === 1 && mine.months[0].month === OCT && mine.months[0].row.s.stack === 5 && mine.months[0].row.s.total === 37.5 && mine.months[0].locked_by === "Mona Manager", mine.months.map((m) => [m.month, m.row.name]));
+ok("Asha sees her October: Stack 5, 37.5 of 40, locked by Mona Manager", mine.months.length === 1 && mine.months[0].month === OCT && mine.months[0].row.s.stack === 5 && mine.months[0].row.s.total === 37.5 && mine.months[0].locked_by === "Mona Manager" && mine.months[0].row.locked === true && !mine.months[0].row.can_edit, mine.months.map((m) => [m.month, m.row.name]));
 ok("only her own row: nobody else's name or numbers", JSON.stringify(mine).indexOf("Bilal") < 0 && JSON.stringify(mine).indexOf("Chen Calm") < 0 && mine.months[0].row.id === tid("Asha Able"), JSON.stringify(mine).length);
 mine = await BI("stack.mine", {}); ok("Bilal sees his own October", mine.months.length === 1 && mine.months[0].row.name === "Bilal Bright" && mine.months[0].row.s.stack === 3, mine.months.length);
 mine = await TE("stack.mine", {}); ok("a team lead has no associate row of her own", mine.months.length === 0, mine);
