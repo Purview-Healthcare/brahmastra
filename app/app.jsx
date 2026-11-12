@@ -7627,7 +7627,8 @@ function crBuildExec(c, raw) {
   const R = c.R, DS = c.DS;
   const inv = crInvSets({ ...c, sel: {} }), amtCur = crSum(inv.curSet, (r) => r.amount), amtPrev = crSum(inv.prevSet, (r) => r.amount);
   const over = (set) => crOwed(set, 91), o90 = crOverShare(inv.curSet, 91), o90p = inv.twoSnapshots ? crOverShare(inv.prevSet, 91) : null;
-  const c0 = { ...c, sel: {} }, posted = (rows) => rows.filter((r) => /posted/.test(r.status || "")), paidOf = (r) => (r.paid != null ? r.paid : r.amount) || 0;
+  // the summary is always the whole client: a context of its own without the page filters (both periods)
+  const c0 = crCtx(DS, R, "exec", {}), posted = (rows) => rows.filter((r) => /posted/.test(r.status || "")), paidOf = (r) => (r.paid != null ? r.paid : r.amount) || 0;
   const pay = c0.ds("payment") ? posted(c0.rowsAll("payment")) : [], payP = c0.ds("payment") && c0.hasPrev("payment") ? posted(c0.prev("payment")) : null;
   const coll = crSum(pay, paidOf), collP = payP ? crSum(payP, paidOf) : null;
   const wkE = c0.ds("worked") ? c0.rowsAll("worked") : [], wkPE = c0.hasPrev("worked") ? c0.prev("worked") : null, wd = crWorkingDaysIn(R.range);
@@ -8260,8 +8261,9 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
       </div>
     );
   }
+  // the executive summary is always the whole client, so it never carries the filter label
   const slideFor = (pid, s, m) => pid === "cover" ? <CrCover rep={rep} pages={included} mode={m} /> : <CrSlide page={CR_PAGE_BY[pid]} model={pid === page && s === sel ? model : buildModel(pid, s)} rep={rep} n={numOf(pid) || 1} total={included.length || 1}
-    mode={m} ed={edits[pid]} onEd={(d) => saveEd(pid, d)} tools={tools} filterText={filterText(s)} />;
+    mode={m} ed={edits[pid]} onEd={(d) => saveEd(pid, d)} tools={tools} filterText={pid === "exec" ? "" : filterText(s)} />;
   return (
     <div className="stack crx" style={{ gap: 12 }}>
       <div className="card crx-bar">

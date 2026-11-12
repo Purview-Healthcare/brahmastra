@@ -199,7 +199,7 @@ does not count).
 | Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof); the rejection rate is of the claims submitted in the period (of the claims worked for a client with no Submission records), and a period with no submission has no rate |
 | Client assistance | requests sent to the client, with their reason and whether they were answered; a request counts in every period it was waiting, however long ago it was sent |
 | EV | the EV production file uploaded on the start screen (verifications, insurance wise, verification type or status) |
-| Executive summary | the headline of each page and the six-month AR and collections trend |
+| Executive summary | the headline of each page and the six-month AR and collections trend; always the whole client (the page filters do not apply to it) |
 
 **Inventory at a past date.** Brahmastra keeps a snapshot of every client's open inventory (every hour and after
 each upload; month ends and Sundays are kept, other days for 45 days). Today's inventory is live.
