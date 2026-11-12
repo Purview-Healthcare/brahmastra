@@ -2111,10 +2111,14 @@ const attainStamp = (v) => v == null ? <span className="muted">–</span> : <spa
 /* On floor and Idle on Team status, from Purview Shastra: met or short on the finished days; idle is Shastra Guard's no
    movement plus screen locked while punched in, breaks left out. */
 const FLOOR_SRC = { off: "Purview Shastra is not connected", not_set_up: "waiting for the floor-time feed in Purview Shastra", error: "Purview Shastra did not answer", pending: "from Purview Shastra" };
+// a day Purview Shastra has not answered for (it was down) is not known: it is not judged, never counted as 0 hours
+const FLOOR_UNKNOWN = "Purview Shastra has not answered for these days yet, so they are not judged";
 const floorCell = (r, src) => {
-  if (r.on_floor_min == null) return <span className="muted" title={r.floor === "no_attendance" ? "No attendance in Purview Shastra for these dates" : FLOOR_SRC[src] || ""}>–{r.floor === "no_attendance" ? <div className="tiny">no attendance</div> : null}</span>;
-  const sub = r.floor === "met" ? <div className="tiny teal-ink">met</div> : r.floor === "short" ? <div className={"tiny " + (r.on_floor_done_min < r.floor_needed_done_min * 0.75 ? "red-ink" : "amber-ink")}>short {fmtHM(r.floor_short_min)}</div> : r.floor === "pending" ? <div className="tiny muted">day under way</div> : null;
-  return <span title={r.floor === "pending" ? "Judged once the day is finished" : "On the finished days: " + fmtHM(r.on_floor_done_min) + " of " + fmtHM(r.floor_needed_done_min) + " needed"}>{fmtHM(r.on_floor_min)}{sub}</span>; };
+  const unk = r.floor_unknown_days ? plural(r.floor_unknown_days, "day") + " not known" : "";
+  if (r.on_floor_min == null) return <span className="muted" title={r.floor === "no_attendance" ? "No attendance in Purview Shastra for these dates" : r.floor === "unknown" ? FLOOR_UNKNOWN : FLOOR_SRC[src] || ""}>–{r.floor === "no_attendance" ? <div className="tiny">no attendance</div> : r.floor === "unknown" ? <div className="tiny">not known</div> : null}</span>;
+  const sub = r.floor === "met" ? <div className="tiny teal-ink">met{unk ? <span className="muted"> · {unk}</span> : null}</div> : r.floor === "short" ? <div className={"tiny " + (r.on_floor_done_min < r.floor_needed_done_min * 0.75 ? "red-ink" : "amber-ink")}>short {fmtHM(r.floor_short_min)}{unk ? <span className="muted"> · {unk}</span> : null}</div>
+    : r.floor === "pending" ? <div className="tiny muted">day under way</div> : r.floor === "unknown" ? <div className="tiny muted">not known</div> : null;
+  return <span title={r.floor === "pending" ? "Judged once the day is finished" : r.floor === "unknown" ? FLOOR_UNKNOWN : "On the finished days: " + fmtHM(r.on_floor_done_min) + " of " + fmtHM(r.floor_needed_done_min) + " needed" + (unk ? " (" + unk + ": Purview Shastra has not answered for them)" : "")}>{fmtHM(r.on_floor_min)}{sub}</span>; };
 const breakCell = (r) => {
   if (r.break_min == null) return <span className="muted">–</span>;
   const avg = r.break_days ? Math.round(r.break_min / r.break_days) : 0;
@@ -2157,7 +2161,8 @@ function TeamStatusTab({ ctx, me, go }) {
     const line = (r) => [r.lead_name, r.name, r.doj, r.status, rampTxt(r.ramp) || r.status, r.attain == null ? "" : r.attain, r.attain == null ? "" : r.attain_basis === "done" ? "days up to yesterday" : "today",
       r.attain == null ? "" : r.attain_basis === "done" ? r.count_done : r.count_today, r.attain == null ? "" : r.attain_basis === "done" ? r.target_done : r.target_today,
       r.worked, r.task_items || 0, r.tasks_completed || 0, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10,
-      r.on_floor_min == null ? "" : Math.round(r.on_floor_min / 6) / 10, r.floor === "met" ? "Met" : r.floor === "short" ? "Short " + Math.round(r.floor_short_min / 6) / 10 + " h" : r.floor === "pending" ? "Day under way" : r.floor === "no_attendance" ? "No attendance in Shastra" : "",
+      r.on_floor_min == null ? "" : Math.round(r.on_floor_min / 6) / 10, (r.floor === "met" ? "Met" : r.floor === "short" ? "Short " + Math.round(r.floor_short_min / 6) / 10 + " h" : r.floor === "pending" ? "Day under way" : r.floor === "no_attendance" ? "No attendance in Shastra" : r.floor === "unknown" ? "Not known" : "")
+        + ((r.floor === "met" || r.floor === "short") && r.floor_unknown_days ? " (" + plural(r.floor_unknown_days, "day") + " not known)" : ""),
       r.idle_min == null ? "" : Math.round(r.idle_min / 6) / 10, r.locked_min == null ? "" : Math.round(r.locked_min / 6) / 10, r.break_min == null ? "" : Math.round(r.break_min / 6) / 10, r.break_min == null ? "" : r.break_over_days, r.left, r.left_high, r.esc_ext || 0, r.esc_int || 0, (r.escalations || []).map((e) => "SR" + e.sr + " " + e.client_name + " (" + e.kind + ")").join("; "), r.start_date, r.end_date, r.comment];
     downloadText(toCSV(rows, head.map((label, i) => ({ label, get: (r) => line(r)[i] }))), "Team status " + (span ? span[0] + " to " + span[1] : "") + ".csv");
   };
@@ -2187,7 +2192,7 @@ function TeamStatusTab({ ctx, me, go }) {
       </div>
       <ErrorBox error={q.error} />
       {!d && !q.error ? <Spinner label="Loading…" /> : d && !rows.length ? <div className="card"><Empty>Nobody here for this selection.</Empty></div> : d && <>
-        {d.floor_error && d.floor_source === "ok" && <div className="small muted">Purview Shastra did not answer just now ({d.floor_error}); on floor and idle show the last figures it sent.</div>}
+        {d.floor_error && d.floor_source === "ok" && <div className="small muted">Purview Shastra did not answer just now ({d.floor_error}); on floor and idle show the last figures it sent, and the days it has not answered for are not judged (not known).</div>}
         {t.esc > 0 && <div className="alert" style={{ background: "var(--red-soft)", borderColor: "rgba(201,79,79,.35)" }}><b className="red-ink">📣 {plural(t.esc, "escalation")} as our error, {word} ({t.esc_ext || 0} external · {t.esc_int || 0} internal):</b>{" "}
           {rows.filter((r) => r.esc_n).sort((a, b) => b.esc_n - a.esc_n).map((r, i) => <React.Fragment key={r.id}>{i ? ", " : ""}<button type="button" className="btn link" style={{ padding: 0 }} onClick={() => setEscOf(r)}>{r.name}</button> ({[r.esc_ext ? r.esc_ext + " external" : "", r.esc_int ? r.esc_int + " internal" : ""].filter(Boolean).join(", ")})</React.Fragment>)}
           <span className="small muted"> · named as who made the error in the Escalation tracker</span></div>}
@@ -2196,7 +2201,7 @@ function TeamStatusTab({ ctx, me, go }) {
           <Kpi tone="accent" label="Headcount" value={fmtInt(t.people)} sub={plural(t.leads, "team lead")} />
           <Kpi label="In production" value={<span className="teal-ink">{fmtInt(t.production)}</span>} sub={t.people ? Math.round(t.production / t.people * 100) + "% of the team" : ""} />
           <Kpi label="In training" value={<span className={t.training ? "amber-ink" : ""}>{fmtInt(t.training)}</span>} sub="training and OJT" />
-          <Kpi label="Floor time needed" value={fmtHM(t.floor_needed_min)} sub="8 h a working day, 4 h a half day" />
+          <Kpi label="Floor time needed" value={fmtHM(t.floor_needed_min)} sub={"8 h a working day, 4 h a half day" + (rows.some((r) => r.floor_unknown_days) ? ", not counting the days Purview Shastra has not answered for" : "")} />
           {t.on_floor_min != null ? <Kpi label="On floor · idle · breaks" value={fmtHM(t.on_floor_min)}
               sub={<>{t.idle_min != null ? "idle " + fmtHM(t.idle_min) + " · " : ""}{t.break_min != null ? "breaks " + fmtHM(t.break_min) + (t.break_over_days ? " (" + plural(t.break_over_days, "day") + " over 1 h)" : "") + " · " : ""}{t.floor_judged ? t.floor_met + " of " + t.floor_judged + " met the floor time" : "from Purview Shastra"}</>} tone={t.floor_judged && t.floor_met < t.floor_judged ? "" : "good"} />
             : <Kpi label="On floor · idle · breaks" value={<span className="muted">–</span>} sub={d.floor_source === "ok" ? "no attendance in Purview Shastra for these dates" : FLOOR_SRC[d.floor_source] || "from Purview Shastra"} />}

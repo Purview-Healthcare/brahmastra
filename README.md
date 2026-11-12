@@ -323,7 +323,8 @@ roster, grouped by team lead (no Emp ID):
   **Task items** and **Tasks completed**, and its count for the attainment is claims plus task items.
 - **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** comes from Purview Shastra (finished
   shifts with breaks taken out; a shift still open counts up to now) and shows **met** or **short** on the finished
-  days. **Idle** is what Shastra Guard saw while the person was punched in, breaks left out: no movement plus screen
+  days. A day Shastra has not answered for (it was down) is not judged: it shows as **not known**, never as 0 hours,
+  and is left out of the floor time needed. **Idle** is what Shastra Guard saw while the person was punched in, breaks left out: no movement plus screen
   locked (the split is in the tooltip and the CSV). **Breaks** is the break time Shastra recorded on the days with
   floor time, with the average a day and the days over the hour Shastra allows (the KPI and the CSV carry it
   too). People with no attendance in Shastra for the dates, or no Guard

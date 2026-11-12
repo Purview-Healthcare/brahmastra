@@ -21,18 +21,19 @@ const feed = [
   P({ emp_id: "M1", name: "Mona Manager", position: "Manager", reports_to: "Vida Vice", project: "Sunrise Eye Care", also_on_projects: "Lakeview Dental Group", email: mail("Mona Manager") }),
   P({ emp_id: "T1", name: "Tess Lead", position: "Team Lead", project: "Sunrise Eye Care", reports_to: "Mona Manager", email: mail("Tess Lead") }),
   B("B1", "Dina Day"), B("B2", "Hal Half"), B("B3", "Lea Leave"), B("B4", "Otto Over"), B("B5", "Nell Night", { shift: "18:30-03:30" }), B("B6", "Walt West", { shift: "22:30-07:30" }),
-  B("B7", "Jo Joiner", { doj: "2026-11-05" }), B("B9", "Ola Owl", { shift: "18:30-03:30" }), B("B10", "Eve Early"),
+  B("B7", "Jo Joiner", { doj: "2026-11-05" }), B("B9", "Ola Owl", { shift: "18:30-03:30" }), B("B10", "Eve Early"), B("B11", "Fay Floor"),
   P({ emp_id: "B8", name: "Lou Lake", project: "Lakeview Dental Group", reports_to: "Mona Manager", email: mail("Lou Lake") }),
 ];
 // Purview Shastra: the roster, its holidays, and the floor-time feed (404 until floorRows is set; at most 93 days a call, as
 // dev/shastra-floor-feed.sql); the other feeds are not set up here
-let floorRows = null; const floorCalls = [];
+let floorRows = null, floorDown = false; const floorCalls = [];
 const fetchMock = async (url, init) => {
   const body = init && init.body ? JSON.parse(init.body) : {};
   if (url.includes("brahmastra_roster")) return J({ ok: true, rows: feed });
   if (url.includes("brahmastra_holidays")) return J({ ok: true, holidays: [{ date: "2026-11-09", name: "Diwali" }] });
   if (url.includes("brahmastra_floor")) {
     floorCalls.push([body.p_from, body.p_to]);
+    if (floorDown) return J({ message: "Shastra is down" }, 503);
     if (!floorRows) return J({ code: "PGRST202", message: "no such function" }, 404);
     if ((Date.parse(body.p_to) - Date.parse(body.p_from)) / 86400000 > 92) return J({ ok: false, error: "Ask for up to 93 days at a time" });
     return J({ ok: true, rows: floorRows.filter((x) => x.date >= body.p_from && x.date <= body.p_to) });
@@ -240,6 +241,25 @@ S("N-10: the Client 360 report's per working day leaves the Shastra holidays out
     const p = crBuildAR(crCtx(DS, R, "ar", {})); return p && p.kpis.find((x) => x.label === "Per working day"); })()`));
   ok("N-10: the report's answer carries the Shastra holidays in its dates (Diwali)", Array.isArray(raw.holidays) && raw.holidays.includes(D(9)), raw.holidays);
   ok("N-10: AR production for November 2026: per working day over 20 working days (21 weekdays, Diwali left out)", !!k && /^20 working days/.test(k.sub || ""), k);
+}
+
+S("N-11: a day Shastra's floor feed never answered is not judged (not known, never 0 hours)");
+{
+  // Shastra has 8 hours for Fay on each working day from Nov 2 to 6, and today so far; it answers for Nov 4 to 10, then goes down
+  await freshFloor([...[2, 3, 4, 5, 6].map((d) => F("B11", D(d), "present", 480)), F("B11", D(10), "present", 300, { open: true })]);
+  const ks = ["floor", "floor_unknown_days", "on_floor_done_min", "floor_needed_done_min", "floor_short_min"];
+  const pointers = (r) => r.suggestions.today.concat(r.suggestions.week).filter((s) => s.who === "Fay Floor" && /On the floor/.test(s.seen));
+  await status(A, D(4), D(10), D(10), IST(2026, 11, 10, 15));
+  floorDown = true;
+  const r = await status(A, D(2), D(10), D(10), IST(2026, 11, 10, 15, 11)), f = row(r, "Fay Floor");
+  ok("N-11: Nov 2 and 3 never answered: judged on the 3 days Shastra answered (24 h of 24 h, met), 2 days not known, no pointer",
+    f.floor === "met" && f.floor_unknown_days === 2 && f.on_floor_done_min === 24 * 60 && f.floor_needed_done_min === 24 * 60 && !pointers(r).length && r.floor_error === "Shastra is down", { ...pick(f, ks), pointers: pointers(r), err: r.floor_error });
+  const r2 = await status(A, D(2), D(3), D(10), IST(2026, 11, 10, 15, 12)), f2 = row(r2, "Fay Floor");
+  ok("N-11: only days Shastra never answered: not known (not 'short', not 'no attendance in Shastra')",
+    f2.floor === "unknown" && f2.floor_unknown_days === 2 && f2.floor_needed_done_min === 0 && !r2.checks.some((c) => /no attendance/.test(c.text) && /Fay Floor/.test(c.text)), { ...pick(f2, ks), checks: r2.checks.map((c) => c.text) });
+  floorDown = false;
+  const f3 = row(await status(A, D(2), D(10), D(10), IST(2026, 11, 10, 15, 22)), "Fay Floor");
+  ok("N-11: once Shastra answers again, every day is judged: 40 h of 40 h, met", f3.floor === "met" && f3.floor_unknown_days === 0 && f3.on_floor_done_min === 40 * 60 && f3.floor_needed_done_min === 40 * 60, pick(f3, ks));
 }
 
 const fails = results.filter((x) => !x.pass);

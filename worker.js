@@ -2200,11 +2200,15 @@ async function shastraFloor(env, from, to, today, off) {
     await setSetting(env, "floor_sync", st);
   }
   // until the feed has answered once, there is nothing to show; after that, the kept days (with a note if the last ask failed,
-  // even when its first part was answered)
+  // even when its first part was answered). known: the days Shastra has answered for (fetched without an error, or holding its
+  // rows); a day it never answered (it was down) is not known, never 0 hours.
   const state = st.ok_at ? "ok" : st.state || "pending";
-  const byUser = new Map();
-  if (state === "ok") for (const x of await all(env, "SELECT * FROM floor_days WHERE day BETWEEN ? AND ?", from, last)) { if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Map()); byUser.get(x.user_id).set(x.day, x); }
-  return { state, error: st.fail_at && st.fail_at >= (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser };
+  const byUser = new Map(), known = new Set();
+  if (state === "ok") {
+    for (const x of await all(env, "SELECT * FROM floor_days WHERE day BETWEEN ? AND ?", from, last)) { if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Map()); byUser.get(x.user_id).set(x.day, x); known.add(x.day); }
+    for (let d = from; d <= last; d = addDays(d, 1)) if (st.days[d]) known.add(d);
+  }
+  return { state, error: st.fail_at && st.fail_at >= (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser, known };
 }
 /* Shastra's attendance status for a day: in (a full day), a half day, unplanned (absent, sick, leave without pay),
    leave (approved, maternity, sabbatical) or off (week off, holiday, comp off: not a working day). Unknown or missing:
@@ -4469,7 +4473,7 @@ const OPS = {
       // day, week off, a Saturday worked); otherwise a weekday is a full day unless marked Out today here (Half day: half).
       // Days before the date of joining have no target and no floor time, and are not days out.
       const fd = fl.byUser.get(u.id), myDay = dayOf(u), doj = isoDate(u.doj);
-      let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0;
+      let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0, unknownDone = 0;
       for (const d of span) {
         const x = fd && fd.get(d), sd0 = x ? shastraDay(x.status) : null, wd = weekday(d);
         // Overtime on a working day is a day in; a weekend or holiday worked as overtime adds no target (its entries still count)
@@ -4480,8 +4484,10 @@ const OPS = {
           else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
             if (!a) full++; else if (share) half++; else { out++; unplanned++; } }
         }
-        shares += share; needAll += share * 480;
-        if (d < myDay) { tDone += share * cap; needDone += share * 480; } else if (d === myDay) tToday = share * cap;
+        // floor time is needed, and judged, only on the days Shastra has answered for: a day it never answered is not known
+        const known = fl.state !== "ok" || (fl.known && fl.known.has(d));
+        shares += share; if (known) needAll += share * 480;
+        if (d < myDay) { tDone += share * cap; if (known) needDone += share * 480; else if (share) unknownDone++; } else if (d === myDay) tToday = share * cap;
         if (x) { const tof = x.tof_min || 0, idl = x.guard ? (x.idle_min || 0) + (x.locked_min || 0) : 0;
           onAll += tof; idleAll += idl; if (x.guard) { lockedAll += x.locked_min || 0; guard = true; }
           // breaks taken that day (Shastra's own figure); Shastra allows 60 minutes a day
@@ -4524,7 +4530,8 @@ const OPS = {
         on_floor_min: inShastra ? onAll : null, on_floor_done_min: inShastra ? onDone : null,
         idle_min: inShastra && guard ? idleAll : null, idle_done_min: inShastra && guard ? idleDone : null, locked_min: inShastra && guard ? lockedAll : null, guard,
         break_min: inShastra ? brkAll : null, break_days: brkDays, break_over_days: brkOver,
-        floor: fl.state !== "ok" ? "none" : !inShastra ? "no_attendance" : needDone <= 0 ? "pending" : onDone >= needDone ? "met" : "short",
+        floor: fl.state !== "ok" ? "none" : needDone <= 0 && unknownDone ? "unknown" : !inShastra ? "no_attendance" : needDone <= 0 ? "pending" : onDone >= needDone ? "met" : "short",
+        floor_unknown_days: unknownDone,
         floor_short_min: inShastra && needDone > onDone ? needDone - onDone : 0,
         left: mine.length, left_high: leftHigh, left_other: mine.length - leftHigh, ramp,
         // judged against the production mark: production only, on finished days; Training and OJT are in ramp-up
