@@ -7183,7 +7183,7 @@ const crSubState = (r) => { const st = r.status || ""; if (/dup/.test(st)) retur
 /* the datasets a page reads; denials come from the AR entries (as Third Eye does without a denial sheet) */
 function crDerived(DS, role) {
   if (role === "denial") { const w = DS.worked; const recs = w ? w.recs.filter(crIsDenied) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked", dedupe: true } : null; }
-  if (role === "rejection") { const r = DS.rejection; if (r && r.recs.length) return r; const w = DS.worked; const recs = w ? w.recs.filter(crIsRejected) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked" } : null; }
+  if (role === "rejection") { const r = DS.rejection; if (r && r.recs.length) return r; const w = DS.worked; const recs = w ? w.recs.filter(crIsRejected) : []; return recs.length ? { ...w, role, recs, nrows: recs.length, derivedFrom: "worked", dedupe: true } : null; }
   const ds = DS[role]; return ds && ds.recs.length ? ds : null;
 }
 /* One row per claim: a desk request over an AR entry, an open request over an answered one, else the later entry. */
@@ -7217,6 +7217,7 @@ function crCardBar(c, field, title, opts = {}) {
   const role = opts.role, ds = c.ds(role); if (!ds) return null;
   const id = `${c.pageId}.${role}.${field}`;
   let rows = c.rows(role, field); if (opts.rowFilter) rows = rows.filter(opts.rowFilter);
+  if (opts.claims) rows = crClaimsOf(rows);   // claims, not entries: one row per claim (its latest entry), as the page's KPIs count
   const measure = (c.R.cardMeasure && c.R.cardMeasure[id]) || opts.measure || "count";
   let items = crAgg(rows, field, ds, { measure, order: opts.order });
   if (opts.filterItems) items = items.filter(opts.filterItems);
@@ -7224,6 +7225,7 @@ function crCardBar(c, field, title, opts = {}) {
   if (opts.emph) crEmph80(items);
   crMarkSel(items, c.sel[field]);
   let prevRows = opts.prev && c.hasPrev(role) ? c.prev(role) : null; if (prevRows && opts.rowFilter) prevRows = prevRows.filter(opts.rowFilter);
+  if (prevRows && opts.claims) prevRows = crClaimsOf(prevRows);
   const prevItems = prevRows ? crAgg(prevRows, field, ds, { measure }) : null;
   const m = CR_MEASURE[measure], sec = measure === "count" ? { key: "amount", label: "Amount", fmt: crF.money } : { key: "count", label: "Claims", fmt: crF.int };
   return { id, title, sub: opts.sub, cols: opts.cols || 6, type: opts.type || "hbar", dim: field, dimLabel: crDimLabel(ds, field), items, prevItems, measure, canToggle: true, measureLabel: m.label,
@@ -7498,10 +7500,11 @@ function crBuildAR(c) {
   ];
   if (wd) kpis.push(crKpi("Per working day", crPerDay(all.length, wd), { sub: `${wd} working days${crSoFar(c.range) < c.range.end ? " so far" : ""}` }));
   const cards = [];
-  crAddCard(cards, crCardBar(c, "bucket", "Aging wise production", { role: "worked", cols: 6, type: "col", prev: true }), 1);
-  crAddCard(cards, crCardBar(c, "purviewStatus", "Status wise breakdown", { role: "worked", cols: 6, measure: "amount", maxRows: 8 }), 1);
-  crAddCard(cards, crCardBar(c, "action", "Action required", { role: "worked", cols: 6, measure: "amount", maxRows: 8 }), 1);
-  crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "worked", cols: 6, measure: "amount", prev: true, maxRows: 8 }), 1);
+  // the charts count claims like the KPIs above (a claim worked twice is one claim, at its latest entry), so they add up to them
+  crAddCard(cards, crCardBar(c, "bucket", "Aging wise production", { role: "worked", cols: 6, type: "col", prev: true, claims: true }), 1);
+  crAddCard(cards, crCardBar(c, "purviewStatus", "Status wise breakdown", { role: "worked", cols: 6, measure: "amount", maxRows: 8, claims: true }), 1);
+  crAddCard(cards, crCardBar(c, "action", "Action required", { role: "worked", cols: 6, measure: "amount", maxRows: 8, claims: true }), 1);
+  crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "worked", cols: 6, measure: "amount", prev: true, maxRows: 8, claims: true }), 1);
   const ins = [], pw = crPrevWord(R);
   ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crF.int(entries.length)} entries` : ""}.`);
   const outcomes = crAgg(all, "purviewStatus", ds); if (outcomes.length) ins.push(`Outcomes: ${outcomes.slice(0, 4).map((o) => `${o.label} ${crF.pct(o.share, 0)}`).join(", ")}.`);
