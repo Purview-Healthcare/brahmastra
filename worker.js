@@ -4917,7 +4917,9 @@ const OPS = {
       WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL AND ${INV_NO_OPEN_HO} GROUP BY 1, 2`, ...ids, today);
     // closed this month: by when it was closed (a note added later does not count it again)
     const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND COALESCE(closed_at, updated_at) >= ? GROUP BY 1`, ...ids, monthStart);
-    const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.status IN ('pending','assigned') AND h.due_at < ? AND NOT ${heldSql("h")} GROUP BY 1, 2`, ...ids, now, today);
+    // the desk tasks the scorecard's TAT counts (Payment posting, Submission, Rejections), past the client's TAT and not on hold;
+    // waiting on the client too (the clock keeps running). The recheck after submitting is not one: it has its own reminders.
+    const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.dept IN ('posting','submission','rejection') AND h.status IN ('pending','assigned','client') AND h.due_at < ? AND NOT ${heldSql("h")} GROUP BY 1, 2`, ...ids, now, today);
     const escOpen = await all(env, `SELECT client_id, SUM(CASE WHEN kind = 'internal' THEN 0 ELSE 1 END) AS n, SUM(CASE WHEN kind = 'internal' THEN 1 ELSE 0 END) AS ni FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, ...ids);
     // working days left in the month, today included (Monday to Friday)
     let wdLeft = 0; { const [y, m] = today.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -4977,7 +4979,9 @@ const OPS = {
           text: "Nobody works a claim that is not on a list. Hand them out so the team's pace covers them.", act: [{ label: "Allocate", to: "allocate", params }] }); }
       const deskLateN = Object.values(x.desk_late).reduce((t, n) => t + n, 0);
       if (deskLateN) { const by = Object.entries(x.desk_late).map(([k, n]) => n + " at " + (deptName[k] || k)).join(", ");
-        out.push({ tone: "amber", short: pl(deskLateN, "desk task") + " past the TAT", num: String(deskLateN), sub: "desk tasks past the TAT", title: "At Posting or Submission past the client's TAT.", text: by + ". These count against the Posting TAT and Submission TAT on the scorecard.", act: [{ label: "Open the desks", to: "handoffs", params: cid ? { client_id: cid } : {} }] }); }
+        // only the TATs these tasks count against: Payment posting's own, and Submission's (Rejections resubmit to it)
+        const against = [x.desk_late.posting ? "the Posting TAT" : "", x.desk_late.submission || x.desk_late.rejection ? "the Submission TAT" : ""].filter(Boolean).join(" and ");
+        out.push({ tone: "amber", short: pl(deskLateN, "desk task") + " past the TAT", num: String(deskLateN), sub: "desk tasks past the TAT", title: "At Posting, Submission or Rejections past the client's TAT.", text: by + ". " + (deskLateN === 1 ? "It counts" : "These count") + " against " + against + " on the scorecard.", act: [{ label: "Open the desks", to: "handoffs", params: cid ? { client_id: cid } : {} }] }); }
       if (x.esc_open) out.push({ tone: "red", short: "Close " + pl(x.esc_open, "open escalation"), num: String(x.esc_open), sub: "open escalations", title: "Escalations are open. The SLA threshold is 0.", text: "Close them, or give the reason and expected date on the tracker.", act: [{ label: "Open the Escalation tracker", to: "escalations", params: cid ? { client_id: cid } : {} }] });
       // what is fine, so the list is not all alarms
       if (arTot && pct <= T) out.push({ tone: "green", num: pct + "%", sub: `over 90 days · target ≤ ${T}%`, title: "Over-90 AR is within target.", text: x.ages[2].bal ? `Keep it there: ${money(x.ages[2].bal)} is 61 to 90 days old and turns 90+ within the month if not worked.` : "Keep the follow-ups on time to hold it there.", act: [] });

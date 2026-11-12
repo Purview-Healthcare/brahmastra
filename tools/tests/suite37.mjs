@@ -96,6 +96,7 @@ for (const [dept, lead, backup] of [["posting", "Pia Poster", "Otto Poster"], ["
 }
 const AR = await firstIn("Arun Agent"), BE = await firstIn("Bela Agent"), CY = await firstIn("Cyra Agent"), TI = await firstIn("Tina Lead");
 const PI = await firstIn("Pia Poster"), OT = await firstIn("Otto Poster"), QU = await firstIn("Quin Submit"), RX = await firstIn("Rex Reject"), LX = await firstIn("Lex Lakepost");
+let LLtok = null; const LL0 = () => LLtok;
 const SAAG = {
   post: { status: "Claim Paid", sub_status: "EOB Available", action: "Need to Post/Posting Correction", bucket: "Closed", effective: "AR Closed-Pending Posting" },
   resub: { status: "Claim In Process", sub_status: "Need to allow some time", action: "Need to Resubmit", bucket: "Purview", effective: "Pending-Submission" },
@@ -673,7 +674,7 @@ await part("B-04: the 09:00 email and the bell state the TAT each task was given
   // Lakeview has its own desk here, so its reminders hold only this section's tasks
   await A("clients.saveResponsibility", { client_id: lake.id, dept: "posting", mode: "person", lead: U("Lex Lakepost").id });
   await sql("UPDATE clients SET posting_tat_hours = 24 WHERE id = ?", lake.id);
-  const LL = await firstIn("Lara Lead");
+  const LL = LLtok = await firstIn("Lara Lead");
   setNow(IST(2026, 11, 16, 9, 0));
   const [a, b] = await give("Cyra Agent", 2, lake);
   for (const id of [a, b]) { await call(CY, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(CY, id, SAAG.post); }
@@ -694,6 +695,28 @@ await part("B-04: the 09:00 email and the bell state the TAT each task was given
   ok("B-04: tasks given different TATs: the heading says each claim's own TAT, and each row has its own (24, 24, 48)", /each claim's own TAT$/.test(lines[i] || "") && rowsOf.filter((l) => /TAT 24 h\)/.test(l)).length === 2 && rowsOf.filter((l) => /TAT 48 h\)/.test(l)).length === 1, [lines[i], rowsOf]);
   ok("B-04: the email carries claim numbers only (no patient names)", !(await rows("SELECT patient FROM claims WHERE id IN (?, ?, ?)", a, b, d)).some((c) => c.patient && m.text.includes(c.patient)));
   await sql("UPDATE clients SET posting_tat_hours = 24 WHERE id = ?", lake.id);
+});
+
+await part("B-09: 'Desks past the client's TAT' counts what the scorecard counts, and says only true things", async () => {
+  // Lakeview: its desk is Lex here; the tasks B-04 left open are finished first, so the client holds only this section's tasks
+  setNow(IST(2026, 11, 30, 10, 0));
+  for (const h of await rows("SELECT id FROM handoffs WHERE client_id = ? AND status IN ('pending','assigned','client')", lake.id))
+    await call(LX, "handoffs.close", { id: h.id, outcome: "complete", proof: { date: nowIso(), ref: "CHK-L", allowed: "100", paid: "80", adjustment: "20" }, note: "Posted" });
+  setNow(IST(2026, 12, 1, 10, 0));
+  const [a, b] = await give("Cyra Agent", 2, lake);
+  await call(CY, "attachments.add", { claim_id: a, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(CY, a, SAAG.post);
+  await call(LX, "handoffs.close", { id: (await openH(a, "posting")).id, outcome: "client", reason: "Need EOB / ERA from the client", note: "Asked the office for the EOB copy" });
+  // a recheck after a submission, past its own TAT (made directly: Lakeview has no Submission desk in this suite)
+  await sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by_name, due_at, available_at, lead_id, assigned_to) VALUES ('b09-recheck', ?, ?, 'subcheck', 'assigned', ?, 'Lex Lakepost', ?, ?, ?, ?)",
+    b, lake.id, IST(2026, 11, 26, 10, 0), IST(2026, 12, 1, 12, 0), IST(2026, 11, 30, 10, 0), U("Cyra Agent").id, U("Cyra Agent").id);
+  setNow(IST(2026, 12, 3, 12, 0));   // the posting task (due Dec 2, 10:00) and the recheck (due Dec 1, 12:00) are both past
+  const inv = await call(LL0(), "inventory.status", { client_id: lake.id, today: nowIso() });
+  const chk = (inv.checks || []).find((x) => x.key === "desk") || {}, card = (inv.insights || []).find((x) => /desk task/.test(x.short || "")) || {};
+  ok("B-09: the check counts the Payment posting task waiting on the client (its clock keeps running), and not the recheck", chk.now === "1" && chk.ok === false && /^1 at Posting\./.test(card.text || "") && !/Submission/.test(card.text || ""), [chk, card.text]);
+  ok("B-09: the do-first card says it is at Posting and counts against the Posting TAT only (nothing at Submission)", card.text === "1 at Posting. It counts against the Posting TAT on the scorecard." && card.short === "1 desk task past the TAT", card);
+  const ex = await call(LL0(), "sla.extras", { client_id: lake.id, from: "2026-12-01", to: "2026-12-31", today: nowIso() });
+  ok("B-09: ...which is what the scorecard counts: Posting missed 1, nothing due at Submission", ex.tat.posting.missed === 1 && ex.tat.submission.due === 0, [ex.tat.posting, ex.tat.submission]);
+  await sql("DELETE FROM handoffs WHERE id = 'b09-recheck'");
 });
 
 const fails = results.filter((x) => !x.pass);
