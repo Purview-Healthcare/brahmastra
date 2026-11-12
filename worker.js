@@ -3357,7 +3357,12 @@ function profileGaps(c, locCount, activeIds) {
 }
 const RESP_COLS = { ar: ["ar_mode", "ar_lead", "ar_backup"], posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
   rejection: ["rejection_mode", "rejection_lead", "rejection_backup"] };
-const handoffDeptOf = (action) => { for (const [re, d] of HANDOFF_ROUTES) if (re.test(String(action || "").trim())) return d; return ""; };
+/* A short stamp of what the client profile form holds (name, code, follow-up, Active, scope, targets, TATs, the people). The page
+   sends back the stamp it opened the form with; a save made from an older copy (someone saved the client since) is refused,
+   so it never silently undoes their change. */
+const CLIENT_STAMP_COLS = ["name", "code", "follow_up_days", "active", "scope_json", "targets_json", ...Object.values(RESP_COLS).flat().filter(Boolean), "posting_tat_hours", "submission_tat_hours", "subcheck_hours"];
+const clientStamp = (c) => { let h = 2166136261; for (const ch of JSON.stringify(CLIENT_STAMP_COLS.map((k) => (c[k] == null ? null : c[k])))) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0; return h.toString(36); };
+const handoffDeptOf =(action) => { for (const [re, d] of HANDOFF_ROUTES) if (re.test(String(action || "").trim())) return d; return ""; };
 const REJECT_REASONS = REJECT_CODES;
 const ASSIST_REASONS = { subcheck: ["Payer has no record yet", "Cannot reach the payer / portal", "Other"], posting: ["No EOB / ERA", "Amount mismatch", "Patient / account not found", "Payer not set up", "Duplicate payment", "Other"],
   submission: ["Missing claim data", "Clearinghouse rejection", "No payer ID / address", "Authorization missing", "Duplicate claim", "Other"] };
@@ -3864,7 +3869,7 @@ const OPS = {
       ...(roster_names_json !== undefined ? { roster_names: jsonList(roster_names_json), caps: jsonObj(caps_json) } : {}) }; };
     const people = await all(env, "SELECT id, name, active FROM users");
     const nm = new Map(people.map((u) => [u.id, u.name])), activeIds = new Set(people.filter((u) => u.active).map((u) => u.id));
-    return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
+    return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), stamp: clientStamp(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
       scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), od: { link: c.od_link || "", inventory: c.od_inventory_link || "", production: c.od_production_link || "", status: jsonObj(c.od_status_json),
         scopes: Object.fromEntries(Object.entries(jsonObj(c.od_prod_json)).map(([k, v]) => [k, { link: v.link || "", path: v.path || "" }])) }, resp_names: Object.fromEntries(RESP_PEOPLE.map(([, l]) => [l, c[l] ? nm.get(c[l]) || "someone" : ""])),
       profile_gaps: profileGaps(c, locs.filter((l) => l.client_id === c.id && l.active).length, activeIds), team_names: Object.fromEntries(parseTeam(c.team_json).map((id) => [id, nm.get(id) || ""])), responsible_me: !!(user.resp_clients && user.resp_clients.has(c.id)),
@@ -5420,6 +5425,7 @@ const OPS = {
     const link = workbookLinkOf(payload.workbook_link);
     if (ex) {
       editableOr(user, ex.id);
+      if (payload.seen != null && String(payload.seen) !== clientStamp(ex)) throw new ApiError(409, "Someone else changed this client after you opened it, so nothing was saved. Close this, open the client again and make your change.");
       if (plainName(ex.name) !== plainName(name) && (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
       const changes = [];
       if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);

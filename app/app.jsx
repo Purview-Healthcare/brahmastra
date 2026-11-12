@@ -2221,7 +2221,8 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
   const save = async () => {
     setBusy(true); setErr(null);
     try {
-      await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active,
+      // seen: the client as this form opened it; if someone saved it since, the server refuses instead of undoing their change
+      await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active, seen: client ? client.stamp : undefined,
         locations: isNew ? f.locations : undefined, profile: { scope: f.scope, targets: f.targets, tat: f.tat, resp: f.resp } });
       toast(isNew ? f.name.trim() + " created. Everyone set as responsible sees it now." : "Client profile saved.");
       onSaved();
@@ -2456,7 +2457,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
         </div>
       ))}
       {hist && <ClientHistory c={hist} onClose={() => setHist(null)} />}
-      {prof && <ClientProfileForm ctx={ctx} client={prof.client} onClose={() => setProf(null)} onSaved={() => { setProf(null); reload(); }} />}
+      {prof && <ClientProfileForm ctx={ctx} client={prof.client} onClose={() => { setProf(null); reload(); }} onSaved={() => { setProf(null); reload(); }} />}
       {edit && (
         <Modal title={edit.id ? "Edit client" : "New client"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || !edit.name.trim()}>{busy ? "Saving…" : "Save"}</button></>}>
           <div className="stack">

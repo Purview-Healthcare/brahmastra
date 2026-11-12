@@ -244,6 +244,44 @@ const profileOf = async (w, tat, over = {}) => {
   ok("M-13: a location save without a name keeps its name", r.ok && l2.name === loc.name && l2.active === 1, { e: r.e, l2 });
 }
 
+{
+  S("M-12: a profile saved from an older copy never undoes someone else's change");
+  const w = await world();
+  const TI = await w.firstIn("Tina Lead");
+  const tina = await w.U("Tina Lead"), pavan = await w.U("Pavan Poster"), pia = await w.U("Pia Postlead");
+  const sunOf = async (who) => (await who("clients.list")).clients.find((c) => c.id === w.sun.id);
+  await w.A("clients.save", { id: w.sun.id, name: w.sun.name, code: w.sun.code, follow_up_days: 30, active: true, profile: { scope: ["ar", "posting"], targets: { ar: 40 }, tat: { posting: 24 }, resp: { ar: { lead: tina.id }, posting: { lead: pavan.id } } } });
+  const profileFrom = vm.runInContext("profileFrom", w.rig.app);
+  // what ClientProfileForm sends for a client it opened (its own payload, from the page's code)
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("M-12: the profile form sends the client as it opened it (seen: its stamp)", /rpc\("clients\.save", \{[^}]*seen: client \? client\.stamp : undefined/.test(src));
+  const formSave = (c, patch) => { const f = profileFrom(c); return { id: c.id, name: c.name, code: c.code, follow_up_days: c.follow_up_days, active: c.active, seen: c.stamp, profile: { scope: f.scope, targets: f.targets, tat: f.tat, resp: f.resp }, ...patch }; };
+  const opened = await sunOf(w.A);
+  ok("M-12: clients.list gives each client a stamp", typeof opened.stamp === "string" && opened.stamp.length > 3, opened.stamp);
+  await TI("clients.saveResponsibility", { client_id: w.sun.id, dept: "posting", mode: "person", lead: pia.id });   // the team lead changes the posting person
+  let r = await w.T(() => w.A("clients.save", formSave(opened, { follow_up_days: 45 })));
+  let now = await w.row("SELECT posting_lead, follow_up_days FROM clients WHERE id = ?", w.sun.id);
+  ok("M-12: the admin's save from the older copy is refused with plain words", !r.ok && r.status === 409 && /Someone else changed this client after you opened it/.test(r.e), r);
+  ok("M-12: the team lead's change stays and nothing of the stale save is applied", now.posting_lead === pia.id && now.follow_up_days === 30, now);
+  const fresh = await sunOf(w.A);
+  r = await w.T(() => w.A("clients.save", formSave(fresh, { follow_up_days: 45 })));
+  now = await w.row("SELECT posting_lead, follow_up_days FROM clients WHERE id = ?", w.sun.id);
+  ok("M-12: opened again, the same change saves and keeps the team lead's", r.ok && now.posting_lead === pia.id && now.follow_up_days === 45, { e: r.e, now });
+  // two people opening the same copy: the first save goes through, the second is refused
+  const c1 = await sunOf(w.A), c2 = await sunOf(TI);
+  const s1 = await w.T(() => w.A("clients.save", formSave(c1, { code: "SUN" })));
+  const s2 = await w.T(() => TI("clients.save", formSave(c2, { follow_up_days: 12 })));
+  ok("M-12: of two people saving the same copy, the first saves and the second is told to reopen", s1.ok && !s2.ok && s2.status === 409 && (await w.row("SELECT code, follow_up_days FROM clients WHERE id = ?", w.sun.id)).code === "SUN", [s1.e, s2.e]);
+  // a change the form does not hold (the client's billers) does not stop a profile save
+  const c3 = await sunOf(w.A);
+  await w.A("clients.saveTeam", { client_id: w.sun.id, team: [(await w.U("Arun Agent")).id] });
+  r = await w.T(() => w.A("clients.save", formSave(c3, { follow_up_days: 20 })));
+  ok("M-12: a change to the client's billers does not block a profile save", r.ok, r.e);
+  // a caller that sends no stamp (an older page) saves as before
+  r = await w.T(() => w.A("clients.save", { id: w.sun.id, name: w.sun.name, follow_up_days: 25 }));
+  ok("M-12: a save without a stamp still saves", r.ok && (await w.row("SELECT follow_up_days FROM clients WHERE id = ?", w.sun.id)).follow_up_days === 25, r.e);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
