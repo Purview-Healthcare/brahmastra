@@ -2432,6 +2432,7 @@ async function audit(env, user, action, clientId, detail) {
 }
 /* ---- client health (Client 360, portfolio) ---- */
 const OVER90_TARGET = 15;   // % of AR over 90 days that counts as healthy
+const CALL_LOG_MAX = 2000;  // characters in one client call log entry (the page counts them as they are typed)
 const MONTHEND_STEPS = [
   ["inventory", "Inventory uploaded", 1, true], ["internal", "Internal reports reviewed", 2, false], ["sla_inventory", "AR Inventory sent to the SLA scorecard", 2, true],
   ["pack", "Client pack built", 3, false], ["sla", "SLA scored and reasons noted", 4, false], ["sent", "Pack sent to the client", 5, false]];   // key, label, due (working day of next month), can tick by itself
@@ -5259,7 +5260,9 @@ const OPS = {
     const clientId = str(payload.client_id, 60);
     editableOr(user, clientId);
     const kind = ["call", "email", "meeting", "note", "next"].includes(payload.kind) ? payload.kind : "note";
-    const text = str(payload.text, 2000).trim();
+    // never cut a note short without a word: a longer one is refused and the person shortens it or splits it
+    const text = (typeof payload.text === "string" ? payload.text : str(payload.text, 4000)).trim();
+    if (text.length > CALL_LOG_MAX) throw bad(`This entry is ${text.length.toLocaleString("en-US")} characters; the call log keeps up to ${CALL_LOG_MAX.toLocaleString("en-US")}. Shorten it, or add the rest as a second entry.`);
     if (!commentOk(text)) throw bad("Write what was said or decided, a few words at least.");
     const next = isoDate(payload.next_on) || "";
     if (kind === "next" && !next) throw bad("Pick the date of the next call.");

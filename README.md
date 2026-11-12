@@ -159,7 +159,8 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 - the **month-end checklist** (inventory uploaded, internal reports reviewed, AR Inventory sent to the SLA
   scorecard, client pack built, SLA scored with its score, pack sent), each with a due working day of the next
   month; inventory and the scorecard step tick by themselves;
-- the **client call log**: calls, emails, meetings, notes and the next call with what to prepare.
+- the **client call log**: calls, emails, meetings, notes and the next call with what to prepare (up to 2,000 characters
+  an entry: the box counts them, and a longer entry is refused, never cut).
 
 **Client call pack (PDF)** prints the page or saves it as a PDF for the meeting. Changes to the log and the
 month-end checklist are kept in the audit trail.

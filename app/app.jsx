@@ -6587,6 +6587,7 @@ function AuditView({ ctx }) {
 }
 /* ---------- Client 360: everything about one client on one page (client managers, team leads, the VP) ---------- */
 const C360_KIND = [["call", "Call"], ["email", "Email"], ["meeting", "Meeting"], ["note", "Note"], ["next", "Next call"]];
+const C360_LOG_MAX = 2000;   // characters in one call log entry (the server refuses a longer one with a message, it never cuts it)
 const c360Last = () => { try { return localStorage.getItem("brahmastra:c360") || ""; } catch (e) { return ""; } };
 function TrendChart({ trend }) {
   if (!trend || trend.length < 2) return null;
@@ -6730,7 +6731,8 @@ function ClientView({ ctx, me, go, params }) {
               <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><div className="seg2">{C360_KIND.map(([k, l]) => <button key={k} className={log.kind === k ? "on" : ""} onClick={() => setLog({ ...log, kind: k })}>{l}</button>)}</div>
                 {log.kind === "next" && <input className="input sm" type="date" value={log.next_on} min={todayISO()} onChange={(e) => setLog({ ...log, next_on: e.target.value })} />}</div>
               <div className="row mt8" style={{ gap: 6 }}><textarea className="textarea" style={{ minHeight: 54, flex: 1 }} value={log.text} onChange={(e) => setLog({ ...log, text: e.target.value })} placeholder={log.kind === "next" ? "What to prepare for the next call" : "What was said or decided, and by whom"} />
-                <button className="btn primary" disabled={busy || log.text.trim().length < 8 || (log.kind === "next" && !log.next_on)} onClick={addLog}>Add</button></div></div>}
+                <button className="btn primary" disabled={busy || log.text.trim().length < 8 || log.text.trim().length > C360_LOG_MAX || (log.kind === "next" && !log.next_on)} onClick={addLog}>Add</button></div>
+              {log.text.trim().length > C360_LOG_MAX - 200 && <div className={"tiny mt8 " + (log.text.trim().length > C360_LOG_MAX ? "red-ink" : "muted")}>{fmtInt(log.text.trim().length)} of {fmtInt(C360_LOG_MAX)} characters{log.text.trim().length > C360_LOG_MAX ? ": too long for one entry. Shorten it, or add the rest as a second entry." : ""}</div>}</div>}
             {d.log.length ? d.log.slice(0, 12).map((l) => <div key={l.id} className={"c3-log " + l.kind}><b>{l.kind === "next" ? "Next call · " + fmtDate(l.next_on) : C360_KIND.find(([k]) => k === l.kind)[1] + " · " + fmtWhen(l.at)} · {l.by_name}{(l.mine || (me.role === "supervisor" && d.monthend.can_edit)) && <button className="btn link sm no-print" style={{ padding: "0 4px" }} disabled={busy} onClick={() => delLog(l)}>remove</button>}</b>{l.text}</div>)
               : <Empty>No calls logged yet. Note what the client agreed and when the next call is, so the next person does not start from zero.</Empty>}</div>
         </div>
