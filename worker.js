@@ -5207,9 +5207,10 @@ const OPS = {
     const waiting = await all(env, `SELECT h.id, h.dept, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.chase_at, c.claim_no, c.patient, c.balance
       FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client' ORDER BY h.paused_at ASC LIMIT 100`, clientId);
     const replyAvg = async (cid) => { const r = await one(env, `SELECT AVG(client_answered_at - COALESCE(client_sent_at, paused_at)) AS ms, COUNT(*) AS n FROM handoffs WHERE client_answered_at IS NOT NULL AND client_answered_at > ?${cid ? " AND client_id = ?" : ""}`, now - 90 * 86400000, ...(cid ? [cid] : [])); return r && r.n ? { days: Math.round(r.ms / 864000) / 100, n: r.n } : null; };
-    const reasons = await all(env, `SELECT COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, COUNT(DISTINCT n.claim_id) AS n, COALESCE(SUM(c.balance), 0) AS bal
+    // each claim once per reason: a claim denied twice in the dates is one claim and its balance once
+    const reasons = await all(env, `SELECT reason, COUNT(*) AS n, COALESCE(SUM(bal), 0) AS bal FROM (SELECT COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, n.claim_id, MAX(c.balance) AS bal
       FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ? AND COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Denied', 'Claim Rejected')
-      GROUP BY reason ORDER BY bal DESC LIMIT 6`, clientId, from, to);
+      GROUP BY reason, n.claim_id) GROUP BY reason ORDER BY bal DESC LIMIT 6`, clientId, from, to);
     const lim = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows.filter((r) => r.client_id === clientId);
     const tfl = lim.reduce((a, r) => ({ soon_bal: a.soon_bal + r.soon_bal, soon_n: a.soon_n + r.soon_n, past_bal: a.past_bal + r.past_bal, past_n: a.past_n + r.past_n }), { soon_bal: 0, soon_n: 0, past_bal: 0, past_n: 0 });
     const esc = (await trackerEsc(env, clientId)).get(clientId) || { n: 0, late: 0 };
