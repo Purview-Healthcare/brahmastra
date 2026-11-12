@@ -2719,8 +2719,11 @@ async function autoAllocate({ ctx, client, loc }) {
   const el = await rpc("claims.eligible", { client_id: client.id, location_id: loc ? loc.id : undefined });
   const pool = rescore(el.claims.filter((c) => (loc ? c.location_id === loc.id : !c.location_id)), today);
   if (!pool.length) return { applied: 0, perUser: [], reason: "no open claims" };
-  const cap = Math.ceil(pool.length / users.length) + 1;
-  const plan = planAllocation({ claims: pool, users: users.map((u) => ({ id: u.id, name: u.name, capacity: capOf[u.id] != null ? capOf[u.id] : cap })), strategy: "smart" });
+  // An even share of the pool for each person, never more than their daily target (what one cannot take is shared by the others);
+  // patients and payers are kept together inside each share.
+  const share = {}; let left = pool.length;
+  [...users].sort((a, b) => capOf[a.id] - capOf[b.id]).forEach((u, i, all) => { share[u.id] = Math.min(capOf[u.id], Math.ceil(left / (all.length - i))); left -= share[u.id]; });
+  const plan = planAllocation({ claims: pool, users: users.map((u) => ({ id: u.id, name: u.name, capacity: share[u.id] })), strategy: "smart" });
   let applied = 0;
   for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: client.id, location_id: loc ? loc.id : undefined, strategy: "auto", assignments: part, summary: { auto: true, perUser: plan.perUser } }); applied += r.applied; }
   return { applied, perUser: plan.perUser };

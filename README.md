@@ -953,8 +953,9 @@ One screen: pick the client (and location), choose the file from the Purview
 Automate OneDrive or from the computer, done. When the file's columns are
 recognised the claims load at once; only a file with unfamiliar column names
 stops at a column check. As soon as the claims load they are handed to the
-billers mapped to that location (evenly, highest priority first, patients and
-payers kept together) unless you untick "Allocate after loading"; a team lead
+billers mapped to that location (evenly, each up to their daily target, highest
+priority first, patients and payers kept together inside each share) unless you
+untick "Allocate after loading"; a team lead
 can move them afterwards on Allocate or Claims.
 
 - **Fresh inventory**: claims never worked. New claims are added; claims already
