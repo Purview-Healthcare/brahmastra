@@ -223,7 +223,9 @@ view**, under the page, lists them with search and CSV; click one to open the cl
 **Editing (team leads and up).** Click any title or insight line to change it, remove a line or add your own; fill
 the RCA and the plan per denial reason, the asks of the client and the focus for next period. Edits are kept in
 Brahmastra for that client, period and location, so the whole team sees the same report, and each save is in the
-audit trail. Untick a page under **In PDF** to leave it out of the PDF and Present. **View as client** hides the editing.
+audit trail. Nobody's change is lost to someone else's later save: when another team lead saved the same page after you
+opened it, your change is not saved, the page says who changed it and when, and shows their version so you can make yours
+again. Untick a page under **In PDF** to leave it out of the PDF and Present. **View as client** hides the editing.
 **Add the client's logo** takes a PNG, JPG or WebP from the Purviewautomate OneDrive (shrunk to a small image).
 
 **Present** shows the ticked pages full screen (arrow keys move, C clears the filters, Esc leaves).

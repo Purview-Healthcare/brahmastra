@@ -8103,18 +8103,28 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
     [clientId, locId, periodKey], !!clientId);
   const raw = q.data && q.data.client && q.data.client.id === clientId && q.data.period_key === periodKey ? q.data : null;
   const DS = useMemo(() => (raw ? crDatasets(raw) : null), [raw]);
-  // the team's words on each page, saved a moment after a change
+  // the team's words on each page, saved a moment after a change. A save names the saved copy it was made on (the page's _at), so one
+  // made on a copy someone else changed since is refused instead of wiping their change; the report then reloads and shows it.
   const [edits, setEdits] = useState({});
-  useEffect(() => { setEdits(raw ? raw.edits || {} : {}); }, [raw]);
+  const own = useRef({}), chain = useRef({}), gen = useRef({});
+  useEffect(() => { setEdits(raw ? raw.edits || {} : {}); own.current = {}; }, [raw]);
   const [saved, setSaved] = useState(null);
   const timers = useRef({});
   const saveEd = (pid, data) => {
     setEdits((e) => ({ ...e, [pid]: data }));
     clearTimeout(timers.current[pid]);
-    timers.current[pid] = setTimeout(async () => {
-      const { _by, _at, ...clean } = data || {};
-      try { const r = await rpc("creport.save", { client_id: clientId, location_id: locId || undefined, period_key: periodKey, page_id: pid, data: clean }); setSaved({ at: r.at, by: r.by }); }
-      catch (e) { toast(e.message, "err"); }
+    timers.current[pid] = setTimeout(() => {
+      const { _by, _at, ...clean } = data || {}, g = gen.current[pid] || 0;
+      // one save at a time per page; this screen's own saves carry the copy forward (a change made while the last save was on its way)
+      chain.current[pid] = (chain.current[pid] || Promise.resolve()).then(async () => {
+        if ((gen.current[pid] || 0) !== g) return;   // made on the copy that was just refused: the page is reloading
+        let base = _at || null; for (let k = pid + ":" + base; own.current[k] != null; k = pid + ":" + base) base = own.current[k];
+        try {
+          const r = await rpc("creport.save", { client_id: clientId, location_id: locId || undefined, period_key: periodKey, page_id: pid, data: clean, base_at: base });
+          own.current[pid + ":" + base] = r.at; setSaved({ at: r.at, by: r.by });
+          setEdits((e) => (e[pid] === data ? { ...e, [pid]: { ...data, _at: r.at, _by: r.by } } : e));
+        } catch (e) { toast(e.message, "err"); if (e.status === 409) { gen.current[pid] = g + 1; clearTimeout(timers.current[pid]); q.reload(); } }
+      });
     }, 600);
   };
   // the cross-filter (one set for every page, or one per page), the # / $ switch and the table view per chart
@@ -8173,7 +8183,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
   const scale = Math.min(1, stageW / CR_W);
   const step = (n) => { if (ptype === "week") setAnchor((a) => crAddD(crWS(a), 7 * n)); else if (ptype === "month") setAnchor((a) => crAddM(crMS(a), n)); else { const r = crShift(range, n); setCustom({ from: crF.iso(r.start), to: crF.iso(r.end) }); } };
   const pIdx = included.findIndex((p) => p.id === page), numOf = (pid) => included.findIndex((p) => p.id === pid) + 1;
-  const togglePdf = (pid) => saveEd("_pages", { off: off.includes(pid) ? off.filter((x) => x !== pid) : [...off, pid] });
+  const togglePdf = (pid) => saveEd("_pages", { ...(edits._pages || {}), off: off.includes(pid) ? off.filter((x) => x !== pid) : [...off, pid] });
   const docTitle = `${rep.client} - ${rep.reportName.replace(" AR report", " AR Report")} - ${rep.periodLabel}${locName ? " - " + locName : ""}`;
   const pickLogo = async ({ bytes, name }) => {
     try { const logo = await crLogoFromBytes(bytes, name); await rpc("clients.setLogo", { client_id: clientId, logo }); toast("Logo saved: it shows on the cover and every page."); setLogoOpen(false); q.reload(); }

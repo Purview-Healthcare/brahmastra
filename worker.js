@@ -5107,7 +5107,9 @@ const OPS = {
       period: { from, to, prev_from: pfrom, prev_to: pto }, data, trend, asks, edits, ev_files: evFiles, made, can_edit: canEditClient(user, clientId), prepared_by: user.name || "" };
   },
   /* A supervisor's words on a report page (title, insights, RCA and plan, the asks, the focus, which pages print), kept for the
-     client, period and location and shared with everyone who opens that report. */
+     client, period and location and shared with everyone who opens that report. A save says which saved copy of the page it was
+     made on (base_at: the copy's time, or none when the page had no saved words yet). When someone else saved the page since,
+     it is refused, so nobody's change is lost without a word: the page then reloads and shows theirs. */
   "creport.save": async ({ env, user, payload }) => {
     const clientId = str(payload.client_id, 60);
     if (user.role !== "supervisor") throw denied("The Client 360 report is for team leads and above.");
@@ -5119,11 +5121,18 @@ const OPS = {
     const loc = payload.location_id ? str(payload.location_id, 60) : "";
     const json = JSON.stringify(payload.data && typeof payload.data === "object" ? payload.data : {});
     if (json.length > 40000) throw bad("That is too much text for one page.");
-    const now = Date.now();
-    await run(env, `INSERT INTO creport_edits (client_id, period_key, loc, page_id, json, by_name, at) VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT (client_id, period_key, loc, page_id) DO UPDATE SET json = excluded.json, by_name = excluded.by_name, at = excluded.at`, clientId, periodKey, loc, pageId, json, user.name || "", now);
+    const base = payload.base_at == null || payload.base_at === "" ? null : num(payload.base_at, -1);
+    const at = base == null ? Date.now() : Math.max(Date.now(), base + 1), by = user.name || "";
+    const r = base == null
+      ? await run(env, `INSERT INTO creport_edits (client_id, period_key, loc, page_id, json, by_name, at) VALUES (?,?,?,?,?,?,?) ON CONFLICT (client_id, period_key, loc, page_id) DO NOTHING`,
+        clientId, periodKey, loc, pageId, json, by, at)
+      : await run(env, "UPDATE creport_edits SET json = ?, by_name = ?, at = ? WHERE client_id = ? AND period_key = ? AND loc = ? AND page_id = ? AND at = ?", json, by, at, clientId, periodKey, loc, pageId, base);
+    if (!changesOf(r)) {
+      const cur = await one(env, "SELECT by_name, at FROM creport_edits WHERE client_id = ? AND period_key = ? AND loc = ? AND page_id = ?", clientId, periodKey, loc, pageId);
+      throw new ApiError(409, `${(cur && cur.by_name) || "Someone else"} changed this page${cur ? " at " + hhmmIST(cur.at) + " IST" : ""} after you opened it, so your change was not saved. The page now shows theirs: make your change again.`);
+    }
     await audit(env, user, "creport.edit", clientId, `${pageId} · ${periodKey}${loc ? " · location" : ""}`);
-    return { ok: true, at: now, by: user.name || "" };
+    return { ok: true, at, by };
   },
   /* EV production for the client report. Brahmastra does not do eligibility checks, so the team uploads the EV file from
      OneDrive; the browser reads it and sends only the columns the report uses (no patient names). A file replaces what
