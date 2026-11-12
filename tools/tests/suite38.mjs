@@ -421,6 +421,30 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-17: someone who may change every client (the admin) can still move it", adm.ok && (await w.row("SELECT client_id FROM note_templates WHERE id = ?", g)).client_id === w.sun.id, adm.e);
 }
 
+{
+  S("E-19: an escalation can be updated and closed after its responding person has left");
+  const w = await world();
+  const SI = await w.firstIn("Sima Expert");
+  const tina = await w.U("Tina Lead"), lara = await w.U("Lara Lead"), bela = await w.U("Bela Agent");
+  const base = { client_id: w.sun.id, kind: "external", day: w.today(), dept: "Account Receivable", raised_who: "Client office", reported_to: "Tina Lead", owner_id: tina.id, location_id: "all", channels: ["Email"], email_subject: "Claims not followed", description: "Made-up description here.", comment: "Looking into it", is_error: "Y", error_by_id: bela.id, error_dow: w.today() };
+  const sr = (await SI("escalations.save", base)).sr;
+  const e = await w.row("SELECT id FROM escalations WHERE sr = ? AND client_id = ?", sr, w.sun.id);
+  // the responding person leaves (as the roster does) and whoever made the error is removed altogether
+  await w.sql("UPDATE users SET active = 0 WHERE id = ?", tina.id);
+  await w.sql("DELETE FROM users WHERE id = ?", bela.id);
+  const c = await w.T(() => SI("escalations.save", { ...base, id: e.id, comment: "Client sent the records" }));
+  const r = await w.T(() => SI("escalations.save", { ...base, id: e.id, status: "resolved", rca: "root cause found", corrective: "fixed the process", preventive: "added a check", close_on: w.today(), review_on: w.today(), rework: "Yes" }));
+  const row = await w.row("SELECT status, owner_id, owner_name, error_by_name, comment FROM escalations WHERE id = ?", e.id);
+  ok("E-19: a plain update keeps the responding person who left", c.ok, c.e);
+  ok("E-19: closing works too, and the register keeps who it was at the time", r.ok && row.status === "resolved" && row.owner_id === tina.id && row.owner_name === "Tina Lead" && row.error_by_name === "Bela Agent", { e: r.e, row });
+  const n = await w.T(() => SI("escalations.save", { ...base, owner_id: tina.id, is_error: "N", error_by_id: "" }));
+  ok("E-19: a new escalation still needs someone active as the responding person", !n.ok && n.e === "Pick the responding person at Purview.", n);
+  const m = await w.T(() => SI("escalations.save", { ...base, id: e.id, owner_id: lara.id, status: "open", is_error: "N", error_by_id: "" }));
+  ok("E-19: the responding person can still be changed to someone active", m.ok && (await w.row("SELECT owner_name FROM escalations WHERE id = ?", e.id)).owner_name === "Lara Lead", m.e);
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("E-19: the form keeps that person in the responding-person list, marked no longer active", /owner_name: r\.owner_name/.test(src) && /form\.owner_name \+ " \(no longer active\)"/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

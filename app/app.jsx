@@ -4106,7 +4106,7 @@ function EscalationTrackerView({ ctx, me, params }) {
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
-  const edit = (r) => setForm({ id: r.id, kind: r.kind || "external", client_id: r.client_id, client_name: r.client_name, sr: r.sr, day: r.day, dept: r.dept, raised_who: r.raised_who, reported_to: r.reported_to, owner_id: r.owner_id || "",
+  const edit = (r) => setForm({ id: r.id, kind: r.kind || "external", client_id: r.client_id, client_name: r.client_name, sr: r.sr, day: r.day, dept: r.dept, raised_who: r.raised_who, reported_to: r.reported_to, owner_id: r.owner_id || "", owner_name: r.owner_name || "",
     email_subject: r.email_subject, description: r.description, is_error: r.is_error, error_by_id: r.error_by_id || "", error_dow: r.error_dow || "", comment: r.comment, status: r.status === "resolved" ? "resolved" : "open", rca: r.rca, corrective: r.corrective, preventive: r.preventive, close_on: r.close_on || "",
     location_id: r.location_id || (r.location_name === "All locations" ? "all" : ""), channels: r.channels ? r.channels.split(/,\s*/) : [], review_on: r.review_on || "", rework: r.rework || "" });
   const csv = () => downloadText(toCSV(rows, [["SR No", (r) => "SR" + r.sr], ["Department", (r) => r.dept], ["Client Name", (r) => r.client_name], ["Received (mm/dd/yy)", (r) => fmtMDY(r.day)],
@@ -4119,7 +4119,9 @@ function EscalationTrackerView({ ctx, me, params }) {
     ["Review Result", (r) => r.review_result || ""], ["Rework Completed (Yes/No)", (r) => r.rework || ""],
     ["Logged on (IST)", (r) => (r.created_at ? fmtWhen(r.created_at) : "")], ["Last updated by", (r) => r.updated_by_name || r.created_by_name || ""], ["Last updated on (IST)", (r) => fmtWhen(r.updated_at || r.created_at)]]
     .map(([label, get]) => ({ label, get }))), "Escalation tracker " + todayISO() + ".csv");
-  const people = (d.people || []).map((u) => ({ id: u.id, label: u.name + (u.tag ? " (" + u.tag + ")" : "") }));
+  // the responding person already on an escalation stays in the list after they have left (the register keeps who it was)
+  const people = [...(d.people || []).map((u) => ({ id: u.id, label: u.name + (u.tag ? " (" + u.tag + ")" : "") })),
+    ...(form && form.owner_id && form.owner_name && !(d.people || []).some((u) => u.id === form.owner_id) ? [{ id: form.owner_id, label: form.owner_name + " (no longer active)" }] : [])];
   // who made the error: anyone at Purview (billers, desks, leads), the team of the escalation's client first
   const team = useMemo(() => {
     const cl = form && ctx.clients.find((c) => c.id === form.client_id), names = new Set(((cl && cl.roster_names) || []).map((n) => String(n).toLowerCase()));

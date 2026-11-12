@@ -7321,6 +7321,8 @@ const OPS = {
     if (isError === "Y") {
       const bid = str(payload.error_by_id, 60);
       errBy = bid ? await one(env, "SELECT id, name FROM users WHERE id = ?", bid) : null;
+      // the same: whoever made the error stays named after their account is gone
+      if (!errBy && ex && ex.error_by_id && bid === ex.error_by_id) errBy = { id: ex.error_by_id, name: ex.error_by_name };
       if (!errBy) throw bad("Our error: pick who made the error.");
       dow = isoDate(payload.error_dow);
       if (!dow) throw bad("Our error: pick the DOW, the date the work with the error was done.");
@@ -7339,6 +7341,8 @@ const OPS = {
     }
     let owner = null;
     if (payload.owner_id) owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60));
+    // A change that keeps the responding person keeps them after they have left: the register keeps who it was at the time.
+    if (!owner && ex && ex.owner_id && str(payload.owner_id, 60) === ex.owner_id) owner = { id: ex.owner_id, name: ex.owner_name };
     if (!owner) throw bad("Pick the responding person at Purview.");
     // location (one of this client's), the channels it came through, the review date and whether the rework is done
     // an update that does not send the location keeps the one saved
