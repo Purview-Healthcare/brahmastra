@@ -6808,24 +6808,28 @@ const OPS = {
     // submission is the same claim again (did the payer accept it?), not a second claim received and submitted, as in the month's
     // Submission TAT %. It still counts under Open now, Needs you now and the rejections by code.
     const work = "h.dept <> 'subcheck'";
+    // Open now and past the TAT, by one rule in the card, By client, By person and Needs you now (the desk list's rule): still with
+    // the desk, waiting on the client included (the clock keeps running); past the TAT only when not on hold (Can't close yet).
+    const openNow = "h.status IN ('pending','assigned','client')";
+    const held = `EXISTS (SELECT 1 FROM tat_holds th WHERE th.kind = 'handoff' AND th.ref_id = h.id AND th.cleared_at IS NULL AND th.until >= '${istISO(now)}')`;
     const done = `${work} AND h.status IN ('complete','assistance','rejected','back')`;
     const tot = await one(env, `SELECT SUM(CASE WHEN ${work} AND h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
         SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
         AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
-        SUM(CASE WHEN h.status IN ('pending','assigned','client') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now,
+        SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN ${openNow} AND h.due_at < ? AND NOT ${held} THEN 1 ELSE 0 END) AS overdue_now,
         SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN c.balance ELSE 0 END) AS amount,
         SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_now, SUM(CASE WHEN h.status = 'back' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS back
       FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE ${W}`, from, to, from, to, from, to, from, to, from, to, from, to, now, from, to, from, to, ...a);
     const byClient = await all(env, `SELECT cl.name AS client_name, SUM(CASE WHEN ${work} AND h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
         SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
-        SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now
+        SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN ${openNow} AND h.due_at < ? AND NOT ${held} THEN 1 ELSE 0 END) AS overdue_now
       FROM handoffs h LEFT JOIN clients cl ON cl.id = h.client_id WHERE ${W} GROUP BY h.client_id ORDER BY overdue_now DESC, open_now DESC, cl.name`, from, to, from, to, from, to, now, ...a);
     const byPerson = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done,
         SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now,
+        SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now,
         AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
       FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
     // time to complete in working hours, as the TAT counts (a task sent Friday 18:00 and done Monday 10:00 took 16, not 64)
@@ -6843,11 +6847,12 @@ const OPS = {
     }
     // For the department's team lead: what needs them now (past or near the TAT, chase the client, claims returned 3+ times).
     const soonCut = addWorkingHours(now, DUE_SOON_HOURS);
-    const attention = (await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.due_at, h.chase_at, h.available_at, c.claim_no, c.patient, cl.name AS client_name,
+    const attention = (await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.due_at, h.chase_at, h.available_at, c.claim_no, c.patient, cl.name AS client_name, ${held} AS held,
         COALESCE(a.name, l.name) AS who, (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN users a ON a.id = h.assigned_to LEFT JOIN users l ON l.id = h.lead_id
       WHERE ${W} AND h.status IN ('pending','assigned','client') AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?) ORDER BY h.due_at LIMIT 300`, ...a, now))
-      .map((x) => ({ ...x, why: x.due_at < now ? "past" : x.status === "client" && x.chase_at && x.chase_at <= now ? "chase" : x.returns >= BOUNCE_LIMIT ? "bounced" : x.due_at <= soonCut ? "soon" : "" }))
+      // one on hold is not past (or near) the TAT until its expected date; it is still listed when the client must be chased or it keeps coming back
+      .map((x) => ({ ...x, held: !!x.held, why: x.due_at < now && !x.held ? "past" : x.status === "client" && x.chase_at && x.chase_at <= now ? "chase" : x.returns >= BOUNCE_LIMIT ? "bounced" : x.due_at <= soonCut && !x.held ? "soon" : "" }))
       .filter((x) => x.why).slice(0, 60);
     // Why claims came back to AR, by reason and by the biller who sent them.
     const backReasons = await all(env, `SELECT h.reason, COUNT(*) AS n FROM handoffs h WHERE ${W} AND h.status IN ('back','assistance') AND h.done_at BETWEEN ? AND ? GROUP BY h.reason ORDER BY n DESC`, ...a, from, to);

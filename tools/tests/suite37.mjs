@@ -523,6 +523,32 @@ await part("C-08: 'needed assistance' on the desk dashboard counts Need assistan
   ok("C-08: after Need assistance from AR the Open now card says 1 needed assistance (the same 1 as 'back to AR')", t.assist === 1 && t.back === 1, { assist: t.assist, back: t.back });
 });
 
+await part("C-20 / C-21: the desk dashboard counts open and past TAT by the desk list's rule", async () => {
+  setNow(IST(2026, 11, 23, 10, 0));
+  const dash = () => call(TI, "handoffs.dashboard", { dept: "submission", client_id: sun.id, from_ms: IST(2026, 11, 23, 0, 0), to_ms: Date.now() });
+  const list = () => call(TI, "handoffs.list", { dept: "submission", client_id: sun.id });
+  const row = (d) => d.by_client.find((x) => x.client_name === sun.name) || {};
+  // everything left open by the sections before is put on hold or closed out of the way by date: compare changes, not totals
+  const d0 = await dash(), l0 = await list();
+  const [a, b] = await give("Arun Agent", 2);
+  await save(AR, a, SAAG.resub); await save(AR, b, SAAG.resub);
+  const ha = await openH(a, "submission"), hb = await openH(b, "submission");
+  await call(QU, "handoffs.close", { id: hb.id, outcome: "client", reason: "Need signature or documents", note: "Need the signed form from the office" });
+  setNow(IST(2026, 11, 25, 12, 0));   // both past the 24 working hours now
+  let d = await dash(), l = await list();
+  ok("C-21: a claim waiting on the client counts as open and past TAT on the card and in By client alike", d.totals.open_now === d0.totals.open_now + 2 && row(d).open_now === d.totals.open_now && row(d).overdue_now === d.totals.overdue_now, { card: [d.totals.open_now, d.totals.overdue_now], by_client: [row(d).open_now, row(d).overdue_now] });
+  ok("C-21: ...and By person counts it for the person who has it", d.by_person.some((p) => p.name === "Quin Submit" && p.open_now >= 2), d.by_person);
+  ok("C-20: (before the hold) the dashboard's past TAT is the list's Past TAT card", d.totals.overdue_now === l.stats.overdue && d.attention.some((x) => x.id === ha.id && x.why === "past"), [d.totals.overdue_now, l.stats.overdue]);
+  // the team lead puts one on hold (Can't close yet)
+  await call(TI, "tat.hold", { kind: "handoff", id: ha.id, reason: "Waiting on the payer", note: "Payer system down", until: "2026-11-27" });
+  const d2 = await dash(), l2 = await list();
+  ok("C-20: one on hold leaves the dashboard's past TAT, as it leaves the list's card", d2.totals.overdue_now === d.totals.overdue_now - 1 && l2.stats.overdue === l.stats.overdue - 1 && d2.totals.overdue_now === l2.stats.overdue, { dash: [d.totals.overdue_now, d2.totals.overdue_now], list: [l.stats.overdue, l2.stats.overdue] });
+  ok("C-20: ...By client drops it too, and it is still open", row(d2).overdue_now === d2.totals.overdue_now && d2.totals.open_now === d.totals.open_now, [row(d2), d2.totals.open_now]);
+  ok("C-20: ...and Needs you now no longer lists it as past the TAT", !d2.attention.some((x) => x.id === ha.id && (x.why === "past" || x.why === "soon")), d2.attention.filter((x) => x.id === ha.id));
+  setNow(IST(2026, 11, 28, 10, 0));   // the expected date has passed
+  ok("C-20: after the expected date it is past the TAT again", (await dash()).attention.some((x) => x.id === ha.id && x.why === "past") && (await dash()).totals.overdue_now === (await list()).stats.overdue);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
