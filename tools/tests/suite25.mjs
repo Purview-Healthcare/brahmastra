@@ -209,7 +209,12 @@ const today = new Date().toISOString().slice(0, 10), iso = (d) => new Date(Date.
   await A("monthend.set", { client_id: sun.id, month: "2026-10", step: "sla", done: true, score: 77 });
   await setDR([{ ...base, periods: [OCT, SEP] }]); await A("sla.summary", TODAY);
   const co2 = await A("client.overview", { client_id: sun.id, ...TODAY });
-  ok("a score typed by a person is kept", co2.sla && co2.sla.score === 77, co2.sla);
+  // G-05 (bug test): one SLA score per client and month. The typed row stays as typed; Client 360 shows Drishti's score for the
+  // month (as the scorecard, the Portfolio and the digest do) and its month-end step says what was typed.
+  const kept = (await DB.prepare("SELECT score, auto FROM client_monthend WHERE client_id = ? AND month = '2026-10' AND step = 'sla'").bind(sun.id).all()).results;
+  const st = co2.monthend.steps.find((x) => x.key === "sla");
+  ok("a score typed by a person is kept in the month-end table, and Client 360 shows Drishti's score for the month with the typed one beside it",
+    kept.length === 1 && kept[0].score === 77 && kept[0].auto === 0 && co2.sla && co2.sla.score === s1 && st && st.score === s1 && st.typed === 77, { kept, sla: co2.sla, step: st, s1 });
 
   S("Drishti: a period with nothing scored does not reach the Portfolio as a band");
   await setDR([{ ...base, periods: [month("e", "October 2026", "2026-10-01", "2026-10-31", {})] }]);

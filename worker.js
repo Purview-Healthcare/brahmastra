@@ -1675,6 +1675,32 @@ async function drTickMonthEnd(env, summaries) {
   }
   if (stmts.length) await batchAll(env, stmts, 50);
 }
+/* One SLA score per client and month, the same on every page: Drishti's score for a month Drishti has scored (what the scorecard,
+   the Portfolio's SLA column and the Monday digest show), and the score typed at month-end only for a month Drishti has not
+   scored. A typed score stays in the month-end table as typed (typed: it, when Drishti's differs). Client 360 (its SLA, health
+   line and month-end step), the Portfolio's reasons and Managers side by side use it. ov: drishtiOverview's answer.
+   Per client: { months: Map(YYYY-MM -> { month, score, drishti, typed }), latest, prev }. */
+async function slaScores(env, clients, today, ov) {
+  const rows = await all(env, "SELECT client_id, month, score, auto FROM client_monthend WHERE step = 'sla' AND score IS NOT NULL");
+  const out = new Map();
+  for (const c of clients) {
+    const months = new Map(rows.filter((r) => r.client_id === c.id).map((r) => [r.month, { month: r.month, score: r.score, drishti: !!r.auto, typed: r.auto ? null : r.score }]));
+    const d = ov && ov.state === "ok" ? drMatch(ov, c.name).d : null;
+    const seen = new Set();
+    // Drishti's finished months, newest first: of two copies of one month the newer counts, as on the scorecard
+    for (const p of (d && d.periods) || []) {
+      if (p.kind !== "month" || (p.range.to && p.range.to >= today)) continue;
+      const m = String(p.range.from || "").slice(0, 7); if (!/^\d{4}-\d{2}$/.test(m) || seen.has(m)) continue;
+      seen.add(m);
+      const pct = drScore(d, p, null).pct; if (pct == null) continue;
+      const was = months.get(m);
+      months.set(m, { month: m, score: pct, drishti: true, typed: was && was.typed != null && was.typed !== pct ? was.typed : null });
+    }
+    const keys = [...months.keys()].sort().reverse();
+    out.set(c.id, { months, latest: keys.length ? months.get(keys[0]) : null, prev: keys.length > 1 ? months.get(keys[1]) : null });
+  }
+  return out;
+}
 /* ---- the SAAG entry and the standard note ----
    A worked claim carries a SAAG selection (Status > Sub-status > Action, with
    the Effective Matrix the workbook maps it to) plus a bucket, and a note in
@@ -4767,7 +4793,6 @@ const OPS = {
         SUM(CASE WHEN state = 'open' THEN 1 ELSE 0 END) AS open_n, COALESCE(SUM(CASE WHEN state = 'open' THEN balance ELSE 0 END), 0) AS open_bal
       FROM (SELECT client_id, balance, state, ${ageSql} AS age FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id`, today));
     const ago = mapOf(await all(env, `SELECT s.client_id, s.ar_balance FROM client_snapshots s WHERE s.day = (SELECT MAX(day) FROM client_snapshots WHERE client_id = s.client_id AND day <= ?)`, istISO(now - 30 * 86400000)));
-    const sla = mapOf(await all(env, `SELECT m.client_id, m.score, m.month FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`));
     const missed = await missedByClient(env, payload);
     const wait = mapOf(await all(env, `SELECT h.client_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS bal, MIN(COALESCE(h.client_sent_at, h.paused_at)) AS first FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.status = 'client' GROUP BY h.client_id`));
     const esc = await trackerEsc(env);
@@ -4784,8 +4809,9 @@ const OPS = {
     const raci = new Map((await OPS["raci.list"]({ env, user, payload })).rows.map((r) => [r.client_id, r]));
     const closing = closingMonth(today), slaDue = nthWorkingDayAfter(closing, 4);
     const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, clients, today) : new Map();
-    if (drs.size) { await drTickMonthEnd(env, drs); for (const [cid, d] of drs) { if (!(d.period && d.period.kind === "month" && d.score != null)) continue; const m = String(d.period.from).slice(0, 7), cur = sla.get(cid);
-      if (!cur || cur.month < m) sla.set(cid, { client_id: cid, score: d.score, month: m }); } }
+    if (drs.size) await drTickMonthEnd(env, drs);
+    // each client's SLA for its health line: Drishti's score for a month it has scored, else the one typed at month-end (as Client 360)
+    const slaAll = await slaScores(env, clients, today, drOv), sla = new Map(clients.map((c) => [c.id, slaAll.get(c.id).latest]).filter(([, v]) => v));
     const rows = clients.map((c) => {
       const a = ar.get(c.id) || { bal: 0, n: 0, o90: 0, to_work: 0 }, w = wait.get(c.id), e = esc.get(c.id), m = missed.get(c.id) || { ar: 0, posting: 0, submission: 0 }, t = tfl.get(c.id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 };
       const pct = a.balp ? Math.round(a.o90p / a.balp * 1000) / 10 : 0;
@@ -4982,17 +5008,24 @@ const OPS = {
     const work = new Map((await all(env, "SELECT user_id, COUNT(*) AS n FROM notes WHERE kind = 'work' AND created_at BETWEEN ? AND ? GROUP BY user_id", from, to)).map((r) => [r.user_id, r.n]));
     const skips = new Map((await all(env, "SELECT user_id, COUNT(*) AS n FROM notes WHERE kind = 'skip' AND created_at BETWEEN ? AND ? GROUP BY user_id", from, to)).map((r) => [r.user_id, r.n]));
     const missed = await missedByClient(env, payload);
-    const sla = new Map((await all(env, `SELECT m.client_id, m.score FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`)).map((r) => [r.client_id, r.score]));
+    // SLA average: the Portfolio's, for the manager's clients: Drishti's last finished month of each client it has scored (so it
+    // matches the Portfolio and the digest for the same clients); with none of them in Drishti, the scores typed at month-end
+    const today = isoDate(payload.today) || isoToday();
+    const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, clients, today) : new Map();
+    if (drs.size) await drTickMonthEnd(env, drs);
+    const slaAll = await slaScores(env, clients, today, drOv);
+    const drMonth = (id) => { const x = drs.get(id); return x && x.period && x.period.kind === "month" && x.score != null ? x.score : null; };
     const escT = await trackerEsc(env), esc = new Map([...escT].map(([k, v]) => [k, v.late]));
     const rows = managers.map((m) => {
       const names = new Set(jsonList(m.scope_projects_json).map(projKey));
       const mine = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n))));
       const team = below(m.id);
       let entries = 0, sk = 0; team.forEach((id) => { entries += work.get(id) || 0; sk += skips.get(id) || 0; });
-      const scores = mine.map((c) => sla.get(c.id)).filter((x) => x != null);
+      const drScores = mine.map((c) => drMonth(c.id)).filter((x) => x != null), scores = mine.map((c) => slaAll.get(c.id).latest).filter(Boolean).map((x) => x.score);
+      const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
       return { id: m.id, name: m.name, clients: mine.map((c) => c.name), people: team.size, entries, skips: sk,
         missed: mine.reduce((t, c) => { const x = missed.get(c.id); return t + (x ? x.ar + x.posting + x.submission : 0); }, 0),
-        escalations_late: mine.reduce((t, c) => t + (esc.get(c.id) || 0), 0), sla_avg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10 : null };
+        escalations_late: mine.reduce((t, c) => t + (esc.get(c.id) || 0), 0), sla_avg: drScores.length ? Math.round(avg(drScores)) : scores.length ? Math.round(avg(scores) * 10) / 10 : null };
     }).sort((a, b) => a.name.localeCompare(b.name));
     return { rows };
   },
@@ -5219,10 +5252,15 @@ const OPS = {
     const missed = (await missedByClient(env, payload)).get(clientId) || { ar: 0, posting: 0, submission: 0 };
     const worked = await one(env, "SELECT COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, from, to);
     const month = okMonth(payload.month, today) ? payload.month : closingMonth(today);
+    // The SLA here is the one the scorecard, the Portfolio and the digest show: Drishti's score for a month Drishti has scored,
+    // the score typed at month-end only for a month it has not. The month-end step ticks itself from Drishti on this page too.
+    const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, [c], today) : new Map();
+    if (drs.size) await drTickMonthEnd(env, drs);
+    const slaAll = (await slaScores(env, [c], today, drOv)).get(c.id), slaRow = slaAll.latest, slaPrev = slaAll.prev;
     const me = new Map((await all(env, "SELECT * FROM client_monthend WHERE client_id = ? AND month = ?", clientId, month)).map((r) => [r.step, r]));
-    const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key); return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: r ? r.score : null, note: r ? r.note : "" }; });
-    const slaRow = await one(env, "SELECT month, score, done_at FROM client_monthend WHERE client_id = ? AND step = 'sla' AND score IS NOT NULL ORDER BY month DESC LIMIT 2", clientId);
-    const slaPrev = slaRow ? await one(env, "SELECT score FROM client_monthend WHERE client_id = ? AND step = 'sla' AND score IS NOT NULL AND month < ? ORDER BY month DESC LIMIT 1", clientId, slaRow.month) : null;
+    // the SLA step shows the score in use; typed: what a person typed for the month, when Drishti's score for it differs
+    const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key), dm = key === "sla" && r ? slaAll.months.get(month) : null;
+      return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: dm ? dm.score : r ? r.score : null, typed: dm && dm.typed != null ? dm.typed : null, note: r ? r.note : "" }; });
     const log = await all(env, "SELECT id, at, kind, text, next_on, by_name, by_id FROM client_log WHERE client_id = ? ORDER BY at DESC LIMIT 30", clientId);
     const raci = (await OPS["raci.list"]({ env, user, payload })).rows.find((r) => r.client_id === clientId) || null;
     const team = parseTeam(c.team_json).length;

@@ -139,6 +139,47 @@ S("G-13: KPIs in the red counts KPIs only");
   ok("G-13: a red SLA line still pulls its client's score down and shows under Pulling it down", row && row.drishti && row.drishti.counts.miss === 1 && row.drishti.drags.some((x) => x.name === "Production SLA"), row && row.drishti);
 }
 
+S("G-05: one client and month, one SLA score on every page");
+{ // Drishti scores Sunrise's October 67% (2 of 3 KPIs green). Before Brahmastra reads it, its team lead typed 85 for October on the
+  // month-end step, and 70 for September (Drishti has no September). Lakeview has only a week in Drishti and 84 typed for October.
+  const oct = (deny) => month("p-oct", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.1), collectionRate: cell(0.9), denialRate: cell(deny) });
+  DR_CLIENTS = [drClient("d-sun", "Sunrise Eye Care", [oct(0.2)]),
+    drClient("d-lake", "Lakeview Dental Group", [period("week", "p-w44", "Week of 26 Oct 2026", "2026-10-26", "2026-11-01", { arAging: cell(0.1) })])];
+  await sql("DELETE FROM client_monthend WHERE step = 'sla'"); await fresh();
+  await at(NOW, () => TA("monthend.set", { client_id: sun.id, month: "2026-10", step: "sla", done: true, score: 85 }));
+  await at(NOW, () => TA("monthend.set", { client_id: sun.id, month: "2026-09", step: "sla", done: true, score: 70 }));
+  await at(NOW, () => A("monthend.set", { client_id: lake.id, month: "2026-10", step: "sla", done: true, score: 84 }));
+  const sc = await at(NOW, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+  const pf = await at(NOW, () => A("portfolio.overview", TODAY)), prow = pf.rows.find((x) => x.client_id === sun.id);
+  const mg = await at(NOW, () => A("portfolio.managers", TODAY)), mona = mg.rows.find((m) => m.name === "Mona Manager");
+  const co = await at(NOW, () => A("client.overview", { client_id: sun.id, tz_offset_min: 330, ...TODAY }));
+  const step = co.monthend.steps.find((x) => x.key === "sla");
+  ok("G-05: the scorecard and the Portfolio's SLA column say 67", sc.score === 67 && prow.drishti && prow.drishti.score === 67, [sc.score, prow.drishti && prow.drishti.score]);
+  ok("G-05: Client 360's SLA is October 67 (not the 85 typed), and its health line says 67", co.sla && co.sla.score === 67 && co.sla.month === "2026-10" && co.reasons.some((x) => x.text === "SLA 67% for October 2026, below 90%") && !co.reasons.some((x) => /85%/.test(x.text)), { sla: co.sla, reasons: co.reasons });
+  ok("G-05: the Portfolio row's own reason says 67 too", prow.sla && prow.sla.score === 67 && prow.reasons.includes("SLA 67% for October 2026, below 90%") && !prow.reasons.some((x) => /SLA 85%/.test(x)), { sla: prow.sla, reasons: prow.reasons });
+  ok("G-05: the change on Client 360 is against September's typed 70 (a month Drishti has not scored keeps its typed score)", co.sla.prev === 70, co.sla);
+  ok("G-05: the month-end step shows 67, and says 85 was typed", step && step.done && step.score === 67 && step.typed === 85 && !step.by_itself, step);
+  const kept = await rows("SELECT month, score, auto FROM client_monthend WHERE client_id = ? AND step = 'sla' ORDER BY month", sun.id);
+  ok("G-05: what was typed stays in the month-end table as typed", kept.length === 2 && kept[1].score === 85 && kept[1].auto === 0 && kept[0].score === 70, kept);
+  const lk = await at(NOW, () => A("client.overview", { client_id: lake.id, tz_offset_min: 330, ...TODAY }));
+  ok("G-05: a client Drishti has no month for keeps the score typed at month-end (Lakeview October 84)", lk.sla && lk.sla.score === 84 && lk.sla.month === "2026-10", lk.sla);
+  ok("G-05: Managers side by side's SLA avg is the Portfolio's (Drishti's months: 67), not 85 or (67 + 84) / 2", mona && mona.sla_avg === 67 && mona.sla_avg === pf.drishti.avg, { mona: mona && mona.sla_avg, portfolio: pf.drishti.avg });
+  const sp = (await at(NOW, () => A("digest.spans", {}))).spans.find((x) => x.clients.some((c) => c.id === sun.id) && x.clients.some((c) => c.id === lake.id));
+  const dd = await at(NOW, () => A("digest.dashboard", { span: sp.key })), dsun = dd.clients.find((x) => x.id === sun.id);
+  ok("G-05: the Monday digest for Mona's span: Sunrise 67, average 67, the same as Managers side by side", dsun.card && dsun.card.score === 67 && dd.rollup.sla_avg === 67 && dd.rollup.sla_avg === mona.sla_avg, { card: dsun.card && dsun.card.score, avg: dd.rollup.sla_avg });
+  ok("G-05: the digest's attention lines name 67 for Sunrise, never the 85 typed", dd.rollup.attention.some(([, c, x]) => c === "Sunrise Eye Care" && /SLA 67%/.test(x)) && !dd.rollup.attention.some(([, , x]) => /SLA 85%/.test(x)), dd.rollup.attention);
+  // Drishti re-scores October to 100%: every page follows
+  DR_CLIENTS[0].periods = [oct(0.04)]; await fresh();
+  const co2 = await at(NOW, () => A("client.overview", { client_id: sun.id, tz_offset_min: 330, ...TODAY })), mg2 = await at(NOW, () => A("portfolio.managers", TODAY));
+  const step2 = co2.monthend.steps.find((x) => x.key === "sla");
+  ok("G-05: Drishti re-scores October to 100: Client 360, its step and Managers side by side follow", co2.sla.score === 100 && !co2.reasons.some((x) => /SLA \d/.test(x.text)) && step2.score === 100 && step2.typed === 85 && mg2.rows.find((m) => m.name === "Mona Manager").sla_avg === 100, { sla: co2.sla, step: step2 });
+  // no Drishti at all (not answering, nothing read yet): the typed scores are all there is, as before
+  drDown = true; await fresh();
+  const co3 = await at(NOW + 60000, () => A("client.overview", { client_id: sun.id, tz_offset_min: 330, ...TODAY })), mg3 = await at(NOW + 60000, () => A("portfolio.managers", TODAY));
+  ok("G-05: with nothing read from Drishti, Client 360 and Managers use the typed scores (85; (85 + 84) / 2)", co3.sla.score === 85 && mg3.rows.find((m) => m.name === "Mona Manager").sla_avg === 84.5, { sla: co3.sla, mgr: mg3.rows.map((m) => [m.name, m.sla_avg]) });
+  drDown = false; await fresh();
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

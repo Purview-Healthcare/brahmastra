@@ -149,15 +149,18 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 - a health line (**On track / Needs attention / At risk**) with the plain reasons: over-90 above the 15% target, SLA
   below 90%, claims past or near timely filing, escalations over 24 hours, old requests waiting on the client,
   many missed tasks;
-- AR balance (against a month ago), over 90 days, the SLA score ticked at month-end, collected (from payment posting
-  hand-offs, against the period before), dollars waiting on the client, dollars at timely-filing risk;
+- AR balance (against a month ago), over 90 days, the SLA score (the one the scorecard, the Portfolio and the digest
+  show: Drishti's for a month Drishti has scored, the score typed at month-end for a month it has not), collected
+  (from payment posting hand-offs, against the period before), dollars waiting on the client, dollars at
+  timely-filing risk;
 - AR and the over-90 share by month (Brahmastra keeps one reading a day, so the trend fills in by itself);
 - denial and rejection reasons from billers' entries, in dollars;
 - every request waiting on the client, how long, whether it was sent, and the client's average reply time;
 - escalations, missed tasks, entries made, RACI;
 - the **month-end checklist** (inventory uploaded, internal reports reviewed, AR Inventory sent to the SLA
   scorecard, client pack built, SLA scored with its score, pack sent), each with a due working day of the next
-  month; inventory and the scorecard step tick by themselves;
+  month; inventory and the scorecard step tick by themselves; a score typed for a month Drishti has scored gives
+  way to Drishti's, and the step says so;
 - the **client call log**: calls, emails, meetings, notes and the next call with what to prepare.
 
 **Client call pack (PDF)** prints the page or saves it as a PDF for the meeting. Changes to the log and the
@@ -326,7 +329,8 @@ red count. Click a client for its Client 360, **scorecard ›** for its scorecar
 bar to narrow the charts), then:
 
 - **Managers side by side** (the VP, admins and managers): clients, people under them, entries and skips by their
-  people, missed tasks, escalations over 24 hours and SLA average, for the dates. The VP sees every manager, a
+  people, missed tasks, escalations over 24 hours and SLA average (Drishti's, as in the SLA score average above;
+  the scores typed at month-end when none of the manager's clients is scored in Drishti), for the dates. The VP sees every manager, a
   manager their own line.
 - **Data freshness**: inventory older than a week, an SLA not scored after its due day, a failed or late roster
   sync.
