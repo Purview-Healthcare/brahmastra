@@ -516,6 +516,11 @@ const postingWorld = async ({ backup = true } = {}) => {
   const again = await w.T(() => TI("projects.map", { name: "Hillcrest Clinic", client_id: c.id }));
   ok("E-16: matching the project to the client just made (what the page does after the setup) works", again.ok, again.e);
   const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  // the admin can still make one straight from a project through the API (test set-ups do): a new name only, in the audit trail
+  const adm = await w.T(() => w.A("projects.map", { name: "Cedar Clinic", create: true, client_name: "Cedar Clinic" }));
+  const dupe = await w.T(() => w.A("projects.map", { name: "Hillcrest Clinic", create: true, client_name: "hillcrest  CLINIC" }));
+  const ac = adm.ok ? (await w.row("SELECT COUNT(*) AS n FROM audit_log WHERE client_id = ?", adm.r.client_id)).n : 0;
+  ok("E-16: the admin's own create through the API still works, is in the audit trail, and refuses a name another client has", adm.ok && ac === 1 && !dupe.ok && /already exists/.test(dupe.e), { a: adm.e, ac, d: dupe.e });
   ok("E-16: the page opens the setup for Create, and SMEs are not offered it", /canCreate=\{!isSmeUI\(me\)\} onCreate=/.test(src) && /if \(make && onCreate\) onCreate\(make\)/.test(src) && !/create: true/.test(src) && /initialName=\{newFor\}/.test(src));
 }
 
