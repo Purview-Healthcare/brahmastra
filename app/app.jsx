@@ -4732,7 +4732,7 @@ function ClaimHistory({ claimId, claim, me, version }) {
   const items = (q.data ? q.data.items : []).filter((it) => filter === "all" || HIST_GROUP[it.kind] === filter);
   const days = []; items.forEach((it) => { const k = dayKey(it.at); if (!days.length || days[days.length - 1].k !== k) days.push({ k, items: [] }); days[days.length - 1].items.push(it); });
   const openFile = async (f) => { try { const r = await rpc("attachments.get", { id: f.id }); const url = URL.createObjectURL(base64Blob(r.data, r.type)); const a = document.createElement("a"); a.href = url; a.download = r.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); } catch (e) { toast(e.message, "err"); } };
-  const saveEdit = async (data) => { await rpc("notes.update", { id: edit.id, ...data }); toast("Entry updated."); setEdit(null); setTick((t) => t + 1); };
+  const saveEdit = async (data) => { const r = await rpc("notes.update", { id: edit.id, ...data }); toast("Entry updated." + handoffToast(r && r.handoff)); setEdit(null); setTick((t) => t + 1); };
   const n = q.data ? q.data.items.length : 0;
   return (
     <>
@@ -5604,7 +5604,7 @@ function Attachments({ claimId, files, onChanged, plain }) {
 }
 function NotesList({ notes, me, claim, onChanged }) {
   const [editing, setEditing] = useState(null);
-  const saveEdit = async (n, data) => { await rpc("notes.update", { id: n.id, ...data }); toast("Note updated."); setEditing(null); if (onChanged) onChanged(); };
+  const saveEdit = async (n, data) => { const r = await rpc("notes.update", { id: n.id, ...data }); toast("Note updated." + handoffToast(r && r.handoff)); setEditing(null); if (onChanged) onChanged(); };
   return (
     <div className="card tight">
       <div className="b small mb">History ({notes.length})</div>

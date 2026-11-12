@@ -3257,6 +3257,42 @@ async function deskPeople(env, cl, dept) {
   if (!lead) return null;
   return { lead, backup: B && B !== lead && act.has(B) ? B : null };
 }
+/* The desk an entry's SAAG action sends a claim to: Need to Post / Posting Correction to Payment posting, a resubmission or a
+   paper claim to Submission (a rejected claim to the client's Rejections person first, when one is set), with the client's
+   profile and the person set there (null when nobody active is set). dept is "" for an action that goes to no desk. */
+async function entryDesk(env, clientId, saag) {
+  let dept = handoffDeptOf(saag.action);
+  if (!dept) return { dept: "", cl: null, people: null };
+  const cl = await one(env, "SELECT * FROM clients WHERE id = ?", clientId);
+  if (dept === "submission" && /reject/i.test(saag.status) && (await deskPeople(env, cl, "rejection"))) dept = "rejection";
+  return { dept, cl, people: cl && cl[dept + "_mode"] === "person" ? await deskPeople(env, cl, dept) : null };
+}
+/* Send claims to the desk their entry names (a saved entry, or an entry edited into such an action): a hand-off to the person
+   set on the client, and the claim is In process for AR (off the biller's list, no follow-up) until the desk is done; or a line
+   in the history that nobody does it for this client. A claim already open with that desk keeps the hand-off it has.
+   billerId: the AR biller of the claim (whose entry sent it). */
+async function sendToDesk(env, user, clientId, saag, targets, now, billerId) {
+  const { dept, cl, people } = await entryDesk(env, clientId, saag);
+  if (!dept) return null;
+  const mode = cl ? cl[dept + "_mode"] : "";
+  const lead = people ? people.lead : null;
+  const hs = [];
+  for (const t of targets) {
+    if (mode === "person" && lead) {
+      const open = await one(env, "SELECT id FROM handoffs WHERE claim_id = ? AND dept = ? AND status IN ('pending','assigned','client')", t.id, dept);
+      if (open) continue;
+      const due = addWorkingHours(now, tatHours(cl, dept));
+      hs.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, biller_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?)`)
+        .bind(uuid(), t.id, clientId, dept, now, user.id, user.name, saag.action, due, lead, people.backup, billerId || user.id));
+      // In process for AR while the department works it: off the biller's list, no follow-up, until it is done or sent back.
+      hs.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '' WHERE id = ?").bind("with_" + dept, IN_PROCESS, "With " + DEPT_LABEL[dept], t.id));
+      hs.push(claimEvent(env, t.id, user, "handoff_sent", DEPT_LABEL[dept], { dept, due_at: due }));
+    } else hs.push(claimEvent(env, t.id, user, "handoff_none", DEPT_LABEL[dept], { dept, mode: mode === "person" ? "unset" : mode || "unset" }));
+  }
+  if (hs.length) await batchAll(env, hs, 40);
+  const leadName = lead ? (await one(env, "SELECT name FROM users WHERE id = ?", lead) || {}).name : "";
+  return { dept, label: DEPT_LABEL[dept], mode: mode === "person" && !lead ? "unset" : mode || "unset", to: leadName || "" };
+}
 /* Open hand-offs of someone who is switched off: they go to the backup, or to whoever the client's profile now names. */
 async function rerouteHandoffs(env, userId) {
   const open = await all(env, "SELECT h.id, h.dept, h.lead_id, h.backup_id, h.assigned_to, h.client_id FROM handoffs h WHERE h.status IN ('pending','assigned','client') AND (h.lead_id = ? OR h.backup_id = ? OR h.assigned_to = ?)", userId, userId, userId);
@@ -6132,11 +6168,7 @@ const OPS = {
     if (!closed && wanted && wanted > addDays(today, 365)) throw bad("Pick a follow-up date within a year from today.");
     // An action that sends the claim to Posting / Submission / Rejections (a person is set on the client) takes it off the
     // biller's list with no follow-up until the desk is done: the note and the answer carry no follow-up date then.
-    let toDesk = false;
-    { let d = handoffDeptOf(saag.action);
-      if (d && !closed) { const cl0 = await one(env, "SELECT * FROM clients WHERE id = ?", c.client_id);
-        if (d === "submission" && /reject/i.test(saag.status) && (await deskPeople(env, cl0, "rejection"))) d = "rejection";
-        const pp = cl0 && cl0[d + "_mode"] === "person" ? await deskPeople(env, cl0, d) : null; toDesk = !!(pp && pp.lead); } }
+    const toDesk = !closed && !!((await entryDesk(env, c.client_id, saag)).people || {}).lead;
     const followUp = closed || toDesk ? "" : workingDayOnOrAfter((wanted && wanted >= today ? wanted : "") || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
     const comment = composeNote(fields, saag, followUp);
     const escalate = payload.escalate ? 1 : 0;
@@ -6173,34 +6205,9 @@ const OPS = {
     const lock = await run(env, "UPDATE claims SET updated_at = MAX(?, COALESCE(updated_at, 0) + 1) WHERE id = ? AND state = ? AND updated_at IS ?", now, c.id, c.state, c.updated_at);
     if (!changesOf(lock)) throw bad("This claim was just saved (in another tab, or by someone else). Open it again to see the latest.");
     await batchAll(env, stmts);
-    // Payment posting / submission: send the claim to the department set on the client profile.
-    let dept = handoffDeptOf(saag.action);
-    let handoff = null;
-    if (dept) {
-      const cl = await one(env, "SELECT * FROM clients WHERE id = ?", c.client_id);
-      // A rejected claim goes to the client's Rejections person first, when one is set.
-      if (dept === "submission" && /reject/i.test(saag.status) && (await deskPeople(env, cl, "rejection"))) dept = "rejection";
-      const mode = cl ? cl[dept + "_mode"] : "";
-      // The lead set on the client, or the backup when the lead is no longer active (never a deactivated person).
-      const people = await deskPeople(env, cl, dept);
-      const lead = people ? people.lead : null;
-      const hs = [];
-      for (const t of targets) {
-        if (mode === "person" && lead) {
-          const open = await one(env, "SELECT id FROM handoffs WHERE claim_id = ? AND dept = ? AND status IN ('pending','assigned','client')", t.id, dept);
-          if (open) continue;
-          const due = addWorkingHours(now, tatHours(cl, dept));
-          hs.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, biller_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?)`)
-            .bind(uuid(), t.id, c.client_id, dept, now, user.id, user.name, saag.action, due, lead, people.backup, user.id));
-          // In process for AR while the department works it: off the biller's list, no follow-up, until it is done or sent back.
-          hs.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '' WHERE id = ?").bind("with_" + dept, IN_PROCESS, "With " + DEPT_LABEL[dept], t.id));
-          hs.push(claimEvent(env, t.id, user, "handoff_sent", DEPT_LABEL[dept], { dept, due_at: due }));
-        } else hs.push(claimEvent(env, t.id, user, "handoff_none", DEPT_LABEL[dept], { dept, mode: mode === "person" ? "unset" : mode || "unset" }));
-      }
-      if (hs.length) await batchAll(env, hs, 40);
-      const leadName = lead ? (await one(env, "SELECT name FROM users WHERE id = ?", lead) || {}).name : "";
-      handoff = { dept, label: DEPT_LABEL[dept], mode: mode === "person" && !lead ? "unset" : mode || "unset", to: leadName || "" };
-    }
+    // Payment posting / submission: send the claim to the department set on the client profile (the lead set on the client, or
+    // the backup when the lead is no longer active; a rejected claim to the client's Rejections person first, when one is set).
+    const handoff = await sendToDesk(env, user, c.client_id, saag, targets, now, user.id);
     // Copy the entry into the client's / location's OneDrive workbook in the background (when a link is set and Microsoft 365 is configured).
     if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user, { ended_at: now, fields: t.id === c.id ? fields : { ...fields, call_start: "", call_end: "" } }); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
     return { completed: targets.length, closed, follow_up_on: followUp, state: newState, comment, handoff };
@@ -6260,13 +6267,22 @@ const OPS = {
     const today = isoDate(payload.today) || isoToday();
     const closed = isClosedWork(saag);
     const wantedFu = isoDate(payload.follow_up_on);
-    const followUp = closed ? "" : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
+    // The claim follows its latest entry (unless it is on a biller's list or with a desk now).
+    const latest = await one(env, "SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id);
+    const sets = !!latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned" && c.state !== IN_PROCESS;
+    // An entry edited into an action that goes to a desk (Need to Post / Posting Correction, a resubmission, a paper claim) sends
+    // the claim there exactly as saving it that way the first time does: the hand-off to the client's person, In process for AR,
+    // no follow-up date while the desk has it (and the entry's own follow-up when nobody is set for that desk).
+    const sends = sets && !!handoffDeptOf(saag.action) && handoffDeptOf(saag.action) !== handoffDeptOf(n.action || n.action_code);
+    const toDesk = sends && !closed && !!((await entryDesk(env, c.client_id, saag)).people || {}).lead;
+    const autoFu = () => addDays(today, followUpDays(saag.effective, c.client_follow_up_days));
+    const followUp = closed || toDesk ? "" : sends ? workingDayOnOrAfter((wantedFu && wantedFu >= today ? wantedFu : "") || autoFu())
+      : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || autoFu());
     const comment = composeNote(fields, saag, followUp);
     const now = Date.now();
     const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, call_min = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
       .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, "", JSON.stringify(fields), callMinOf(fields), now, user.id, n.id)];
-    const latest = await one(env, "SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id);
-    if (latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned" && c.state !== IN_PROCESS) {
+    if (sets) {
       const newState = closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?, last_note = ?, follow_up_on = ?, updated_at = ? WHERE id = ?`)
         .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", comment.slice(0, 600), followUp, now, c.id));
@@ -6276,8 +6292,13 @@ const OPS = {
     if (lim) stmts.push(lim);
     const dd = denialDateStmt(env, c.id, fields);
     if (dd) stmts.push(dd);
+    // Two edits at once that both send the claim to a desk (a double click, two tabs): the first one wins, as with a saved entry.
+    if (sends && !changesOf(await run(env, "UPDATE claims SET updated_at = MAX(?, COALESCE(updated_at, 0) + 1) WHERE id = ? AND state = ? AND updated_at IS ?", now, c.id, c.state, c.updated_at)))
+      throw bad("This claim was just saved (in another tab, or by someone else). Open it again to see the latest.");
     await env.DB.batch(stmts);
-    return { ok: true, comment, closed };
+    // the AR biller of the hand-off is the person whose entry it is (a team lead may be the one editing it)
+    const handoff = sends ? await sendToDesk(env, user, c.client_id, saag, [c], now, n.user_id) : null;
+    return { ok: true, comment, closed, handoff };
   },
   "history.mine": async ({ env, user, payload }) => {
     const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());

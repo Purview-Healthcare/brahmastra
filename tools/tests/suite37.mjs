@@ -153,6 +153,50 @@ setNow(IST(2026, 11, 10, 10, 0));
 }
 setNow(null);
 
+S("C-11: an entry edited into Need to Post or Need to Resubmit sends the claim to the desk, as a first save does");
+setNow(IST(2026, 11, 10, 10, 0));
+{
+  const noteOf = async (id) => (await rows("SELECT * FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC", id))[0];
+  const [a, b, d, e, f] = await give("Arun Agent", 5);
+  for (const id of [a, b, d, e]) await save(AR, id, SAAG.fu);
+  // what a first save does (the yardstick): claim f saved as Need to Resubmit
+  await save(AR, f, SAAG.resub);
+  const cf = await claim(f), hf = await openH(f, "submission");
+  // into Need to Post (the EOB arrived and is attached)
+  await call(AR, "attachments.add", { claim_id: a, name: "eob.pdf", type: "application/pdf", data: PDF });
+  let r = await T(async () => call(AR, "notes.update", { id: (await noteOf(a)).id, saag: SAAG.post, note: NOTE("Payment found, EOB attached, needs posting") }));
+  let c = await claim(a), h = await openH(a, "posting");
+  ok("C-11: edited into Need to Post: a Payment posting hand-off for the client's person, with the backup", r.ok && h && h.status === "pending" && h.lead_id === U("Pia Poster").id && h.backup_id === U("Otto Poster").id && h.biller_id === U("Arun Agent").id, [r, h && { status: h.status, lead: h.lead_id }]);
+  ok("C-11: ...the claim is In process with Payment posting, no follow-up date", c.state === "in_process" && c.handoff_status === "with_posting" && c.state_reason === "With Payment Posting" && c.follow_up_on === "" && c.last_effective === "AR Closed-Pending Posting", await brief(a));
+  ok("C-11: ...the answer says where it went (for the same toast as a save)", r.ok && r.r.handoff && r.r.handoff.dept === "posting" && r.r.handoff.mode === "person" && r.r.handoff.to === "Pia Poster", r.ok && r.r.handoff);
+  ok("C-11: ...and Posting has it on its list with the client's TAT", (await call(PI, "handoffs.list", {})).rows.some((x) => x.claim_id === a) && h.due_at - h.created_at === hf.due_at - hf.created_at, h && [h.created_at, h.due_at]);
+  // into Need to Resubmit
+  r = await T(async () => call(AR, "notes.update", { id: (await noteOf(b)).id, saag: SAAG.resub, note: NOTE("Claim needs a corrected resubmission") }));
+  c = await claim(b); h = await openH(b, "submission"); let n = await noteOf(b);
+  ok("C-11: edited into Need to Resubmit: a Submission hand-off, as the first save of that action makes", r.ok && h && h.lead_id === hf.lead_id && h.status === hf.status && h.saag_action === hf.saag_action && h.due_at - h.created_at === hf.due_at - hf.created_at, [r, h && h.status]);
+  ok("C-11: ...the claim stands as after a first save (In process, with Submission, no follow-up)", c.state === cf.state && c.handoff_status === cf.handoff_status && c.state_reason === cf.state_reason && c.follow_up_on === cf.follow_up_on && c.last_effective === cf.last_effective && c.last_bucket === cf.last_bucket, [await brief(b), await brief(f)]);
+  ok("C-11: ...the entry carries no follow-up date while the desk has the claim", n.follow_up_on === "" && !/FOLLOW-UP/.test(n.comment), [n.follow_up_on, n.comment]);
+  ok("C-11: ...the history has the hand-off line", (await rows("SELECT kind FROM claim_events WHERE claim_id = ? AND kind = 'handoff_sent'", b)).length === 1);
+  // a team lead edits the biller's entry: the hand-off's AR biller is still the biller
+  r = await T(async () => call(TI, "notes.update", { id: (await noteOf(d)).id, saag: SAAG.rej, note: NOTE("Rejected by the clearinghouse, needs resubmitting") }));
+  h = await openH(d, "rejection");
+  ok("C-11: a team lead's edit sends it too (a rejected claim to Rejections first); the AR biller of the hand-off is the entry's author", r.ok && h && h.lead_id === U("Rex Reject").id && h.biller_id === U("Arun Agent").id && h.created_by === U("Tina Lead").id, [r, h && { lead: h.lead_id, biller: h.biller_id }]);
+  // an edit that keeps the action does not send the claim a second time
+  await submitIt(QU, b);
+  r = await T(async () => call(AR, "notes.update", { id: (await noteOf(b)).id, saag: SAAG.resub, note: NOTE("Claim needs a corrected resubmission, typo fixed") }));
+  ok("C-11: fixing a typo in an entry the desk already worked does not send the claim again", r.ok && !r.r.handoff && (await hos(b)).filter((x) => x.dept === "submission").length === 1 && (await claim(b)).state === "completed", [r, (await hos(b)).map((x) => x.dept + ":" + x.status)]);
+  // two edits at once: one hand-off
+  const two = await Promise.all([1, 2].map(() => T(async () => call(AR, "notes.update", { id: (await noteOf(e)).id, saag: SAAG.resub, note: NOTE("Claim needs a corrected resubmission") }))));
+  ok("C-11: two edits at once make one hand-off", (await hos(e)).filter((x) => x.dept === "submission").length === 1 && two.some((x) => x.ok), two.map((x) => x.ok || x.e));
+  // nobody set for Submission on the client: no hand-off, and the follow-up a first save of that action gets
+  const [g] = await give("Cyra Agent", 1, lake);
+  await save(CY, g, SAAG.fu);
+  r = await T(async () => call(CY, "notes.update", { id: (await noteOf(g)).id, saag: SAAG.resub, note: NOTE("Claim needs a corrected resubmission") }));
+  c = await claim(g);
+  ok("C-11: nobody set for Submission: no hand-off, the claim stays with the biller with the 15-day follow-up of that action", r.ok && r.r.handoff && r.r.handoff.mode !== "person" && !(await hos(g)).length && c.state === "completed" && c.follow_up_on === "2026-11-25", [r.ok && r.r.handoff, await brief(g)]);
+}
+setNow(null);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
