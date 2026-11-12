@@ -281,6 +281,10 @@ function parseDateAny(v, { order = "", dob = false } = {}) {
   if (isNaN(t)) return "";
   const d = new Date(t);
   if (dob ? d.getFullYear() < 1900 : d.getFullYear() < 2000 || d.getFullYear() > 2100) return "";
+  // the text must say the year and the day: the browser makes up the rest (26-Oct is read as 2001, October 2026 as the 1st), so a
+  // date written without them is no date
+  const nums = (s.match(/\d+/g) || []).map((x) => [x, +x]);
+  if (!nums.some(([x, n]) => n === d.getFullYear() || (x.length === 2 && n === d.getFullYear() % 100)) || !nums.some(([, n]) => n === d.getDate())) return "";
   return fit(isoOf(d));
 }
 /* The day / month order of one date column of a file, decided once for the whole column: a date whose first part is over 12
@@ -516,6 +520,9 @@ function buildClaims({ rows, mapping, kind, today }) {
   const hasBalance = !!mapping.balance;
   // each date column is read in one day / month order, decided from the whole column
   const dateOf = Object.fromEntries(["dos", "date_worked", "follow_up"].map((f) => [f, dateReader(mapping[f] ? rows.map((r) => r[mapping[f]]) : [])]));
+  // a date cell that has something in it but cannot be read (26-Oct with no year, N/A) is left empty and counted, so the screen says so
+  let datesUnread = 0;
+  const unread = (cell, read) => (!read && cell != null && String(cell).trim() !== "" ? 1 : 0);
   const groups = new Map();
   let footer = 0, blank = 0;
   rows.forEach((r, i) => {
@@ -533,6 +540,7 @@ function buildClaims({ rows, mapping, kind, today }) {
       status: txt(get(r, "status")), sub_status: txt(get(r, "sub_status")), action: txt(get(r, "action")), comments: txt(get(r, "comments")),
       date_worked: dateOf.date_worked(get(r, "date_worked")), follow_up: dateOf.follow_up(get(r, "follow_up")), file_bucket: txt(get(r, "file_bucket")), location: txt(get(r, "location")), raw: r, idx: i,
     };
+    datesUnread += unread(get(r, "dos"), dos) + (kind === "worked" ? unread(get(r, "date_worked"), line.date_worked) + unread(get(r, "follow_up"), line.follow_up) : 0);
     const key = claim_no && /\d/.test(claim_no) ? "claim:" + claim_no.toLowerCase().replace(/\s+/g, "") : "fp:" + [patient, dos, payer, line.provider].map(normKey).join("|");
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(line);
@@ -567,7 +575,7 @@ function buildClaims({ rows, mapping, kind, today }) {
   const cut = tierCut(included);
   claims.forEach((c) => { c.tier = tierOf(c.balance, cut); const s = scoreClaim(c, today); c.priority = s.priority; c.priority_reason = s.reason; });
   claims.sort((a, b) => b.priority - a.priority || b.balance - a.balance);
-  const summary = summarizeClaims(claims, { footer, blank, rowsRead: rows.length, cut, hasBalance });
+  const summary = summarizeClaims(claims, { footer, blank, rowsRead: rows.length, cut, hasBalance, datesUnread });
   return { claims, summary };
 }
 function summarizeClaims(claims, extra = {}) {
@@ -3286,6 +3294,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           {result && (
             <>
               <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
+              {built && built.summary.datesUnread > 0 && <div className="alert warn">{plural(built.summary.datesUnread, "date")} in the file could not be read (no year or no day, as in 26-Oct, or not a date) and {built.summary.datesUnread === 1 ? "was" : "were"} left empty. Check the date columns in the file.</div>}
               {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {fmtInt(r.assigned.applied)} claims allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
             </>
@@ -8350,7 +8359,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
                 ? <div className="alert err" style={{ margin: 0 }}><b>{evDraft.file}:</b> Brahmastra could not find the date each check was done (a column such as Date, Work date or Verified on). Add that column and pick the file again.
                     <div className="row" style={{ marginTop: 6 }}><button type="button" className="btn sm" onClick={() => setEvDraft(null)}>OK</button></div></div>
                 : <div className="crx-file draft"><span>📄 <b>{evDraft.file}</b></span><span className="badge blue">{crF.int(evDraft.n)} rows · {crF.dateShort(crD(evDraft.from))} to {crF.date(crD(evDraft.to))}</span>
-                    <span className="tiny muted" style={{ flexBasis: "100%" }}>Columns found: {evDraft.found.map(([l, h]) => l + (l.toLowerCase() === h.toLowerCase() ? "" : " (" + h + ")")).join(", ")}{evDraft.skipped ? ` · ${crF.int(evDraft.skipped)} rows without a date left out` : ""}. Patient names are not read.</span>
+                    <span className="tiny muted" style={{ flexBasis: "100%" }}>Columns found: {evDraft.found.map(([l, h]) => l + (l.toLowerCase() === h.toLowerCase() ? "" : " (" + h + ")")).join(", ")}{evDraft.skipped ? ` · ${crF.int(evDraft.skipped)} rows left out: no date, or a date that could not be read (no year or no day, as in 26-Oct)` : ""}. Patient names are not read.</span>
                     <button type="button" className="btn primary sm" disabled={evBusy} onClick={saveEV}>{evBusy ? "Saving…" : "Save to the report"}</button><button type="button" className="btn sm" disabled={evBusy} onClick={() => setEvDraft(null)}>Cancel</button></div>)}
               {!evFiles.length && !evDraft && <span className="small muted">No EV file covers these dates yet; the EV page is left out until one is added.</span>}
               {canEdit && !evDraft && <div><button type="button" className="btn sm" onClick={() => setEvOpen(true)}>{evFiles.length ? "Add or replace from OneDrive" : "Upload EV from OneDrive"}</button></div>}

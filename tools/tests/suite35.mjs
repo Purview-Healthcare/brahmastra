@@ -476,6 +476,26 @@ S("N-06: an amount written with the word Credit is a credit");
   ok("N-06: in the Submission file a client balance written 45.00 CREDIT is -45 and Credit 12.50 is -12.5", iBal >= 0 && row[1][iBal] === -45 && row[2][iBal] === -12.5, row && row.e ? row.e : row && row.slice(0, 3).map((x) => x[iBal]));
 }
 
+S("N-05: a date with no year (or no day) is no date, and the screen says so");
+{
+  const pd = (v, o) => app.parseDateAny(v, o);
+  ok("N-05: 26-Oct, Oct 26, Dec-25, October 2026 and Week 44 are no date (the browser would make up 2001, the 1st or 2044)", ["26-Oct", "Oct 26", "Dec-25", "October 2026", "Week 44"].every((v) => pd(v) === ""),
+    ["26-Oct", "Oct 26", "Dec-25", "October 2026", "Week 44"].map((v) => v + ":" + pd(v)));
+  ok("N-05: dates that say their year and day still read: Oct 26, 2026 / 26-Oct-26 / Oct 1, 2026 / 26 October 2026", pd("Oct 26, 2026") === "2026-10-26" && pd("26-Oct-26") === "2026-10-26" && pd("Oct 1, 2026") === "2026-10-01" && pd("26 October 2026") === "2026-10-26",
+    [pd("Oct 26, 2026"), pd("26-Oct-26"), pd("Oct 1, 2026"), pd("26 October 2026")]);
+  ok("N-05: a date of birth needs its day and year too (March 15, 1952 reads; June 1952 and 1952 do not)", pd("March 15, 1952", { dob: true }) === "1952-03-15" && pd("June 1952", { dob: true }) === "" && pd("1952", { dob: true }) === "",
+    [pd("March 15, 1952", { dob: true }), pd("June 1952", { dob: true }), pd("1952", { dob: true })]);
+  const HN = ["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "Date Worked"];
+  const fresh = build([HN, ["9805501", "Test Patient One", "Aetna", "26-Oct", "100", "Pending", "N/A"], ["9805502", "Test Patient Two", "Aetna", "10/26/2026", "100", "Pending", "26-Oct"], ["Total", "", "", "Grand total", "200", "", ""]]);
+  const d1 = fresh.claims.find((c) => c.claim_no === "9805501");
+  ok("N-05: in an inventory file the DOS 26-Oct is left empty (no DOS), never 2001", d1 && d1.dos === "" && d1.age_days === null, d1 && [d1.dos, d1.age_days]);
+  ok("N-05: the upload counts it as a date not read (a fresh file's Date Worked column and the footer row are not counted)", fresh.summary.datesUnread === 1, fresh.summary.datesUnread);
+  const worked = build([HN, ["9805503", "Test Patient Three", "Aetna", "10/20/2026", "100", "Pending", "26-Oct"]], "worked");
+  ok("N-05: in a previously worked file a Date Worked of 26-Oct is no date, and counted", worked.claims[0].last_worked_on === "" && worked.summary.datesUnread === 1, [worked.claims[0].last_worked_on, worked.summary.datesUnread]);
+  const ev = app.crReadEV(new TextEncoder().encode("Date Verified,Insurance,Status\n26-Oct,Aetna,Active coverage\n10/27/2026,Aetna,Active coverage\n"), "EV.csv");
+  ok("N-05: the EV upload leaves a check dated 26-Oct out (and says how many) instead of filing it in 2001", ev.n === 1 && ev.skipped === 1 && ev.from === "2026-10-27" && ev.to === "2026-10-27", [ev.n, ev.skipped, ev.from, ev.to]);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
