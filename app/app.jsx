@@ -3328,23 +3328,28 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
     setBusy(true); setStep(4); setProgress(0);
     try {
       const groups = [];
+      // the client's locations as they are now (one may have been switched off since this page loaded)
+      const locsNow = ((await rpc("clients.list")).clients.find((x) => x.id === client.id) || client).locations || [];
       if (locMode === "file" && mapping.location) {
         // a location is the same whatever its case or extra spaces (as the server tells them apart)
         const m = by(built.claims, (c) => (c.location || "").replace(/\s+/g, " ").trim());
         for (const [name, list] of m) {
-          let loc = null;
+          let loc = null, note = "";
           if (name) {
-            loc = client.locations.find((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase() === name.toLowerCase());
-            if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name }); loc = r.location; }
+            loc = locsNow.find((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase() === name.toLowerCase());
+            // a name the client does not have yet becomes a new location
+            if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name }); loc = r.location; note = "a new location"; }
           }
-          groups.push({ loc, claims: list });
+          groups.push({ loc, claims: list, note });
         }
-      } else groups.push({ loc: client.locations.find((l) => l.id === locId) || null, claims: built.claims });
+      } else groups.push({ loc: locsNow.find((l) => l.id === locId) || null, claims: built.claims, note: "" });
+      // claims never go into a location that is switched off: it is switched on again (as a name it did not know is added), and the result says so
+      for (const g of groups) if (g.loc && !g.loc.active) { const r = await rpc("locations.save", { id: g.loc.id, name: g.loc.name, active: true }); g.loc = { ...g.loc, ...r.location }; g.note = "it was switched off: switched on again"; }
       const results = [];
       let done = 0;
       for (const g of groups) {
         const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, source: file.source || "file", web_url: file.webUrl || "", claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / groups.length) });
-        const row = { ...r, location: g.loc ? g.loc.name : "(no location)", total: g.claims.length, assigned: null };
+        const row = { ...r, location: g.loc ? g.loc.name : "(no location)", note: g.note || "", total: g.claims.length, assigned: null };
         const team = g.loc && g.loc.team && g.loc.team.length ? g.loc.team : (client.team || []);
         const wants = g.loc ? g.loc.auto_allocate !== false : client.auto_allocate !== false;
         if (autoAlloc && wants && team.length) {
@@ -3416,7 +3421,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
             </Field>
           </div>
           {client && client.locations.length > 0 && (
-            <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created)</label>
+            <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created, and a switched-off location named in it is switched on again)</label>
           )}
           {client && locMode !== "file" && (
             <div className="card tight row between">
@@ -3448,7 +3453,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           {progress != null && progress < 1 && <div><div className="bar"><i style={{ width: Math.round(progress * 100) + "%" }} /></div><div className="small muted mt8"><span className="spin" /> Loading claims… {Math.round(progress * 100)}%</div></div>}
           {result && (
             <>
-              <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
+              <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
               {built && built.summary.datesUnread > 0 && <div className="alert warn">{plural(built.summary.datesUnread, "date")} in the file could not be read (no year or no day, as in 26-Oct, or not a date) and {built.summary.datesUnread === 1 ? "was" : "were"} left empty. Check the date columns in the file.</div>}
               {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
@@ -5473,7 +5478,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   // a desk still has the claim (Payment posting, Submission or Rejections): a team lead closes or excludes it once the desk is done
   const atDesk = ((q.data && q.data.handoffs) || []).find((h) => h.dept !== "subcheck" && ["pending", "assigned", "client"].includes(h.status));
   const changed = () => { q.reload(); setVer((v) => v + 1); onChanged && onChanged(); };
-  const act = async (label, fn) => { setBusy(true); try { await fn(); toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  // Say what the server did, never a success that did not happen: an action that changed nothing says so (none: why, when known).
+  const act = async (label, fn, none) => { setBusy(true); try { const r = await fn(); if (r && r.changed === 0) toast(none || "Nothing changed: the claim may have changed meanwhile. Open it again.", "err"); else toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const sup = me.role === "supervisor";
   // a pop-up like the others: Esc closes it when nothing is open on top of it (a box opened from it closes first)
   const L = useLayer(onClose);
@@ -5492,8 +5498,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
               <div className="card tight row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <span className="cv-sec" style={{ margin: 0 }}>Team lead actions</span>
                 <Combo sm width={220} value={user} onChange={setUser} placeholder="Assign to…" options={ctx.users.filter((u) => u.active && (u.role === "user" || u.id === me.id)).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
-                <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }))}>Assign</button>
-                {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }))}>Unassign</button>}
+                <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }), c.state === "closed" || c.state === "excluded" ? `Not assigned: this claim is ${c.state === "closed" ? "closed" : "excluded from the inventory"}. Reopen it first, then assign it.` : c.state === "in_process" ? "Not assigned: this claim is with Payment posting or Submission now." : "")}>Assign</button>
+                {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }), "Nothing to unassign: the claim is no longer on anyone's list.")}>Unassign</button>}
                 {!atDesk && !c.locked && (c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
                 {!atDesk && c.state !== "closed" && <button className="btn sm danger" disabled={busy} onClick={() => act("Closed.", () => rpc("claims.setState", { ids: [id], state: "closed" }))}>Close</button>}
                 {!atDesk && c.state !== "excluded" && c.state !== "closed" && <button className="btn sm" disabled={busy} onClick={() => act("Excluded.", () => rpc("claims.setState", { ids: [id], state: "excluded" }))}>Exclude</button>}

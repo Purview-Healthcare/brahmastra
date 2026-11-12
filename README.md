@@ -1076,7 +1076,8 @@ BR-... number from Brahmastra; when a later file carries its real number it is f
 two claims. Several service
 lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
-locations automatically.
+locations automatically: a name the client does not have yet becomes a new location, and a
+switched-off location named in the file is switched on again; the result says which.
 
 **Upload history** lists every batch. **Undo** removes the claims that upload added which nobody has
 opened or worked yet (no entry, never opened, no note, attachment or hand-off), also when the upload had already
