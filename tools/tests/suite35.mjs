@@ -309,6 +309,41 @@ S("A-07: previously worked claims wait for their follow-up date");
   ok("A-07: undoing that worked file puts the claim back in the pool", (await q1("SELECT state FROM claims WHERE client_id = ? AND claim_no = '9807101'", c2.id)).state === "open");
 }
 
+S("A-05: Undo upload after the upload allocated its claims");
+{
+  const HF = ["Claim ID", "Patient Name", "Payer", "Date of Service", "CPT", "AR Balance", "Status"];
+  const cl = await mkClient("Made-up Clinic S35 A05");
+  await A("clients.saveTeam", { client_id: cl.id, team: billers.map((b) => b.id) });
+  const up = await upload(cl, [HF, ...Array.from({ length: 6 }, (_, i) => [String(9805001 + i), "Test Patient " + i, "Aetna", "09/10/2026", "99213", "250.00", "Pending"])], { name: "wrong file.csv" });
+  const al = await app.autoAllocate({ ctx: null, client: { id: cl.id }, loc: { id: cl.loc } });
+  const onLists = await q("SELECT assigned_to, COUNT(*) AS n FROM claims WHERE client_id = ? AND assigned_to IS NOT NULL GROUP BY assigned_to", cl.id);
+  const r = await A("inventory.undoBatch", { batch_id: up.r.batch_id });
+  ok("A-05: the wrong file's 6 claims, handed to billers but never opened, are all removed by Undo", al.applied === 6 && r.removed === 6 && r.kept === 0 && (await claimsOf(cl)).length === 0, [al.applied, r]);
+  const told = await q("SELECT user_id, text FROM user_notices WHERE client_id = ? AND text LIKE '%taken off your list%'", cl.id);
+  ok("A-05: each biller who had them is told in the bell how many left the list (no claim or patient details)", told.length === onLists.length && onLists.every((o) => told.some((t) => t.user_id === o.assigned_to && t.text.startsWith(o.n + " claim") && /the upload they came from was undone \(Made-up Clinic S35 A05\)\.$/.test(t.text))), [onLists, told]);
+  ok("A-05: an upload is still undone only once", !(await T(() => A("inventory.undoBatch", { batch_id: up.r.batch_id }))).ok);
+  // what somebody opened or worked stays
+  const c2 = await mkClient("Made-up Clinic S35 A05 b");
+  await A("clients.saveTeam", { client_id: c2.id, team: [billers[0].id] });
+  const up2 = await upload(c2, [HF, ...Array.from({ length: 5 }, (_, i) => [String(9805101 + i), "Test Patient " + i, "Aetna", "09/10/2026", "99213", "250.00", "Pending"])], { name: "second file.csv" });
+  await app.autoAllocate({ ctx: null, client: { id: c2.id }, loc: { id: c2.loc } });
+  const idOf = async (n) => (await q1("SELECT id FROM claims WHERE client_id = ? AND claim_no = ?", c2.id, n)).id;
+  const B = await login(billers[0].email);
+  await B("queue.open", { id: await idOf("9805101") }); await B("queue.skip", { id: await idOf("9805101"), count: false });   // opened, then back to my day
+  await B("queue.open", { id: await idOf("9805102") });                                                                  // open on the desk right now
+  const r2 = await A("inventory.undoBatch", { batch_id: up2.r.batch_id });
+  const left = (await claimsOf(c2)).map((c) => c.claim_no + " " + c.state);
+  ok("A-05: a claim a biller opened (even if put back) and one open on the desk stay; the three nobody opened go", r2.removed === 3 && r2.kept === 2 && left.join() === "9805101 assigned,9805102 in_progress", [r2, left]);
+  const evLeft = await q("SELECT c.claim_no, COUNT(*) AS n FROM claim_events e LEFT JOIN claims c ON c.id = e.claim_id WHERE e.claim_id IN (SELECT id FROM claims WHERE client_id = ?) GROUP BY 1", c2.id);
+  const orphans = await q1("SELECT COUNT(*) AS n FROM claim_events e WHERE NOT EXISTS (SELECT 1 FROM claims c WHERE c.id = e.claim_id)");
+  ok("A-05: the claims that stay keep their history; the removed ones leave none behind", evLeft.length === 2 && evLeft.every((e) => e.n >= 2) && orphans.n === 0, [evLeft, orphans]);
+  // a previously worked claim still waiting for its follow-up (never worked in Brahmastra) goes with its upload too
+  const c3 = await mkClient("Made-up Clinic S35 A05 c");
+  const up3 = await upload(c3, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "Date Worked"], ["9805201", "Test Patient One", "Aetna", "09/10/2026", "800.00", "Pending", "11/05/2026"]], { kind: "worked" });
+  const r3 = await A("inventory.undoBatch", { batch_id: up3.r.batch_id });
+  ok("A-05: Undo also removes a worked-file claim that was waiting for its follow-up date", r3.removed === 1 && (await claimsOf(c3)).length === 0, r3);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

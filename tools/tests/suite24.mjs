@@ -52,8 +52,10 @@ S("Undo an upload");
 const b3 = (await A("inventory.batches", { client_id: z.id })).batches.find((b) => b.file_name === "f3.csv");
 const l1 = await row("SELECT id FROM claims WHERE client_id = ? AND claim_no = '77777/1'", z.id), l2 = await row("SELECT id FROM claims WHERE client_id = ? AND claim_no = '77777/2'", z.id);
 await A("alloc.reassign", { ids: [l1.id], user_id: aisha.id });
+await AI("queue.open", { id: l1.id }); await AI("queue.skip", { id: l1.id, count: false });   // she opened it, then went back to her day
 r = await A("inventory.undoBatch", { batch_id: b3.id });
-ok("the claim on a biller's list stays, the untouched one goes", r.removed === 1 && r.kept === 1, r);
+// (a claim only handed to a biller and never opened goes with its upload: suite35, A-05)
+ok("the claim a biller opened stays, the untouched one goes", r.removed === 1 && r.kept === 1, r);
 ok("the kept claim is still there", !!(await row("SELECT id FROM claims WHERE id = ?", l1.id)) && !(await row("SELECT id FROM claims WHERE id = ?", l2.id)));
 ok("no history left behind for the removed claim", (await row("SELECT COUNT(*) AS n FROM claim_events WHERE claim_id = ?", l2.id)).n === 0);
 r = await up("f4.csv", [mk("CLM-2024-00002", "Roe, Rick", "2026-08-02", 0, { exclude_reason: "closed", status_class: "paid" })]);

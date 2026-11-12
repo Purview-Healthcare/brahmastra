@@ -982,8 +982,9 @@ underneath. A file that has a Location column can be split across the client's
 locations automatically.
 
 **Upload history** lists every batch. **Undo** removes the claims that upload added which nobody has
-worked yet (no entry, not open, no attachment); claims already worked stay, so no work is lost. An upload is
-undone once.
+opened or worked yet (no entry, never opened, no note, attachment or hand-off), also when the upload had already
+handed them to a biller, who is told in the bell; claims already opened or worked stay, so no work is lost. An
+upload is undone once.
 
 ### Prioritisation (the Revenue Doctor's rules)
 

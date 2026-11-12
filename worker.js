@@ -5740,16 +5740,29 @@ const OPS = {
     if (!b) throw bad("Unknown batch.");
     editableOr(user, b.client_id);
     if (b.undone_at) throw bad("This batch was already undone.");
-    // Only claims nobody has touched go: not on anyone's list, never worked, no notes, files or hand-offs, and not refreshed by a later file.
-    const UNTOUCHED = `first_batch_id = ? AND batch_id = ? AND touches = 0 AND assigned_to IS NULL AND state IN ('open','closed','excluded')
+    // Only claims nobody has touched go: never opened or worked, no notes, files or hand-offs, and not refreshed by a later file.
+    // A claim that was only handed to a biller (the upload allocates by itself) is untouched until someone opens it.
+    const UNTOUCHED = `first_batch_id = ? AND batch_id = ? AND touches = 0 AND state IN ('open','assigned','completed','closed','excluded')
+      AND NOT EXISTS (SELECT 1 FROM claim_events e WHERE e.claim_id = claims.id AND e.kind = 'opened')
       AND id NOT IN (SELECT claim_id FROM attachments) AND id NOT IN (SELECT claim_id FROM notes) AND id NOT IN (SELECT claim_id FROM handoffs)`;
     const added = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE first_batch_id = ?", b.id);
-    const gone = await all(env, `SELECT id FROM claims WHERE ${UNTOUCHED}`, b.id, b.id);
+    const gone = await all(env, `SELECT id, assigned_to FROM claims WHERE ${UNTOUCHED}`, b.id, b.id);
     let removed = 0;
-    for (const part of chunks(gone.map((x) => x.id), 80)) {
-      const qs = part.map(() => "?").join(",");
-      const res = await batchAll(env, [env.DB.prepare(`DELETE FROM claim_events WHERE claim_id IN (${qs})`).bind(...part), env.DB.prepare(`DELETE FROM claims WHERE id IN (${qs}) AND ${UNTOUCHED}`).bind(...part, b.id, b.id)]);
-      removed += changesOf(res[1]);
+    const off = new Map();   // how many claims left each biller's list
+    for (const part of chunks(gone, 80)) {
+      const ids = part.map((x) => x.id), qs = ids.map(() => "?").join(",");
+      // the claims first (a claim opened this very moment stays, with its history), then the history of the ones that went
+      const res = await batchAll(env, [env.DB.prepare(`DELETE FROM claims WHERE id IN (${qs}) AND ${UNTOUCHED}`).bind(...ids, b.id, b.id),
+        env.DB.prepare(`DELETE FROM claim_events WHERE claim_id IN (${qs}) AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.id = claim_events.claim_id)`).bind(...ids)]);
+      removed += changesOf(res[0]);
+      const left = new Set((await all(env, `SELECT id FROM claims WHERE id IN (${qs})`, ...ids)).map((x) => x.id));
+      for (const x of part) if (x.assigned_to && !left.has(x.id)) off.set(x.assigned_to, (off.get(x.assigned_to) || 0) + 1);
+    }
+    // the billers who had been given those claims are told (the bell), so a shorter list is no surprise
+    if (off.size) {
+      const cname = ((await one(env, "SELECT name FROM clients WHERE id = ?", b.client_id)) || {}).name || "";
+      await batchAll(env, [...off.entries()].map(([uid, n]) => env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)")
+        .bind(uuid(), uid, Date.now(), `${n} claim${n === 1 ? " was" : "s were"} taken off your list: the upload they came from was undone${cname ? " (" + cname + ")" : ""}.`, "queue", b.client_id)), 50);
     }
     // Claims this file refreshed: a state the file changed (closed, excluded, reopened) goes back, when nothing changed it since.
     let reverted = 0;
