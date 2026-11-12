@@ -356,6 +356,31 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-11: an edit with people still to complete leaves the task open", r2.ok && !r2.r.closed && (await w.row("SELECT status FROM team_tasks WHERE id = ?", tid2)).status === "open", r2);
 }
 
+{
+  S("E-12: deleting a client takes its team tasks and holds with it");
+  const { w, AR, arun, h } = await postingWorld();
+  const TI = await w.firstIn("Tina Lead");
+  const t = (await TI("tasks.create", { client_id: w.sun.id, scope: "AR follow-up", title: "Work the client's list", description: "made up", source: "Client", tat: { kind: "24" }, count: 4, people: [{ user_id: arun.id, share: 4 }] })).task.id;
+  const t2 = (await w.A("tasks.create", { client_id: w.lake.id, scope: "AR follow-up", title: "Another client's list", description: "made up", source: "Client", tat: { kind: "24" }, count: 2, people: [{ user_id: (await w.U("Cyra Agent")).id, share: 2 }] })).task.id;
+  const pid = (await AR("tasks.mine", {})).rows.find((x) => x.task_id === t).person_id;
+  await AR("tasks.update", { person_id: pid, done: 1, status: "in_progress", comment: "started on it", files: [{ name: "list.txt", type: "text/plain", data: Buffer.from("made-up list").toString("base64") }] });
+  const file = await w.row("SELECT id FROM team_task_files WHERE task_id = ?", t);
+  await w.sql("UPDATE team_tasks SET due_at = ? WHERE id = ?", Date.now() - 3600000, t);
+  const hold = await w.T(() => w.A("tat.hold", { kind: "handoff", id: h.id, reason: "Other", note: "waiting on the clearinghouse", until: w.today() }));
+  const n = async (q, ...a) => (await w.row(q, ...a)).n;
+  const before = { tasks: await n("SELECT COUNT(*) AS n FROM team_tasks WHERE client_id = ?", w.sun.id), holds: await n("SELECT COUNT(*) AS n FROM tat_holds WHERE client_id = ?", w.sun.id), file: !!file };
+  const r = await w.T(() => w.A("clients.delete", { id: w.sun.id, confirm: "Sunrise Eye Care" }));
+  const after = { tasks: await n("SELECT COUNT(*) AS n FROM team_tasks WHERE client_id = ?", w.sun.id), people: await n("SELECT COUNT(*) AS n FROM team_task_people WHERE task_id = ?", t),
+    updates: await n("SELECT COUNT(*) AS n FROM team_task_updates WHERE task_id = ?", t), files: await n("SELECT COUNT(*) AS n FROM team_task_files WHERE task_id = ?", t),
+    parts: file ? await n("SELECT COUNT(*) AS n FROM attachment_parts WHERE attachment_id = ?", file.id) : 0, holds: await n("SELECT COUNT(*) AS n FROM tat_holds WHERE client_id = ?", w.sun.id) };
+  ok("E-12: before the delete the client has a task with a file, and a hold", hold.ok && before.tasks === 1 && before.holds === 1 && before.file, { hold: hold.e, before });
+  ok("E-12: after it, the task, its people, updates, files and file data are gone", r.ok && !after.tasks && !after.people && !after.updates && !after.files && !after.parts, { e: r.e, after });
+  ok("E-12: the client's holds are gone too", !after.holds, after);
+  const bell = (await AR("notify.list", { today: w.today() })).items.filter((x) => x.key.startsWith("task_late:"));
+  ok("E-12: the biller's bell and My tasks no longer show it", !bell.length && !(await AR("tasks.mine", {})).rows.some((x) => x.task_id === t), bell);
+  ok("E-12: another client's task stays", t2 && (await n("SELECT COUNT(*) AS n FROM team_tasks WHERE id = ?", t2)) === 1);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

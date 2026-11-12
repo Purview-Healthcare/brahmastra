@@ -5491,9 +5491,12 @@ const OPS = {
       env.DB.prepare("DELETE FROM attachments WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
       env.DB.prepare("DELETE FROM claim_events WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
       env.DB.prepare("DELETE FROM handoffs WHERE client_id = ? OR claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id, ex.id),
-      // Everything else kept per client: the escalation tracker, shares, RACI, insurance limits, month-end, snapshots, notices and the rest.
+      // Its team tasks with their people, updates and files (the file data too).
+      env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id IN (SELECT f.id FROM team_task_files f JOIN team_tasks t ON t.id = f.task_id WHERE t.client_id = ?)").bind(ex.id),
+      ...["team_task_files", "team_task_updates", "team_task_people"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE task_id IN (SELECT id FROM team_tasks WHERE client_id = ?)`).bind(ex.id)),
+      // Everything else kept per client: the escalation tracker, shares, RACI, insurance limits, month-end, snapshots, notices, team tasks, holds and the rest.
       ...["escalations", "client_access", "raci", "payer_limits", "client_monthend", "client_snapshots", "inv_snapshots", "user_notices", "availability", "detail_uploads",
-        "ev_rows", "ev_batches", "creport_edits", "client_log", "digest_runs", "digest_log", "note_templates"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE client_id = ?`).bind(ex.id)),
+        "ev_rows", "ev_batches", "creport_edits", "client_log", "digest_runs", "digest_log", "note_templates", "team_tasks", "tat_holds"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE client_id = ?`).bind(ex.id)),
       env.DB.prepare("DELETE FROM claims WHERE client_id = ?").bind(ex.id),
       env.DB.prepare("DELETE FROM batches WHERE client_id = ?").bind(ex.id),
       env.DB.prepare("DELETE FROM allocations WHERE client_id = ?").bind(ex.id),
