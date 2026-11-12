@@ -186,7 +186,8 @@ changed and keeps working on its own address. Team leads and above, for their ow
 **Pages** (1280 x 720, like slides), in this order everywhere (the pages list, Present and the PDF): Cover (with the
 client's logo), Executive summary, EV, Submission, Rejections, Payment posting, Inventory analysis, Inventory
 breakdown, AR production, Denials, Top denials: RCA and Client assistance. A page with nothing in the period shows
-greyed out in the list and stays out of the PDF.
+greyed out in the list and stays out of the PDF and Present (the period before alone, which the comparison reads,
+does not count).
 
 **Where the figures come from**
 

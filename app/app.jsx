@@ -7116,6 +7116,8 @@ function crDatasets(raw) {
   out.inventory = inv(d.inventory, !!d.inventory.cells);
   out.inventoryPrev = inv(d.inventoryPrev, !!d.inventoryPrev.cells); out.inventoryPrev.role = "inventoryPrev";
   out._movement = Array.isArray(d.movement) ? d.movement : [];   // where the claims open at the period before went (not a dataset)
+  // the report's own period (the records cover the period before too, for the comparison): a page has data only when it has rows in it
+  out._period = raw.period && crD(raw.period.from) && crD(raw.period.to) ? { start: crD(raw.period.from), end: crD(raw.period.to) } : null;
   out.worked = crDataset("worked", d.worked, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, charge: r.chg, balance: r.amt, amount: r.chg != null ? r.chg : r.amt, bucket: r.bk,
     purviewStatus: r.st, status: r.sub, action: r.act, moveTo: r.mv, workDate: r.wd, workBy: r.by, loc: r.loc }), { dateField: "workDate" });
   out.payment = crDataset("payment", d.payment, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, checkNo: r.chk, paidDate: r.pd, paid: r.paid, charge: r.chg,
@@ -7983,7 +7985,9 @@ function crHasPage(DS, pid) {
   if (pid === "cover" || pid === "exec") return true;
   if (pid === "inventory" || pid === "inventory2") return !!(DS.inventory && DS.inventory.recs.length);
   const role = { ev: "ev", submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
-  return !!crDerived(DS, role);
+  if (!crDerived(DS, role)) return false;
+  // rows of the period before alone (fetched for the comparison) do not make a page: it is greyed out and stays out of the PDF
+  return !DS._period || crCtx(DS, { range: DS._period, compare: false }, pid, {}).rowsAll(role).length > 0;
 }
 /* the claims behind what the page shows (current filters), with search and CSV */
 const CR_COL_LABEL = { invoice: "Claim", dos: "DOS", bucket: "Age group", payerKey: "Payer", amount: "Amount", purviewStatus: "Status", status: "Reason / sub-status", action: "Action", workDate: "Date", workBy: "Worked by",
