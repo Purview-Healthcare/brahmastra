@@ -771,6 +771,40 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("N-15: and one that leaves out the team keeps the team", r.ok && JSON.parse(cc.team_json).length === team0.length && team0.length > 0 && cc.auto_allocate === 1, cc);
 }
 
+/* ================= N-16: two Shastra rows with the same Emp ID: neither takes an account by it ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, st, row, rows, sql } = w;
+  const AR = await w.c("Arun Agent");
+  const u = async (uid) => row("SELECT name, email, active, emp_id, department FROM users WHERE id = ?", uid);
+  const arun0 = await u(id["Arun Agent"]);
+  const dupAudits = async () => (await w.audits("roster.dupEmp")).length;
+  S("N-16: the same Emp ID on two rows");
+  // a new joiner entered with Arun's Emp ID by mistake, listed before him; and an HR row with Bela's Emp ID (HR gets no access)
+  const base = FEED();
+  st.feed = [P({ emp_id: "A1", name: "Neha Newjoiner", project: SUN, reports_to: "Tina Lead", email: "neha" + D }), ...base.map((r) => (r.name === "Cyra Agent" ? { ...r, department: "Posting" } : r)),
+    P({ emp_id: "a2 ", name: "Hari Hr", position: "Executive", department: "HR", email: "hari" + D })];
+  let r = await T(() => A("roster.syncShastra"));
+  const arun = await u(id["Arun Agent"]);
+  ok("N-16: the row listed first does not take the account of that Emp ID: Arun keeps his name, email and access", r.ok && arun.name === arun0.name && arun.email === arun0.email && arun.active === 1, [r.ok || r.e, arun0, arun]);
+  ok("N-16: and no account is made for the other row by it", !(await row("SELECT id FROM users WHERE name = 'Neha Newjoiner' OR email = ?", "neha" + D)));
+  const ws = r.ok ? r.r.warnings.filter((x) => (x.issues || []).some((i) => /same Emp ID/.test(i))) : [];
+  ok("N-16: the sync result says so for both rows, naming the Emp ID and the other person", ws.some((x) => x.name === "Neha Newjoiner" && /\(A1\) as Arun Agent/.test(x.issues.join())) && ws.some((x) => x.name === "Arun Agent" && /\(A1\) as Neha Newjoiner/.test(x.issues.join())), ws);
+  ok("N-16: an HR row with Bela's Emp ID does not switch Bela off either (whatever the spacing or case)", (await u(id["Bela Agent"])).active === 1 && ws.some((x) => x.name === "Hari Hr" && /\(A2\)/.test(x.issues.join())), ws.map((x) => x.name));
+  ok("N-16: the rest of the feed is applied as usual", (await u(id["Cyra Agent"])).department === "Posting");
+  const au = await w.audits("roster.dupEmp");
+  ok("N-16: the audit trail has one row naming both Emp IDs and the people", au.length === 1 && /A1 \(Neha Newjoiner, Arun Agent\)/.test(au[0].detail) && /A2 /.test(au[0].detail), au);
+  r = await T(() => A("roster.syncShastra"));
+  ok("N-16: the next (hourly) sync says it again in its result, without a second audit row", r.ok && r.r.warnings.some((x) => x.name === "Neha Newjoiner") && (await dupAudits()) === 1);
+  ok("N-16: Arun still signs in", (await T(() => AR("auth.me"))).ok);
+  // Shastra is fixed: Neha gets her own Emp ID, the HR row its own
+  st.feed = st.feed.map((x) => (x.name === "Neha Newjoiner" ? { ...x, emp_id: "N7" } : x.name === "Hari Hr" ? { ...x, emp_id: "H1" } : x));
+  r = await T(() => A("roster.syncShastra"));
+  const neha = await row("SELECT name, emp_id, active FROM users WHERE email = ?", "neha" + D);
+  ok("N-16: once fixed in Shastra the new joiner gets an account of her own and Arun keeps his", r.ok && neha && neha.emp_id === "N7" && neha.active === 1 && (await u(id["Arun Agent"])).name === "Arun Agent" && !r.r.warnings.some((x) => (x.issues || []).some((i) => /same Emp ID/.test(i))), [neha, r.ok && r.r.warnings]);
+  ok("N-16: and a later duplicate is in the audit trail again", (await (async () => { st.feed = [...st.feed, P({ emp_id: "T1", name: "Tom Twin", project: SUN, reports_to: "Mona Manager", email: "tom" + D })]; await A("roster.syncShastra"); return dupAudits(); })()) === 2);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

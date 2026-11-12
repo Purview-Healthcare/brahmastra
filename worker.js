@@ -1977,7 +1977,18 @@ async function importRoster(env, user, payload) {
   const byMail = new Map(); rows.forEach((r) => { if (rosterClassify(r).reason) return; const k = rowMail(r); byMail.set(k, [...(byMail.get(k) || []), r]); });
   const claimed = new Map(), planMail = new Map();
   const skipRow = (row, match, issue) => { if (match) used.add(match.id); warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues: [issue], skipped: true }); };
+  // Two Shastra rows with the same Emp ID: the one listed first would take the account of that Emp ID (and the other person could be
+  // switched off). Neither takes an account by it: both are skipped with a warning until Shastra is fixed, and no account either
+  // of them points to (by that Emp ID, their email or their name) is switched off meanwhile.
+  const empKey = (r) => String(r.emp_id || "").trim().toUpperCase();
+  const rowsByEmp = new Map(); rows.forEach((r) => { const k = empKey(r); if (k) rowsByEmp.set(k, [...(rowsByEmp.get(k) || []), r]); });
+  const dupEmp = [...rowsByEmp].filter(([, rs]) => rs.length > 1).map(([k]) => k).sort();
   for (const row of rows) {
+    if (dupEmp.includes(empKey(row))) {
+      for (const u of [byEmp.get(empKey(row)), mailOk(row.email) && byEmail.get(row.email), byName.get(row.name.trim().toLowerCase())]) if (u) used.add(u.id);
+      skipRow(row, null, `skipped: the same Emp ID (${empKey(row)}) as ${rowsByEmp.get(empKey(row)).filter((r) => r !== row).map((r) => r.name).join(", ")} in Shastra; neither takes an account by it until it is fixed in Shastra`);
+      continue;
+    }
     const match0 = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
     // A name or placeholder match already taken by another row is not this person's account.
     const strong = match0 && ((row.emp_id && match0.emp_id && match0.emp_id.toUpperCase() === row.emp_id.toUpperCase()) || (mailOk(row.email) && match0.email === row.email));
@@ -2073,6 +2084,13 @@ async function importRoster(env, user, payload) {
   await recomputeScopes(env);
   await autoMapProjects(env);
   await syncTeams(env);
+  // An Emp ID on more than one Shastra row goes in the audit trail when it first shows (the hourly sync does not repeat it).
+  const dupLast = (await getSetting(env, "roster_dup_emp", [])) || [];
+  if (JSON.stringify(dupEmp) !== JSON.stringify(dupLast)) {
+    const fresh = dupEmp.filter((k) => !dupLast.includes(k));
+    if (fresh.length) await audit(env, user, "roster.dupEmp", null, "The same Emp ID on more than one row in Shastra: " + fresh.map((k) => `${k} (${rowsByEmp.get(k).map((r) => r.name).join(", ")})`).join("; ") + ". Neither row took an account by it; fix it in Shastra.");
+    await setSetting(env, "roster_dup_emp", dupEmp);
+  }
   await setSetting(env, "roster_meta", { at: now, by: user.name || user.email, file: str(payload.file_name, 200), summary });
   return { ...out, applied: true };
 }
@@ -3691,7 +3709,7 @@ const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\
 // settings.get / settings.save: who reads and writes which keys (see the two ops).
 const SETTINGS_OPEN = ["onedrive_folder"], SETTINGS_LEAD = ["onedrive_folder", "digest_enabled"], SETTINGS_LEAD_SAVE = ["onedrive_folder"];
 const SETTINGS_ADMIN_OWN = ["extra_emails", "roster_meta", "feedback_to"];
-const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$)/;
+const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$|roster_dup_emp$)/;
 
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
