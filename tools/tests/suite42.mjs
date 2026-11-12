@@ -13,7 +13,8 @@ const rig = await makeRig({});
 const { as, tryOp, sha } = rig; const T = (fn) => tryOp(fn);
 await rig.app.seedDemo(() => {});
 const A = as((await as(null)("auth.login", { email: "supervisor@purview-healthcare.com", passHash: await sha("brahmastra-demo") })).token);
-const ev = (s) => vm.runInContext(s, rig.app);
+// the page's own code, run in the rig (a helper the page does not have gives "ERROR: ...", so the check fails instead of the suite)
+const ev = (s) => { try { return vm.runInContext(s, rig.app); } catch (e) { return "ERROR: " + e.message; } };
 const SRC = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
 const HTML = fs.readFileSync(REPO + "/index.html", "utf8");
 // one component's code in app.jsx: from "function Name(" to the next top-level function
@@ -26,9 +27,9 @@ const decls = (body) => { const out = {}; for (const d of body.split(";")) { con
 // the declarations of every rule whose selector list holds `sel`, in that @media (none: outside any), merged in order
 const rule = (sel, media = "") => Object.assign({}, ...RULES.filter((r) => r.media === media && r.sel.split(",").map((x) => x.trim()).includes(sel)).map((r) => decls(r.body)));
 const LIGHT = rule(":root"), THEME = { light: LIGHT, navy: { ...LIGHT, ...rule(':root[data-theme="navy"]') }, gold: { ...LIGHT, ...rule(':root[data-theme="gold"]') } };
-const rgba = (c) => { c = String(c).trim(); let m = c.match(/^#([0-9a-f]{6})$/i); if (m) return [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)).concat(1); m = c.match(/^rgba?\(([^)]+)\)$/); if (m) { const a = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return [a[0], a[1], a[2], a.length > 3 ? a[3] : 1]; } return null; };
-const over = (top, bot, alpha = 1) => { const a = top[3] * alpha; return [0, 1, 2].map((k) => top[k] * a + bot[k] * (1 - a)).concat(1); };
-const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+const rgba = (c) => { c = String(c).trim(); if (/^#[0-9a-f]{3}$/i.test(c)) c = "#" + [...c.slice(1)].map((x) => x + x).join(""); let m = c.match(/^#([0-9a-f]{6})$/i); if (m) return [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)).concat(1); m = c.match(/^rgba?\(([^)]+)\)$/); if (m) { const a = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return [a[0], a[1], a[2], a.length > 3 ? a[3] : 1]; } return null; };
+const over = (top, bot, alpha = 1) => { top = top || [0, 0, 0, 1]; bot = bot || [0, 0, 0, 1]; const a = top[3] * alpha; return [0, 1, 2].map((k) => top[k] * a + bot[k] * (1 - a)).concat(1); };
+const lum = (c) => { c = c || [0, 0, 0, 1]; const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
 const ratio = (a, b) => { const x = lum(a), y = lum(b); return Math.round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) * 100) / 100; };
 // a colour in a theme (tokens: the theme's values; var(--x) followed until it is a colour)
 const col = (theme, v, toks = THEME[theme]) => { let x = String(v).trim(); for (let k = 0; k < 6; k++) { const m = x.match(/^var\((--[\w-]+)\)$/); if (!m) break; x = String(toks[m[1]]).trim(); } return rgba(x); };
