@@ -2134,14 +2134,16 @@ async function shastraFloor(env, from, to, today, off) {
 }
 /* Shastra's attendance status for a day: in (a full day), a half day, unplanned (absent, sick, leave without pay),
    leave (approved, maternity, sabbatical) or off (week off, holiday, comp off: not a working day). Unknown or missing:
-   Brahmastra's own Out today mark decides. */
+   Brahmastra's own Out today mark decides. Shastra still reads its older spellings "half-day" and "leave" (approved
+   leave), and counts Overtime as a day at work. */
 function shastraDay(status) {
   const s = String(status || "").trim().toLowerCase();
   if (!s) return null;
   if (["present", "late", "p", "l"].includes(s)) return { share: 1, kind: "in" };
-  if (["half_day", "half_day_lwp", "hd", "hd-lwp"].includes(s)) return { share: 0.5, kind: "half" };
+  if (["overtime", "ot"].includes(s)) return { share: 1, kind: "in", overtime: true };
+  if (["half_day", "half-day", "half_day_lwp", "hd", "hd-lwp"].includes(s)) return { share: 0.5, kind: "half" };
   if (["absent", "a", "sick_leave", "sl", "lwp"].includes(s)) return { share: 0, kind: "unplanned" };
-  if (["approved_leave", "al", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { share: 0, kind: "leave" };
+  if (["approved_leave", "leave", "al", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { share: 0, kind: "leave" };
   if (["week_off", "wo", "holiday", "h", "ho", "comp_off", "co", "not_joined", "nj", "attrite", "att"].includes(s)) return { share: 0, kind: "off" };
   return null;
 }
@@ -4202,7 +4204,9 @@ const OPS = {
       const fd = fl.byUser.get(u.id);
       let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0;
       for (const d of span) {
-        const x = fd && fd.get(d), sd = x ? shastraDay(x.status) : null, wd = weekday(d);
+        const x = fd && fd.get(d), sd0 = x ? shastraDay(x.status) : null, wd = weekday(d);
+        // Overtime on a working day is a day in; a weekend or holiday worked as overtime adds no target (its entries still count)
+        const sd = sd0 && sd0.overtime && !wd ? null : sd0;
         let share = 0;
         if (sd) { share = sd.share; if (sd.kind === "in") full++; else if (sd.kind === "half") half++; else if (sd.kind !== "off") { out++; if (sd.kind === "unplanned") unplanned++; } }
         else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
