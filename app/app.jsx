@@ -5456,7 +5456,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   // a desk still has the claim (Payment posting, Submission or Rejections): a team lead closes or excludes it once the desk is done
   const atDesk = ((q.data && q.data.handoffs) || []).find((h) => h.dept !== "subcheck" && ["pending", "assigned", "client"].includes(h.status));
   const changed = () => { q.reload(); setVer((v) => v + 1); onChanged && onChanged(); };
-  const act = async (label, fn) => { setBusy(true); try { await fn(); toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  // Say what the server did, never a success that did not happen: an action that changed nothing says so (none: why, when known).
+  const act = async (label, fn, none) => { setBusy(true); try { const r = await fn(); if (r && r.changed === 0) toast(none || "Nothing changed: the claim may have changed meanwhile. Open it again.", "err"); else toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const sup = me.role === "supervisor";
   // a pop-up like the others: Esc closes it when nothing is open on top of it (a box opened from it closes first)
   const L = useLayer(onClose);
@@ -5475,8 +5476,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
               <div className="card tight row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <span className="cv-sec" style={{ margin: 0 }}>Team lead actions</span>
                 <Combo sm width={220} value={user} onChange={setUser} placeholder="Assign to…" options={ctx.users.filter((u) => u.active && (u.role === "user" || u.id === me.id)).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
-                <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }))}>Assign</button>
-                {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }))}>Unassign</button>}
+                <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }), c.state === "closed" || c.state === "excluded" ? `Not assigned: this claim is ${c.state === "closed" ? "closed" : "excluded from the inventory"}. Reopen it first, then assign it.` : c.state === "in_process" ? "Not assigned: this claim is with Payment posting or Submission now." : "")}>Assign</button>
+                {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }), "Nothing to unassign: the claim is no longer on anyone's list.")}>Unassign</button>}
                 {!atDesk && (c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
                 {!atDesk && c.state !== "closed" && <button className="btn sm danger" disabled={busy} onClick={() => act("Closed.", () => rpc("claims.setState", { ids: [id], state: "closed" }))}>Close</button>}
                 {!atDesk && c.state !== "excluded" && c.state !== "closed" && <button className="btn sm" disabled={busy} onClick={() => act("Excluded.", () => rpc("claims.setState", { ids: [id], state: "excluded" }))}>Exclude</button>}

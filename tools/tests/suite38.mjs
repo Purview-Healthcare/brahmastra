@@ -540,6 +540,22 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("N-17: a switched-off location that would receive claims is switched on again, and the result says so", /for \(const g of groups\) if \(g\.loc && !g\.loc\.active\) \{ const r = await rpc\("locations\.save", \{ id: g\.loc\.id, name: g\.loc\.name, active: true \}\)/.test(src) && /\$\{r\.note \? " \(" \+ r\.note \+ "\)" : ""\}/.test(src));
 }
 
+{
+  // The claim drawer is page code (React) this rig does not render; the page itself is checked in a browser by
+  // fix-E/repro-N-20.js. Here: the server's answer for a closed claim, and the drawer's rule for showing it.
+  S("N-20: the claim drawer says what the server did, never a success that did not happen");
+  const w = await world();
+  const c = await w.row("SELECT id FROM claims WHERE client_id = ? AND state = 'open' LIMIT 1", w.sun.id);
+  await w.A("claims.setState", { ids: [c.id], state: "closed" });
+  const arun = await w.U("Arun Agent");
+  const r = await w.T(() => w.A("alloc.reassign", { ids: [c.id], user_id: arun.id }));
+  const after = await w.row("SELECT state, assigned_to FROM claims WHERE id = ?", c.id);
+  ok("N-20: assigning a closed claim changes nothing and the server says so (changed 0)", r.ok && r.r.changed === 0 && after.state === "closed" && !after.assigned_to, { r, after });
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("N-20: the drawer shows a success only when something changed", /const act = async \(label, fn, none\) => \{ setBusy\(true\); try \{ const r = await fn\(\); if \(r && r\.changed === 0\) toast\(none \|\| /.test(src));
+  ok("N-20: Assign on a closed or excluded claim says it was not assigned and why", /Not assigned: this claim is \$\{c\.state === "closed" \? "closed" : "excluded from the inventory"\}\. Reopen it first, then assign it\./.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
