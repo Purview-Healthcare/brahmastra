@@ -1682,6 +1682,20 @@ function AllocBanner({ items, onGo, onSeen }) {
     </div>
   );
 }
+/* Does the menu fit on one line between the logo and the tools? (widths in px; room: the bar's width inside its padding) */
+const menuFits = (logo, items, navGap, tools, gap, room) => logo + items.reduce((t, x) => t + x, 0) + Math.max(0, items.length - 1) * navGap + tools + 2 * gap <= room + 0.5;
+/* A menu of the top bar (Work, Manage): it opens under its button, and leftwards from the button's right edge when it would
+   run off the right of the screen (the menu on its own row on a tablet ends near the edge). */
+function NavMenu({ children }) {
+  const ref = useRef(null);
+  const [flip, setFlip] = useState(false);
+  React.useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect(), b = el.parentElement.getBoundingClientRect();
+    if (r.right > document.documentElement.clientWidth - 4 && b.right - r.width >= 4) setFlip(true);
+  }, []);
+  return <div ref={ref} className={"menu" + (flip ? " flip" : "")}>{children}</div>;
+}
 function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount, attention, handoffs, fb, notify, tasks, onGo, onSearch, onRefreshNotify, children }) {
   const [menu, setMenu] = useState(false);
   useEffect(() => {
@@ -1696,6 +1710,19 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   useEffect(() => { if (!menu && !openG) return undefined; const k = (e) => { if (e.key === "Escape") { setMenu(false); setOpenG(null); } };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [menu, openG]);
   const [fbOpen, setFbOpen] = useState(false);
+  // The menu takes a row of its own under the logo whenever it does not fit on one line beside the logo and the tools (a
+  // tablet held upright, a half-screen window), instead of being squeezed into a narrow column; on a phone it always has one.
+  const barRef = useRef(null);
+  const [navRow, setNavRow] = useState(false);
+  React.useLayoutEffect(() => {
+    const fit = () => {
+      const el = barRef.current; if (!el) return;
+      const nav = el.querySelector(":scope > .nav"), logo = el.querySelector(":scope > .wordmark"), tools = el.querySelector(":scope > .top-tools"); if (!nav || !logo || !tools) return;
+      const w = (x) => x.getBoundingClientRect().width, cs = getComputedStyle(el), px = (v) => parseFloat(v) || 0;
+      setNavRow(!menuFits(w(logo), [...nav.children].map(w), px(getComputedStyle(nav).columnGap), w(tools), px(cs.columnGap), el.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)));
+    };
+    fit(); window.addEventListener("resize", fit); return () => window.removeEventListener("resize", fit);
+  });
   const nav = navFor(me, handoffs, fb, attention, tasks);
   const pageLabel = (navItems(nav).find(([k]) => k === view) || [view, view === "settings" ? "Settings" : view === "digest" ? "Monday digest" : view === "mytasks" ? "My tasks" : view])[1];
   // Client 360 is off the menu (it opens from Dashboard › Client 360 report): the Dashboard tab stays lit on it
@@ -1712,15 +1739,15 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   return (
     <div>
       {DEMO && <div className="banner">Demo mode: the server runs inside this browser and nothing is shared. Set <span className="mono">API_BASE</span> in index.html to go live.</div>}
-      <div className="topbar"><div className="topbar-in">
+      <div className="topbar"><div className={"topbar-in" + (navRow ? " nav-row" : "")} ref={barRef}>
         <Wordmark size={20} tag={deskOf(me, handoffs) ? DESK[deskOf(me, handoffs)].role + (me.role === "supervisor" ? " lead" : "") : roleLabel(me).toLowerCase()} />
         <div className="nav" style={{ flex: 1 }}>{nav.map((e) => Array.isArray(e)
           ? <button key={e[0]} className={navKey === e[0] ? "active" : ""} onClick={() => { setOpenG(null); setView(e[0]); }}>{e[1]}{navBadge(e[0])}</button>
           : <div key={e.g} className="nav-group" onClick={(ev) => ev.stopPropagation()}>
               <button className={e.items.some(([k]) => k === navKey) ? "active" : ""} onClick={() => setOpenG(openG === e.g ? null : e.g)}>{e.g} ▾{openG !== e.g && (e.items.map(([k]) => navBadge(k)).find(Boolean) || null)}</button>
-              {openG === e.g && <div className="menu">
+              {openG === e.g && <NavMenu>
                 {e.items.map(([k, l]) => <button key={k} className={navKey === k ? "on" : ""} onClick={() => { setOpenG(null); setView(k); }}>{l}{navBadge(k)}</button>)}
-              </div>}
+              </NavMenu>}
             </div>)}</div>
         <div className="top-tools">
         <button type="button" className="btn sm cmdk-btn" onClick={onSearch} title="Search pages, clients, people and claims (Ctrl+K)"><SearchIcon /><span className="cmdk-lbl">Search</span><kbd>Ctrl K</kbd></button>

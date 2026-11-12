@@ -155,6 +155,20 @@ const pv = (v) => col("light", v, { ...LIGHT, ...PR });
 ok("H-10: printed: a light page and white cards with dark text (at least 4.5 to 1)", lum(pv("var(--paper)")) > 0.8 && lum(pv("var(--card)")) > 0.95 && ratio(pv("var(--ink)"), pv("var(--card)")) >= 4.5 && ratio(pv("var(--dd-r)"), pv("var(--card)")) >= 4.5);
 ok("H-10: the PDF button marks the page for that print (body.dd-printing)", /classList\.add\("dd-printing"\)/.test(fnSrc("DigestDashboard")));
 
+S("The top bar on a tablet: the menu on a row of its own when it does not fit beside the logo (H-06)");
+// the natural widths measured on the page (logo 155 px, tools about 310 px, gaps 18 px, menu items 2 px apart)
+const adminMenu = [52, 45, 135, 98, 92, 70, 84, 100];   // 8 items, 676 px in all (RACI ... Manage ▾)
+const billerMenu = [70, 95, 84];                         // 3 items, 249 px
+ok("H-06: a team lead or admin at 768 px (an iPad upright): the menu does not fit beside the logo, so it gets its own row", ev(`menuFits(155, ${JSON.stringify(adminMenu)}, 2, 308, 18, 728)`) === false);
+ok("H-06: on that row of its own (728 px) the whole menu fits on one line", ev(`menuFits(0, ${JSON.stringify(adminMenu)}, 2, 0, 0, 728)`) === true);
+ok("H-06: at 1280 px it fits beside the logo: one row, as before", ev(`menuFits(155, ${JSON.stringify(adminMenu)}, 2, 308, 18, 1240)`) === true);
+ok("H-06: a biller's short menu at 1024 px still sits beside the logo, as before", ev(`menuFits(155, ${JSON.stringify(billerMenu)}, 2, 310, 18, 984)`) === true);
+const shell = fnSrc("Shell");
+ok("H-06: Shell measures the bar on every change and resize and marks it nav-row when the menu does not fit", /setNavRow\(!menuFits\(/.test(shell) && /addEventListener\("resize", fit\)/.test(shell) && /"topbar-in" \+ \(navRow \? " nav-row" : ""\)/.test(shell));
+const tab = rule(".topbar-in.nav-row>.nav", "(min-width:761px)");
+ok("H-06: a marked bar puts the menu on its own full-width row (above phone width; phones keep their own rule)", tab.order === "3" && /^1 1 100%/.test(tab.flex || ""), tab);
+ok("H-06: a top-bar menu that would run off the right edge opens leftwards from its button", /setFlip\(true\)/.test(fnSrc("NavMenu")) && rule(".nav .menu.flip", "(min-width:761px)").right === "0" && /<NavMenu>/.test(shell));
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

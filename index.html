@@ -93,6 +93,8 @@ a{color:var(--tealink)}
 .topbar{background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
 .topbar-in{max-width:1360px;margin:0 auto;padding:8px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
 .nav{display:flex;gap:2px;flex-wrap:wrap}
+/* the menu on a row of its own under the logo when it does not fit beside the logo and the tools (Shell measures it; phones below) */
+@media(min-width:761px){.topbar-in.nav-row{row-gap:6px}.topbar-in.nav-row>.nav{order:3;flex:1 1 100% !important}.nav .menu.flip{left:auto;right:0}}
 .nav button{padding:9px 13px;font-weight:600;font-size:13.5px;color:var(--slate);background:transparent;border:none;border-bottom:3px solid transparent;cursor:pointer;border-radius:8px 8px 0 0;font-family:inherit}
 .nav button.active{color:var(--tealink);border-bottom-color:var(--teal);background:var(--soft)}
 .nav button:not(.active):hover{color:var(--ink);background:var(--hover)}
@@ -671,4 +673,4 @@ tr.inv-risk td{background:color-mix(in srgb,var(--sc-r) 4%,var(--card))}
 .claim-tips .tip{font-size:12.8px;line-height:1.45;margin-top:3px}.claim-tips .tip.red b{color:var(--red-ink)}.claim-tips .tip.amber b{color:var(--amber-ink)}
 </style>
 </head><body><div id="root"></div>
-<script src="app/app.js?v=a0cab806ed"></script></body></html>
+<script src="app/app.js?v=2b748f53fa"></script></body></html>
