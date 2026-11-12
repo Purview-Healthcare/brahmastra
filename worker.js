@@ -5275,6 +5275,7 @@ const OPS = {
     editableOr(user, l.client_id);
     if (l.by_id !== user.id && !(user.role === "supervisor" && !isSME(user))) throw denied("Only the person who wrote it or a team lead can remove it.");
     await run(env, "DELETE FROM client_log WHERE id = ?", l.id);
+    await audit(env, user, "client.logRemove", l.client_id, `${l.kind} by ${l.by_name || "someone"} on ${istISO(l.at)}: ${String(l.text || "").slice(0, 80)}`);
     return { ok: true };
   },
   "monthend.set": async ({ env, user, payload }) => {
@@ -5284,7 +5285,12 @@ const OPS = {
     if (!step) throw bad("Pick the month and the step.");
     const month = okMonth(payload.month, istISO(Date.now())) ? payload.month : null;
     if (!month) throw bad("Pick a month from January to December, not later than this month.");
-    if (payload.done === false) { await run(env, "DELETE FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]); return { ok: true }; }
+    if (payload.done === false) {
+      const was = await one(env, "SELECT done_at FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]);
+      await run(env, "DELETE FROM client_monthend WHERE client_id = ? AND month = ? AND step = ?", clientId, month, step[0]);
+      if (was && was.done_at) await audit(env, user, "monthend." + step[0], clientId, monthName(month) + " · marked not done");
+      return { ok: true };
+    }
     let score = null;
     if (step[0] === "sla") {
       score = payload.score == null || payload.score === "" || typeof payload.score === "boolean" ? NaN : Number(payload.score);

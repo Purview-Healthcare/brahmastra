@@ -2279,7 +2279,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
   );
 }
 const CLIENT_ACTION = { "client.save": "Profile", "client.responsibility": "Responsibility", "client.team": "Team", "client.location": "Location", "access.share": "Shared", "access.remove": "Share removed",
-  "raci.save": "RACI", "client.log": "Call log", "digest.sendNow": "Digest" };
+  "raci.save": "RACI", "client.log": "Call log", "client.logRemove": "Call log", "digest.sendNow": "Digest" };
 function ClientHistory({ c, onClose }) {
   const q = useRpc("clients.history", { client_id: c.id }, [c.id]);
   const rows = (q.data && q.data.rows) || [];
@@ -6565,7 +6565,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
 }
 const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took a share back", "raci.save": "Changed the RACI", "feedback.recipients": "Changed who gets feedback",
   "client.responsibility": "Changed posting / submission responsibility", "settings.save": "Changed settings", "client.delete": "Deleted a client", "client.save": "Edited a client",
-  "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
+  "user.save": "Changed a team member", "client.log": "Logged a client call", "client.logRemove": "Removed a client call log entry", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
