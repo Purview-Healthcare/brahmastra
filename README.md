@@ -1058,7 +1058,8 @@ can move them afterwards on Allocate or Claims.
 
 Excel (`.xlsx`, `.xls`) and CSV are accepted. Dates are read month first (05/06/2026 is 6 May) unless a date in
 the same column, such as 13/06/2026, shows the column is written day first: then the whole column is read day first
-(05/06/2026 is 5 June). Columns are matched by name
+(05/06/2026 is 5 June). A date without its year or day (26-Oct, October 2026) is not read: the cell is left empty
+and the upload says how many dates it could not read (the EV upload leaves such a row out and says so). Columns are matched by name
 (`IG Claim ID#/Charge ID#`, `Claim ID`, `Patient Name`, `Payer`, `DOS`, `CPT`,
 `Provider`, `Balance Amount($)`, `Status`, `Sub Status`, `Action`,
 `Comments/Notes`, `Date Worked`, and the usual variants); when a claim column

@@ -443,6 +443,85 @@ S("A-09: dates in the AR production file and the Production CSVs");
   ok("A-09: the week and date range columns stay as they were (mm/dd/yyyy text)", /^\d{2}\/\d{2}\/\d{4} - \d{2}\/\d{2}\/\d{4}$/.test(c1[col("Date Range")]) && /^WE-\d{2}\/\d{2}\/\d{4}$/.test(c1[col("Week")]), [c1[col("Date Range")], c1[col("Week")]]);
 }
 
+S("N-06: an amount written with the word Credit is a credit");
+{
+  const pm = (v) => app.parseMoney(v);
+  ok("N-06: 45.00 CREDIT, Credit 45.00, 45.00 Cr. and 45.00 cr are a credit of 45, like 45.00CR", [pm("45.00 CREDIT"), pm("Credit 45.00"), pm("45.00 Cr."), pm("45.00 cr"), pm("45.00CR")].every((n) => n === -45),
+    [pm("45.00 CREDIT"), pm("Credit 45.00"), pm("45.00 Cr."), pm("45.00 cr")]);
+  ok("N-06: a debit stays positive (45.00 DR, 45.00 DEBIT)", pm("45.00 DR") === 45 && pm("45.00 DEBIT") === 45, [pm("45.00 DR"), pm("45.00 DEBIT")]);
+  const cl = await mkClient("Made-up Clinic S35 N06");
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"],
+    ["9806601", "Test Patient One", "Aetna", "09/15/2026", "45.00 CREDIT", "Pending"], ["9806602", "Test Patient Two", "Aetna", "09/15/2026", "45.00 Cr.", "Pending"]]);
+  const got = await claimsOf(cl);
+  ok("N-06: both load as credit balances (-45, set aside), not as workable claims", got.length === 2 && got.every((c) => c.balance === -45 && c.state === "excluded" && c.state_reason === "credit balance"), got.map((c) => [c.claim_no, c.balance, c.state]));
+  // the same reading on the server: the client's own balance column copied into the Submission file
+  const sc = await mkClient("Made-up Clinic S35 N06 Sub");
+  await upload(sc, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "VEC Patient Balance"],
+    ["9806701", "Test Patient One", "Aetna", "09/15/2026", "300.00", "Rejected", "45.00 CREDIT"], ["9806702", "Test Patient Two", "Aetna", "09/16/2026", "200.00", "Rejected", "Credit 12.50"]]);
+  const row = await withOneDrive(async () => {
+    await A("clients.saveResponsibility", { client_id: sc.id, dept: "submission", mode: "person", lead: adminId });
+    const ids = (await claimsOf(sc)).map((c) => c.id);
+    await A("alloc.reassign", { ids, user_id: adminId });
+    for (const id of ids) {
+      await A("queue.complete", { id, today: TODAY, saag: { status: "Claim In Process", sub_status: "Need to allow some time", action: "Correction, Resubmission & Reprocessing", bucket: "Payer", effective: "Pending-Collectible Insurance" }, note: { source: "Portal", findings: "Member ID corrected, to be resubmitted", action: "follow up" } });
+      const h = await q1("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'submission'", id);
+      const r = await T(() => A("handoffs.close", { id: h && h.id, outcome: "complete", today: TODAY, note: "Resubmitted", proof: { date: TODAY, ref: "B-2", mode: "Portal", inv_status: "Resubmitted", bucket: "Payer", claim_type: "Resubmission", type: "" } }));
+      if (!r.ok) return r;
+      await sleep(400);
+    }
+    const book = odFile("Made-up Clinic S35 N06 Sub", "Submission", "Submission"), tab = book && book.sheets.find((t) => t.name === "Submission");
+    return tab ? tab.rows : null;
+  });
+  const iBal = Array.isArray(row) && row[0] ? row[0].indexOf("VEC Patient Balance") : -1;
+  ok("N-06: in the Submission file a client balance written 45.00 CREDIT is -45 and Credit 12.50 is -12.5", iBal >= 0 && row[1][iBal] === -45 && row[2][iBal] === -12.5, row && row.e ? row.e : row && row.slice(0, 3).map((x) => x[iBal]));
+}
+
+S("N-05: a date with no year (or no day) is no date, and the screen says so");
+{
+  const pd = (v, o) => app.parseDateAny(v, o);
+  ok("N-05: 26-Oct, Oct 26, Dec-25, October 2026 and Week 44 are no date (the browser would make up 2001, the 1st or 2044)", ["26-Oct", "Oct 26", "Dec-25", "October 2026", "Week 44"].every((v) => pd(v) === ""),
+    ["26-Oct", "Oct 26", "Dec-25", "October 2026", "Week 44"].map((v) => v + ":" + pd(v)));
+  ok("N-05: dates that say their year and day still read: Oct 26, 2026 / 26-Oct-26 / Oct 1, 2026 / 26 October 2026", pd("Oct 26, 2026") === "2026-10-26" && pd("26-Oct-26") === "2026-10-26" && pd("Oct 1, 2026") === "2026-10-01" && pd("26 October 2026") === "2026-10-26",
+    [pd("Oct 26, 2026"), pd("26-Oct-26"), pd("Oct 1, 2026"), pd("26 October 2026")]);
+  ok("N-05: a date of birth needs its day and year too (March 15, 1952 reads; June 1952 and 1952 do not)", pd("March 15, 1952", { dob: true }) === "1952-03-15" && pd("June 1952", { dob: true }) === "" && pd("1952", { dob: true }) === "",
+    [pd("March 15, 1952", { dob: true }), pd("June 1952", { dob: true }), pd("1952", { dob: true })]);
+  const HN = ["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "Date Worked"];
+  const fresh = build([HN, ["9805501", "Test Patient One", "Aetna", "26-Oct", "100", "Pending", "N/A"], ["9805502", "Test Patient Two", "Aetna", "10/26/2026", "100", "Pending", "26-Oct"], ["Total", "", "", "Grand total", "200", "", ""]]);
+  const d1 = fresh.claims.find((c) => c.claim_no === "9805501");
+  ok("N-05: in an inventory file the DOS 26-Oct is left empty (no DOS), never 2001", d1 && d1.dos === "" && d1.age_days === null, d1 && [d1.dos, d1.age_days]);
+  ok("N-05: the upload counts it as a date not read (a fresh file's Date Worked column and the footer row are not counted)", fresh.summary.datesUnread === 1, fresh.summary.datesUnread);
+  const worked = build([HN, ["9805503", "Test Patient Three", "Aetna", "10/20/2026", "100", "Pending", "26-Oct"]], "worked");
+  ok("N-05: in a previously worked file a Date Worked of 26-Oct is no date, and counted", worked.claims[0].last_worked_on === "" && worked.summary.datesUnread === 1, [worked.claims[0].last_worked_on, worked.summary.datesUnread]);
+  const ev = app.crReadEV(new TextEncoder().encode("Date Verified,Insurance,Status\n26-Oct,Aetna,Active coverage\n10/27/2026,Aetna,Active coverage\n"), "EV.csv");
+  ok("N-05: the EV upload leaves a check dated 26-Oct out (and says how many) instead of filing it in 2001", ev.n === 1 && ev.skipped === 1 && ev.from === "2026-10-27" && ev.to === "2026-10-27", [ev.n, ev.skipped, ev.from, ev.to]);
+}
+
+S("N-04: an unreadable date of birth never replaces a good one");
+{
+  const cl = await mkClient("Made-up Clinic S35 N04");
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"],
+    ...["9804401", "9804402", "9804403", "9804404"].map((n, i) => [n, "Test Patient " + i, "Medicare", "09/15/2026", "300", "Pending"])]);
+  const fill = async (rows, overwrite, name = "details.csv") => { const t = readCsv(rows, name);
+    return A("inventory.enrich", { client_id: cl.id, purpose: "DOB / member ID needed for calls", file_name: name, overwrite, rows: app.detailRows({ rows: t.rows, map: app.detailAutoMap(t.headers) }) }); };
+  const dobs = async () => Object.fromEntries((await claimsOf(cl)).map((c) => [c.claim_no, c.patient_dob]));
+  await fill([["Claim ID", "DOB"], ["9804401", "06/15/1952"], ["9804403", "01/02/1960"]], false);
+  const r = await fill([["Claim ID", "DOB"], ["9804401", "N/A"], ["9804402", "Unknown"], ["9804403", "03/04/1961"], ["9804404", "12/15/2027"]], true, "next.csv");
+  let d = await dobs();
+  ok("N-04: with Overwrite ticked, DOB N/A leaves the good DOB on file (06/15/1952)", d["9804401"] === "1952-06-15", d);
+  ok("N-04: an unreadable DOB (Unknown) or one in the future (12/15/2027) is not stored where there was none", d["9804402"] === "" && d["9804404"] === "", d);
+  ok("N-04: a DOB that reads still replaces the one on file when Overwrite is ticked (01/02/1960 to 03/04/1961)", d["9804403"] === "1961-03-04", d);
+  ok("N-04: the upload counts the three rows as DOB not read, and Upload history shows it", r.fields.dob_unread === 3 && (await A("inventory.enrichList", {})).rows.find((h) => h.id === r.upload_id).fields.dob_unread === 3, [r.fields, r.updated]);
+  ok("N-04: the page never sends the unreadable text (the row says DOB not read instead)", (() => { const rows = app.detailRows({ rows: [{ "Claim ID": "1", DOB: "N/A" }], map: { claim_no: "Claim ID", patient_dob: "DOB" } }); return rows[0].patient_dob === "" && rows[0].dob_unread === 1; })());
+  // the server on its own, as an older page would call it: text that is no date is not stored, and counted
+  const r2 = await A("inventory.enrich", { client_id: cl.id, purpose: "DOB / member ID needed for calls", file_name: "old page.csv", overwrite: true, rows: [{ claim_no: "9804401", patient_dob: "N/A" }, { claim_no: "9804403", patient_dob: "1961-03-05" }] });
+  d = await dobs();
+  ok("N-04: the server never stores a DOB that is not a real date, even sent as text", d["9804401"] === "1952-06-15" && d["9804403"] === "1961-03-05" && r2.fields.dob_unread === 1, [d, r2.fields]);
+  // a DOB on file that is no date (stored by an older upload) counts as empty: a real one fills it without Overwrite
+  await x("UPDATE claims SET patient_dob = 'N/A' WHERE client_id = ? AND claim_no = '9804402'", cl.id);
+  await fill([["Claim ID", "DOB"], ["9804402", "07/08/1949"]], false, "fix.csv");
+  ok("N-04: a DOB on file that is not a date (N/A) is filled by a real one, Overwrite or not", (await dobs())["9804402"] === "1949-07-08", await dobs());
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
