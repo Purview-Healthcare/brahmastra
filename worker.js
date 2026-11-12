@@ -1655,7 +1655,10 @@ function drSummary(ov, clients, today) {
     const cur = list[0]; if (!cur) { out.set(c.id, { drishti_id: d.id, owner: d.owner, ambiguous, period: null }); continue; }
     const prev = list.find((p) => p !== cur && p.kind === cur.kind && p.range.to < cur.range.from) || null;
     const sc = drScore(d, cur, prev);
+    // kpi_red: the KPIs in the red by name (SLA task lines are not KPIs; the Portfolio's "KPIs in the red" and the digest's
+    // "N of M KPIs on target" count KPIs only)
     out.set(c.id, { drishti_id: d.id, owner: d.owner, ambiguous, period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to }, score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts,
+      kpi_red: sc.items.filter((x) => x.kind === "KPI" && x.status === "miss").map((x) => x.name),
       scopes: sc.scopes.map((x) => ({ key: x.key, short: x.short, pct: x.pct, band: x.band })), drags: sc.drags.slice(0, 4).map((x) => ({ name: x.name, scope: x.scope, shown: x.shown, status: x.status })) });
   }
   return out;
@@ -4794,7 +4797,7 @@ const OPS = {
       const r = raci.get(c.id);
       return { client_id: c.id, client: c.name, code: c.code, health: hh.health, reasons: hh.reasons.map((x) => x.text), tl: r ? r.a.map((p) => p.name) : [], manager: r ? r.c.map((p) => p.name) : [],
         ar: a.bal, ar_owed: a.balp || 0, o90_owed: a.o90p || 0, claims: a.n, ar_month_ago: ago.get(c.id) ? ago.get(c.id).ar_balance : null, over90_pct: pct, sla: sl ? { score: sl.score, month: sl.month } : null,
-        drishti: dr && dr.period && dr.score != null ? { score: dr.score, band: dr.band, delta: dr.delta, label: dr.period.label, kind: dr.period.kind, counts: dr.counts, scopes: dr.scopes, drags: dr.drags } : null,
+        drishti: dr && dr.period && dr.score != null ? { score: dr.score, band: dr.band, delta: dr.delta, label: dr.period.label, kind: dr.period.kind, counts: dr.counts, kpi_red: dr.kpi_red, scopes: dr.scopes, drags: dr.drags } : null,
         missed: missN, waiting: w ? { n: w.n, bal: w.bal, oldest } : null, escalations_late: e ? e.late || 0 : 0, tfl_soon: t.soon_bal, tfl_soon_n: t.soon_n, tfl_past_n: t.past_n,
         to_work: a.to_work || 0, per_day: Math.round(perDay * 10) / 10, people: pc ? pc.people : 0, days_to_clear: perDay ? Math.ceil((a.to_work || 0) / perDay) : null,
         last_inventory: lastInv.get(c.id) ? lastInv.get(c.id).at : null, collected_month: coll.get(c.id) ? coll.get(c.id).amt : 0,
@@ -4818,7 +4821,8 @@ const OPS = {
     const slas = rows.filter((r) => r.sla); const drAll = rows.filter((r) => r.drishti), drRows = drAll.filter((r) => r.drishti.kind === "month");
     const drishti = { state: drOv.state, stale: !!drOv.stale, error: drOv.error || "", avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
       bands: { ok: drRows.filter((r) => r.drishti.band === "ok").length, warn: drRows.filter((r) => r.drishti.band === "warn").length, miss: drRows.filter((r) => r.drishti.band === "miss").length },
-      weeks_only: drAll.length - drRows.length, red: drRows.reduce((t, r) => t + r.drishti.counts.miss, 0), red_names: [...new Set(drRows.flatMap((r) => r.drishti.drags.filter((d) => d.status === "miss").map((d) => d.name)))].slice(0, 4), clients_red: drRows.filter((r) => r.drishti.counts.miss > 0).length };
+      // KPIs in the red: KPIs only (an SLA task line under 70% is red on the scorecard, but it is not a KPI)
+      weeks_only: drAll.length - drRows.length, red: drRows.reduce((t, r) => t + r.drishti.kpi_red.length, 0), red_names: [...new Set(drRows.flatMap((r) => r.drishti.kpi_red))].slice(0, 4), clients_red: drRows.filter((r) => r.drishti.kpi_red.length > 0).length };
     
     return { rows, freshness: fresh, drishti, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, ar_comparable: arComparable, over90_pct: totOwed ? Math.round(totO90 / totOwed * 1000) / 10 : 0,
       sla_avg: slas.length ? Math.round(slas.reduce((t, r) => t + r.sla.score, 0) / slas.length * 10) / 10 : null, collected_month: sum("collected_month"),
@@ -6466,8 +6470,8 @@ const OPS = {
     const scored = rows.filter((x) => x.score != null);
     return { state: ov.state, stale: !!ov.stale, error: ov.error || "", at: ov.at, rows, totals: { avg: scored.length ? Math.round(scored.reduce((t, x) => t + x.score, 0) / scored.length) : null,
       bands: { ok: scored.filter((x) => x.band === "ok").length, warn: scored.filter((x) => x.band === "warn").length, miss: scored.filter((x) => x.band === "miss").length },
-      red: scored.reduce((t, x) => t + x.counts.miss, 0), amber: scored.reduce((t, x) => t + x.counts.warn, 0),
-      red_names: [...new Set(rows.flatMap((x) => (x.drags || []).filter((d) => d.status === "miss").map((d) => d.name)))].slice(0, 5) } };
+      red: scored.reduce((t, x) => t + x.kpi_red.length, 0), amber: scored.reduce((t, x) => t + x.counts.warn, 0),
+      red_names: [...new Set(scored.flatMap((x) => x.kpi_red))].slice(0, 5) } };
   },
   /* One client's scorecard in full: the period picked (the latest month unless asked), every KPI with its value, standard,
      formula, status, where it comes from and the comment; the scopes; what pulls it down; the score by period. */

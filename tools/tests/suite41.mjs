@@ -120,6 +120,25 @@ S("G-07: the TAT Report in the SLA & KPI folder cannot be taken for the Escalati
   ok("G-07: the Escalation Tracker copy keeps SR No and Department, so Drishti still takes that file for the tracker", eh[0] === "SR No" && eh[1] === "Department" && eh.some(escLike), eh.slice(0, 4));
 }
 
+S("G-13: KPIs in the red counts KPIs only");
+{ // Sunrise: two KPIs red, one green, and one SLA task line red. Lakeview: KPIs green, one SLA task line red.
+  DR_CLIENTS = [
+    drClient("d-sun", "Sunrise Eye Care", [month("p-oct", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.3), collectionRate: cell(0.5), denialRate: cell(0.04) }, [{ name: "Production SLA", received: 100, achieved: 50 }])]),
+    drClient("d-lake", "Lakeview Dental Group", [month("p-l-oct", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.1), collectionRate: cell(0.9) }, [{ name: "Production SLA", received: 100, achieved: 60 }])])];
+  await fresh();
+  const pf = await A("portfolio.overview", TODAY);
+  let kpiRed = 0, lineRed = 0; const names = [];
+  for (const c of [sun, lake]) { const s = await A("sla.scorecard", { client_id: c.id, kind: "month", ...TODAY });
+    for (const i of s.items) { if (i.status !== "miss") continue; if (i.kind === "KPI") { kpiRed++; names.push(i.name); } else lineRed++; } }
+  ok("G-13: the scorecards have 2 red KPIs and 2 red SLA lines (the made-up data)", kpiRed === 2 && lineRed === 2, { kpiRed, lineRed });
+  ok("G-13: the Portfolio's KPIs in the red is the 2 KPIs, not the 4 red lines", pf.drishti.red === kpiRed, pf.drishti);
+  ok("G-13: it names the red KPIs only, and counts only the client that has one", pf.drishti.red_names.join("|") === names.join("|") && !pf.drishti.red_names.includes("Production SLA") && pf.drishti.clients_red === 1, pf.drishti);
+  const sm = await A("sla.summary", TODAY);
+  ok("G-13: sla.summary's red count and names are the same KPIs", sm.totals.red === kpiRed && sm.totals.red_names.join("|") === names.join("|"), sm.totals);
+  const row = pf.rows.find((x) => x.client_id === lake.id);
+  ok("G-13: a red SLA line still pulls its client's score down and shows under Pulling it down", row && row.drishti && row.drishti.counts.miss === 1 && row.drishti.drags.some((x) => x.name === "Production SLA"), row && row.drishti);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
