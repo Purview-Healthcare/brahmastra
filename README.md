@@ -1090,7 +1090,8 @@ The bucket mapping lives in `EFFECTIVE_BUCKET` in `index.html`.
 
 **Claims › Entries** lists every entry with its claim (worked claims, skips, plain
 notes) for a date range, client, location or biller. **Download CSV** gives the
-Production Conso layout (the team's consolidation columns, one row per entry);
+Production Conso layout (the team's consolidation columns, one row per entry; DOS and Date Worked written
+mm/dd/yyyy, in the Claims file too);
 **Brahmastra columns** gives the SAAG fields, every note field and the one-cell
 note. **Team** shows claims worked per person per day. **Claims** exports the
 filtered claim list in the Production layout too, one row per claim with its

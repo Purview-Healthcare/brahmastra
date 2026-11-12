@@ -180,6 +180,13 @@ function downloadText(text, name, type = "text/csv;charset=utf-8") {
 /* A cell that starts with = + - @, a tab or a carriage return would run as a formula in Excel: it gets a leading '
    (plain numbers, negative ones too, stay numbers). */
 const csvSafe = (v) => { const s = v == null ? "" : String(v); return typeof v !== "number" && /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s) ? "'" + s : s; };
+/* The Production layout as a CSV (Claims and Entries > Download CSV): DOS and Date Worked written mm/dd/yyyy, as the OneDrive
+   production file shows them (a CSV has no date format, and an Excel date number means nothing to the reader). */
+function productionCSV(header, rows) {
+  const at = ["DOS", "Date Worked"].map((h) => header.indexOf(h)).filter((i) => i >= 0);
+  const mdy = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v == null ? "" : v)); return m ? `${m[2]}/${m[3]}/${m[1]}` : v; };
+  return arrayCSV(header, rows.map((r) => { const x = r.slice(); at.forEach((i) => { x[i] = mdy(x[i]); }); return x; }));
+}
 /* Every row of a list the server sends in pages of 500 (claims.list, reports.claimsProduction), however many there are. */
 async function rpcAllPages(op, payload) {
   const rows = []; let r = null;
@@ -3404,7 +3411,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   // the CSV the team keeps: the Production Conso layout, one row per claim with its last entry
   const exportProduction = async () => {
     setBusy(true);
-    try { const r = await rpcAllPages("reports.claimsProduction", payload); downloadText(arrayCSV(r.header, r.rows), `Production - claims - ${todayISO()}.csv`); }
+    try { const r = await rpcAllPages("reports.claimsProduction", payload); downloadText(productionCSV(r.header, r.rows), `Production - claims - ${todayISO()}.csv`); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
@@ -8816,7 +8823,7 @@ function ReportsView({ ctx, from, to, embedded }) {
   return (
     <div className="stack">
       <div className="row between"><div>{!embedded && <h1>Reports</h1>}<div className="sub">Every note the team wrote, with the claim it belongs to. Download as CSV for the client or for QA.</div></div>
-        <div className="row" style={{ gap: 8 }}><button className="btn" disabled={!rows.length} title="One row per entry, in the Production Conso columns" onClick={async () => { try { const r = await rpc("reports.production", { scope: "ar", client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] }); downloadText(arrayCSV(r.header, r.rows), `Production - entries - ${f.from} to ${f.to}.csv`); } catch (e) { toast(e.message, "err"); } }}>Download CSV</button>
+        <div className="row" style={{ gap: 8 }}><button className="btn" disabled={!rows.length} title="One row per entry, in the Production Conso columns" onClick={async () => { try { const r = await rpc("reports.production", { scope: "ar", client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] }); downloadText(productionCSV(r.header, r.rows), `Production - entries - ${f.from} to ${f.to}.csv`); } catch (e) { toast(e.message, "err"); } }}>Download CSV</button>
           <button className="btn link sm" disabled={!rows.length} title="Brahmastra's own columns, the note fields apart" onClick={() => downloadText(toCSV(rows.map(reportRow), REPORT_COLS), `brahmastra-work-${f.from}-to-${f.to}.csv`)}>Brahmastra columns</button></div></div>
       <div className="card tight grid g5">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF({ ...f, client_id: v, location_id: "" })} locId={f.location_id} setLocId={(v) => setF({ ...f, location_id: v })} allowAll />

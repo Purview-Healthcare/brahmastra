@@ -414,6 +414,35 @@ else {
   await x("DELETE FROM claims WHERE client_id = ?", cl.id);
 }
 
+S("A-09: dates in the AR production file and the Production CSVs");
+{
+  const name = "Made-up Clinic S35 A09";
+  const cl = await mkClient(name);
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "Billed Amount", "AR Balance", "Status"], ["9809001", "Test Patient One", "Aetna", "09/15/2026", "2000.00", "1234.50", "Pending"]]);
+  const id = (await q1("SELECT id FROM claims WHERE client_id = ? AND claim_no = '9809001'", cl.id)).id;
+  const tab = await withOneDrive(async () => {
+    await A("alloc.reassign", { ids: [id], user_id: adminId });
+    await A("queue.complete", { id, today: TODAY, saag: { status: "In Process", sub_status: "Claim in process", action: "Follow up", bucket: "Payer", effective: "Claim in process" }, note: { source: "Web", findings: "Checked the payer portal, the claim is in process" } });
+    for (let i = 0; i < 40 && !(odFile(name, "AR", "AR") || { sheets: [{ rows: [] }] }).sheets[0].rows[1]; i++) await sleep(50);
+    const book = odFile(name, "AR", "AR"); return book && book.sheets[0];
+  });
+  const col = (h) => AR_HEADER.indexOf(h), row = tab && tab.rows[1], f = tab && tab.fmts[1];
+  ok("A-09: the OneDrive AR row keeps DOS and Date Worked as Excel dates (09/15/2026, 11/10/2026)", row && row[col("DOS")] === 46280 && row[col("Date Worked")] === 46336, row && [row[col("DOS")], row[col("Date Worked")]]);
+  ok("A-09: and sends their format: mm/dd/yyyy for DOS and Date Worked, money for Billed and Balance, General elsewhere", f && f[col("DOS")] === "mm/dd/yyyy" && f[col("Date Worked")] === "mm/dd/yyyy" && f[col("Billed Amount($)")] === "#,##0.00" && f[col("Balance Amount($)")] === "#,##0.00"
+    && f[col("Patient Name")] === "General" && f[col("Uni")] === "General" && f.length === AR_HEADER.length, f);
+  ok("A-09: the template's header row is left as it is", tab && tab.rows[0][0] === "Sr. No" && !tab.fmts[0], tab && tab.fmts[0]);
+  const cp = await A("reports.claimsProduction", { client_id: cl.id, state: "workable", today: TODAY });
+  const ep = await A("reports.production", { client_id: cl.id, from_ms: 0, to_ms: Date.now() });
+  ok("A-09: Claims' production rows carry DOS and Date Worked as dates, like Entries' (and Third Eye's feed is unchanged)", cp.rows[0][col("DOS")] === "2026-09-15" && cp.rows[0][col("Date Worked")] === TODAY && ep.rows[0][col("DOS")] === "2026-09-15" && ep.rows[0][col("Date Worked")] === TODAY,
+    [cp.rows[0][col("DOS")], cp.rows[0][col("Date Worked")], ep.rows[0][col("DOS")], ep.rows[0][col("Date Worked")]]);
+  const csvRow = (text) => app.readWorkbook(bytesOf(text), "back.csv")[0].rows[1];   // read back as a CSV, quotes and commas in cells too
+  const toCsvText = typeof app.productionCSV === "function" ? app.productionCSV : app.arrayCSV;   // the snapshot wrote the rows as they came
+  const c1 = csvRow(toCsvText(cp.header, cp.rows)), c2 = csvRow(toCsvText(ep.header, ep.rows));
+  ok("A-09: Claims > Download CSV and Entries > Download CSV write them as 09/15/2026 and 11/10/2026", c1[col("DOS")] === "09/15/2026" && c1[col("Date Worked")] === "11/10/2026" && c2[col("DOS")] === "09/15/2026" && c2[col("Date Worked")] === "11/10/2026",
+    [c1[col("DOS")], c1[col("Date Worked")], c2[col("DOS")], c2[col("Date Worked")]]);
+  ok("A-09: the week and date range columns stay as they were (mm/dd/yyyy text)", /^\d{2}\/\d{2}\/\d{4} - \d{2}\/\d{2}\/\d{4}$/.test(c1[col("Date Range")]) && /^WE-\d{2}\/\d{2}\/\d{4}$/.test(c1[col("Week")]), [c1[col("Date Range")], c1[col("Week")]]);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

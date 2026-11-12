@@ -379,7 +379,10 @@ async function appendRowTo(tok, loc, values, header = WORKBOOK_HEADER) {
   const srOf = (sheetRow) => sheetRow - 1;
   rows = rows.map((r, i) => r.map((v) => (v === SR_NO ? srOf(startRow + i) : v)));
   const last = colLetter(header.length);
-  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows });
+  // DOS and Date Worked are Excel dates shown as mm/dd/yyyy and the amounts as money (as the desks' files do), so the file reads
+  // the same whatever OneDrive's language; the header row stays as it is
+  const fmt = header === WORKBOOK_HEADER ? AR_FMT : null;
+  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows, ...(fmt ? { numberFormat: rows.map((r, i) => (empty && i === 0 ? header.map(() => "General") : fmt)) } : {}) });
   return loc.name;
 }
 /* ---- the team's report files in OneDrive ----
@@ -483,6 +486,7 @@ function postingRow(h, user, proof, action, now, comment) {
     n(p.allowed), n(paid), n(p.adjustment), p.adj_reason || "", n(p.deductible), n(p.coinsurance), n(p.copay), pr, n(p.writeoff), after,
     msDateCell(h.created_at), "", msDateCell(now), user.emp_id || "", user.name || "", done ? "Posted" : action, comment];
 }
+const AR_FMT = fmtFor(WORKBOOK_HEADER, ["DOS", "Date Worked"], ["Billed Amount($)", "Balance Amount($)"]);
 const SUB_FMT = fmtFor(SUB_HEADER, ["Date", "Allocation Date", "DOW"], ["Balance", "VEC Patient Balance"]);
 const POST_FMT = fmtFor(POST_HEADER, ["Date", "Check / EFT date", "Posted date", "Allocation Date", "DOW"],
   ["Billed", "Balance", "Allowed", "Paid", "Adjustment", "Deductible", "Co-insurance", "Co-pay", "Patient responsibility", "Write-off", "Balance after posting"]);
@@ -6599,10 +6603,13 @@ const OPS = {
     const workedBy = new Map();
     for (const part of chunks(rows.map((c) => c.id), 80)) (await all(env, `SELECT id, last_worked_by FROM claims WHERE id IN (${part.map(() => "?").join(",")})`, ...part)).forEach((x) => workedBy.set(x.id, x.last_worked_by));
     const iWorked = WORKBOOK_HEADER.indexOf("Date Worked"), iAssoc = WORKBOOK_HEADER.indexOf("Associate Name"), iEmp = WORKBOOK_HEADER.indexOf("Emp. ID"), iTl = WORKBOOK_HEADER.indexOf("Team Lead"), iRange = WORKBOOK_HEADER.indexOf("Date Range"), iWeek = WORKBOOK_HEADER.indexOf("Week"), iLoc = WORKBOOK_HEADER.indexOf("Location");
+    const iDos = WORKBOOK_HEADER.indexOf("DOS");
     const out = rows.map((c, i) => {
       const worked = !!(c.last_status_code || c.last_worked_on), by = worked ? person(c.last_worked_by || workedBy.get(c.id)) : null;
       const row = productionRow({ ...c, client_name: c.client_name || cl.get(c.client_id) || "" }, by, { ended_at: worked && c.last_worked_on ? Date.parse(c.last_worked_on + "T12:00:00+05:30") : Date.now(), age_at: Date.now() });
-      row[0] = (first - 1) * 500 + i + 1; if (!worked) { row[iWorked] = ""; row[iAssoc] = ""; row[iEmp] = ""; row[iTl] = ""; row[iRange] = ""; row[iWeek] = ""; row[iLoc] = ""; } else row[iWorked] = c.last_worked_on ? excelSerial(c.last_worked_on) : "";
+      row[0] = (first - 1) * 500 + i + 1; if (!worked) { row[iWorked] = ""; row[iAssoc] = ""; row[iEmp] = ""; row[iTl] = ""; row[iRange] = ""; row[iWeek] = ""; row[iLoc] = ""; } else row[iWorked] = c.last_worked_on || "";
+      // dates as dates (the page writes them mm/dd/yyyy in the CSV), as Entries' production rows give them; a CSV has no date format
+      row[iDos] = c.dos || "";
       return row;
     });
     return { header: WORKBOOK_HEADER, rows: out, total, page: first };
