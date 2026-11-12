@@ -6462,17 +6462,26 @@ const OPS = {
       return { scope, header: WORKBOOK_HEADER, rows };
     }
     const dept = scope === "pp" ? "posting" : "submission";
-    const hs = await all(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.billed, c.balance, cl.name AS client_name, l.name AS location_name
+    const hs = await all(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.billed, c.balance${scope === "sub" ? ", c.raw_json" : ""}, cl.name AS client_name, l.name AS location_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
       WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY h.done_at LIMIT 60000`, dept, from, to, ...args, ...scopeArgs(user));
+    // what the desk person entered goes along, under the column names Third Eye reads (an amount not entered stays empty)
     const header = scope === "pp"
-      ? ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "DOS", "Billed Amount", "Check Number", "Paid Amount", "Posted", "Comment"]
-      : ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "Service Date", "Billed Amount", "Status", "Submission Type", "Comment"];
+      ? ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "DOS", "Billed Amount", "Check Number", "Check Date",
+        "Allowed Amount", "Paid Amount", "Posted", "Other Adjustment", "Adjustment Reason", "Deductible", "Co-insurance", "Co-pay", "Patient Responsibility", "Write-off", "Comment"]
+      : ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "Service Date", "Billed Amount", "Status", "Submission Type", "Type", "Claim Type", "Comment"];
+    const nv = (v) => (v == null || v === "" ? "" : Number(v));
     const rows = hs.map((h) => {
       const p = person(h.done_by, h.done_by_name), proof = jsonObj(h.proof_json);
-      return scope === "pp"
-        ? [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, proof.ref || "", proof.amount == null ? "" : proof.amount, proof.amount == null ? "" : proof.amount, h.note || ""]
-        : [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "", [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
+      if (scope === "pp") {
+        // patient responsibility: deductible + co-insurance + co-pay, as in the Payment posting file
+        const pr = [proof.deductible, proof.coinsurance, proof.copay].some((v) => v != null && v !== "") ? Math.round(((Number(proof.deductible) || 0) + (Number(proof.coinsurance) || 0) + (Number(proof.copay) || 0)) * 100) / 100 : "";
+        return [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, proof.ref || "",
+          isoDate(proof.check_date) || "", nv(proof.allowed), nv(proof.amount), nv(proof.amount), nv(proof.adjustment), proof.adj_reason || "", nv(proof.deductible), nv(proof.coinsurance), nv(proof.copay), pr, nv(proof.writeoff), h.note || ""];
+      }
+      // Type left empty in the form is the Type in the client's inventory file; the claim type defaults to the one the AR biller's action says (the Submission file's rule)
+      return [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "",
+        proof.type || rawPick(jsonObj(h.raw_json), "Type"), proof.claim_type || claimTypeOf(h.saag_action), [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
     });
     return { scope, header, rows };
   },

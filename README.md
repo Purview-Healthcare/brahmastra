@@ -894,7 +894,9 @@ status opens a person's allocations, and a team lead who works claims gets **Wor
 
 **Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:
 - *Internal reports*: Brahmastra's production (and the roster) loads into the Production Sheet box when the page
-  opens and whenever the work, client or dates change.
+  opens and whenever the work, client or dates change. Payment posting rows carry what the poster entered (check /
+  EFT date, allowed, paid, adjustment and its reason, deductible, co-insurance, co-pay, patient responsibility,
+  write-off) and Submission rows their Type and Claim Type, under the column names Third Eye reads.
 - *SLA*: when a client's upload page is open in the scorecard, today's AR Inventory for the Brahmastra client
   of the same name is added to it, and the scorecard shows it in its "Check these before they are applied" list,
   so nothing is calculated until someone presses apply.
