@@ -434,6 +434,59 @@ await part("C-19: the files of a Posting Closed claim cannot be removed", async 
   ok("C-19: on a claim that is not Posting Closed a file is removed as before", (await call(AR, "claims.get", { id: b })).attachments.some((x) => x.id === other.id && x.deletable) && (await T(() => call(AR, "attachments.delete", { id: other.id }))).ok);
 });
 
+await part("C-15 / E-10 / D-06: text written to the OneDrive Excel files is never read as a formula", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const EVIL = '=HYPERLINK("https://example.invalid/x","Open the client file")';
+  const [a, b, d] = await give("Arun Agent", 3);
+  await sql("UPDATE claims SET patient = ?, balance = -25.5 WHERE id = ?", EVIL, a);   // a patient cell from a client's file, and a credit balance
+  const SI = await firstIn("Sima Expert");
+  rig.liveEnv.DEMO = false;   // OneDrive copies on, into the fake Graph
+  try {
+    OD.writes.length = 0;
+    // the AR Production row of a saved entry (appendRowTo)
+    await save(AR, a, SAAG.resub); await sleep(400);
+    const arRow = (OD.writes.find((w) => /^AR Production/.test(w.file)) || { values: [] }).values.slice(-1)[0] || [];
+    const iPat = AR_TEMPLATE.indexOf("Patient Name"), iBal = AR_TEMPLATE.indexOf("Balance Amount($)"), iUni = AR_TEMPLATE.indexOf("Uni");
+    ok("D-06: AR Production row: a patient cell that starts with = is written as text (a leading ')", arRow[iPat] === "'" + EVIL && String(arRow[iUni]).startsWith("'="), [arRow[iPat], arRow[iUni]]);
+    ok("D-06: ...and the balance stays a number, a negative one too", arRow[iBal] === -25.5, arRow[iBal]);
+    // the Submission desk's rows (appendDeskRow): a comment, and the free-text fields of the Completed form
+    const h = await openH(a, "submission");
+    await call(QU, "handoffs.close", { id: h.id, outcome: "pending", note: "-ve balance on the account, refund asked" }); await sleep(300);
+    await call(QU, "handoffs.close", { id: h.id, outcome: "complete", note: '=HYPERLINK("https://example.invalid","see batch")', proof: { date: nowIso(), ref: "B-1", mode: "Portal", inv_status: "+Resubmitted", bucket: "@Payer", type: "-3" } }); await sleep(400);
+    const SUBH = ["Client", "UID", "Date", "Patient", "Invoice", "NAEC Order No", "VEC S/W Insurance Name", "Insurance", "Balance", "VEC Patient Balance", "Location", "Type", "VEC Claims Sourse", "VEC Submission Type", "Old status", "Old Comment", "old bucket", " Old Onhold/Pending ", "Allocation Date", "Allocation", "DOW", "EMPID", "Worked by", "Inventory Status", "Comment", "Bucket", "Claim Type"];
+    const subRows = OD.writes.filter((w) => /^Submission Production/.test(w.file)).map((w) => w.values[0]).filter((r) => r[0] !== "Client");
+    const S_ = (r, k) => (r || [])[SUBH.indexOf(k)];
+    ok("C-15: Submission row: a comment that starts with - is written as text", S_(subRows[0], "Comment") === "'-ve balance on the account, refund asked", S_(subRows[0], "Comment"));
+    ok("C-15: ...a comment that starts with =, an Inventory Status with + and a Bucket with @ too", S_(subRows[1], "Comment") === "'=HYPERLINK(\"https://example.invalid\",\"see batch\")" && S_(subRows[1], "Inventory Status") === "'+Resubmitted" && S_(subRows[1], "Bucket") === "'@Payer", [S_(subRows[1], "Comment"), S_(subRows[1], "Inventory Status"), S_(subRows[1], "Bucket")]);
+    ok("C-15: ...numbers stay numbers (the negative balance), and text that is only a number stays as typed", S_(subRows[1], "Balance") === -25.5 && S_(subRows[1], "Type") === "-3" && typeof S_(subRows[1], "DOW") === "number", [S_(subRows[1], "Balance"), S_(subRows[1], "Type"), S_(subRows[1], "DOW")]);
+    ok("C-15: ...ordinary text is written as it is", S_(subRows[1], "Patient") === "'" + EVIL && S_(subRows[1], "Worked by") === "Quin Submit" && S_(subRows[0], "Inventory Status") === "Pending", [S_(subRows[1], "Worked by"), S_(subRows[0], "Inventory Status")]);
+    // Payment posting row: the check reference and the comment
+    await call(AR, "attachments.add", { claim_id: b, name: "eob.pdf", type: "application/pdf", data: PDF });
+    await save(AR, b, SAAG.post); await sleep(300);
+    await call(PI, "handoffs.close", { id: (await openH(b, "posting")).id, outcome: "complete", proof: { date: nowIso(), ref: "+EFT 7781", allowed: "100", paid: "80", adjustment: "20", adj_reason: "-CO45" }, note: "@team posted per the ERA" }); await sleep(400);
+    const postRow = (OD.writes.filter((w) => /^Payment posting Production/.test(w.file)).map((w) => w.values[0]).filter((r) => r[0] !== "Client").slice(-1)[0]) || [];
+    ok("C-15: Payment posting row: the reference, the adjustment reason and the comment are text; the amounts are numbers", postRow.includes("'+EFT 7781") && postRow.includes("'-CO45") && postRow.includes("'@team posted per the ERA") && postRow.includes(80) && postRow.includes(20), postRow);
+    // Rejections row (the desk header layout)
+    await save(AR, d, SAAG.rej); await sleep(300);
+    await call(RX, "handoffs.close", { id: (await openH(d, "rejection")).id, outcome: "other", reason: "=not sure", note: "-waiting for the payer portal to come back" }); await sleep(400);
+    const rejRow = (OD.writes.filter((w) => /^Rejections Production/.test(w.file)).map((w) => w.values[0]).filter((r) => r[0] !== "Sr. No").slice(-1)[0]) || [];
+    ok("C-15: Rejections row: the reason and the comment are text", rejRow.includes("'=not sure") && rejRow.includes("'-waiting for the payer portal to come back"), rejRow);
+    // the escalation register and the month's SLA copy
+    OD.writes.length = 0;
+    const e = await T(() => call(SI, "escalations.save", { client_id: sun.id, kind: "external", day: nowIso(), dept: "Account Receivable", raised_who: EVIL, reported_to: "Tina Lead", owner_id: U("Tina Lead").id, location_id: "all",
+      channels: ["Email"], email_subject: "=1+2", description: "Made-up description of the problem.", comment: "-ve balance shown after posting" }));
+    await sleep(900);
+    const escFiles = OD.writes.filter((w) => /^Escalation Tracker/.test(w.file));
+    const bad = escFiles.flatMap((w) => w.values.flat()).filter((v) => typeof v === "string" && /^[=+\-@\t\r]/.test(v) && !/^-?\d+(\.\d+)?$/.test(v));
+    ok("E-10: the escalation is saved and written to the register and to the month's SLA copy", e.ok && escFiles.some((w) => w.file === "Escalation Tracker - Sunrise Eye Care.xlsx") && escFiles.some((w) => /Nov 2026\.xlsx$/.test(w.file)), [e, escFiles.map((w) => w.file)]);
+    ok("E-10: no cell in either file starts with = + - or @ (Raised by, Email subject, Comment are text)", !bad.length && escFiles.every((w) => w.values.some((r) => r.includes("'" + EVIL) && r.includes("'=1+2") && r.includes("'-ve balance shown after posting"))), bad.slice(0, 4));
+    ok("E-10: ...the dates stay Excel date numbers and the SR No, the department and the headers are as they were", escFiles.every((w) => w.values[0][0] === "SR No" && w.values.slice(1).every((r) => /^SR\d+$/.test(r[0]) && r[1] === "Account Receivable" && typeof r[3] === "number")), escFiles.map((w) => w.values.slice(0, 2).map((r) => r.slice(0, 4))));
+  } finally { rig.liveEnv.DEMO = true; }
+  // the one rule, in one place: every Graph write of cell values goes through writeRange
+  const src = (await import("fs")).readFileSync(new URL("../../worker.js", import.meta.url), "utf8");
+  ok("C-15: worker.js sends cell values to Graph only through writeRange", (src.match(/"PATCH",[^\n]*\{ values/g) || []).length === 1 && /const writeRange = [^\n]*row\.map\(xlText\)/.test(src), (src.match(/"PATCH",[^\n]*\{ values/g) || []).length);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

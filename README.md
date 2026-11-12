@@ -872,6 +872,11 @@ written on the client card (billers do not). If OneDrive refuses a write, the cl
 get a bell notice and an email (once a day), and the card says why; the entry itself is always saved in Brahmastra.
 Older workbook links on clients and locations are no longer used.
 
+Typed text stays text in every Excel file Brahmastra writes (the Production files, the Escalation tracker and its
+SLA copy, the TAT report): a cell that starts with = + - or @ gets a leading apostrophe, which Excel hides, so a
+comment like "-ve balance" is not read as a formula. Numbers, negative amounts too, stay numbers. The CSV downloads
+follow the same rule.
+
 It needs the **Files.ReadWrite.All application permission** on the Microsoft 365 app (already used for the
 sign-in emails). Optional Worker variables: `REPORTS_OWNER` (default `Purviewautomate@purview-healthcare.com`) and
 `REPORTS_AUTO=off` to stop it.

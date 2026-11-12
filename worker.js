@@ -366,6 +366,13 @@ async function graphCall(tok, method, path, body) {
   return r.json();
 }
 const colLetter = (n) => { let s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+/* Every write of cell values into an Excel workbook through Microsoft Graph goes through writeRange. Graph reads a value the
+   way Excel reads typing, so text that starts with = + - @ (or a tab or a carriage return) would become a formula: a comment
+   "-ve balance" shows #NAME?, a typed =HYPERLINK(...) becomes a live link in the team's file. Such text gets a leading
+   apostrophe, which Excel keeps as a hidden text marker (the cell shows the text as typed). Numbers stay numbers, negative
+   amounts too, and so does text that is only a number. The same rule as csvSafe in app.jsx for the CSV downloads. */
+const xlText = (v) => (typeof v === "string" && /^[=+\-@\t\r]/.test(v) && !/^-?\d+(\.\d+)?$/.test(v) ? "'" + v : v);
+const writeRange = (tok, path, values, numberFormat) => graphCall(tok, "PATCH", path, { values: values.map((row) => row.map(xlText)), ...(numberFormat ? { numberFormat } : {}) });
 async function appendRowTo(tok, loc, values, header = WORKBOOK_HEADER) {
   const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
   const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
@@ -379,7 +386,7 @@ async function appendRowTo(tok, loc, values, header = WORKBOOK_HEADER) {
   const srOf = (sheetRow) => sheetRow - 1;
   rows = rows.map((r, i) => r.map((v) => (v === SR_NO ? srOf(startRow + i) : v)));
   const last = colLetter(header.length);
-  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows });
+  await writeRange(tok, ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, rows);
   return loc.name;
 }
 /* ---- the team's report files in OneDrive ----
@@ -506,13 +513,13 @@ async function appendDeskRow(tok, loc, values, header, sheetName, formats) {
   if (!rowIs(used && used.values && used.values[0], header) && (blank(used) || used.rowCount <= 1)) {
     // this desk's header on row 1 (over the template's AR header, cleared to its last column), then the row under it
     const width = Math.max(header.length, WORKBOOK_HEADER.length);
-    await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(width)}1')`, { values: [[...header, ...Array(width - header.length).fill("")]] });
+    await writeRange(tok, ws + `/range(address='A1:${colLetter(width)}1')`, [[...header, ...Array(width - header.length).fill("")]]);
     try { await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(header.length)}1')/format/font`, { bold: true, color: "#FFFFFF" });
       await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(header.length)}1')/format/fill`, { color: "#111B4D" }); } catch (e) {}
     startRow = 2;
   } else startRow = (parseInt(String(used.address).replace(/^.*![A-Z]+\d+:?[A-Z]*/, "").replace(/\D/g, ""), 10) || used.rowCount) + 1;
   const row = values.map((v) => (v === SR_NO ? startRow - 1 : v));
-  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${colLetter(row.length)}${startRow}')`, { values: [row], ...(formats ? { numberFormat: [formats] } : {}) });
+  await writeRange(tok, ws + `/range(address='A${startRow}:${colLetter(row.length)}${startRow}')`, [row], formats ? [formats] : null);
   return loc.name;
 }
 async function odChild(tok, driveId, parentId, name) {
@@ -727,7 +734,7 @@ async function escalationSlaFiles(env, tok, clientId, months) {
       const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(ESC_HEADER.length);
       // an escalation moved to another month leaves this file: clear the old rows before writing the month afresh
       await graphCall(tok, "POST", ws + `/range(address='A2:${last}5000')/clear`, { applyTo: "Contents" });
-      await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [ESC_HEADER, ...rows], numberFormat: escFormats(rows.length) });
+      await writeRange(tok, ws + `/range(address='A1:${last}${rows.length + 1}')`, [ESC_HEADER, ...rows], escFormats(rows.length));
       saved.push(path.join(" › "));
     }
   }
@@ -777,7 +784,7 @@ async function tatSlaFiles(env, tok, clientId, ym) {
     const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
     const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(TAT_HEADER.length);
     await graphCall(tok, "POST", ws + `/range(address='A2:${last}20000')/clear`, { applyTo: "Contents" });
-    await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [TAT_HEADER, ...rows], numberFormat: [TAT_HEADER.map(() => "@"), ...rows.map(() => TAT_HEADER.map((h, i) => (i >= 6 ? "General" : "@")))] });
+    await writeRange(tok, ws + `/range(address='A1:${last}${rows.length + 1}')`, [TAT_HEADER, ...rows], [TAT_HEADER.map(() => "@"), ...rows.map(() => TAT_HEADER.map((h, i) => (i >= 6 ? "General" : "@")))]);
     saved.push(path.join(" › "));
   }
   return saved;
@@ -832,7 +839,7 @@ async function syncEscalations(env, clientId, months) {
     const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
     const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
     const all2 = [ESC_HEADER, ...rows];
-    await graphCall(tok, "PATCH", base + "/worksheets/" + encodeURIComponent(sheet.id) + `/range(address='A1:${colLetter(ESC_HEADER.length)}${all2.length}')`, { values: all2, numberFormat: escFormats(rows.length) });
+    await writeRange(tok, base + "/worksheets/" + encodeURIComponent(sheet.id) + `/range(address='A1:${colLetter(ESC_HEADER.length)}${all2.length}')`, all2, escFormats(rows.length));
     await recordWorkbookStatus(env, clientId + ":esc", { ok: true, at: now, file: loc.path, link: loc.link || "", rows: rows.length });
   } catch (e) {
     const msg = String(e && e.message || e).slice(0, 300);
