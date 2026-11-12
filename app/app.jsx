@@ -1602,7 +1602,10 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   useEffect(() => { document.title = pageLabel + " · Brahmastra"; }, [pageLabel]);
   const allowedViews = [...navItems(nav).map(([k]) => k), "mytasks", ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   useEffect(() => { if (!menu && !openG) return; const h = () => { setMenu(false); setOpenG(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu, openG]);
-  const navBadge = (k) => (k === "attention" || k === "live") && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue || attention.tasks_late ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+  // Live status carries the escalation count (claims flagged by billers waiting for an answer, the first line of its Needs you);
+  // Needs attention, and the Work group while it is closed, carry the whole attention count
+  const navBadge = (k) => k === "attention" && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue || attention.tasks_late ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+    : k === "live" && attention && attention.escalations > 0 ? <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }} title="Claims flagged by billers waiting for your answer">{attention.escalations}</span>
     : k === "teamtasks" && attention && attention.tasks > 0 ? <span className={"badge " + (attention.tasks_late || attention.tasks_help ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.tasks}</span>
     : k === "mytasks" && tasks && tasks.open > 0 ? <span className={"badge " + (tasks.late ? "red" : tasks.unseen ? "teal" : "amber")} style={{ marginLeft: 6 }} title={tasks.late ? tasks.late + " past the TAT" : tasks.unseen ? tasks.unseen + " new" : "to do"}>{tasks.open}</span>
     : k === "handoffs" && handoffs && handoffs.n > 0 ? <span className={"badge " + (handoffs.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{handoffs.n}</span>

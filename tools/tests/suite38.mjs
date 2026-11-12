@@ -473,6 +473,23 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-13: with no Vice President, RACI has no VP (the AVP is not put in that place)", L2.vp === null && !L2.rows.find((x) => x.client_id === w.sun.id).i.length, { vp: L2.vp });
 }
 
+{
+  // The badges are drawn by the page's Shell (React), which this rig does not render: the page itself is checked by
+  // fix-E/repro-E-20.js in a browser; here the count behind each badge and the page's badge rule are checked.
+  S("E-20: the Live status tab carries the escalation count, not the whole Needs attention count");
+  const w = await world();
+  const TI = await w.firstIn("Tina Lead");
+  await w.sql("UPDATE claims SET escalated = 0");
+  const tk = await TI("tasks.create", { client_id: w.sun.id, scope: "AR follow-up", title: "Recheck the client list", description: "made up", source: "Client", tat: { kind: "24" }, count: 4, people: [{ user_id: (await w.U("Arun Agent")).id, share: 4 }] });
+  await w.sql("UPDATE team_tasks SET due_at = ? WHERE id = ?", Date.now() - 3600000, tk.task.id);
+  const at = await TI("attention.count", {});
+  const strip = (await TI("notify.list", { today: w.today() })).items.filter((i) => i.key === "escalations" && i.n > 0);
+  ok("E-20: one late team task counts on Needs attention but is no escalation (the Live status Needs you line shows none)", at.n === 1 && at.tasks_late === 1 && at.escalations === 0 && !strip.length, at);
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("E-20: the page gives the Live status tab the escalation count and Needs attention the attention count",
+    /k === "attention" && attention && attention\.n > 0 \?/.test(src) && /k === "live" && attention && attention\.escalations > 0 \?[\s\S]{0,300}?\{attention\.escalations\}<\/span>/.test(src) && !/\(k === "attention" \|\| k === "live"\)/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

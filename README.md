@@ -140,8 +140,9 @@ not in Brahmastra.
   in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
   Inventory & allocation, Escalation tracker) and **Manage** (Team, Note templates, Clients &
   locations, SAAG reference, TFL / AFL, Roster for admins, Audit trail for admins and the VP). Client 360 is not on
-  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count shows on the
-  Live status tab, and the attention and hand-off counts on the group button while it is closed.
+  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count (claims flagged
+  by billers waiting for an answer, the first line of its **Needs you**) shows on the Live status tab, and the attention
+  and hand-off counts on the group button while it is closed.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
