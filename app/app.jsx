@@ -8228,7 +8228,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
     const invNote = !inv ? "" : inv.source === "live" ? "today's inventory" : inv.source === "snapshot" ? "kept at " + crF.date(crD(inv.as_of)) : "rebuilt from the claims' history for " + crF.date(crD(inv.as_of));
     const SRC = [["submission", "Submission", "Submission desk"], ["rejection", "Rejections", "Rejections desk"], ["payment", "Payment posting", "Posting desk"], ["inventory", "AR inventory", "inventory uploads"], ["ar", "AR production", "billers' entries"], ["ca", "Client assistance", "requests to the client"]];
     return (
-      <div className="stack crx crx-setup" style={{ gap: 12 }}>
+      <div key="setup" className="stack crx crx-setup" style={{ gap: 12 }}>
         <div className="card"><div className="row between" style={{ gap: 12, flexWrap: "wrap" }}>
           <div><h2 style={{ margin: 0 }}>New client report · {client.name}</h2><div className="sub">Add what Brahmastra does not have, pick the dates, then create the dashboard.</div></div>
           {made.length > 0 && <div className="small">Made before: {made.map((m, i) => <React.Fragment key={m.period_key}>{i ? " · " : ""}<button type="button" className="btn link" style={{ padding: 0, fontWeight: 700 }} onClick={() => openMade(m.period_key)}>{crRangeLabel(m.r)}</button></React.Fragment>)}</div>}
@@ -8264,8 +8264,9 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
   // the executive summary is always the whole client, so it never carries the filter label
   const slideFor = (pid, s, m) => pid === "cover" ? <CrCover rep={rep} pages={included} mode={m} /> : <CrSlide page={CR_PAGE_BY[pid]} model={pid === page && s === sel ? model : buildModel(pid, s)} rep={rep} n={numOf(pid) || 1} total={included.length || 1}
     mode={m} ed={edits[pid]} onEd={(d) => saveEd(pid, d)} tools={tools} filterText={pid === "exec" ? "" : filterText(s)} />;
+  // its own key: the start screen and the dashboard never share a DOM node (the hover tip's hand-set display would carry over)
   return (
-    <div className="stack crx" style={{ gap: 12 }}>
+    <div key="dash" className="stack crx" style={{ gap: 12 }}>
       <div className="card crx-bar">
         <b className="crx-made">{crRangeLabel(range)}</b>
         <span className="muted small">{compare ? "compared with " + crRangeLabel(prevRange) : "no comparison"}{locName ? " · " + locName : ""}{DS && DS.ev ? " · EV from the uploaded file" : ""}</span>
