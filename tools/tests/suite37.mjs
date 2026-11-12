@@ -648,6 +648,15 @@ await part("C-17: a recheck cannot be marked before it opens", async () => {
   ok("C-17: ...and Accepted is saved", r.ok && (await row1("SELECT status FROM handoffs WHERE id = ?", rc.id)).status === "complete", r);
 });
 
+await part("C-18: the red past-TAT bar names the person's own tab", async () => {
+  // the page's bars (their text is in the page code; the browser check repro-C-18.js drives the real page)
+  const app = (await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  const red = (app.match(/<div className="tat-bar" onClick=\{\(\) => setView\("handoffs"\)\}>⚠[^\n]*/) || [""])[0];
+  ok("C-18: the red bar says 'Open <their tab>' (Submission, Payment posting), as the amber bar does, not always 'Posting & submission'", /Open \{\(DESK\[deskOf\(me, handoffs\)\] \|\| \{ tab: "Posting & submission" \}\)\.tab\}/.test(red) && !/Open Posting &amp; submission/.test(red), red.slice(0, 200));
+  ok("C-18: the tab names it can say are the menu's own", /const DESK = \{ posting: \{ tab: "Payment posting"[^\n]*submission: \{ tab: "Submission"[^\n]*both: \{ tab: "Posting & submission"/.test(app));
+  ok("C-18: a Submission person's desk is Submission", rig.app.deskOf({ department: "Submission", departments_also: "" }, { depts: ["submission"] }) === "submission");
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
