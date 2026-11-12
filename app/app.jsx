@@ -2064,25 +2064,28 @@ function LiveStatusView({ ctx, me, go, params }) {
     </div>
   );
 }
-/* ---------- Dashboard: Team status, Inventory status and the Client 360 report ---------- */
-const DASH_TABS = [["team", "Team status"], ["inventory", "Inventory status"], ["report", "Client 360 report"]];
+/* ---------- Dashboard: Team status, Inventory status, the Client 360 report and the Stack report ---------- */
+const DASH_TABS = [["team", "Team status"], ["inventory", "Inventory status"], ["report", "Client 360 report"], ["stack", "Stack report"]];
 // an old Dashboard › Client reports or Portfolio link opens Inventory status
-const dashTab = (x) => { const t = x && x.tab; return t === "inventory" || t === "clients" || t === "client" || t === "portfolio" ? "inventory" : t === "report" ? "report" : "team"; };
+const dashTab = (x) => { const t = x && x.tab; return t === "inventory" || t === "clients" || t === "client" || t === "portfolio" ? "inventory" : t === "report" ? "report" : t === "stack" ? "stack" : "team"; };
 function DashboardHub(props) {
-  const { params } = props;
-  const [tab, setTab] = useState(() => dashTab(params));
-  useEffect(() => { if (params && params.tab) setTab(dashTab(params)); }, [params && params.tab]);
+  const { params, me } = props;
+  // the Stack report is for team leads and above (not SMEs): anyone else asking for it gets Team status
+  const tabOf = (x) => { const t = dashTab(x); return t === "stack" && !canStack(me) ? "team" : t; };
+  const [tab, setTab] = useState(() => tabOf(params));
+  useEffect(() => { if (params && params.tab) setTab(tabOf(params)); }, [params && params.tab]);
   useEffect(() => { navKeep({ tab }); }, [tab]);
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
   const SUB = { team: "Team status: production and training, attainment and time on floor, for the dates picked.",
     inventory: "Inventory status: where every claim stands today, and what to work first to meet the SLA this month.",
-    report: "Client 360 report: the client's report pack, filled from Brahmastra, to present or send as one PDF." };
+    report: "Client 360 report: the client's report pack, filled from Brahmastra, to present or send as one PDF.",
+    stack: "Stack report: every person's month on one page, worked out by Brahmastra from the same rules for the whole floor." };
   return (
     <div className="stack">
       <div className="row between top"><div><h1>Dashboard</h1><div className="sub">{SUB[tab]}</div></div><span className="small muted">{stamp}</span></div>
-      <div className="seg2 dash-subtabs" role="tablist" style={{ alignSelf: "flex-start" }}>{DASH_TABS.map(([k, l]) =>
+      <div className="seg2 dash-subtabs" role="tablist" style={{ alignSelf: "flex-start" }}>{DASH_TABS.filter(([k]) => k !== "stack" || canStack(me)).map(([k, l]) =>
         <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
-      {tab === "team" ? <TeamStatusTab {...props} /> : tab === "inventory" ? <InventoryStatusTab {...props} /> : <DashClientReport {...props} />}
+      {tab === "team" ? <TeamStatusTab {...props} /> : tab === "inventory" ? <InventoryStatusTab {...props} /> : tab === "stack" ? <StackReportTab {...props} /> : <DashClientReport {...props} />}
     </div>
   );
 }
@@ -2101,6 +2104,377 @@ function DashClientReport({ ctx, me, go, params }) {
       </div>
       {cid && <ClientReportStudio ctx={ctx} me={me} go={go} clientId={cid} />}
     </div>
+  );
+}
+/* ---------- Dashboard › Stack report ----------
+   The owner's monthly stack report, worked out on the server (stack.month): each associate's points, percentage and Stack
+   (5 to 0), grouped under their team lead with the team's average, and each team lead's stack. The yellow dashed cells are
+   typed: PKT, Team player and the fallbacks by the team lead, the ticks (and an attrition Brahmastra cannot tell) by the
+   manager. A locked month shows its snapshot, its cells closed. Download Excel writes her layout (stackWorkbook). */
+const canStack = (me) => !!me && me.role === "supervisor" && !isSmeUI(me);
+// a share as a percentage, cut (not rounded) at two decimals: 110.509% shows as 110.5%, never as a 110.51% it did not reach
+const stkPct = (v) => (v == null || !isFinite(v) ? "–" : Math.floor(v * 1e4 + 1e-6) / 100 + "%");
+const stkHM = (m) => (m == null ? "–" : Math.floor(m / 60) + " h " + String(Math.floor(m % 60)).padStart(2, "0"));
+const stkN = (v, dec = 2) => (v == null || !isFinite(v) ? "–" : Number(v).toLocaleString(LOC, { maximumFractionDigits: dec }));
+const stkDay = (iso) => { const [y, m, d] = String(iso).split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString(LOC, { month: "short", day: "numeric" }); };
+const stkDays = (list) => list.map((x) => (Array.isArray(x) ? stkDay(x[0]) + (x[1] === 0.5 ? " (half day)" : "") : stkDay(x))).join(", ");
+const stkTyped = (t) => (t ? t.by + ", " + stkDay(istISOOf(t.at)) : "");
+const stkEnter = (te) => { const p = [te.pkt && plural(te.pkt, "PKT score"), te.quality && plural(te.quality, "quality score"), te.prod && plural(te.prod, "person's work numbers", "people's work numbers"),
+  te.ticks && plural(te.ticks, "tick"), te.attrition && plural(te.attrition, "attrition", "attritions")].filter(Boolean); return p.length ? p.join(", ") + " to enter" : "nothing left to enter"; };
+const STK_TH = ["th1", "th2", "th3", "th4", "th5"], STK_CF = ["cf1", "cf2", "cf3", "cf4", "cf5"];
+const StkChip = ({ n, lg }) => (n == null ? <span className="stk sn">–</span> : <span className={"stk s" + n + (lg ? " lg" : "")} title={"Stack " + n}>{n}</span>);
+const StkSc = ({ v, max }) => <span className={"sc " + (v >= max ? "full" : v > 0 ? "mid" : "zero")}>{stkN(v)}</span>;
+// a typed cell (yellow, dashed): "enter" while empty; a click opens it when the viewer may type it, else it only says who typed it
+function StkTyped({ text, empty, typed, can, onEdit, hint }) {
+  const tip = typed ? "Typed by " + typed.by + ", " + fmtWhen(typed.at) + (typed.note ? ": " + typed.note : "") : hint || "";
+  if (!can) return <span className={"typed ro" + (empty ? " need" : "")} title={tip}>{empty ? "–" : text}</span>;
+  return <button type="button" className={"typed" + (empty ? " need" : "")} title={tip} onClick={(e) => { e.stopPropagation(); onEdit(); }}>{empty ? "enter" : text}</button>;
+}
+function StackReportTab({ me, params }) {
+  const [month, setMonth] = useState(() => (params && /^\d{4}-\d{2}$/.test(String(params.month || "")) ? params.month : ""));
+  const q = useRpc("stack.month", month ? { month } : {}, [month]);
+  const d = q.data;
+  const [view, setView] = useState("assoc"), [leadF, setLeadF] = useState(""), [clientF, setClientF] = useState("");
+  const [person, setPerson] = useState(null), [lead, setLead] = useState(null), [edit, setEdit] = useState(null), [tick, setTick] = useState(null), [crit, setCrit] = useState(false), [ask, setAsk] = useState("");
+  useEffect(() => { if (d && d.month) navKeep({ month: d.month }); }, [d && d.month]);
+  const rows = useMemo(() => (d ? d.rows.filter((r) => (!leadF || (r.lead_id || "none") === leadF) && (!clientF || r.title === clientF)) : []), [d, leadF, clientF]);
+  const tls = useMemo(() => (d ? d.tls.filter((t) => (!leadF || t.id === leadF) && (!clientF || t.title === clientF || d.rows.some((r) => r.lead_id === t.id && r.title === clientF))) : []), [d, leadF, clientF]);
+  if (q.error && !d) return <ErrorBox error={q.error} />;
+  if (!d) return <div className="card"><Spinner label="Working out the month…" /></div>;
+  const showTl = d.manager || d.tls.length > 0, isTl = showTl && view === "tl", mon = d.label.split(" ")[0];
+  const leads = [...new Map(d.rows.map((r) => [r.lead_id || "none", r.lead_name || "No team lead"])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const clients = [...new Set(d.rows.map((r) => r.title).filter(Boolean))].sort();
+  const reload = () => { setEdit(null); setTick(null); q.reload(); };
+  // the person and team lead pop-ups follow the month's data after a save
+  const cur = person && d.rows.find((r) => r.id === person.id), curLead = lead && d.tls.find((t) => t.id === lead.id);
+  const lk = d.lock, allLocked = lk.teams > 0 && lk.locked === lk.teams;
+  const by0 = lk.by[0];
+  const chip = allLocked ? <span className="badge green stk-state">Locked by {by0.name}{lk.by.length > 1 ? " and others" : ""} on {stkDay(istISOOf(by0.at))}</span>
+    : <span className="badge amber stk-state">Draft · {lk.locked ? lk.locked + " of " + plural(lk.teams, "team") + " locked · " : ""}{stkEnter(d.to_enter)}</span>;
+  const shown = isTl ? tls : rows, avg = shown.length ? shown.reduce((a, r) => a + r.s.pct, 0) / shown.length : null;
+  const toEnter = shown.filter((r) => !r.locked).reduce((a, r) => a + r.to_enter.length, 0);
+  const groups = groupByLead(rows, true);
+  const empty = !d.rows.length && !d.tls.length;
+  return (
+    <div className="card stack stk-card">
+      <div className="row stk-bar">
+        {showTl && <div className="seg2" role="tablist">{[["assoc", "Associate stack"], ["tl", "Team lead stack"]].map(([k, l]) =>
+          <button key={k} type="button" role="tab" aria-selected={(isTl ? "tl" : "assoc") === k} className={(isTl ? "tl" : "assoc") === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>)}</div>}
+        <div className="stk-f"><Field label="Month"><Combo value={d.month} clearable={false} onChange={(v) => v && setMonth(v)} options={d.months.map((m) => ({ id: m.month, label: m.label + (m.locked ? " · locked" : "") }))} /></Field></div>
+        {leads.length > 1 && <div className="stk-f"><Field label="Team lead"><Combo value={leadF} onChange={setLeadF} placeholder="All team leads" options={leads.map(([id, n]) => ({ id, label: n }))} /></Field></div>}
+        {clients.length > 1 && <div className="stk-f"><Field label="Client"><Combo value={clientF} onChange={setClientF} placeholder="All clients" options={clients.map((c) => ({ id: c, label: c }))} /></Field></div>}
+        <span style={{ flex: 1 }} />
+        {chip}
+        <button className="btn sm" onClick={() => setCrit(true)}>How it is worked out</button>
+        <button className="btn sm" disabled={empty} onClick={() => { try { XLSX.writeFile(stackWorkbook(d, rows, tls), "Stack report - " + d.label + ".xlsx"); } catch (e) { toast("Could not make the file: " + e.message, "err"); } }}>Download Excel</button>
+        {d.can_lock && <button className="btn sm primary" onClick={() => setAsk("lock")}>Lock {mon}</button>}
+        {d.can_unlock && <button className="btn sm danger" onClick={() => setAsk("unlock")}>Unlock {mon}</button>}
+      </div>
+      <ErrorBox error={q.error} />
+      {d.current && <div className="small muted">{d.label} is still under way: worked out on its finished days, up to {stkDay(d.through)}.</div>}
+      {!empty && d.floor.state !== "ok" && <div className="alert warn small">Purview Shastra's attendance is not in for these days ({d.floor.state === "off" ? "Shastra is not connected" : d.floor.error || "it did not answer"}): AL, LWP, late logins, breaks over and time on system are empty.</div>}
+      {!empty && d.floor.state === "ok" && d.floor.unknown > 0 && <div className="alert warn small">Purview Shastra has not answered for {plural(d.floor.unknown, "working day")} of the month yet: those days are not counted.</div>}
+      {empty ? <Empty>Nothing for this month yet.</Empty> : <>
+        <div className="grid stk-kpis">
+          <Kpi label={isTl ? "Team leads" : "People listed"} value={fmtInt(shown.length)} sub={isTl ? "with their team's numbers" : plural(new Set(rows.map((r) => r.lead_id || "none")).size, "team")} tone="accent" />
+          <Kpi label={isTl ? "Average" : "Floor average"} value={stkPct(avg)} sub={isTl ? "of the team leads' percentages" : "of everyone's percentage"} />
+          {[5, 4, 3, 2, 1, 0].map((k) => <Kpi key={k} label={"Stack " + k} value={<span className="row" style={{ gap: 8 }}><StkChip n={k} />{shown.filter((r) => r.s.stack === k).length}</span>} />)}
+          <Kpi label="To enter" value={<span className={toEnter ? "amber-ink" : ""}>{toEnter}</span>} sub={isTl ? "ticks and attrition" : "PKT, quality, work numbers"} />
+        </div>
+        {!isTl ? <>
+          <div className="small muted">Yellow cells are typed by the team lead (PKT score, Team player, quality, and the work numbers of a role Brahmastra does not count). Everything else fills itself: work from Brahmastra (the same numbers as Team status); attendance, late logins, breaks and time on system from Purview Shastra. Click a person to see how each score was worked out.</div>
+          {!rows.length ? <Empty>Nobody here for this selection.</Empty> : <div className="table-wrap"><table className="t stk-t"><thead><tr>
+            <th>#</th><th>Person</th><th className="r">Productivity<small>done / expected · %</small></th><th className="r">/10</th><th className="r">Quality</th><th className="r">/10</th>
+            <th className="r">Attendance<small>AL · LWP</small></th><th className="r">/10</th><th className="r">Late login</th><th className="r">/1</th><th className="r">Breaks over</th><th className="r">/1</th>
+            <th>Team player</th><th className="r">PKT</th><th className="r">/2</th><th className="r">Time on system<small>a day</small></th><th className="r">/5</th><th className="r">Total<small>of 40</small></th><th className="r">%</th><th>Stack</th></tr></thead>
+            <tbody>{groups.map((g) => { const ga = g.rows.reduce((a, r) => a + r.s.pct, 0) / g.rows.length, gs = g.rows.reduce((a, r) => a + r.s.stack, 0) / g.rows.length;
+              return <React.Fragment key={g.key || "none"}>
+                <tr className="lead-grp"><td colSpan={20}><b>{g.key ? g.name + "'s team" : "No team lead"}</b> <span className="muted">· {plural(g.rows.length, "person", "people")} · team average {stkPct(ga)} · average stack {stkN(gs, 1)}</span></td></tr>
+                {g.rows.map((r) => <StackAssocRow key={r.id} r={r} onOpen={() => setPerson(r)} onEdit={(field) => setEdit({ r, field })} />)}
+              </React.Fragment>; })}</tbody></table></div>}
+        </> : <>
+          <div className="small muted">Each team lead's stack from their whole team's numbers, plus the ten ticks the manager confirms (kept with name and date). Click a team lead to see how it was worked out.</div>
+          {!tls.length ? <Empty>{d.manager ? "No team lead here for this selection." : "Your own row shows here once " + d.label + " is locked."}</Empty> : <div className="table-wrap"><table className="t stk-t"><thead><tr>
+            <th>#</th><th>Team lead</th><th className="r">Team</th><th className="r">Productivity<small>team average</small></th><th className="r">/10</th><th className="r">Quality</th><th className="r">/10</th>
+            <th className="r">Shrinkage</th><th className="r">/10</th><th className="r">Attrition<small>people left</small></th><th className="r">/5</th><th className="r">Adherence<small>late + breaks</small></th><th className="r">/5</th>
+            <th>Team handling</th><th className="r">/5</th><th>Client forefront</th><th className="r">/5</th><th className="r">Addition<small>team's average stack</small></th><th className="r">Total<small>of 50</small></th><th className="r">%</th><th>Stack</th></tr></thead>
+            <tbody>{tls.map((t) => <StackTlRow key={t.id} t={t} ticks={d.ticks} onOpen={() => setLead(t)} onTick={() => setTick(t)} />)}</tbody></table></div>}
+          <div className="row small muted stk-legend"><span><span className="tick y">✓</span> Yes, ticked by the manager</span><span><span className="tick n">✕</span> No</span><span><span className="tick e" /> not ticked yet (counts as No)</span></div>
+          <div className="tiny muted">Team handling: {d.ticks.filter(([k]) => k[0] === "t").map((x) => x[1]).join(" · ")}. Client forefront: {d.ticks.filter(([k]) => k[0] === "c").map((x) => x[1]).join(" · ")}.</div>
+        </>}
+      </>}
+      {cur && <StackPersonModal r={cur} label={d.label} lines={d.lines} trend={[...(d.history[cur.id] || []), { month: d.month, stack: cur.s.stack, pct: cur.s.pct, draft: !cur.locked }]} onEdit={(field) => setEdit({ r: cur, field })} onClose={() => setPerson(null)} />}
+      {curLead && <StackLeadModal t={curLead} label={d.label} lines={d.lines} ticks={d.ticks} onTick={() => setTick(curLead)} onClose={() => setLead(null)} />}
+      {edit && <StackEditModal month={d.month} label={d.label} r={edit.r} field={edit.field} onClose={() => setEdit(null)} onSaved={reload} />}
+      {tick && <StackTicksModal month={d.month} label={d.label} t={tick} ticks={d.ticks} onClose={() => setTick(null)} onSaved={reload} />}
+      {crit && <StackCriteriaModal criteria={d.criteria} onClose={() => setCrit(false)} />}
+      {ask === "lock" && <StackLockModal d={d} onClose={() => setAsk("")} onDone={() => { setAsk(""); q.reload(); }} />}
+      {ask === "unlock" && <StackUnlockModal d={d} onClose={() => setAsk("")} onDone={() => { setAsk(""); q.reload(); }} />}
+    </div>
+  );
+}
+function StackAssocRow({ r, onOpen, onEdit }) {
+  const can = !!r.can_edit, s = r.s;
+  return (
+    <tr className="click" onClick={onOpen}>
+      <td className="muted">{r.rank}</td>
+      <td><b>{r.name}</b><div className="tiny muted">{[r.emp_id, r.title].filter(Boolean).join(" · ")}</div>{r.shastra === "none" && <div className="tiny amber-ink">no attendance in Shastra</div>}</td>
+      <td className="num">{r.tracked ? <>{stkN(r.achieved, 1)} / {stkN(r.expected, 1)}<div className="b">{stkPct(r.pct)}</div></>
+        : <StkTyped can={can} empty={r.achieved == null || r.expected == null} typed={r.achieved_typed || r.expected_typed} text={<>{stkN(r.achieved, 1)} / {stkN(r.expected, 1)} · {stkPct(r.pct)}</>}
+          hint="Brahmastra has no work numbers for this role: the team lead types them" onEdit={() => onEdit("prod")} />}</td>
+      <td className="num"><StkSc v={s.prod} max={10} /></td>
+      <td className="num"><StkTyped can={can} empty={r.quality == null} typed={r.quality_typed} text={stkPct(r.quality)} onEdit={() => onEdit("quality")} /></td>
+      <td className="num"><StkSc v={s.qual} max={10} /></td>
+      <td className="num">{stkN(r.al, 1)} · <span className={r.lwp ? "red-ink b" : ""}>{stkN(r.lwp, 1)}</span></td>
+      <td className="num"><StkSc v={s.att} max={10} /></td>
+      <td className="num">{r.late}</td><td className="num"><StkSc v={s.late} max={1} /></td>
+      <td className="num">{r.brk}</td><td className="num"><StkSc v={s.brk} max={1} /></td>
+      <td><StkTyped can={can} typed={r.tp_typed} text={r.tp ? "Yes" : "No"} hint="Yes unless the team lead changes it" onEdit={() => onEdit("tp")} /></td>
+      <td className="num"><StkTyped can={can} empty={r.pkt == null} typed={r.pkt_typed} text={stkPct(r.pkt)} onEdit={() => onEdit("pkt")} /></td>
+      <td className="num"><StkSc v={s.pkt} max={2} /></td>
+      <td className="num">{stkHM(r.tos)}</td><td className="num"><StkSc v={s.tos} max={5} /></td>
+      <td className="num b">{stkN(s.total)}</td><td className="num b">{stkPct(s.pct)}</td><td><StkChip n={s.stack} /></td>
+    </tr>
+  );
+}
+const StkTicks = ({ t, keys, ticks }) => keys.map((k) => { const x = t.ticks[k], v = x && x.v, lbl = (ticks.find((y) => y[0] === k) || [])[1];
+  return <span key={k} className={"tick " + (v === "yes" ? "y" : v === "no" ? "n" : "e")} title={lbl + ": " + (v === "yes" ? "Yes" : v === "no" ? "No" : "not ticked yet") + (x ? " (" + stkTyped(x) + ")" : "")}>{v === "yes" ? "✓" : v === "no" ? "✕" : ""}</span>; });
+function StackTlRow({ t, ticks, onOpen, onTick }) {
+  const s = t.s, open = (e) => { e.stopPropagation(); if (t.can_tick) onTick(); };
+  return (
+    <tr className="click" onClick={onOpen}>
+      <td className="muted">{t.rank}</td>
+      <td><b>{t.name}</b><div className="tiny muted">{[t.emp_id, t.title].filter(Boolean).join(" · ")}</div></td>
+      <td className="num">{t.team_n}</td>
+      <td className="num b">{stkPct(t.prod)}</td><td className="num"><StkSc v={s.prod} max={10} /></td>
+      <td className="num">{stkPct(t.quality)}</td><td className="num"><StkSc v={s.qual} max={10} /></td>
+      <td className="num">{stkPct(t.shrink)}</td><td className="num"><StkSc v={s.shrink} max={10} /></td>
+      <td className="num">{t.left_unknown.length ? <StkTyped can={t.can_tick} empty={!t.attrition_typed} typed={t.attrition_typed} text={String(t.attrition)} onEdit={onTick}
+        hint={"Brahmastra cannot tell: " + t.left_unknown.join(", ") + " left with no exit date; the manager types the count"} /> : t.attrition}</td>
+      <td className="num"><StkSc v={s.attr} max={5} /></td>
+      <td className="num">{t.adherence}</td><td className="num"><StkSc v={s.adh} max={5} /></td>
+      <td><button type="button" className="ticks" disabled={!t.can_tick} onClick={open}><StkTicks t={t} keys={STK_TH} ticks={ticks} /></button></td><td className="num"><StkSc v={s.th} max={5} /></td>
+      <td><button type="button" className="ticks" disabled={!t.can_tick} onClick={open}><StkTicks t={t} keys={STK_CF} ticks={ticks} /></button></td><td className="num"><StkSc v={s.cf} max={5} /></td>
+      <td className="num">{stkN(t.addition)}</td>
+      <td className="num b">{stkN(s.total)}</td><td className="num b">{stkPct(s.pct)}</td><td><StkChip n={s.stack} /></td>
+    </tr>
+  );
+}
+/* How one person's month was worked out (drawing 2): each parameter, what Brahmastra found, the band that applied, the score
+   and where it came from; their last months. Also the associate's own My stack card opens it. */
+function StackPersonModal({ r, label, lines, trend, onEdit, onClose }) {
+  const s = r.s, can = !!(r.can_edit && onEdit);
+  const SRC = { b: <span className="src b">Brahmastra</span>, s: <span className="src s">Shastra</span> };
+  const typedSrc = (t) => <span className="src m">{t ? "Typed · " + stkTyped(t) : "Typed"}</span>;
+  const shastra = r.shastra === "ok" ? SRC.s : <span className="src s" title="No attendance in Purview Shastra for this month">Shastra · none</span>;
+  const next = s.stack < 5 ? lines.assoc[4 - s.stack] : null, short = next != null ? next * lines.of - s.total : 0;
+  const L = (name, found, applied, sc, max, from) => <tr><td><b>{name}</b></td><td>{found}</td><td>{applied}</td><td className="num nowrap"><StkSc v={sc} max={max} /> <span className="muted">/ {max}</span></td><td>{from}</td></tr>;
+  const prodFound = r.tracked ? (r.expected > 0 ? <>{stkN(r.achieved, 1)} claims and task items done against {stkN(r.expected, 1)} expected = <b>{stkPct(r.pct)}</b><div className="tiny muted">the same numbers as Team status{r.avr_prod != null ? " · " + stkN(r.avr_prod, 1) + " a day done, " + stkN(r.avr_target, 1) + " a day expected" : ""}</div></> : "No target on the days counted")
+    : <><StkTyped can={can} empty={r.achieved == null || r.expected == null} typed={r.achieved_typed || r.expected_typed} text={<>{stkN(r.achieved, 1)} done against {stkN(r.expected, 1)} expected = {stkPct(r.pct)}</>} onEdit={() => onEdit("prod")} /><div className="tiny muted">Brahmastra has no work numbers for this role: typed by the team lead</div></>;
+  return (
+    <Modal wide title={r.name + " · " + label} sub={[r.emp_id, r.title, r.lead_name ? "team lead " + r.lead_name : "", stkN(r.present, 1) + " of " + plural(r.working, "working day") + " present"].filter(Boolean).join(" · ")} onClose={onClose}>
+      <div className="row between stk-head"><div className="small muted">{r.locked ? "Locked: this is the month as it was locked." : "Draft: it changes as the work, Shastra's attendance and the typed values change."}</div>
+        <div className="row" style={{ gap: 12 }}><div style={{ textAlign: "right" }}><div className="tiny muted b">TOTAL</div><div className="stk-total">{stkN(s.total)} <span className="muted">of {lines.of} · {stkPct(s.pct)}</span></div></div><StkChip n={s.stack} lg /></div></div>
+      <div className="table-wrap"><table className="t stk-bk"><thead><tr><th>Parameter</th><th>What Brahmastra found</th><th>Criteria that applied</th><th className="r">Score</th><th>From</th></tr></thead><tbody>
+        {L("Productivity", prodFound, r.why.prod, s.prod, 10, r.tracked ? SRC.b : typedSrc(r.achieved_typed || r.expected_typed))}
+        {L("Quality", <StkTyped can={can} empty={r.quality == null} typed={r.quality_typed} text={stkPct(r.quality)} onEdit={() => onEdit("quality")} />, r.why.qual, s.qual, 10, r.quality_from === "qa" ? <span className="src b">QA tracker</span> : typedSrc(r.quality_typed))}
+        {L("Attendance", <>{r.al ? <>{stkN(r.al, 1)} {r.al === 1 ? "day" : "days"} of approved or sick leave ({stkDays(r.al_days)})</> : "No approved or sick leave"}{" · "}{r.lwp ? <span className="red-ink">{stkN(r.lwp, 1)} {r.lwp === 1 ? "day" : "days"} of leave without pay or absent ({stkDays(r.lwp_days)})</span> : "no leave without pay or absence"}<div className="tiny muted">{stkN(r.present, 1)} of {plural(r.working, "working day")} present · shrinkage {stkPct(r.shrink)}</div></>, r.why.att, s.att, 10, shastra)}
+        {L("Late login", r.late ? <>Late on <b>{r.late}</b> {r.late === 1 ? "day" : "days"} ({stkDays(r.late_days)})</> : "No late login", r.why.late, s.late, 1, shastra)}
+        {L("Breaks over", r.brk ? <>Breaks over the limit on <b>{r.brk}</b> {r.brk === 1 ? "day" : "days"} ({r.brk_days.map((x) => stkDay(x[0]) + ": " + x[1] + " min").join(", ")})</> : "No day over the break limit", r.why.brk, s.brk, 1, shastra)}
+        {L("Team player", <StkTyped can={can} typed={r.tp_typed} text={(r.tp ? "Yes" : "No") + (r.tp_typed && r.tp_typed.note ? ": " + r.tp_typed.note : r.tp_typed ? "" : " (as it starts)")} onEdit={() => onEdit("tp")} />, r.why.tp, s.tp, 1, r.tp_typed ? typedSrc(r.tp_typed) : <span className="src m">Starts as Yes</span>)}
+        {L("PKT score", <StkTyped can={can} empty={r.pkt == null} typed={r.pkt_typed} text={stkPct(r.pkt)} onEdit={() => onEdit("pkt")} />, r.why.pkt, s.pkt, 2, typedSrc(r.pkt_typed))}
+        {L("Time on system", r.tos != null ? <>Average <b>{stkHM(r.tos)} min</b> a day over {plural(r.tos_days, "day")}</> : "No time on floor in Shastra", r.why.tos, s.tos, 5, shastra)}
+      </tbody></table></div>
+      <div className="row between top mt">
+        <div><div className="tiny muted b mb8">{trend.length > 1 ? "LAST " + trend.length + " MONTHS" : "THIS MONTH"}</div><div className="stk-trend">{trend.map((m) => <div key={m.month}><StkChip n={m.stack} /><div className="tiny muted">{STK_MON[Number(m.month.slice(5, 7)) - 1]} · {stkPct(m.pct)}{m.draft ? " (draft)" : ""}</div></div>)}</div></div>
+        <div className="small muted stk-why">{next != null ? <>{stkPct(s.pct)} is {stkN(short)} {short === 1 ? "point" : "points"} short of Stack {s.stack + 1} ({stkPct(next)}).</> : <>Stack 5: the top of the stack.</>}<br />Every typed value keeps who typed it and when. After the month is locked, nothing changes unless the admin unlocks it.</div>
+      </div>
+    </Modal>
+  );
+}
+const STK_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/* How a team lead's month was worked out. */
+function StackLeadModal({ t, label, lines, ticks, onTick, onClose }) {
+  const s = t.s, next = s.stack < 5 ? lines.tl[4 - s.stack] : null, short = next != null ? next * lines.tl_of - s.total : 0;
+  const L = (name, found, applied, sc, max) => <tr><td><b>{name}</b></td><td>{found}</td><td>{applied}</td><td className="num nowrap"><StkSc v={sc} max={max} />{max ? <span className="muted"> / {max}</span> : null}</td></tr>;
+  const tickList = (keys) => keys.map((k) => { const x = t.ticks[k], lbl = (ticks.find((y) => y[0] === k) || [])[1]; return <div key={k}>{x && x.v === "yes" ? "✓" : x && x.v === "no" ? "✕" : "○"} {lbl}{x ? <span className="tiny muted"> · {stkTyped(x)}</span> : <span className="tiny amber-ink"> · not ticked yet</span>}</div>; });
+  return (
+    <Modal wide title={t.name + " · " + label} sub={[t.emp_id, t.title, plural(t.team_n, "person", "people") + " on the team"].filter(Boolean).join(" · ")} onClose={onClose}
+      footer={t.can_tick ? <button className="btn primary" onClick={onTick}>Tick Team handling and Client forefront</button> : null}>
+      <div className="row between stk-head"><div className="small muted">{t.locked ? "Locked: this is the month as it was locked." : "Draft."}</div>
+        <div className="row" style={{ gap: 12 }}><div style={{ textAlign: "right" }}><div className="tiny muted b">TOTAL</div><div className="stk-total">{stkN(s.total)} <span className="muted">of {lines.tl_of} · {stkPct(s.pct)}</span></div></div><StkChip n={s.stack} lg /></div></div>
+      <div className="table-wrap"><table className="t stk-bk"><thead><tr><th>Parameter</th><th>What Brahmastra found</th><th>Criteria that applied</th><th className="r">Score</th></tr></thead><tbody>
+        {L("Productivity", <>The team's average productivity: <b>{stkPct(t.prod)}</b> ({plural(t.prod_n, "person", "people")} with a percentage)</>, t.why.prod, s.prod, 10)}
+        {L("Quality", t.quality != null ? <>The average quality of {plural(t.qual_n, "person", "people")} with one: <b>{stkPct(t.quality)}</b></> : "Nobody on the team has a quality % yet", t.why.qual, s.qual, 10)}
+        {L("Shrinkage", <>The team's average shrinkage: <b>{stkPct(t.shrink)}</b></>, t.why.shrink, s.shrink, 10)}
+        {L("Attrition", <>{t.left.length ? <>{t.left.map((x) => x.name + " (" + stkDay(x.day) + ")").join(", ")} left</> : "Nobody left"}{t.left_unknown.length ? <div className="tiny amber-ink">Brahmastra cannot tell for {t.left_unknown.join(", ")} (switched off with no exit date){t.attrition_typed ? ": the manager typed " + t.attrition + " (" + stkTyped(t.attrition_typed) + ")" : ": the manager types the count"}</div> : null}</>, t.why.attr, s.attr, 5)}
+        {L("Adherence", <>The team's late logins and breaks over: <b>{t.adherence}</b></>, t.why.adh, s.adh, 5)}
+        {L("Team handling", tickList(STK_TH), "1 for each Yes", s.th, 5)}
+        {L("Client forefront", tickList(STK_CF), "1 for each Yes", s.cf, 5)}
+        {L("Addition point", <>The average of the team's Stacks: <b>{stkN(t.addition)}</b></>, "added as it is", s.add, 0)}
+      </tbody></table></div>
+      <div className="small muted mt">{next != null ? <>{stkPct(s.pct)} is {stkN(short)} {short === 1 ? "point" : "points"} short of Stack {s.stack + 1} ({stkPct(next)} of {lines.tl_of}).</> : "Stack 5: the top of the stack."} The ticks are the manager's, kept with name and date.</div>
+    </Modal>
+  );
+}
+/* Typing one of an associate's yellow cells: PKT, Quality, Team player (with a reason), or Achieved and Expected. */
+function StackEditModal({ month, label, r, field, onClose, onSaved }) {
+  const pctOf = (v) => (v == null ? "" : String(Math.round(v * 1e4) / 100));
+  const [v1, setV1] = useState(() => (field === "pkt" ? pctOf(r.pkt) : field === "quality" ? pctOf(r.quality) : field === "prod" ? (r.achieved == null ? "" : String(r.achieved)) : r.tp ? "yes" : "no"));
+  const [v2, setV2] = useState(() => (field === "prod" ? (r.expected == null ? "" : String(r.expected)) : field === "tp" ? (r.tp_typed && r.tp_typed.note) || "" : ""));
+  const [busy, setBusy] = useState(false);
+  const TITLE = { pkt: "PKT score", quality: "Quality", tp: "Team player", prod: "Achieved and Expected" };
+  const typed = field === "pkt" ? r.pkt_typed : field === "quality" ? r.quality_typed : field === "tp" ? r.tp_typed : r.achieved_typed || r.expected_typed;
+  const save = async (clear) => {
+    setBusy(true);
+    try {
+      const put = (f, value, note) => rpc("stack.save", { month, user_id: r.id, field: f, value, note });
+      if (field === "prod") { await put("achieved", clear ? "" : v1); await put("expected", clear ? "" : v2); }
+      else if (field === "tp") await put("tp", clear ? "" : v1, v2);
+      else await put(field, clear ? "" : v1);
+      toast((clear ? "Cleared " : "Saved ") + TITLE[field] + " for " + r.name + "."); onSaved();
+    } catch (e) { toast(e.message, "err"); setBusy(false); }
+  };
+  return (
+    <Modal narrow title={TITLE[field] + " · " + r.name} sub={label + (typed ? " · last typed by " + stkTyped(typed) : "")} onClose={onClose}
+      footer={<>{typed && <button className="btn" disabled={busy} onClick={() => save(true)}>{field === "tp" ? "Back to Yes" : "Clear"}</button>}<button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => save(false)}>{busy ? "Saving…" : "Save"}</button></>}>
+      {field === "pkt" || field === "quality" ? <Field label={TITLE[field] + " (%)"} hint={field === "pkt" ? "A percentage from 0 to 100. Empty counts as 0." : "The month's quality, a percentage from 0 to 100."}>
+        <input className="input" type="number" min="0" max="100" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
+        : field === "tp" ? <div className="stack">
+          <div className="seg2" role="radiogroup">{[["yes", "Yes"], ["no", "No"]].map(([k, l]) => <button key={k} type="button" role="radio" aria-checked={v1 === k} className={v1 === k ? "on" : ""} onClick={() => setV1(k)}>{l}</button>)}</div>
+          <Field label="Reason (optional)"><input className="input" type="text" maxLength={200} value={v2} onChange={(e) => setV2(e.target.value)} placeholder="For example: covered the team's backlog" /></Field></div>
+        : <div className="grid g2"><Field label="Achieved"><input className="input" type="number" min="0" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
+          <Field label="Expected"><input className="input" type="number" min="0" step="0.01" value={v2} onChange={(e) => setV2(e.target.value)} /></Field>
+          <div className="tiny muted" style={{ gridColumn: "1 / -1" }}>Brahmastra has no work numbers for {r.name}'s role, so the team lead types the month's work done and the work expected.</div></div>}
+    </Modal>
+  );
+}
+/* The manager's ticks for one team lead (and the attrition, where Brahmastra cannot tell). */
+function StackTicksModal({ month, label, t, ticks, onClose, onSaved }) {
+  const [vals, setVals] = useState(() => Object.fromEntries(ticks.map(([k]) => [k, (t.ticks[k] && t.ticks[k].v) || ""])));
+  const wasAttr = t.attrition_typed ? String(t.attrition) : "";
+  const [attr, setAttr] = useState(wasAttr);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      for (const [k] of ticks) if (vals[k] !== ((t.ticks[k] && t.ticks[k].v) || "")) await rpc("stack.save", { month, user_id: t.id, field: k, value: vals[k] });
+      if (t.left_unknown.length && attr !== wasAttr) await rpc("stack.save", { month, user_id: t.id, field: "attrition", value: attr });
+      toast("Saved for " + t.name + "."); onSaved();
+    } catch (e) { toast(e.message, "err"); setBusy(false); }
+  };
+  const part = (title, keys) => <div className="stack" style={{ gap: 6 }}><div className="tiny muted b">{title}</div>{keys.map((k) => { const lbl = (ticks.find((y) => y[0] === k) || [])[1], x = t.ticks[k];
+    return <div key={k} className="row between stk-tickrow"><div><div>{lbl}</div>{x && <div className="tiny muted">{stkTyped(x)}</div>}</div>
+      <div className="seg2">{[["yes", "Yes"], ["no", "No"]].map(([v, l]) => <button key={v} type="button" className={vals[k] === v ? "on" : ""} onClick={() => setVals((o) => ({ ...o, [k]: v }))}>{l}</button>)}</div></div>; })}</div>;
+  return (
+    <Modal title={"Ticks · " + t.name} sub={label + ". 1 point for each Yes; a tick not ticked counts as No."} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button></>}>
+      <div className="grid g2">{part("Team handling", STK_TH)}{part("Client forefront", STK_CF)}</div>
+      {t.left_unknown.length > 0 && <div className="mt"><Field label="Attrition: people who left in the month" hint={"Brahmastra cannot tell: " + t.left_unknown.join(", ") + " left with no exit date in Shastra. " + (t.left.length ? "It counts " + t.left.length + " by exit date." : "")}>
+        <input className="input" type="number" min="0" step="1" value={attr} onChange={(e) => setAttr(e.target.value)} placeholder="How many left" /></Field></div>}
+    </Modal>
+  );
+}
+/* "How it is worked out": the bands in plain words, read-only (there is no criteria editing). */
+function StackCriteriaModal({ criteria, onClose }) {
+  const part = (title, list) => <><h3 className="mt">{title}</h3><div className="table-wrap"><table className="t stk-crit"><thead><tr><th>Parameter</th><th className="r">Out of</th><th>How</th><th>Score</th></tr></thead>
+    <tbody>{list.map((c) => <tr key={c.name}><td className="b nowrap">{c.name}{c.group ? <div className="tiny muted">{c.group}</div> : null}</td><td className="num">{c.max}</td><td className="small">{c.how}</td><td className="small">{c.bands}</td></tr>)}</tbody></table></div></>;
+  return (
+    <Modal wide title="How it is worked out" sub="The owner's rules, as her April sheet works them out. They are the same for the whole floor and cannot be changed here." onClose={onClose}>
+      {part("Associate stack: Productivity 10, Quality 10, Attendance 10, Others 5, Time on system 5; total of 40", criteria.assoc)}
+      {part("Team lead stack: total out of 50", criteria.tl)}
+    </Modal>
+  );
+}
+/* Lock the month: what is still empty first, then the manager confirms. */
+function StackLockModal({ d, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const draft = d.rows.filter((r) => !r.locked), dtl = d.tls.filter((t) => !t.locked);
+  const who = (f) => draft.filter((r) => r.to_enter.includes(f)).map((r) => r.name);
+  const items = [["PKT scores (count as 0)", who("pkt")], ["Quality (counts as 0)", who("quality")], ["Achieved and Expected (count as 0)", who("prod")],
+    ["Ticks not ticked yet (count as No)", dtl.filter((t) => t.to_enter.some((k) => k !== "attrition")).map((t) => t.name + " (" + t.to_enter.filter((k) => k !== "attrition").length + ")")],
+    ["Attrition Brahmastra cannot tell", dtl.filter((t) => t.to_enter.includes("attrition")).map((t) => t.name)],
+    ["No attendance in Purview Shastra", draft.filter((r) => r.shastra === "none").map((r) => r.name)]].filter(([, l]) => l.length);
+  const go = async () => { setBusy(true); try { const r = await rpc("stack.lock", { month: d.month }); toast(d.label + " locked: " + plural(r.locked, "team") + ", " + plural(r.people, "person", "people") + "."); onDone(); } catch (e) { toast(e.message, "err"); setBusy(false); } };
+  return (
+    <Modal title={"Lock " + d.label + "?"} sub="Every draft team you see is saved as it is now. From then on it shows that snapshot and its typed cells are closed; only the admin can unlock it." onClose={onClose}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={go}>{busy ? "Locking…" : "Lock " + d.label.split(" ")[0]}</button></>}>
+      {d.floor.state !== "ok" && <div className="alert warn small">Purview Shastra's attendance is not in for these days: AL, LWP, late logins, breaks over and time on system are empty.</div>}
+      {items.length ? <div className="stack" style={{ gap: 8 }}><div className="b">Still empty:</div>{items.map(([k, l]) => <div key={k}><div className="small b">{k}</div><div className="small muted">{l.join(", ")}</div></div>)}</div>
+        : <div className="small">Nothing is left to enter.</div>}
+    </Modal>
+  );
+}
+function StackUnlockModal({ d, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const go = async () => { setBusy(true); try { await rpc("stack.unlock", { month: d.month }); toast(d.label + " is a draft again."); onDone(); } catch (e) { toast(e.message, "err"); setBusy(false); } };
+  return <Confirm title={"Unlock " + d.label + "?"} text={"Every locked team of " + d.label + " becomes a draft again, worked out from today's numbers, and its typed cells open. The unlock is written to the audit trail."}
+    confirmLabel={"Unlock " + d.label.split(" ")[0]} danger busy={busy} onYes={go} onNo={onClose} />;
+}
+/* The Stack report in the owner's Excel layout: "Stack Sheet" (the Team Member Stack table under her group headers, and the TL
+   STACK table under it), then "Associate Stack" and "TL Stack" stating the bands. Values, not formulas: dates are dates, percentages
+   percentages, numbers numbers, and text is a text cell (a name or typed text starting with = + - @ stays text, never a formula). */
+function stackWorkbook(d, rows, tls) {
+  const serial = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000) : null; };
+  const MON = "mmm-yy", DAY = "mm/dd/yyyy", PCT = "0.00%", DEC = "0.00", TIME = "[h]:mm";
+  const sheet = () => ({ cells: {}, merges: [], maxR: 0, maxC: 0 });
+  const put = (sh, r, c, v, z) => { sh.maxR = Math.max(sh.maxR, r); sh.maxC = Math.max(sh.maxC, c); if (v == null || v === "" || (typeof v === "number" && !isFinite(v))) return;
+    sh.cells[XLSX.utils.encode_cell({ r, c })] = typeof v === "number" ? { t: "n", v, ...(z ? { z } : {}) } : { t: "s", v: String(v) }; };
+  const done = (sh, widths) => { const ws = { ...sh.cells, "!ref": XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: sh.maxR, c: sh.maxC } }) }; if (sh.merges.length) ws["!merges"] = sh.merges; ws["!cols"] = widths.map((w) => ({ wch: w })); return ws; };
+  const month = serial(d.month + "-01"), tick = (t, k) => (t.ticks[k] && t.ticks[k].v === "yes" ? "Yes" : "No");
+  const st = sheet();
+  // the Team Member Stack: her group headers over her columns, in her order
+  const groups = [["Month", 5], ["Productivity 10", 6], ["Quality 10", 3], ["Attendance 10", 7], ["Others 5", 10], ["TOS 5", 2], ["Total Score 40", 3], ["Attriation", 1]];
+  let c = 0; for (const [g, n] of groups) { put(st, 0, c, g); if (n > 1) st.merges.push({ s: { r: 0, c }, e: { r: 0, c: c + n - 1 } }); c += n; }
+  const HEAD = ["Month", "ECN", "Name", "DOJ", "Title", "Achieved", "Expected", "Percentage", "AVR Production", "Avr Target", "Score", "Achieved", "Expected", "Score", "AL", "LWP", "Total", "Total Working Day",
+    "Total Present Day", "Shrinkage", "Score", "Login/Logout Adherence", "Score", "Break adherence", "Score", "Total Adherence", "Team Player", "Score", "PKT Scores", "Score", "Total Score out of 5", "Average TOS", "Score",
+    "Total Score", "Percentage", "Stack"];
+  HEAD.forEach((h, i) => put(st, 1, i, h));
+  const ordered = groupByLead(rows, true).flatMap((g) => g.rows);
+  ordered.forEach((r, i) => { const R = 2 + i, s = r.s;
+    [[month, MON], [r.emp_id], [r.name], [serial(r.doj), DAY], [r.title], [r.achieved], [r.expected], [r.pct, PCT], [r.avr_prod, DEC], [r.avr_target, DEC], [s.prod], [r.quality, PCT], [null], [s.qual],
+      [r.al], [r.lwp], [r.al + r.lwp], [r.working], [r.present], [r.shrink, PCT], [s.att], [r.late], [s.late], [r.brk], [s.brk], [r.adherence], [r.tp ? "Yes" : "No"], [s.tp], [r.pkt, PCT], [s.pkt], [s.others],
+      [r.tos == null ? null : r.tos / 1440, TIME], [s.tos], [s.total], [s.pct, PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z)); });
+  // the TL STACK under it
+  let R = 2 + ordered.length + 2;
+  const thK = d.ticks.filter(([k]) => k[0] === "t"), cfK = d.ticks.filter(([k]) => k[0] === "c");
+  put(st, R, 0, "TL STACK"); R++;
+  const TLH = ["Month", "ECN", "Name", "DOJ", "Productivity Score", "Quality Score", "Shrinkage Score", "Attriation Score", "Adherence Score", ...thK.flatMap(([, l]) => [l, "Score"]), "Total Score",
+    ...cfK.flatMap(([, l]) => [l, "Score"]), "Total Score", "Addition Point", "Total Score", "Percentage", "Stack"];
+  TLH.forEach((h, i) => put(st, R, i, h)); R++;
+  for (const t of tls) { const s = t.s;
+    [[month, MON], [t.emp_id], [t.name], [serial(t.doj), DAY], [s.prod], [s.qual], [s.shrink], [s.attr], [s.adh], ...thK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.th],
+      ...cfK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.cf], [t.addition, DEC], [s.total, DEC], [s.pct, PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z));
+    R++; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, done(st, HEAD.map((h, i) => (i === 2 ? 22 : i === 4 ? 20 : Math.max(9, Math.min(16, h.length + 2))))), "Stack Sheet");
+  // the bands, one a row
+  const bands = (title, list) => { const sh = sheet(); put(sh, 0, 0, title); ["Parameter", "Out of", "How it is worked out", "Value", "Score"].forEach((h, i) => put(sh, 1, i, h)); let r = 2;
+    for (const x of list) { const b = x.list && x.list.length ? x.list : [{ text: "", score: null }]; b.forEach((y, i) => { if (!i) { put(sh, r, 0, x.name); put(sh, r, 1, x.max); put(sh, r, 2, x.how); } put(sh, r, 3, y.text); put(sh, r, 4, y.score); r++; }); }
+    return done(sh, [18, 8, 80, 28, 8]); };
+  XLSX.utils.book_append_sheet(wb, bands("Associate stack: total of 40; Percentage = Total Score / 40", d.criteria.assoc), "Associate Stack");
+  XLSX.utils.book_append_sheet(wb, bands("TL stack: Percentage = Total Score / 50", d.criteria.tl), "TL Stack");
+  return wb;
+}
+/* My day: an associate's own stack, locked months only (stack.mine): the last one's Stack, total and percentage, opening how it was
+   worked out, with their earlier locked months as a small trend. */
+function MyStackCard() {
+  const q = useRpc("stack.mine", {}, []);
+  const [open, setOpen] = useState(false);
+  const ms = (q.data && q.data.months) || [];
+  if (!ms.length) return null;
+  const m = ms[0], s = m.row.s, trend = ms.slice(0, 6).reverse().map((x) => ({ month: x.month, stack: x.row.s.stack, pct: x.row.s.pct }));
+  return (
+    <>
+      <div className="card tight stk-mine" role="button" tabIndex={0} onClick={() => setOpen(true)} onKeyDown={(e) => { if (e.key === "Enter") setOpen(true); }} title="See how it was worked out">
+        <div className="row between">
+          <div className="row" style={{ gap: 12 }}><StkChip n={s.stack} lg /><div><div className="tiny muted b">MY STACK · {m.label.toUpperCase()}</div><div className="stk-total">{stkN(s.total)} <span className="muted">of {q.data.lines.of} · {stkPct(s.pct)}</span></div>
+            <div className="tiny muted">Locked by {m.locked_by} on {stkDay(istISOOf(m.locked_at))} · see how it was worked out</div></div></div>
+          {trend.length > 1 && <div className="stk-trend">{trend.map((x) => <div key={x.month}><StkChip n={x.stack} /><div className="tiny muted">{STK_MON[Number(x.month.slice(5, 7)) - 1]} · {stkPct(x.pct)}</div></div>)}</div>}
+        </div>
+      </div>
+      {open && <StackPersonModal r={m.row} label={m.label} lines={q.data.lines} trend={trend} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 const fmtHM = (m) => { if (m == null) return "–"; m = Math.round(m); const h = Math.floor(m / 60), mm = m % 60; return h ? h + " h" + (mm ? " " + String(mm).padStart(2, "0") + " m" : "") : mm + " m"; };
@@ -5408,6 +5782,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   return (
     <div className="stack">
       {desk ? <div><h1>{DESK_TEXT[desk][0]}</h1><div className="sub">{DESK_TEXT[desk][1]} Each client's TAT (working hours) is set on its profile.</div></div> : <div><h1>Payment posting & submission</h1><div className="sub">Claims sent by billers through their SAAG action (Need to Post / Posting Correction → Payment Posting; resubmission and paper claims → Submission). Each client's TAT (working hours, set on its profile) to complete each one or ask for assistance; Saturday, Sunday and Shastra holidays do not count.</div></div>}
+      {desk && me.role !== "supervisor" && <MyStackCard />}
       <div className="grid g6">
         <Kpi label="Open" value={fmtInt(st.open_n || 0)} sub={st.rejection_n ? st.rejection_n + " rejection" + (st.rejection_n === 1 ? "" : "s") + " first" : "within each client's TAT"} tone="accent" onClick={() => { setView("open"); setPick(""); }} on={view === "open" && !pick} />
         <Kpi label="Past TAT" value={fmtInt(st.overdue || 0)} tone={st.overdue ? "bad" : ""} sub={st.overdue ? "at the top of Open: answer these first" : "none"} onClick={() => pickCard("late")} on={pick === "late"} title="Show only the claims past their TAT" />
@@ -9292,6 +9667,7 @@ function QueueView({ ctx, me, go, refreshTasks }) {
         </div>
       )}
       {emptyMsg && <div className="card"><Empty>{emptyMsg}</Empty></div>}
+      {me.role !== "supervisor" && <MyStackCard />}
       <MyTasksPanel ctx={ctx} me={me} go={go} refreshTasks={refreshTasks} />
       <MyRechecks ctx={ctx} me={me} />
       {patientOf && <PatientModal id={patientOf} ctx={ctx} me={me} onClose={() => setPatientOf(null)} onOpenClaim={(r) => { if (r.mine && ["assigned", "in_progress", "completed"].includes(r.state)) { setPatientOf(null); open(r.id); } }} />}

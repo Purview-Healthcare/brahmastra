@@ -4079,34 +4079,37 @@ async function stackView(env, user, span, month, today) {
   return { month, label: stackMonthLabel(month), first, last, through, current: last >= today, over: last < today, rows, tls, history, to_enter: te,
     lock: { teams: scopes.size, locked: lockedShown.length, by: lockers.sort((a, b) => b.teams - a.teams) },
     manager: mgr, admin, me: user.id, can_lock: mgr && last < today && lockable > 0, lockable, can_unlock: admin && locks.size > 0,
-    floor: live ? live.floor : snap && snap.data.floor ? snap.data.floor : { state: "off", error: "", unknown: 0 }, ticks: STACK_TICKS, criteria: stackCriteria() };
+    floor: live ? live.floor : snap && snap.data.floor ? snap.data.floor : { state: "off", error: "", unknown: 0 }, ticks: STACK_TICKS, criteria: stackCriteria(), lines: stackLines() };
 }
+// the percentage each Stack starts at (5, 4, 3, 2, 1), for "N points short of Stack k"
+const stackLines = () => ({ assoc: STACK_RULES.stack.bands.map((b) => b[1]), tl: STACK_RULES.tlStack.bands.map((b) => b[1]), of: STACK_OUT_OF, tl_of: STACK_TL_OUT_OF });
 /* "How it is worked out": the bands in plain words, from the rules themselves. */
 function stackCriteria() {
   const W = (k) => stackBandTexts(STACK_RULES[k]).map((b) => b.text + ": " + b.score).join(" · ");
+  const L = (k) => stackBandTexts(STACK_RULES[k]);
   const th = STACK_TICKS.filter(([k]) => k[0] === "t").map((x) => x[1]).join("; "), cf = STACK_TICKS.filter(([k]) => k[0] === "c").map((x) => x[1]).join("; ");
   return {
     assoc: [
-      { name: "Productivity", max: 10, how: "Achieved / Expected for the month: the numbers Team status shows (claims worked and team task items done, against the daily target on the days in; a half day counts half; no target before the date of joining). Typed by the team lead for someone Brahmastra has no work numbers for.", bands: W("prod") },
-      { name: "Quality", max: 10, how: "The month's quality %, typed by the team lead.", bands: W("qual") },
-      { name: "Attendance", max: 10, how: "From Purview Shastra, on the working days (Monday to Friday, holidays left out, from the date of joining): approved and sick leave are AL (an approved half day 0.5), leave without pay and absent are LWP (a half day without pay 0.5). LWP of half a day or more scores 0; otherwise by AL + LWP.", bands: W("leave") },
-      { name: "Late login", max: 1, group: "Others", how: "The days Purview Shastra marks the person late.", bands: W("count") },
-      { name: "Breaks over", max: 1, group: "Others", how: "The days the breaks added up to more than " + STACK_BREAK_LIMIT_MIN + " minutes.", bands: W("count") },
-      { name: "Team player", max: 1, group: "Others", how: "Typed by the team lead; Yes unless they change it.", bands: "Yes: 1 · No: 0" },
-      { name: "PKT score", max: 2, group: "Others", how: "Typed by the team lead; empty counts as 0.", bands: W("pkt") },
-      { name: "Time on system", max: 5, how: "The average time on floor a day in Purview Shastra, over the finished days that have some.", bands: W("tos") },
-      { name: "Stack", max: 5, how: "The total out of 40 as a percentage.", bands: W("stack") },
+      { name: "Productivity", max: 10, how: "Achieved / Expected for the month: the numbers Team status shows (claims worked and team task items done, against the daily target on the days in; a half day counts half; no target before the date of joining). Typed by the team lead for someone Brahmastra has no work numbers for.", bands: W("prod"), list: L("prod") },
+      { name: "Quality", max: 10, how: "The month's quality %, typed by the team lead.", bands: W("qual"), list: L("qual") },
+      { name: "Attendance", max: 10, how: "From Purview Shastra, on the working days (Monday to Friday, holidays left out, from the date of joining): approved and sick leave are AL (an approved half day 0.5), leave without pay and absent are LWP (a half day without pay 0.5). LWP of half a day or more scores 0; otherwise by AL + LWP.", bands: W("leave"), list: L("leave") },
+      { name: "Late login", max: 1, group: "Others", how: "The days Purview Shastra marks the person late.", bands: W("count"), list: L("count") },
+      { name: "Breaks over", max: 1, group: "Others", how: "The days the breaks added up to more than " + STACK_BREAK_LIMIT_MIN + " minutes.", bands: W("count"), list: L("count") },
+      { name: "Team player", max: 1, group: "Others", how: "Typed by the team lead; Yes unless they change it.", bands: "Yes: 1 · No: 0", list: [{ text: "Yes", score: 1 }, { text: "No", score: 0 }] },
+      { name: "PKT score", max: 2, group: "Others", how: "Typed by the team lead; empty counts as 0.", bands: W("pkt"), list: L("pkt") },
+      { name: "Time on system", max: 5, how: "The average time on floor a day in Purview Shastra, over the finished days that have some.", bands: W("tos"), list: L("tos") },
+      { name: "Stack", max: 5, how: "The total out of 40 as a percentage.", bands: W("stack"), list: L("stack") },
     ],
     tl: [
-      { name: "Productivity", max: 10, how: "The average of the team members' productivity percentages.", bands: W("tlProd") },
-      { name: "Quality", max: 10, how: "The average quality % of the team members who have one.", bands: W("tlQual") },
-      { name: "Shrinkage", max: 10, how: "The average of the members' shrinkage (AL + LWP as a share of the working days).", bands: W("tlShrink") },
-      { name: "Attrition", max: 5, how: "People of the team who left in the month: the exit date in Purview Shastra, or the day the roster sync switched them off. Typed by the manager where Brahmastra cannot tell.", bands: W("tlAttr") },
-      { name: "Adherence", max: 5, how: "The members' late logins and breaks over, added up for the whole team.", bands: W("tlAdh") },
-      { name: "Team handling", max: 5, how: "Five ticks, 1 each, by the manager: " + th + ".", bands: "Yes: 1 · No or not ticked: 0" },
-      { name: "Client forefront", max: 5, how: "Five ticks, 1 each, by the manager: " + cf + ".", bands: "Yes: 1 · No or not ticked: 0" },
-      { name: "Addition point", max: 5, how: "The average of the team members' Stacks (0 to 5), added as it is.", bands: "" },
-      { name: "Stack", max: 5, how: "The total out of 50 as a percentage.", bands: W("tlStack") },
+      { name: "Productivity", max: 10, how: "The average of the team members' productivity percentages.", bands: W("tlProd"), list: L("tlProd") },
+      { name: "Quality", max: 10, how: "The average quality % of the team members who have one.", bands: W("tlQual"), list: L("tlQual") },
+      { name: "Shrinkage", max: 10, how: "The average of the members' shrinkage (AL + LWP as a share of the working days).", bands: W("tlShrink"), list: L("tlShrink") },
+      { name: "Attrition", max: 5, how: "People of the team who left in the month: the exit date in Purview Shastra, or the day the roster sync switched them off. Typed by the manager where Brahmastra cannot tell.", bands: W("tlAttr"), list: L("tlAttr") },
+      { name: "Adherence", max: 5, how: "The members' late logins and breaks over, added up for the whole team.", bands: W("tlAdh"), list: L("tlAdh") },
+      { name: "Team handling", max: 5, how: "Five ticks, 1 each, by the manager: " + th + ".", bands: "Yes: 1 · No or not ticked: 0", list: [{ text: "Yes", score: 1 }, { text: "No or not ticked", score: 0 }] },
+      { name: "Client forefront", max: 5, how: "Five ticks, 1 each, by the manager: " + cf + ".", bands: "Yes: 1 · No or not ticked: 0", list: [{ text: "Yes", score: 1 }, { text: "No or not ticked", score: 0 }] },
+      { name: "Addition point", max: 5, how: "The average of the team members' Stacks (0 to 5), added as it is.", bands: "", list: [] },
+      { name: "Stack", max: 5, how: "The total out of 50 as a percentage.", bands: W("tlStack"), list: L("tlStack") },
     ],
   };
 }
@@ -5081,7 +5084,7 @@ const OPS = {
       const row = (jsonObj(x.rows_json).rows || []).find((r) => r.id === user.id);
       if (row) months.push({ month: x.month, label: stackMonthLabel(x.month), row, locked_by: x.by_name, locked_at: x.at });
     }
-    return { months: months.slice(0, 12), criteria: months.length ? stackCriteria() : null };
+    return { months: months.slice(0, 12), criteria: months.length ? stackCriteria() : null, lines: stackLines() };
   },
   /* The claims activity for the Dashboard's dates (the inventory figures themselves are always as of now). */
   "team.activity": async ({ env, user, payload }) => {
