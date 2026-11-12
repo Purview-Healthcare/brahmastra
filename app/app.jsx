@@ -2217,7 +2217,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
     .map((u) => ({ id: u.id, label: u.name, sub: [u.designation || (u.role === "supervisor" ? "Supervisor" : "Biller"), u.department].filter(Boolean).join(" · ") }));
   const locCount = isNew ? f.locations.length : (client.locations || []).filter((l) => l.active).length;
   const missing = profileMissing(f, locCount);
-  const addLoc = () => { const n = f.locDraft.trim(); if (n && !f.locations.some((l) => l.toLowerCase() === n.toLowerCase())) set({ locations: [...f.locations, n], locDraft: "" }); };
+  const addLoc = () => { const n = f.locDraft.trim(), k = (s) => s.replace(/\s+/g, " ").toLowerCase(); if (n && !f.locations.some((l) => k(l) === k(n))) set({ locations: [...f.locations, n], locDraft: "" }); };
   const save = async () => {
     setBusy(true); setErr(null);
     try {
@@ -3085,11 +3085,12 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
     try {
       const groups = [];
       if (locMode === "file" && mapping.location) {
-        const m = by(built.claims, (c) => (c.location || "").trim());
+        // a location is the same whatever its case or extra spaces (as the server tells them apart)
+        const m = by(built.claims, (c) => (c.location || "").replace(/\s+/g, " ").trim());
         for (const [name, list] of m) {
           let loc = null;
           if (name) {
-            loc = client.locations.find((l) => l.name.toLowerCase() === name.toLowerCase());
+            loc = client.locations.find((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase() === name.toLowerCase());
             if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name }); loc = r.location; }
           }
           groups.push({ loc, claims: list });

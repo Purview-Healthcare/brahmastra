@@ -2931,6 +2931,8 @@ async function describeProfile(env, c) {
   return out;
 }
 const diffLines = (before, after) => after.map((x, i) => (x !== before[i] ? x + (before[i] ? "  (was: " + before[i].replace(/^[^:]+: /, "") + ")" : "") : null)).filter(Boolean);
+/* Client names, and a client's location names, are one of a kind: told apart without case or extra spaces. */
+const plainName = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
 /* Tell people when they are made responsible for a client (or taken off it): a line in their bell for two
    weeks, and an email when one is set up. */
 const RESP_LABEL = { ar_lead: "AR follow-up person (accountable)", ar_backup: "AR follow-up backup", posting_lead: "Payment posting person", posting_backup: "Payment posting backup",
@@ -5416,6 +5418,7 @@ const OPS = {
       const ex = await one(env, "SELECT * FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
       editableOr(user, ex.id);
+      if (plainName(ex.name) !== plainName(name) && (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
       const changes = [];
       if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);
       if ((ex.code || "") !== code) changes.push(`code ${ex.code || "none"} → ${code || "none"}`);
@@ -5441,9 +5444,9 @@ const OPS = {
     // Team leads and above add clients (SMEs and billers cannot). Someone with a span gets edit access to the client they add, so it opens for them.
     if (user.scope && (user.role !== "supervisor" || isSME(user))) throw denied("Adding a client is for team leads and above. Ask your team lead.");
     // A new client needs its whole profile: scope of work, locations, targets, the people responsible.
-    const locNames = [...new Set((Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter(Boolean))].slice(0, 50);
+    const locNames = (Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter((x, i, a) => x && a.findIndex((y) => plainName(y) === plainName(x)) === i).slice(0, 50);
     const p = await checkProfile(env, payload.profile, { isNew: true, locations: locNames.length });
-    if (await one(env, "SELECT id FROM clients WHERE lower(name) = lower(?)", name)) throw bad("A client with that name already exists.");
+    if ((await all(env, "SELECT name FROM clients")).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
     const id = uuid(), now = Date.now();
     const sets = Object.keys(p.cols);
     await env.DB.batch([
@@ -5498,6 +5501,7 @@ const OPS = {
       if (!ex) throw bad("Unknown location.");
       editableOr(user, ex.client_id);
       const old = await one(env, "SELECT name, active, workbook_link FROM locations WHERE id = ?", ex.id);
+      if (plainName(old.name) !== plainName(name) && (await all(env, "SELECT name FROM locations WHERE client_id = ? AND id <> ?", ex.client_id, ex.id)).some((l) => plainName(l.name) === plainName(name))) throw bad("That location already exists for this client.");
       await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
       const ch = [...(old.name !== name ? [`renamed ${old.name} → ${name}`] : []), ...(!!old.active !== !!active ? [active ? "reactivated" : "deactivated"] : []), ...(link != null && (old.workbook_link || "") !== link ? [link ? "production file link set" : "production file link removed"] : [])];
       if (ch.length) await audit(env, user, "client.location", ex.client_id, `Location ${old.name}: ` + ch.join("; "));
@@ -5506,8 +5510,7 @@ const OPS = {
     const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!client) throw bad("Unknown client.");
     editableOr(user, client.id);
-    const dup = await one(env, "SELECT id FROM locations WHERE client_id = ? AND lower(name) = lower(?)", client.id, name);
-    if (dup) throw bad("That location already exists for this client.");
+    if ((await all(env, "SELECT name FROM locations WHERE client_id = ?", client.id)).some((l) => plainName(l.name) === plainName(name))) throw bad("That location already exists for this client.");
     const id = uuid(), now = Date.now();
     await run(env, "INSERT INTO locations (id, client_id, name, active, created_at) VALUES (?,?,?,?,?)", id, client.id, name, active, now);
     await audit(env, user, "client.location", client.id, "Location added: " + name);

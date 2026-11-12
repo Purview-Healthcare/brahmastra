@@ -181,6 +181,42 @@ const profileOf = async (w, tat, over = {}) => {
   ok("E-04: the line made when the client was added names the TATs too", /Payment posting: in scope, Pavan Poster, TAT 24 working hours/.test(created), created);
 }
 
+{
+  S("E-05: client names and a client's location names are one of a kind (case and extra spaces do not count)");
+  const w = await world();
+  const { A, T, sun, lake } = w;
+  const same = async (n) => (await w.rows("SELECT id FROM clients")).length;
+  const n0 = await same();
+  let r = await T(() => A("clients.save", { id: lake.id, name: "Sunrise Eye Care", code: lake.code, follow_up_days: 30, active: true }));
+  ok("E-05: renaming a client to another client's name is refused", !r.ok && r.e === "A client with that name already exists.", r);
+  r = await T(() => A("clients.save", { id: lake.id, name: "  sunrise   EYE care ", code: lake.code, follow_up_days: 30, active: true }));
+  ok("E-05: also with other case and extra spaces", !r.ok && /already exists/.test(r.e), r);
+  r = await T(() => A("clients.save", { id: lake.id, name: "LAKEVIEW Dental  Group", code: lake.code, follow_up_days: 30, active: true }));
+  ok("E-05: a client can still change the case of its own name", r.ok && (await w.row("SELECT name FROM clients WHERE id = ?", lake.id)).name === "LAKEVIEW Dental  Group", r.e);
+  await A("clients.save", { id: lake.id, name: "Lakeview Dental Group", code: lake.code, follow_up_days: 30, active: true });
+  r = await T(async () => A("clients.save", { name: "Sunrise  Eye Care", code: "X", follow_up_days: 30, active: true, locations: ["Main"], profile: await profileOf(w, { posting: 24, submission: 24, subcheck: 48 }) }));
+  ok("E-05: adding a client whose name differs only by spaces is refused", !r.ok && /already exists/.test(r.e) && (await same()) === n0, r);
+  r = await T(async () => A("clients.save", { name: "Hill Clinic", code: "HC", follow_up_days: 30, active: true, locations: ["Main St", "main  st", "MAIN ST", "Annex"], profile: await profileOf(w, { posting: 24, submission: 24, subcheck: 48 }) }));
+  const hl = r.ok ? (await w.rows("SELECT name FROM locations WHERE client_id = ? ORDER BY name", r.r.client.id)).map((x) => x.name) : [];
+  ok("E-05: a new client's locations are kept once each (case and spaces ignored)", r.ok && JSON.stringify(hl) === JSON.stringify(["Annex", "Main St"]), { e: r.e, hl });
+  const locs = await w.rows("SELECT id, name FROM locations WHERE client_id = ? ORDER BY name", sun.id);   // Downtown, Westside
+  r = await T(() => A("locations.save", { id: locs[1].id, name: "DOWNTOWN", active: true }));
+  ok("E-05: renaming a location to another location's name of the client is refused", !r.ok && r.e === "That location already exists for this client.", r);
+  r = await T(() => A("locations.save", { client_id: lake.id, name: "  main   STREET " }));
+  ok("E-05: adding a location that differs only by case or spaces is refused", !r.ok && r.e === "That location already exists for this client.", r);
+  r = await T(() => A("locations.save", { id: locs[1].id, name: "Westside North", active: true }));
+  const r3 = await T(() => A("locations.save", { id: locs[1].id, name: "westside north", active: false }));
+  ok("E-05: a location can still be renamed, switched off or change its own case", r.ok && r3.ok && (await w.row("SELECT name, active FROM locations WHERE id = ?", locs[1].id)).active === 0, [r.e, r3.e]);
+  // the same location name under another client is fine
+  r = await T(() => A("locations.save", { client_id: lake.id, name: "Downtown" }));
+  ok("E-05: another client may have a location of the same name", r.ok, r.e);
+  // two clients that already share a name (from before) can still be edited and renamed apart
+  await w.sql("INSERT INTO clients (id, name, code, active, follow_up_days, created_at) VALUES ('dup-old', 'Lakeview dental group', '', 1, 30, ?)", Date.now());
+  r = await T(() => A("clients.save", { id: "dup-old", name: "Lakeview dental group", code: "", follow_up_days: 14, active: true }));
+  const r4 = await T(() => A("clients.save", { id: "dup-old", name: "Lakeview Dental Annex", code: "", follow_up_days: 14, active: true }));
+  ok("E-05: an old same-name pair is not locked: it saves, and can be renamed apart", r.ok && r4.ok, [r.e, r4.e]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
