@@ -6480,7 +6480,8 @@ const drDot = (b) => <i className={"psla-dot " + (b || "none")} />;
    target, the pace to clear, the SLA checks the inventory answers today, and what to do first to meet the SLA. Every client, or one. */
 const INV_STAGES = [["open", "Unassigned", "#9AA5B1"], ["list", "On a biller's list", "#22CAE4"], ["later", "Worked, follow-up later", "#30C48D"], ["due", "Follow-up due today", "#F5A623"],
   ["overdue", "Follow-up overdue", "#E5484D"], ["waiting", "Waiting on the client", "#7C5CFF"], ["desk", "At Posting / Submission", "#2563EB"]];
-const fmtK = (v) => { const a = Math.abs(Number(v) || 0); return "$" + (a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); };
+// a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none (the same rule as the server's cards)
+const fmtK = (v) => { const a = Math.abs(Number(v) || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((Number(v) || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
 function InvStrip({ stages, mini }) {
   const tot = INV_STAGES.reduce((t, [k]) => t + (stages[k] ? stages[k].n : 0), 0);
   if (!tot) return <div className={mini ? "inv-mini" : "inv-strip"} style={{ background: "var(--soft)" }} />;

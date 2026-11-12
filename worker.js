@@ -5105,7 +5105,8 @@ const OPS = {
     for (const r of t90) both(r.client_id, (x) => { for (const f of ["n7", "bal7", "n14", "bal14"]) x.t90[f] += Number(r[f]) || 0; });
     const pfBy = new Map(pf.rows.map((r) => [r.client_id, r]));
     const T = OVER90_TARGET;
-    const money = (v) => { const a = Math.abs(v || 0); return "$" + (a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); };
+    // a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none
+    const money = (v) => { const a = Math.abs(v || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((v || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
     const pl = (n, w) => n + " " + w + (n === 1 ? "" : "s");
     const deptName = { posting: "Posting", submission: "Submission", subcheck: "Submission", rejection: "Rejections" };
     // What to do first, most SLA-damaging first. Each card: the number, why it matters, and the one action.

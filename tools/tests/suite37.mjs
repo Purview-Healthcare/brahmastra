@@ -824,6 +824,26 @@ await part("N-02: a rejected recheck with nobody to resubmit leaves a closed cla
   ok("N-02: with a Rejections person set: the Rejections task is made, an excluded claim stays excluded, and the answer says Rejections", rf.ok && rf.r.went === "rejection" && !!(await openH(f, "rejection")) && (await claim(f)).state === "excluded", [rf, await brief(f)]);
 });
 
+await part("N-03: Inventory status keeps the minus sign of a credit", async () => {
+  setNow(IST(2027, 1, 25, 10, 0));
+  // Lakeview's unassigned claims all carry a credit (made-up demo claims), so their total is below zero
+  const open = await rows("SELECT id, balance FROM claims WHERE client_id = ? AND state = 'open'", lake.id);
+  await sql("UPDATE claims SET balance = -25 WHERE client_id = ? AND state = 'open'", lake.id);
+  try {
+    const total = -25 * open.length, inv = await call(A, "inventory.status", { client_id: lake.id, today: nowIso() });
+    const card = (inv.insights || []).find((c) => /unassigned/.test(c.sub || "")) || {};
+    const want = "-$" + (Math.abs(total) >= 1e3 ? Math.round(Math.abs(total) / 100) / 10 + "k" : Math.abs(total));
+    ok("N-03: the Allocate card shows the unassigned total as a credit (with its minus sign), not as a positive amount", open.length > 0 && card.sub === "unassigned · " + want, [open.length, want, card.sub]);
+    const sunCard = ((await call(A, "inventory.status", { client_id: sun.id, today: nowIso() })).insights || []).find((c) => /unassigned/.test(c.sub || "")) || {};
+    ok("N-03: ...and a positive total still shows without a sign", !sunCard.sub || /unassigned · \$\d/.test(sunCard.sub), sunCard.sub);
+  } finally { for (const c of open) await sql("UPDATE claims SET balance = ? WHERE id = ?", c.balance, c.id); }
+  // the page's own short money format on the same page (stage balances, aging, AR per client): taken from the page code as it is
+  const app = (await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  const fmtK = new Function("return " + app.match(/\nconst fmtK = (\(v\) => \{[^\n]*\});\n/)[1])();
+  const got = [-1400, -12345, -2e6, 2500, 980, -0.4, 0].map(fmtK);
+  ok("N-03: the page's short money format keeps a credit's sign and never shows -$0", got.join(" ") === "-$1.4k -$12k -$2M $2.5k $980 $0 $0", got);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
