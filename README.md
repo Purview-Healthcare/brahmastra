@@ -227,7 +227,8 @@ inventory pages (age groups, payers, status, actions) are of the money owed: cre
 says how much), a Future DOS claim is owed but never old, and a claim with no age is never counted as old.
 
 **Third Eye's rules, kept as they are:** periods by month, week (Monday to Sunday) or custom dates, each compared
-with the period of the same length before it; working days Monday to Friday; payer names merged across spellings;
+with the period of the same length before it; working days Monday to Friday (here with the Shastra holidays left out
+too, as the TAT clock counts them); payer names merged across spellings;
 the Pareto rule (the reasons that make 80% are highlighted, the long tail folds into *Other*); the movers insights
 (a change counts at 3 claims or $500 and 5% of the total); the top denial set for the RCA (the 80% set when it has
 3 to 6 reasons, else the top 3 or 5); closed, rejected, denied and paid read the same way as Third Eye reads them.

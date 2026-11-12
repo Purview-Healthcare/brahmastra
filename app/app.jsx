@@ -7291,7 +7291,8 @@ const crMS = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
 const crME = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 const crWS = (d) => { const x = crDay(d); return crAddD(x, -((x.getDay() + 6) % 7)); };   // Monday
 const crDaysBetween = (a, b) => Math.round((crDay(b) - crDay(a)) / 86400000) + 1;
-const crWorkingDays = (a, b) => { let n = 0; for (let d = crDay(a); d <= b; d = crAddD(d, 1)) { const w = d.getDay(); if (w !== 0 && w !== 6) n++; } return n; };
+// working days: Monday to Friday, the Shastra holidays left out (the report's own come with its data), as the TAT clock counts them
+const crWorkingDays = (a, b) => { let n = 0; for (let d = crDay(a); d <= b; d = crAddD(d, 1)) { const w = d.getDay(); if (w !== 0 && w !== 6 && !APP_HOLIDAYS.has(crF.iso(d))) n++; } return n; };
 /* report periods: a month, a week (Monday to Sunday) or custom dates; the period before has the same length */
 const crRangeMonth = (d) => ({ start: crMS(d), end: crME(d), kind: "month" });
 const crRangeWeek = (d) => ({ start: crWS(d), end: crAddD(crWS(d), 6), kind: "week" });
@@ -7365,6 +7366,8 @@ function crDatasets(raw) {
   out._movement = Array.isArray(d.movement) ? d.movement : [];   // where the claims open at the period before went (not a dataset)
   // the report's own period (the records cover the period before too, for the comparison): a page has data only when it has rows in it
   out._period = raw.period && crD(raw.period.from) && crD(raw.period.to) ? { start: crD(raw.period.from), end: crD(raw.period.to) } : null;
+  // the Shastra holidays in the report's dates join the ones the page knows (auth.me brings only the coming ones)
+  for (const h of Array.isArray(raw.holidays) ? raw.holidays : []) APP_HOLIDAYS.add(h);
   out.worked = crDataset("worked", d.worked, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, charge: r.chg, balance: r.amt, amount: r.chg != null ? r.chg : r.amt, bucket: r.bk,
     purviewStatus: r.st, status: r.sub, action: r.act, moveTo: r.mv, workDate: r.wd, workBy: r.by, loc: r.loc }), { dateField: "workDate" });
   out.payment = crDataset("payment", d.payment, (r) => ({ id: r.id, invoice: r.no, dos: r.dos, payer: r.py, checkNo: r.chk, paidDate: r.pd, paid: r.paid, charge: r.chg,

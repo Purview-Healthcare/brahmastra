@@ -5397,8 +5397,10 @@ const OPS = {
     // reports made before for this client (a period with the team's words, or one created from the start screen)
     const made = (await all(env, `SELECT period_key, MAX(at) AS at FROM creport_edits WHERE client_id = ? AND loc = ? GROUP BY period_key ORDER BY at DESC LIMIT 8`, clientId, loc))
       .map((x) => ({ period_key: x.period_key, at: x.at }));
+    // the Shastra holidays in these dates: the page's "per working day" leaves them out, as the TAT clock does
     return { client: { id: client.id, name: client.name, logo: client.logo || "" }, locations: locs, location_id: loc, period_key: periodKey, today,
-      period: { from, to, prev_from: pfrom, prev_to: pto }, data, trend, asks, edits, ev_files: evFiles, made, can_edit: canEditClient(user, clientId), prepared_by: user.name || "" };
+      period: { from, to, prev_from: pfrom, prev_to: pto }, data, trend, asks, edits, ev_files: evFiles, made, can_edit: canEditClient(user, clientId), prepared_by: user.name || "",
+      holidays: [...HOLIDAYS].filter((d) => d >= pfrom && d <= to).sort() };
   },
   /* A supervisor's words on a report page (title, insights, RCA and plan, the asks, the focus, which pages print), kept for the
      client, period and location and shared with everyone who opens that report. A save says which saved copy of the page it was

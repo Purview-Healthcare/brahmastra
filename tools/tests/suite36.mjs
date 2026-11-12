@@ -231,6 +231,17 @@ S("B-08 and H-07: the page uses India's date, whatever the computer's time zone"
   } finally { rig.app.getLocalBackend = lb; if (tz0 === undefined) delete process.env.TZ; else process.env.TZ = tz0; }
 }
 
+S("N-10: the Client 360 report's per working day leaves the Shastra holidays out");
+{
+  // Lakeview has entries in November (B-05 above); the report page is built by the page's own code on 5 Dec 2026
+  const raw = await A("creport.get", { client_id: lake.id, from: D(1), to: D(30), prev_from: "2026-10-01", prev_to: "2026-10-31", period_key: "month:2026-11" });
+  rig.app.__raw = raw;
+  const k = await at(IST(2026, 12, 5, 12), () => page(`(() => { const DS = crDatasets(__raw); const R = { range: crRangeMonth(crD("2026-11-01")), compare: true, cardMeasure: {} };
+    const p = crBuildAR(crCtx(DS, R, "ar", {})); return p && p.kpis.find((x) => x.label === "Per working day"); })()`));
+  ok("N-10: the report's answer carries the Shastra holidays in its dates (Diwali)", Array.isArray(raw.holidays) && raw.holidays.includes(D(9)), raw.holidays);
+  ok("N-10: AR production for November 2026: per working day over 20 working days (21 weekdays, Diwali left out)", !!k && /^20 working days/.test(k.sub || ""), k);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
