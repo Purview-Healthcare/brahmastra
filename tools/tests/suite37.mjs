@@ -719,6 +719,29 @@ await part("B-09: 'Desks past the client's TAT' counts what the scorecard counts
   await sql("DELETE FROM handoffs WHERE id = 'b09-recheck'");
 });
 
+await part("B-10: the month's TAT counts tasks not yet due as open", async () => {
+  // December on Lakeview, with the tasks the sections before left there finished: one task closed in time, one open and due later
+  setNow(IST(2026, 12, 7, 9, 0));
+  for (const h of await rows("SELECT id FROM handoffs WHERE client_id = ? AND status IN ('pending','assigned','client')", lake.id))
+    await call(LX, "handoffs.close", { id: h.id, outcome: "complete", proof: { date: nowIso(), ref: "CHK-L", allowed: "100", paid: "80", adjustment: "20" }, note: "Posted" });
+  const [a, b] = await give("Cyra Agent", 2, lake);
+  for (const id of [a, b]) { await call(CY, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF }); }
+  await save(CY, a, SAAG.post);
+  setNow(IST(2026, 12, 7, 15, 0));
+  await call(LX, "handoffs.close", { id: (await openH(a, "posting")).id, outcome: "complete", proof: { date: nowIso(), ref: "CHK-2", allowed: "100", paid: "80", adjustment: "20" }, note: "Posted" });
+  setNow(IST(2026, 12, 9, 10, 0));
+  await save(CY, b, SAAG.post);   // due Dec 10, 10:00
+  // the rest of the month from Dec 7 (a task an earlier section left fell due on Dec 2)
+  const month = async () => (await call(LL0(), "sla.extras", { client_id: lake.id, from: "2026-12-07", to: "2026-12-31", today: nowIso() })).tat.posting;
+  let t = await month();
+  ok("B-10: on Dec 9 the month's Posting TAT: 1 due and met, 1 still open and not yet due", t.due === 1 && t.met === 1 && t.open === 1 && t.pct === 100, t);
+  setNow(IST(2026, 12, 11, 10, 0));
+  t = await month();
+  ok("B-10: once its due time has passed, the open one is missed (no longer open)", t.due === 2 && t.met === 1 && t.missed === 1 && t.open === 0, t);
+  const pastWeek = (await call(LL0(), "sla.extras", { client_id: lake.id, from: "2026-12-07", to: "2026-12-08", today: nowIso() })).tat.posting;
+  ok("B-10: a window that has ended reads as before (only the task due in it)", pastWeek.due === 1 && pastWeek.met === 1 && pastWeek.open === 0, pastWeek);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

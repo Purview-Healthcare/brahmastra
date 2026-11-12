@@ -1087,13 +1087,14 @@ function sumTat(boards) {
    fell due in it. Payment posting; Submission: every time a claim is sent to it (a first submission or a resubmission, each
    counts) and Rejections (they resubmit to the Submission TAT), but not the recheck after submitting (the biller checking
    the payer has the claim); Needs attention (48 working hours).
-   Closed after the due time, or still open past it, is missed; still open and not yet due is left out. */
+   Closed after the due time, or still open past it, is missed; still open and not yet due is counted as open (left out of the %). */
 async function tatStats(env, clientIds, from, to, now = Date.now()) {
   const ids = [...new Set(clientIds || [])].filter(Boolean);
   const blank = () => ({ due: 0, met: 0, missed: 0, open: 0, pct: null, who: {} });
   const out = new Map(ids.map((id) => [id, { posting: blank(), submission: blank(), attention: blank(), missed_list: [] }]));
   if (!ids.length) return out;
-  const IN = `(${ids.map(() => "?").join(",")})`, lim = Math.min(to, now);
+  // every task due in the window, also the ones not due yet (a month still running): tally() counts those as open
+  const IN = `(${ids.map(() => "?").join(",")})`;
   const tally = (s, due, closed, who, row) => {
     if (closed == null && due >= now) { s.open++; return; }
     s.due++;
@@ -1102,13 +1103,13 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
   };
   for (const h of await all(env, `SELECT h.client_id, h.dept, h.status, h.due_at, h.created_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no, COALESCE(NULLIF(h.done_by_name, ''), u.name) AS who
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
-      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, lim)) {
+      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, to)) {
     const o = out.get(h.client_id); if (!o) continue;
     const k = h.dept === "posting" ? "posting" : "submission", open = HO_OPEN.includes(h.status);
     tally(o[k], h.due_at, open ? null : h.closed_at, h.who || "", () => o.missed_list.push({ dept: k, claim_no: h.claim_no || "", sent: h.created_at, due: h.due_at, closed: open ? null : h.closed_at, who: h.who || "" }));
   }
   // Needs attention: flagged by billers (closed when answered or reviewed), sent back (when reviewed or worked again), client requests (when sent)
-  const attn = async (sql, args) => { for (const r of await all(env, sql, ...args)) { const o = out.get(r.client_id); if (!o || !r.start) continue; const due = addWorkingHours(r.start, ATTN_TAT_HOURS); if (due < from || due > lim) continue; tally(o.attention, due, r.closed_at || null, ""); } };
+  const attn = async (sql, args) => { for (const r of await all(env, sql, ...args)) { const o = out.get(r.client_id); if (!o || !r.start) continue; const due = addWorkingHours(r.start, ATTN_TAT_HOURS); if (due < from || due > to) continue; tally(o.attention, due, r.closed_at || null, ""); } };
   const back = now - 120 * 86400000;
   await attn(`SELECT client_id, escalated_at AS start, CASE WHEN escalated = 1 THEN NULL ELSE COALESCE(escalation_answered_at, reviewed_at, updated_at) END AS closed_at FROM claims c
     WHERE client_id IN ${IN} AND escalated_at > ? AND (escalated = 1 OR escalation_answered_at >= escalated_at OR reviewed_at >= escalated_at) AND NOT ${BOUNCE_FLAG_SQL("c")}`, [...ids, back]);
