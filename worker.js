@@ -2679,7 +2679,7 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
   const cell = (x, align, extraStyle) => `<td align="${align || "left"}" style="padding:8px 4px;border-bottom:1px solid #EEF1F4;vertical-align:middle${extraStyle || ""}">${x}</td>`;
   const row = (d) => {
     const ppl = [d.tls.length ? (d.tls.length > 1 ? "TLs " : "TL ") + d.tls.join(", ") : "", d.smes.length ? (d.smes.length > 1 ? "SMEs " : "SME ") + d.smes.join(", ") : ""].filter(Boolean).join(" · ");
-    const sla = d.card ? tag(`${d.card.score}%${d.card.delta ? (d.card.delta > 0 ? " ▲" : " ▼") + Math.abs(d.card.delta) : ""}`, BAND_LOOK[d.card.band]) : `<span style="color:#627079">not scored</span>`;
+    const sla = d.card ? tag(`${d.card.score}%${d.card.delta ? (d.card.delta > 0 ? " ▲" : " ▼") + Math.abs(d.card.delta) : ""}`, BAND_LOOK[d.card.band]) : `<span style="color:#627079">no month scored</span>`;
     const esc = d.esc ? tag((d.esc.n ? `${d.esc.n} ext · ${d.esc.open ? d.esc.open + " open" : "closed"}` : "0 ext") + ` · ${d.esc.internal || 0} int`, BAND_LOOK[d.esc.n ? "miss" : "ok"]) : "–";
     return `<tr>${cell(`<b>${htmlEsc(d.client.name)}</b>${ppl ? `<div style="color:#627079;font-size:11px">${htmlEsc(ppl)}</div>` : ""}`)}${cell(sla, "center")}${cell(esc, "center")}${cell(d.wfm ? `${fteTxt(d.wfm.billable)} / ${fteTxt(d.wfm.assigned_fte)}` : "–", "center")}${cell(d.ar.over90_pct + "%", "right", d.ar.over90_pct > d.ar.target ? ";color:#BA2340" : "")}</tr>`;
   };
@@ -2711,7 +2711,7 @@ ${link ? `<tr><td style="padding:16px 22px 4px"><table role="presentation" cellp
     `Manager name: ${extra.manager ? extra.manager.name : "No manager"} · Designation: ${extra.manager ? extra.manager.designation : "-"} · Period: week of ${weekTxt}`,
     ...(wf.length ? [`Total team: Billable FTE: ${fteTxt(wsum("billable"))} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}`] : []),
     `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} external (target ${ESC_SLA_TARGET}) and ${R.esc.internal || 0} internal` : ""), "", "Client by client:",
-    ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "not scored"}` + (d.esc ? `, escalations ${d.esc.n} external and ${d.esc.internal || 0} internal` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
+    ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "(no month scored in Drishti)"}` + (d.esc ? `, escalations ${d.esc.n} external and ${d.esc.internal || 0} internal` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
     ...(ds.some((d) => d.tat) ? ["", "TAT last week (working hours, Monday to Friday):", ...TAT_PARTS.filter(([k]) => R.tat[k]).map(([k, label]) => `- ${label}: ${R.tat[k].pct}% (${R.tat[k].met} of ${R.tat[k].due})`),
       ...order.filter((d) => d.tat).map((d) => `- ${d.client.name}: ${tatLine(d.tat)}`)] : []),
     "", "Needs your attention:", ...(R.attention.length ? R.attention.slice(0, 5).map(([, c, x]) => `- ${c}: ${x}`) : ["- Nothing needs you."]), "",
@@ -5246,7 +5246,7 @@ const OPS = {
         insights: insights(x, cl, cid) };
     };
     const clients = pf.rows.map((r) => { const x = per.get(r.client_id), s = shape(x, [r], r, r.client_id);
-      return { client_id: r.client_id, client: r.client, health: r.health, tl: r.tl, manager: r.manager, drishti: r.drishti ? { score: r.drishti.score, band: r.drishti.band } : null,
+      return { client_id: r.client_id, client: r.client, health: r.health, tl: r.tl, manager: r.manager, drishti: r.drishti ? { score: r.drishti.score, band: r.drishti.band, kind: r.drishti.kind, label: r.drishti.label } : null,
         stages: s.stages, ar: s.ar, over90_pct: s.over90_pct, overdue: s.stages.overdue.n, waiting: s.stages.waiting.n, days_to_clear: s.pace.days_to_clear, per_day: s.pace.per_day,
         do_first: s.insights.filter((i) => i.tone !== "green").slice(0, 2).map((i) => i.short) }; });
     // pending with the desks and team leads, against each TAT (working hours)
