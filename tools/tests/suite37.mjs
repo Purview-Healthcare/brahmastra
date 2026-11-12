@@ -605,6 +605,29 @@ await part("C-14: the Rejections file's TAT column is named for what it answers 
   } finally { rig.liveEnv.DEMO = true; await sql("UPDATE clients SET submission_tat_hours = 24 WHERE id = ?", sun.id); }
 });
 
+await part("C-16: an open rejection is at the top of the desk's Open list", async () => {
+  // the Submission person is also the Rejections person here; a resubmission came an hour before the rejection
+  await A("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "person", lead: U("Quin Submit").id });
+  setNow(IST(2026, 12, 1, 10, 0));
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  await save(AR, a, SAAG.resub);
+  setNow(IST(2026, 12, 1, 11, 0));
+  await save(AR, b, SAAG.rej); await save(AR, d, SAAG.rej); await save(AR, e, SAAG.resub);
+  await call(QU, "handoffs.close", { id: (await openH(d, "rejection")).id, outcome: "client", reason: "Need signature or documents", note: "Need the signed form from the office" });
+  setNow(IST(2026, 12, 3, 12, 0));
+  await call(TI, "tat.hold", { kind: "handoff", id: (await openH(e, "submission")).id, reason: "Waiting on the payer", note: "Payer system down", until: "2026-12-04" });
+  const mine = new Set([a, b, d, e]);
+  const server = (await call(QU, "handoffs.list", { from_ms: IST(2026, 12, 1, 0, 0) })).rows.filter((h) => mine.has(h.claim_id));
+  // the page's own default order of that list (HandoffsView: the TAT column, earliest first)
+  const shown = rig.app.useTableSort("due_at", "asc").sortRows(server, { due_at: rig.app.handoffDueKey }).map((h) => h.claim_id);
+  ok("C-16: the server sends the open rejection first", server[0].claim_id === b && server[0].dept === "rejection", server.map((h) => h.dept + ":" + h.status));
+  ok("C-16: the page keeps it first, above the resubmission that is due earlier", shown[0] === b && shown[1] === a, shown.map((id) => [a, b, d, e].indexOf(id)));
+  ok("C-16: ...the one on hold is after the rest", shown.length === 3 && shown[2] === e, shown.map((id) => [a, b, d, e].indexOf(id)));
+  const K = rig.app.handoffDueKey;
+  ok("C-16: ...a rejection waiting on the client is not pulled to the top, and a finished one sorts by when it was done", K({ status: "client", dept: "rejection", due_at: 500 }) === 500 && K({ status: "pending", dept: "rejection", due_at: 500 }) < 0 && K({ status: "complete", dept: "rejection", due_at: 500, done_at: 700 }) === 700);
+  await A("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "person", lead: U("Rex Reject").id });
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

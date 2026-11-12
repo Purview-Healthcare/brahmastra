@@ -5105,6 +5105,12 @@ function HoldCell({ hold, late, canHold, onHold, onChanged }) {
   return <>{hold && !hold.active && <div className="tiny red-ink" style={{ marginTop: 3, maxWidth: 240 }}>Expected {fmtMDY(hold.until)} ({String(hold.reason || "").toLowerCase()}): the date has passed</div>}
     {late && canHold && <div><button type="button" className="btn link tiny" style={{ padding: 0, marginTop: 3 }} onClick={onHold} title="Why it cannot be closed yet, and by when: no reminders for it until then">Can't close yet</button></div>}</>;
 }
+/* The desk list's own order (the TAT column, earliest first): open rejections first (the server's order, and what the Open card
+   says: "N rejections first"), then the earliest due (past TAT on top), the ones on hold after the rest; closed ones by when done. */
+function handoffDueKey(h) {
+  if (!["pending", "assigned", "client"].includes(h.status)) return h.done_at;
+  return h.hold && h.hold.active ? 9e15 + h.due_at : h.dept === "rejection" && h.status !== "client" ? h.due_at - 9e15 : h.due_at;
+}
 function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const desk = deskOf(me, handoffs);
   const hd = (handoffs && handoffs.depts) || [];
@@ -5132,8 +5138,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const rows = pick === "late" ? all0.filter((h) => h.overdue) : pick === "held" ? all0.filter((h) => h.hold && h.hold.active) : all0;
   const st = (q.data && q.data.stats) || {};
   const sort = useTableSort("due_at", "asc");
-  // past TAT first (the earliest due), the ones on hold after the rest
-  const shown = sort.sortRows(rows, { due_at: (h) => (["pending", "assigned", "client"].includes(h.status) ? (h.hold && h.hold.active ? 9e15 + h.due_at : h.due_at) : h.done_at) });
+  const shown = sort.sortRows(rows, { due_at: handoffDueKey });
   const pickCard = (k) => { setView("open"); setPick(pick === k ? "" : k); };
   const changed = () => { q.reload(); refreshHandoffs && refreshHandoffs(); };
   const assign = async (h, uid) => { if (!uid) return; setBusy(true); try { await rpc("handoffs.assign", { id: h.id, user_id: uid }); toast("Assigned."); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
