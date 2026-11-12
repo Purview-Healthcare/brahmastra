@@ -149,9 +149,10 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 - a health line (**On track / Needs attention / At risk**) with the plain reasons: over-90 above the 15% target, SLA
   below 90%, claims past or near timely filing, escalations over 24 hours, old requests waiting on the client,
   many missed tasks;
-- AR balance (against a month ago), over 90 days, the SLA score ticked at month-end, collected (from payment posting
+- AR balance (against a month ago), over 90 days (a share of the money owed, its dollars the same money: credit balances
+  are left out, as on the Dashboard), the SLA score ticked at month-end, collected (from payment posting
   hand-offs, against the period before), dollars waiting on the client, dollars at timely-filing risk;
-- AR and the over-90 share by month (Brahmastra keeps one reading a day, so the trend fills in by itself);
+- AR and the over-90 share of the money owed by month (Brahmastra keeps one reading a day, so the trend fills in by itself);
 - denial and rejection reasons from billers' entries, in dollars;
 - every request waiting on the client, how long, whether it was sent, and the client's average reply time;
 - escalations, missed tasks, entries made, RACI;
@@ -191,7 +192,7 @@ greyed out in the list and stays out of the PDF.
 
 | Page | From |
 |---|---|
-| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, and Future DOS for a date of service typed in the future), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
+| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, Future DOS for a date of service typed in the future, and Unknown age for a claim with no date of service or age), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
 | AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet* |
 | Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof) |
 | Client assistance | requests sent to the client, with their reason and whether they were answered |
@@ -202,6 +203,10 @@ greyed out in the list and stays out of the PDF.
 each upload; month ends and Sundays are kept, other days for 45 days). Today's inventory is live.
 For a date before the snapshots started, the inventory is rebuilt from the claims' history (claims loaded by then
 that had not yet been closed, excluded or sent to a desk) and the page says so.
+
+**Money owed, as on the Dashboard.** Over 90 days, older than 120 or 360 days and every share of money on the
+inventory pages (age groups, payers, status, actions) are of the money owed: credit balances are left out (the page
+says how much), a Future DOS claim is owed but never old, and a claim with no age is never counted as old.
 
 **Third Eye's rules, kept as they are:** periods by month, week (Monday to Sunday) or custom dates, each compared
 with the period of the same length before it; working days Monday to Friday; payer names merged across spellings;

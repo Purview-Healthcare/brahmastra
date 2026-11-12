@@ -7136,7 +7136,7 @@ function crDatasets(raw) {
 }
 /* ---------- aggregation (Third Eye's agg, Pareto, folding, cross-filter) ---------- */
 function crLabelOf(ds, field, key) {
-  if (!key) return "(blank)";
+  if (!key) return field === "bucket" ? "Unknown age" : "(blank)";
   if (field === "payerKey") return (ds.labels.payerKey && ds.labels.payerKey[key]) || crTitle(key);
   if (field === "bucket") return (ds.labels.bucket && ds.labels.bucket[key]) || key;
   const L = ds.labels[field]; return (L && L[key]) || crTitle(key);
@@ -7146,7 +7146,8 @@ function crAgg(rows, field, ds, opts = {}) {
   const measure = opts.measure || "count", m = new Map();
   for (const r of rows) { const k = r[field] == null ? "" : String(r[field]); let e = m.get(k); if (!e) { e = { key: k, count: 0, amount: 0, lo: r.bucketLo, first: null }; m.set(k, e); } e.count += r._n || 1; e.amount += Number(r.amount) || 0; if (r.workDate && (!e.first || r.workDate < e.first)) e.first = r.workDate; }
   let items = [...m.values()].map((e) => ({ ...e, label: crLabelOf(ds, field, e.key), value: measure === "amount" ? e.amount : e.count }));
-  if (!opts.keepBlank) items = items.filter((x) => x.key !== "" || items.length === 1);
+  // claims with no age stay in as "Unknown age" (as in Third Eye), so the age groups add up to the total and shares are of that total
+  if (!opts.keepBlank && field !== "bucket") items = items.filter((x) => x.key !== "" || items.length === 1);
   const total = crSum(items, (x) => x.value) || 1; items.forEach((x) => { x.share = x.value / total; });
   if (field === "bucket") items.sort((a, b) => a.lo - b.lo);
   else if (opts.order === "label") items.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
@@ -7284,9 +7285,14 @@ function crInvSets(c) {
     prevLabel: two ? `AR · ${asOf(prevDs)}` : "", curLabel: two ? `AR · ${asOf(ds)}` : "Open AR", pw,
     rebuilt: two && prevDs.source === "rebuilt" ? prevDs.asOf : null };
 }
-/* Over 90 days is a share of the money owed: credit balances are left out (the Dashboard's rule). */
-const crOwed = (set, lo = 0) => crSum(set.filter((r) => r.bucketLo >= lo), (r) => Math.max(0, Number(r.amount) || 0));
+/* Over 90 days is a share of the money owed: credit balances are left out (the Dashboard's rule). The money owed is every claim
+   (Future DOS and a claim with no age too); "older than" counts only claims whose age is known (no age is lo 9999, never older). */
+const crOlder = (r, lo) => r.bucketLo >= lo && r.bucketLo < 9999;
+const crOwed = (set, lo) => crSum(lo == null ? set : set.filter((r) => crOlder(r, lo)), (r) => Math.max(0, Number(r.amount) || 0));
 const crOverShare = (set, lo) => { const owed = crOwed(set); return owed ? crOwed(set, lo) / owed : null; };
+/* the money owed by age group (credits left out), the share each holds of it, and the credits left out */
+const crOwedBuckets = (set, ds) => crAgg(set.filter((r) => Number(r.amount) > 0), "bucket", ds, { measure: "amount" });
+const crCredit = (set) => -crSum(set.filter((r) => Number(r.amount) < 0), (r) => r.amount);
 function crBuildInventory(c) {
   const R = c.R, { ds, prevSet, curSet, twoSnapshots, prevLabel, curLabel, rebuilt, noPrev } = crInvSets(c);
   if (!twoSnapshots) return crBuildInventoryNow(c, ds, curSet, noPrev);
@@ -7297,14 +7303,14 @@ function crBuildInventory(c) {
     crKpi(prevLabel, crF.money(amtPrev, 0), { sub: `${crF.int(nPrev)} claims` }),
     crKpi(red != null && red >= 0 ? "Reduction" : "Change", red == null ? "–" : crF.pct(Math.abs(red), 1), { sub: red == null ? "" : `${crF.money(Math.abs(amtPrev - amtCur), 0)} ${red >= 0 ? "off the open AR" : "added"}${nPrev !== nCur ? " · " + crPl(Math.abs(nPrev - nCur), "claim") : ""}`, accent: true }),
     crKpi(curLabel, crF.money(amtCur, 0), { sub: `${crF.int(nCur)} claims`, delta: twoSnapshots ? crDelta(amtCur, amtPrev) : null, upGood: false, fmt: crF.moneyK }),
-    crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: o90p == null ? "of the open balance" : `was ${crF.pct(o90p, 1)}`, delta: o90 != null && o90p != null ? { cur: o90, prev: o90p, diff: o90 - o90p, pct: null, pts: true } : null, upGood: false }),
+    crKpi("Over 90 days", o90 == null ? "–" : crF.pct(o90, 1), { sub: o90p == null ? "of the money owed" : `was ${crF.pct(o90p, 1)}`, delta: o90 != null && o90p != null ? { cur: o90, prev: o90p, diff: o90 - o90p, pct: null, pts: true } : null, upGood: false }),
   ];
   const bP = crAgg(prevSet, "bucket", ds, { measure: "amount" }), bC = crAgg(curSet, "bucket", ds, { measure: "amount" }), bPc = crAgg(prevSet, "bucket", ds), bCc = crAgg(curSet, "bucket", ds);
   crMarkSel(bP, c.sel.bucket); crMarkSel(bC, c.sel.bucket);
   const keys = crUniq([...bP.map((x) => x.key), ...bC.map((x) => x.key)]).map((k) => ({ k, lo: (bP.find((x) => x.key === k) || bC.find((x) => x.key === k)).lo })).sort((a, b) => a.lo - b.lo).map((x) => x.k);
   const mk = (P, Q) => keys.map((k) => { const p = P.find((x) => x.key === k), q = Q.find((x) => x.key === k); const pv = p ? p.value : 0, cv = q ? q.value : 0; return { key: k, label: crLabelOf(ds, "bucket", k), value: pv - cv, prev: pv, cur: cv, dim: c.sel.bucket && c.sel.bucket.size && !c.sel.bucket.has(k) }; });
   const redAmt = mk(bP, bC), redCnt = mk(bPc, bCc);
-  const grouped = keys.map((k) => { const p = bP.find((x) => x.key === k), q = bC.find((x) => x.key === k); return { key: k, label: k === "future" ? "Future DOS" : k + "", prev: p ? p.value : 0, cur: q ? q.value : 0, dim: c.sel.bucket && c.sel.bucket.size && !c.sel.bucket.has(k), sel: c.sel.bucket && c.sel.bucket.has(k) }; });
+  const grouped = keys.map((k) => { const p = bP.find((x) => x.key === k), q = bC.find((x) => x.key === k); return { key: k, label: k === "future" ? "Future DOS" : k || "Unknown age", prev: p ? p.value : 0, cur: q ? q.value : 0, dim: c.sel.bucket && c.sel.bucket.size && !c.sel.bucket.has(k), sel: c.sel.bucket && c.sel.bucket.has(k) }; });
   const cards = [
     { id: "inv.bucket.both", title: `Aging, ${twoSnapshots ? "then against now" : "received against still open"}`, sub: "Balance by age of claim", cols: 7, type: "grouped", dim: "bucket", items: grouped, fmtV: crF.moneyK, labels: [prevLabel, curLabel] },
     { id: "inv.red.amt", title: "What changed in each age group", sub: "Balance off the open AR (right) or added (left)", cols: 5, type: "diverge", dim: "bucket", items: redAmt, fmtV: crF.moneyK, posLabel: "Balance reduced", negLabel: "Balance increased" },
@@ -7321,8 +7327,11 @@ function crBuildInventory(c) {
   const cntOf = (k) => (redCnt.find((x) => x.key === k) || {}).value || 0;
   const bestRed = redAmt.filter((x) => x.value > 0).sort((a, b) => b.value - a.value)[0]; if (bestRed) ins.push(`The largest reduction came from the ${bestRed.label} bucket: ${crF.money(bestRed.value, 0)}${cntOf(bestRed.key) > 0 ? " (" + crPl(cntOf(bestRed.key), "claim") + ")" : ""} off the open AR.`);
   const worst = redAmt.filter((x) => x.value < 0).sort((a, b) => a.value - b.value)[0]; if (worst) ins.push(`The ${worst.label} bucket grew by ${crF.money(-worst.value, 0)}${cntOf(worst.key) < 0 ? " (" + crPl(-cntOf(worst.key), "claim") + ")" : ""}; these need attention before they age further.`);
-  const top = bC.slice().sort((a, b) => b.value - a.value)[0]; if (top && !moves.length) { const pt = bP.find((x) => x.key === top.key); ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of the open balance${pt ? ` (${crF.pct(pt.share, 0)} at ${prevLabel.replace(/^AR · /, "")})` : ""}.`); }
+  // the heaviest age group is a share of the money owed (credits left out, as Over 90 days), among the groups with a known age
+  const owC = crOwedBuckets(curSet, ds), owP = crOwedBuckets(prevSet, ds), credit = crCredit(curSet), ofWhat = credit ? "the money owed" : "the open balance";
+  const top = owC.filter((x) => x.key).sort((a, b) => b.value - a.value)[0]; if (top && !moves.length) { const pt = owP.find((x) => x.key === top.key); ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of ${ofWhat}${pt ? ` (${crF.pct(pt.share, 0)} at ${prevLabel.replace(/^AR · /, "")})` : ""}.`); }
   const o120 = crOverShare(curSet, 121), o120p = crOverShare(prevSet, 121); if (o120) ins.push(`${crF.pct(o120, 0)} of the money owed is older than 120 days${o120p != null ? `, compared with ${crF.pct(o120p, 0)} before` : ""}; timely filing and appeal limits make this the priority slice.`);
+  if (credit && owC.length) ins.push(`The age shares are of the ${crF.money(crSum(owC, (x) => x.value), 0)} owed; credit balances (${crF.money(credit, 0)}) are left out.`);
   const headline = red == null ? "Inventory analysis" : twoSnapshots ? `AR ${red >= 0 ? "came down" : "went up"} ${crF.pct(Math.abs(red), 0)} in ${R.periodName}` : `${crF.pct(Math.max(0, red), 0)} of the inventory received is off the open AR`;
   return { title: "Inventory analysis", headline, sub: twoSnapshots ? `Open AR at ${prevLabel.replace(/^AR · /, "")} against ${curLabel.replace(/^AR · /, "")}, by age of claim` : `Inventory on file · ${R.client}`,
     note: rebuilt ? `The ${crF.date(crD(rebuilt))} inventory is rebuilt from the claims' history (Brahmastra keeps a month-end snapshot from now on).` : "",
@@ -7339,8 +7348,10 @@ function crBuildInventoryNow(c, ds, curSet, noPrev) {
     fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 14 }];
   const ins = [`The open AR is ${crF.money(amt, 0)} across ${crF.int(n)} claims.`];
   ins.push(noPrev ? "There is no month-end inventory before this one to compare with: the reduction shows from the next report." : "Compare is off: this page shows the open AR only.");
-  const top = bC.slice().sort((a, b) => b.value - a.value)[0]; if (top) ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of the open balance.`);
+  const owC = crOwedBuckets(curSet, ds), credit = crCredit(curSet);
+  const top = owC.filter((x) => x.key).sort((a, b) => b.value - a.value)[0]; if (top) ins.push(`${top.label} is the heaviest open bucket at ${crF.money(top.value, 0)}, ${crF.pct(top.share, 0)} of ${credit ? "the money owed" : "the open balance"}.`);
   if (o120) ins.push(`${crF.pct(o120, 0)} of the money owed is older than 120 days; timely filing and appeal limits make this the priority slice.`);
+  if (credit && owC.length) ins.push(`The age shares are of the ${crF.money(crSum(owC, (x) => x.value), 0)} owed; credit balances (${crF.money(credit, 0)}) are left out.`);
   return { title: "Inventory analysis", headline: `${crF.money(amt, 0)} open across ${crF.int(n)} claims`, sub: `Open AR by age of claim · ${R.client}`, watermark: "INVENTORY", kpis, cards, insights: ins,
     slicers: ["payerKey", "bucket", "purviewStatus", "action"].filter((f) => curSet.some((r) => r[f])), claims: crClaims(ds, ds.cells ? [] : curSet, "inventory"), unfiltered: true };
 }
@@ -7348,32 +7359,37 @@ function crBuildInventory2(c) {
   const R = c.R, { ds, prevSet, curSet, twoSnapshots, curLabel } = crInvSets(c);
   if (!ds) return null;
   const amtCur = crSum(curSet, (r) => r.amount);
-  const payerItems = crEmph80(crAgg(curSet, "payerKey", ds, { measure: "amount" })); crMarkSel(payerItems, c.sel.payerKey);
+  // payer, status and action shares are of the money owed: credit balances are left out (the rule of Over 90 days, and of Third Eye's client report)
+  const owedOf = (rows) => rows.filter((r) => !(Number(r.amount) < 0)), owedSet = owedOf(curSet), credit = crCredit(curSet);
+  const ofBal = credit ? "the money owed" : "the balance", ofOpen = credit ? "the money owed" : "the open balance";
+  const payerItems = crEmph80(crAgg(owedSet, "payerKey", ds, { measure: "amount" })); crMarkSel(payerItems, c.sel.payerKey);
   const n80 = payerItems.filter((x) => x.emph).length;
   // the real share the highlighted payers hold (the Pareto stops at the first payer that reaches 80%, so it is often a little more)
   const share80 = crF.pct(crSum(payerItems.filter((x) => x.emph), (x) => x.share), 0);
   const statusField = curSet.some((r) => r.purviewStatus) ? "purviewStatus" : curSet.some((r) => r.pmsStatus) ? "pmsStatus" : "status";
-  const stAll = crAgg(curSet, statusField, ds, { measure: "amount" }), stItems = crFold(stAll, 6); crMarkSel(stItems, c.sel[statusField]);
-  const actItems = crAgg(curSet, "action", ds, { measure: "amount" }); crMarkSel(actItems, c.sel.action);
-  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: `${crF.int(crN(curSet))} claims`, accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold ${share80} of the balance` : "" })];
+  const stAll = crAgg(owedSet, statusField, ds, { measure: "amount" }), stItems = crFold(stAll, 6); crMarkSel(stItems, c.sel[statusField]);
+  const actItems = crAgg(owedSet, "action", ds, { measure: "amount" }); crMarkSel(actItems, c.sel.action);
+  const kpis = [crKpi(`Open balance`, crF.money(amtCur, 0), { sub: `${crF.int(crN(curSet))} claims`, accent: true }), crKpi("Payers", crF.int(payerItems.length), { sub: payerItems.length ? `${n80} hold ${share80} of ${ofBal}` : "" })];
   if (payerItems[0]) kpis.push(crKpi("Largest payer", crF.pct(payerItems[0].share, 0), { sub: payerItems[0].label }));
   if (stAll[0]) kpis.push(crKpi("Top status", crF.pct(stAll[0].share, 0), { sub: stAll[0].label }));
   const cards = [
-    { id: "inv2.payer", title: "Insurance wise Pareto", sub: "Payers holding the top 80% of the balance are highlighted", cols: 6, type: "hbar", dim: "payerKey", dimLabel: "Payer", items: payerItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, emphasis: true, maxRows: 7,
-      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} payers</b> hold ${share80} of the balance: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
-    { id: "inv2.status", title: "Inventory status mix", sub: crDimLabel(ds, statusField), cols: 6, type: "donut", dim: statusField, items: stItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, centerValue: crF.moneyK(amtCur), centerLabel: "open" },
+    { id: "inv2.payer", title: "Insurance wise Pareto", sub: `Payers holding the top 80% of ${credit ? "the money owed (credits left out)" : "the balance"} are highlighted`, cols: 6, type: "hbar", dim: "payerKey", dimLabel: "Payer", items: payerItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, emphasis: true, maxRows: 7,
+      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} payers</b> hold ${share80} of ${ofBal}: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
+    { id: "inv2.status", title: "Inventory status mix", sub: crDimLabel(ds, statusField), cols: 6, type: "donut", dim: statusField, items: stItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, centerValue: crF.moneyK(credit ? crSum(owedSet, (r) => r.amount) : amtCur), centerLabel: credit ? "owed" : "open" },
   ];
   if (actItems.length > 1) cards.push({ id: "inv2.action", title: "Action wise breakdown", sub: "Balance by action taken", cols: 12, type: "hbar", dim: "action", dimLabel: "Action", items: actItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 5 });
   const ins = [];
   // the real share the top payers hold (88%, not the 80% line they cross), so it matches the chart and the amount
   const top80 = payerItems.filter((x) => x.emph);
-  if (payerItems.length) ins.push(`${crListNames(top80)} ${n80 === 1 ? "holds" : "hold"} ${crF.pct(crSum(top80, (x) => x.share), 0)} of the open balance (${crF.money(crSum(top80, (x) => x.amount), 0)}), so payer level follow up with ${n80 === 1 ? "this payer" : "these payers"} moves most of the money.`);
+  if (payerItems.length) ins.push(`${crListNames(top80)} ${n80 === 1 ? "holds" : "hold"} ${crF.pct(crSum(top80, (x) => x.share), 0)} of ${ofOpen} (${crF.money(crSum(top80, (x) => x.amount), 0)}), so payer level follow up with ${n80 === 1 ? "this payer" : "these payers"} moves most of the money.`);
   if (payerItems[0]) ins.push(`${payerItems[0].label} alone carries ${crF.pct(payerItems[0].share, 0)} (${crF.int(payerItems[0].count)} claims, ${crF.money(payerItems[0].amount, 0)})${payerItems[1] ? `; ${payerItems[1].label} follows with ${crF.pct(payerItems[1].share, 0)}` : ""}.`);
+  if (credit && payerItems.length) ins.push(`Payer, status and action shares are of the ${crF.money(crSum(owedSet, (r) => r.amount), 0)} owed; credit balances (${crF.money(credit, 0)}) are left out.`);
   if (stAll.length) ins.push(`Status mix: ${stAll.slice(0, 4).map((s) => `${s.label} ${crF.pct(s.share, 0)}`).join(", ")}.`);
   const denied = stAll.find((s) => /deni/.test(s.key)); if (denied) ins.push(`${crF.money(denied.amount, 0)} (${crF.int(denied.count)} claims) sits in denied status and needs appeals or corrected claims before it can be collected.`);
-  if (actItems[0]) ins.push(`The most common action is ${actItems[0].label} (${crF.pct(actItems[0].share, 0)} of the balance)${actItems[1] ? `, then ${actItems[1].label} (${crF.pct(actItems[1].share, 0)})` : ""}.`);
-  if (twoSnapshots) { ins.push(...crMovers(R, curSet, prevSet, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: "inventory balance" })); ins.push(...crMovers(R, curSet, prevSet, statusField, ds, { measure: "amount", noun: "status", share: false, newItems: true })); }
-  const headline = payerItems[0] ? `${payerItems[0].label} holds ${crF.pct(payerItems[0].share, 0)} of the open balance` : "Inventory breakdown";
+  if (actItems[0]) ins.push(`The most common action is ${actItems[0].label} (${crF.pct(actItems[0].share, 0)} of ${ofBal})${actItems[1] ? `, then ${actItems[1].label} (${crF.pct(actItems[1].share, 0)})` : ""}.`);
+  if (twoSnapshots) { const prevOwed = owedOf(prevSet), anyCredit = credit || prevOwed.length < prevSet.length;
+    ins.push(...crMovers(R, owedSet, prevOwed, "payerKey", ds, { measure: "amount", noun: "payer", shareOf: anyCredit ? "money owed" : "inventory balance" })); ins.push(...crMovers(R, owedSet, prevOwed, statusField, ds, { measure: "amount", noun: "status", share: false, newItems: true })); }
+  const headline = payerItems[0] ? `${payerItems[0].label} holds ${crF.pct(payerItems[0].share, 0)} of ${ofOpen}` : "Inventory breakdown";
   return { title: "Inventory breakdown", headline, sub: `Payers, status and actions · ${curLabel.replace(/^AR · /, "open AR at ")}`, watermark: "PAYERS", kpis, cards, insights: ins,
     slicers: ["payerKey", "bucket", statusField, "action"].filter((f) => curSet.some((r) => r[f])), claims: crClaims(ds, ds.cells ? [] : curSet, "inventory"), unfiltered: true };
 }
@@ -7489,7 +7505,7 @@ function crBuildAR(c) {
   const ins = [], pw = crPrevWord(R);
   ins.push(`${crF.int(all.length)} claims worth ${crF.money(amt, 0)} were worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crF.int(entries.length)} entries` : ""}.`);
   const outcomes = crAgg(all, "purviewStatus", ds); if (outcomes.length) ins.push(`Outcomes: ${outcomes.slice(0, 4).map((o) => `${o.label} ${crF.pct(o.share, 0)}`).join(", ")}.`);
-  const buckets = crAgg(all, "bucket", ds, { measure: "amount" }), old = buckets.filter((x) => x.lo >= 181); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the amount worked sits in claims older than 180 days; timely filing and appeal limits are the main risk there.`);
+  const buckets = crAgg(all, "bucket", ds, { measure: "amount" }), old = buckets.filter((x) => x.lo >= 181 && x.lo < 9999); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the amount worked sits in claims older than 180 days; timely filing and appeal limits are the main risk there.`);
   const acts = crAgg(all, "action", ds); if (acts[0]) ins.push(`The most common action was ${acts[0].label} (${crF.pct(acts[0].share, 0)})${acts[1] ? `, then ${acts[1].label} (${crF.pct(acts[1].share, 0)})` : ""}.`);
   const sts = crAgg(all, "status", ds, { measure: "amount" }); if (sts[0]) ins.push(`By status, ${sts[0].label} carries the largest amount worked (${crF.money(sts[0].amount, 0)}, ${crF.pct(sts[0].share, 0)}).`);
   if (prev) {
@@ -7557,7 +7573,7 @@ function crBuildCA(c) {
     crKpi("Claims needing the client", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
     crKpi("Amount on hold", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), upGood: false, fmt: crF.moneyK }),
   ];
-  const old = all.filter((r) => r.bucketLo >= 121); if (all.length) kpis.push(crKpi("Older than 120 days", crF.pct(old.length / all.length, 0), { sub: `${crF.int(old.length)} claims at filing risk`, upGood: false }));
+  const old = all.filter((r) => crOlder(r, 121)); if (all.length) kpis.push(crKpi("Older than 120 days", crF.pct(old.length / all.length, 0), { sub: `${crF.int(old.length)} claims at filing risk`, upGood: false }));
   const open = all.filter((r) => r.open === true); if (open.length) kpis.push(crKpi("Still open", crF.int(open.length), { sub: "requests waiting on you" }));
   const cards = [];
   crAddCard(cards, crCardBar(c, "status", "What is needed", { role: "clientAssistance", cols: 6, measure: "amount", maxRows: 9 }), 1);
@@ -7626,7 +7642,8 @@ function crBuildExec(c, raw) {
   // the focus for the next period, from the numbers (the team edits it)
   const focus = [];
   if (den.length) { const t = crAgg(den, "status", DS.worked, { measure: "amount" })[0]; if (t) focus.push(`Work the ${crF.int(t.count)} "${t.label}" denials (${crF.money(t.amount, 0)}) to appeal or correction.`); }
-  const yearOld = inv.curSet.filter((r) => r.bucketLo >= 361); if (yearOld.length) focus.push(`Clear ${crF.int(crN(yearOld))} claims over 360 days (${crF.money(crSum(yearOld, (r) => r.amount), 0)}) before filing limits close.`);
+  // money owed over 360 days: a claim whose age is known (no age is not over 360) and not a credit balance
+  const yearOld = inv.curSet.filter((r) => crOlder(r, 361) && Number(r.amount) > 0); if (yearOld.length) focus.push(`Clear ${crF.int(crN(yearOld))} claims over 360 days (${crF.money(crSum(yearOld, (r) => r.amount), 0)}) before filing limits close.`);
   const rejOpen = rej.filter((r) => !/corrected|resubmit/.test(r.action || "")); if (rejOpen.length) focus.push(`Correct and resubmit ${crF.int(rejOpen.length)} rejected claims still open.`);
   if (openN) focus.push(`Close the ${crF.int(openN)} requests waiting on the client${oldest ? " (oldest since " + crF.dateShort(crD(oldest)) + ")" : ""}.`);
   return { title: "Executive summary", headline: `${R.periodName} at a glance`, sub: `${R.client} · ${crRangeLabel(R.range)}${R.compare ? ", compared with the " + crPrevWord(R) : ""}`, watermark: "SUMMARY", kpis, cards: [], insights: ins,

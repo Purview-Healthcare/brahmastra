@@ -216,6 +216,8 @@ const EXTRA_COLUMNS = {
     ["kind", "TEXT NOT NULL DEFAULT 'external'"], ["error_by_id", "TEXT"], ["error_by_name", "TEXT NOT NULL DEFAULT ''"], ["error_dow", "TEXT NOT NULL DEFAULT ''"],
     ["location_id", "TEXT"], ["location_name", "TEXT NOT NULL DEFAULT ''"], ["channels", "TEXT NOT NULL DEFAULT ''"], ["review_on", "TEXT NOT NULL DEFAULT ''"], ["rework", "TEXT NOT NULL DEFAULT ''"]],
   locations: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"]],
+  // the money owed (positive balances, credits left out) and its over-90 part, for the over-90 share on the trend; empty on readings kept before
+  client_snapshots: [["ar_owed", "REAL"], ["over90_owed", "REAL"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
     ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
     // Who does payment posting / submission for this client: a person (with a backup), the client itself, or the biller.
@@ -2491,15 +2493,16 @@ async function digestData(env, clientId, wk) {
   const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 7 * 86400000));
   // a past week's digest: AR as it stood at that week's end (the day's snapshot), not today's
   const endSnap = digestWeek(Date.now()).week === wk.week ? null
-    : await one(env, "SELECT day, ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
+    : await one(env, "SELECT day, ar_balance, over90_balance, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
   const prevWorked = await one(env, "SELECT COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, wk.from - 7 * 86400000, wk.from);
   const people = await all(env, `SELECT n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
     WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 12`, clientId, wk.from, wk.to);
   const esc = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND escalated_at BETWEEN ? AND ?", clientId, wk.from, wk.to);
   return {
     client: o.client, health: o.health, reasons: o.reasons,
-    ar: endSnap ? { now: endSnap.ar_balance, over90: endSnap.over90_balance, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: endSnap.ar_balance ? Math.round(endSnap.over90_balance / endSnap.ar_balance * 1000) / 10 : 0,
-        target: o.ar.target, owed: endSnap.ar_balance, over90_owed: endSnap.over90_balance, as_of: endSnap.day }
+    // that week's money owed (credits left out); a reading kept before the money owed was kept falls back to the net figures
+    ar: endSnap ? (() => { const owed = endSnap.ar_owed != null ? endSnap.ar_owed : endSnap.ar_balance, o90 = endSnap.over90_owed != null ? endSnap.over90_owed : endSnap.over90_balance;
+        return { now: endSnap.ar_balance, over90: o90, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: owed ? Math.round(o90 / owed * 1000) / 10 : 0, target: o.ar.target, owed, over90_owed: o90, as_of: endSnap.day }; })()
       : { now: o.ar.balance, over90: o.ar.over90, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: o.ar.over90_pct, target: o.ar.target, owed: o.ar.owed || 0, over90_owed: o.ar.over90_owed || 0 },
     collected: o.collected, worked: { n: o.worked.entries, people: o.worked.people, prev: (prevWorked && prevWorked.n) || 0 }, team: people,
     sla: o.sla, escalations: { open: o.escalations.open, late: o.escalations.late, raised: (esc && esc.n) || 0 }, missed: o.missed,
@@ -2699,20 +2702,22 @@ function digestDue(now) {
   const d = new Date(now + IST_MIN * 60000), h = d.getUTCHours() + d.getUTCMinutes() / 60;
   return d.getUTCDay() === 1 && h >= DIGEST_HOURS[0] && h < DIGEST_HOURS[1];
 }
-/* Today's AR per client, kept once a day (the last write of the day wins), for the six-month trend. */
+/* Today's AR per client, kept once a day (the last write of the day wins), for the six-month trend. The money owed (credits left out)
+   and its over-90 part are kept too: the trend's over-90 share is of the money owed, as on the Dashboard and Client 360. */
 async function snapshotClients(env) {
   const now = Date.now(), day = istISO(now), today = day;
-  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at)
+  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, ar_owed, over90_owed, at)
     SELECT client_id, ?, COALESCE(SUM(balance), 0), COUNT(*), COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0), SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END),
-      COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0), ?
+      COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0), COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN age > 90 AND balance > 0 THEN balance ELSE 0 END), 0), ?
     FROM (SELECT client_id, balance, CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END AS age
           FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id
     ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = excluded.ar_balance, ar_claims = excluded.ar_claims, over90_balance = excluded.over90_balance,
-      over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, at = excluded.at`, day, now, today);
+      over90_claims = excluded.over90_claims, over120_balance = excluded.over120_balance, ar_owed = excluded.ar_owed, over90_owed = excluded.over90_owed, at = excluded.at`, day, now, today);
   // A client whose last claims closed still gets today's row (nothing open; a client with no claims yet gets none), so an older snapshot is not read as today's.
-  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, at)
-    SELECT id, ?, 0, 0, 0, 0, 0, ? FROM clients WHERE active = 1 AND id IN (SELECT client_id FROM claims) AND id NOT IN (SELECT client_id FROM claims WHERE state IN ${WORKABLE})
-    ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = 0, ar_claims = 0, over90_balance = 0, over90_claims = 0, over120_balance = 0, at = excluded.at`, day, now);
+  await run(env, `INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, ar_owed, over90_owed, at)
+    SELECT id, ?, 0, 0, 0, 0, 0, 0, 0, ? FROM clients WHERE active = 1 AND id IN (SELECT client_id FROM claims) AND id NOT IN (SELECT client_id FROM claims WHERE state IN ${WORKABLE})
+    ON CONFLICT (client_id, day) DO UPDATE SET ar_balance = 0, ar_claims = 0, over90_balance = 0, over90_claims = 0, over120_balance = 0, ar_owed = 0, over90_owed = 0, at = excluded.at`, day, now);
   await snapshotInventory(env, day, now);
 }
 /* The client report's month against month needs the inventory as it stood at each period end: kept here as cells (location,
@@ -5186,14 +5191,17 @@ const OPS = {
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const from = num(payload.from_ms, now - 30 * 86400000), to = num(payload.to_ms, now), span = Math.max(86400000, to - from);
     const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END";
-    const ar = await one(env, `SELECT COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, COALESCE(SUM(CASE WHEN age > 90 THEN balance ELSE 0 END), 0) AS o90, SUM(CASE WHEN age > 90 THEN 1 ELSE 0 END) AS o90n,
+    // over 90 and over 120 are of the money owed: credit balances are left out (the Dashboard's rule), so a tile's dollars and its share are the same money
+    const ar = await one(env, `SELECT COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, SUM(CASE WHEN age > 90 AND balance > 0 THEN 1 ELSE 0 END) AS o90n,
         COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS balp, COALESCE(SUM(CASE WHEN age > 90 AND balance > 0 THEN balance ELSE 0 END), 0) AS o90p,
-        COALESCE(SUM(CASE WHEN age > 120 THEN balance ELSE 0 END), 0) AS o120 FROM (SELECT balance, ${ageSql} AS age FROM claims WHERE client_id = ? AND state IN ${WORKABLE})`, today, clientId);
+        COALESCE(SUM(CASE WHEN age > 120 AND balance > 0 THEN balance ELSE 0 END), 0) AS o120 FROM (SELECT balance, ${ageSql} AS age FROM claims WHERE client_id = ? AND state IN ${WORKABLE})`, today, clientId);
     // a month ago, from the snapshots, for the change
     const monthAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(now - 30 * 86400000));
-    const snaps = await all(env, `SELECT day, ar_balance, over90_balance, ar_claims FROM client_snapshots WHERE client_id = ? AND day >= ? ORDER BY day`, clientId, istISO(now - 190 * 86400000));
+    const snaps = await all(env, `SELECT day, ar_balance, over90_balance, ar_claims, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day >= ? ORDER BY day`, clientId, istISO(now - 190 * 86400000));
     const byMonth = new Map(); for (const sn of snaps) byMonth.set(sn.day.slice(0, 7), sn);
-    const trend = [...byMonth.entries()].slice(-6).map(([m, sn]) => ({ month: m, ar: sn.ar_balance, over90: sn.over90_balance, pct: sn.ar_balance ? Math.round(sn.over90_balance / sn.ar_balance * 1000) / 10 : 0, claims: sn.ar_claims, day: sn.day }));
+    // the over-90 share of the money owed, as on the tile (a reading kept before the money owed was kept falls back to the net figures)
+    const trend = [...byMonth.entries()].slice(-6).map(([m, sn]) => { const owed = sn.ar_owed != null, o90 = owed ? sn.over90_owed : sn.over90_balance, base = owed ? sn.ar_owed : sn.ar_balance;
+      return { month: m, ar: sn.ar_balance, over90: o90, pct: base ? Math.round(o90 / base * 1000) / 10 : 0, claims: sn.ar_claims, day: sn.day }; });
     const paid = async (a, b) => (await one(env, `SELECT COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt, COUNT(*) AS n FROM handoffs WHERE client_id = ? AND dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ?`, clientId, a, b));
     const coll = await paid(from, to), collPrev = await paid(from - span, from);
     const waiting = await all(env, `SELECT h.id, h.dept, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.chase_at, c.claim_no, c.patient, c.balance
@@ -5223,7 +5231,7 @@ const OPS = {
     return {
       client: { id: c.id, name: c.name, code: c.code, active: !!c.active, created_at: c.created_at, team, locations: locs },
       raci, health, reasons: reasonsOut.slice(0, 4),
-      ar: { balance: ar.bal, claims: ar.n, over90: ar.o90, over90_claims: ar.o90n || 0, over90_pct: pct, over120: ar.o120, target: OVER90_TARGET, month_ago: monthAgo ? monthAgo.ar_balance : null,
+      ar: { balance: ar.bal, claims: ar.n, over90: ar.o90p || 0, over90_claims: ar.o90n || 0, over90_pct: pct, over120: ar.o120, target: OVER90_TARGET, month_ago: monthAgo ? monthAgo.ar_balance : null,
         owed: ar.balp || 0, over90_owed: ar.o90p || 0 },
       collected: { amount: coll.amt, n: coll.n, prev: collPrev.amt },
       waiting: { rows: waiting.map((w) => ({ ...w, days: Math.floor((now - (w.client_sent_at || w.paused_at || now)) / 86400000), sent: !!w.client_sent_at, dept_label: DEPT_LABEL[w.dept] || w.dept })),
