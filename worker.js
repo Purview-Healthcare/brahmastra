@@ -5963,6 +5963,8 @@ const OPS = {
       all(env, "SELECT * FROM claim_events WHERE claim_id = ? ORDER BY at DESC LIMIT 500", c.id),
     ]);
     const out = [];
+    // who last edited each entry (a team lead may edit a biller's entry), and the entries by id for the edit lines below
+    const edNames = await namesOf(env, notes.map((n) => n.edited_by)), noteById = new Map(notes.map((n) => [n.id, n]));
     const workEv = events.filter((e) => e.kind === "worked");
     // A desk step (pending, in process, other, back, client, resume, rejected, sent to the client) saves a note and an event: show it once.
     const deskEv = events.filter((e) => /^handoff_(pending|inprocess|other|back|client|resume|rejected|client_sent)$/.test(e.kind));
@@ -5973,13 +5975,16 @@ const OPS = {
         const ev = workEv.find((e) => e.user_id === n.user_id && Math.abs(e.at - n.created_at) < 5000);
         const d = ev ? jsonObj(ev.data_json) : {};
         out.push({ at: n.created_at, kind: "work", id: n.id, editable: !postedClosed(c) && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
-          follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at });
+          follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at, edited_by: (n.edited_by && edNames.get(n.edited_by)) || "" });
       } else if (n.kind === "skip") out.push({ at: n.created_at, kind: "skip", who: n.user_name, text: n.comment });
       else if (/^Escalation answered:/.test(n.comment || "")) out.push({ at: n.created_at, kind: "answer", who: n.user_name, text: n.comment.replace(/^Escalation answered:\s*/, "") });
       else out.push({ at: n.created_at, kind: "note", who: n.user_name, fields: f && f.findings != null ? f : null, text: n.comment });
     }
     for (const a of files) out.push({ at: a.created_at, kind: "file", who: a.user_name, file: { id: a.id, name: a.name, size: a.size, type: a.type } });
-    for (const e of events) if (e.kind !== "worked" && e.kind !== "edited") { const d = jsonObj(e.data_json); out.push({ at: e.at, kind: e.kind, who: e.user_name, text: e.text, changes: d.changes || {}, data: d }); }
+    for (const e of events) if (e.kind !== "worked") { const d = jsonObj(e.data_json);
+      // each edit of an entry is a line of its own: who edited it, when, and which entry (the entry itself shows its latest text)
+      if (e.kind === "edited") { const n = noteById.get(d.note_id); out.push({ at: e.at, kind: "edited", who: e.user_name, text: "", changes: {}, data: { note_id: d.note_id, entry_at: n ? n.created_at : null, entry_by: n ? n.user_name : "" } }); continue; }
+      out.push({ at: e.at, kind: e.kind, who: e.user_name, text: e.text, changes: d.changes || {}, data: d }); }
     // Claims from before the event log: the first upload and the current assignment still show.
     const batch = c.first_batch_id ? await one(env, "SELECT b.file_name, b.kind, u.name AS by_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by WHERE b.id = ?", c.first_batch_id) : null;
     out.push({ at: c.created_at, kind: "loaded", who: batch ? batch.by_name || "" : "", text: batch ? batch.file_name : "", data: { kind: c.inventory_kind, file_status: [c.file_status, c.file_sub_status].filter(Boolean).join(" · ") } });
@@ -7990,7 +7995,8 @@ async function claimBundle(env, user, c, opts = {}) {
   let raw = {}; try { raw = JSON.parse(c.raw_json || "{}"); } catch {}
   const { raw_json, lines_json, ...rest } = c;
   const now = Date.now();
-  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: !locked && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
+  const edNames = await namesOf(env, notes.map((n) => n.edited_by));
+  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), edited_by_name: (n.edited_by && edNames.get(n.edited_by)) || "", editable: !locked && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
   const handoffs = await all(env, `SELECT h.*, l.name AS lead_name, b.name AS backup_name, a.name AS assigned_name FROM handoffs h LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
       LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
   const role = await handoffRole(env, user, c.id);

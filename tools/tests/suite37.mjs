@@ -565,6 +565,24 @@ await part("C-10: a sent-back claim is reviewed once", async () => {
   ok("C-10: once the biller saves an entry the row leaves the list", !(await rowOf()), await rowOf());
 });
 
+await part("C-13: the claim history says who edited an entry, and shows each edit", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const [a] = await give("Arun Agent", 1);
+  await save(AR, a, SAAG.fu, { findings: "Arun's own words on the portal check" });
+  const nid = (await rows("SELECT id FROM notes WHERE claim_id = ? AND kind = 'work'", a))[0].id;
+  setNow(IST(2026, 11, 10, 11, 0)); await call(TI, "notes.update", { id: nid, saag: SAAG.fu, note: NOTE("Team lead rewrote this entry") });
+  setNow(IST(2026, 11, 10, 12, 0)); await call(AR, "notes.update", { id: nid, saag: SAAG.fu, note: NOTE("Arun changed it again himself") });
+  setNow(IST(2026, 11, 10, 13, 0)); await call(TI, "notes.update", { id: nid, saag: SAAG.fu, note: NOTE("Team lead rewrote it a second time") });
+  const tl = await call(AR, "claims.timeline", { id: a });
+  const w = tl.items.find((i) => i.kind === "work"), ed = tl.items.filter((i) => i.kind === "edited");
+  ok("C-13: the entry still shows as worked by its author, with its latest text", w && w.who === "Arun Agent" && w.fields.findings === "Team lead rewrote it a second time", w && [w.who, w.fields.findings]);
+  ok("C-13: ...and names who last edited it, and when", w && w.edited_by === "Tina Lead" && Math.abs(w.edited_at - IST(2026, 11, 10, 13, 0)) < 1000, w && [w.edited_by, w.edited_at]);
+  ok("C-13: each of the three edits is a line of its own, with who made it (newest first)", ed.length === 3 && ed.map((e) => e.who).join() === "Tina Lead,Arun Agent,Tina Lead", ed.map((e) => [e.who, e.at]));
+  ok("C-13: ...and each says which entry it was (the author's, with its time)", ed.every((e) => e.data.note_id === nid && e.data.entry_by === "Arun Agent" && Math.abs(e.data.entry_at - IST(2026, 11, 10, 10, 0)) < 1000), ed.map((e) => e.data));
+  const g = await call(AR, "claims.get", { id: a });
+  ok("C-13: the notes list on the claim page names the editor too", g.notes.some((n) => n.id === nid && n.edited_by_name === "Tina Lead"), g.notes.map((n) => [n.kind, n.edited_by_name]));
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

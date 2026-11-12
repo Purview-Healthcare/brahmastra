@@ -4651,7 +4651,7 @@ function NoteForm({ c, files, onChanged }) {
 }
 /* The history tab on the right edge and the timeline panel it opens: newest first, grouped by day, each entry with its time. */
 const HIST_FILTERS = [["all", "Everything"], ["work", "Work"], ["note", "Notes"], ["handoff", "Posting & submission"], ["file", "Files"], ["assign", "Assignments"], ["upload", "Uploads"]];
-const HIST_GROUP = { work: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff", handoff_client_sent: "handoff", handoff_pending: "handoff", handoff_inprocess: "handoff", handoff_other: "handoff", review_to_biller: "note", review_to_dept: "note" };
+const HIST_GROUP = { work: "work", edited: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff", handoff_client_sent: "handoff", handoff_pending: "handoff", handoff_inprocess: "handoff", handoff_other: "handoff", review_to_biller: "note", review_to_dept: "note" };
 const CHANGE_LABEL = { state: "State", bucket: "Bucket", follow_up: "Follow-up", status: "SAAG status" };
 const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 const dayKey = (ms) => { const d = new Date(Number(ms)); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -4678,8 +4678,9 @@ function HistEvent({ it, onEdit, onFile }) {
         <div className="row mt8" style={{ gap: 4, flexWrap: "wrap" }}><span className="badge ink">{it.saag.status}</span>{it.saag.sub_status && <span className="badge gray">{it.saag.sub_status}</span>}<span className="badge">{it.saag.action}</span>{it.saag.bucket && <span className={"badge " + (it.saag.bucket === "Closed" ? "green" : "teal")}>{it.saag.bucket}</span>}{it.follow_up_on && <span className="badge amber">follow-up {fmtDate(it.follow_up_on)}</span>}</div>
         {it.fields && it.fields.findings != null ? <NoteFieldList f={it.fields} /> : <div className="x">{it.comment}</div>}
         <Changes changes={it.changes} />
-        {it.edited_at ? <div className="m">edited {fmtWhen(it.edited_at)}</div> : null}
+        {it.edited_at ? <div className="m">last edited {it.edited_by ? "by " + it.edited_by + " · " : ""}{fmtWhen(it.edited_at)}</div> : null}
         {it.editable && onEdit && <button className="btn sm link" style={{ padding: 0, marginTop: 4 }} onClick={() => onEdit(it)}>Edit this entry</button>}</>; break;
+    case "edited": dot = D("#FDF2D9", "✏️"); title = "Entry edited" + who; body = it.data && it.data.entry_at ? <div className="m">the entry {it.data.entry_by ? "by " + it.data.entry_by + " " : ""}of {fmtWhen(it.data.entry_at)}</div> : null; break;
     case "note": dot = D("#E4EEFA", "📝"); title = "Note" + who; body = it.fields ? <NoteFieldList f={it.fields} /> : <div className="x">{it.text}</div>; break;
     case "answer": dot = D("#FDEAEA", "⚑"); title = "Escalation answered" + who; body = <div className="x">{it.text}</div>; break;
     case "escalated": dot = D("#FDEAEA", "⚑"); title = "Escalated to the team lead"; break;
@@ -5620,7 +5621,7 @@ function NotesList({ notes, me, claim, onChanged }) {
         return (
           <div key={n.id} className={"note " + n.kind}>
             <div className="row between">
-              <span className="small"><b>{n.user_name}</b> <span className="muted">· {fmtWhen(n.created_at)}</span>{n.edited_at ? <span className="tiny muted"> · edited {fmtWhen(n.edited_at)}</span> : null}</span>
+              <span className="small"><b>{n.user_name}</b> <span className="muted">· {fmtWhen(n.created_at)}</span>{n.edited_at ? <span className="tiny muted"> · edited {n.edited_by_name ? "by " + n.edited_by_name + " " : ""}{fmtWhen(n.edited_at)}</span> : null}</span>
               <span className="row" style={{ gap: 6 }}>
                 <span className="tiny muted">{n.kind === "work" ? "worked" : n.kind === "skip" ? "skipped" : "note"}</span>
                 {n.kind === "work" && (n.editable && claim ? <button className="btn sm link" onClick={() => setEditing(editing === n.id ? null : n.id)}>{editing === n.id ? "Cancel" : "Edit"}</button> : <span className="tiny muted" title={claim && claim.locked ? "Posting closed this claim: its notes can no longer be edited" : "Only the person who wrote it or a team lead can edit it"}>{claim && claim.locked ? "locked" : "read-only"}</span>)}
