@@ -231,11 +231,12 @@ appears when filters are set and prints the pages with them. The PDF is saved fr
 location) and **team lead** (assistant managers, managers and the VP; a team lead sees their own team). On top,
 **Needs you** lists escalations, client requests to send and missed tasks; then in today, working now, idle now,
 worked today against the target, closed today and **left over** (allocated before this shift and not worked) split
-into **high priority** (the High tier) and other.
+into **high priority** (the High tier) and other. Worked and closed today count the whole day from midnight IST,
+entries before the shift time too, as Team status and My day do (a night shift's count to the day it began).
 
 - **On the floor now**: each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
   after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
-  been on it (the claim number opens the claim), pace this shift against their target, on desk, closed today and left
+  been on it (the claim number opens the claim), pace today against their target, on desk, closed today and left
   over. Managers and above see the billers grouped by team lead: each group opens and closes (a closed group shows
   working, idle and on desks), **Expand all** / **Collapse all**, or **One list**. Click a biller's name to open
   **their claims**.

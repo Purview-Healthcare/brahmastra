@@ -131,6 +131,27 @@ S("B-14: a night shift still under way after midnight is not judged as a finishe
   ok("B-14: at 06:00 her Monday is finished and judged: 30 of 35 up to yesterday, 85.7%, below the mark", o2.attain_basis === "done" && o2.target_done === 35 && o2.count_done === 30 && o2.attain === 85.7 && o2.perf === "below", pick(o2, ks));
 }
 
+S("B-11: Live status counts the whole working day, as Team status and My day");
+{
+  // Dina (09:00 to 18:00): 20 entries and a claim closed on Tuesday; on Wednesday 5 entries at 08:30, before her shift
+  await work("Dina Day", IST(2026, 11, 10, 14), 20);
+  await sql("UPDATE claims SET state = 'closed', completed_at = ?, last_worked_by = ? WHERE id = ?", IST(2026, 11, 10, 15), U("Dina Day").id, sunClaims[210]);
+  await work("Dina Day", IST(2026, 11, 11, 8, 30), 5);
+  const e = row(await live(TL, D(11), IST(2026, 11, 11, 8, 45)), "Dina Day");
+  const ks = ["worked", "closed", "expected", "behind", "status"];
+  ok("B-11: 08:45 Wednesday, before her 09:00 shift: worked today 5 (not Tuesday's 20), closed today 0, nothing expected yet", e.worked === 5 && e.closed === 0 && e.expected === 0 && !e.behind, pick(e, ks));
+  await work("Dina Day", IST(2026, 11, 11, 9, 30), 3);
+  const m = row(await live(TL, D(11), IST(2026, 11, 11, 11)), "Dina Day"), t = row(await status(TL, D(11), D(11), D(11), IST(2026, 11, 11, 11)), "Dina Day");
+  const md = await at(IST(2026, 11, 11, 11), async () => { const [f, to] = page('bizDayBounds("09:00-18:00")'); return (await DD("queue.summary", { day_from_ms: f, day_to_ms: to })).done_today.n; });
+  ok("B-11: 11:00: Live status worked today 8 = Team status Today 8 = My day 8 (the 5 before the shift count)", m.worked === 8 && t.worked_today === 8 && md === 8, { live: m.worked, team: t.worked_today, myday: md });
+  ok("B-11: the pace is judged on the 8, against 2 of her 9 hours (8 expected): not behind", m.expected === 8 && !m.behind, pick(m, ks));
+  // a night shift on Live status: Ola (18:30 to 03:30) on Wednesday night
+  await work("Ola Owl", IST(2026, 11, 11, 19), 20); await work("Ola Owl", IST(2026, 11, 12, 0, 10), 10);
+  const n1 = row(await live(TL, D(12), IST(2026, 11, 12, 1)), "Ola Owl"), n2 = row(await live(TL, D(12), IST(2026, 11, 12, 10)), "Ola Owl");
+  ok("B-11: a night shift at 01:00: worked today is the evening's 20 and the 10 since midnight (30)", n1.worked === 30, pick(n1, ks));
+  ok("B-11: at 10:00 the next morning a new working day has begun: 0 worked, nothing expected before her 18:30 shift, not behind", n2.worked === 0 && n2.expected === 0 && !n2.behind, pick(n2, ks));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -4078,18 +4078,21 @@ const OPS = {
     const live = await shastraLive(env);
     const weekdayToday = isWorkDay(today);   // Monday to Friday, not a Shastra holiday
     const rows = people.map((u) => {
-      const win = shiftWindow(u.shift, now, dayStart);
-      const startOf = win ? win.start : dayStart;
-      const mine = notes.filter((n) => n.user_id === u.id && n.created_at >= startOf);
+      // worked and closed today: the person's whole working day (from midnight IST; a night shift's is the day it began, until
+      // it is over), as Team status and My day count it; the pace is that day's shift from the roster
+      const wday = workDayOf(u.shift, now, today, off), win = wday.shift;
+      const mine = notes.filter((n) => n.user_id === u.id && n.created_at >= wday.from && n.created_at < wday.to);
       const work = mine.filter((n) => n.kind === "work"), skips = mine.length - work.length, workHere = work.filter((n) => n.here).length;
       // a night shift belongs to the day it began: one that began on a Sunday (or a holiday) has no target
-      const workDay = win ? isWorkDay(istISO(win.start)) : weekdayToday;
+      const workDay = isWorkDay(wday.day);
       const first = mine.length ? Math.min(...mine.map((n) => n.created_at)) : null, last = mine.length ? Math.max(...mine.map((n) => n.created_at)) : null;
       const onDesk = desk.filter((c) => c.assigned_to === u.id);
-      // Left over: allocated before this shift and still not worked; high priority (the High tier) apart from the rest.
+      // Left over: allocated before this shift (the one now, or the last one begun) and still not worked; high priority (the
+      // High tier) apart from the rest.
+      const sw = shiftWindow(u.shift, now, dayStart), startOf = sw ? sw.start : dayStart;
       const left = onDesk.filter((c) => c.assigned_at && c.assigned_at < startOf && c.state === "assigned" && !(c.follow_up_on && c.follow_up_on > today));
       const leftHigh = left.filter((c) => c.tier === "High").length;
-      const closed = closedRows.filter((c) => c.user_id === u.id && c.completed_at >= startOf).length;
+      const closed = closedRows.filter((c) => c.user_id === u.id && c.completed_at >= wday.from && c.completed_at < wday.to).length;
       const cur = onDesk.find((c) => c.state === "in_progress") || null;
       const target = Math.max(1, u.capacity || 35);
       const span = win ? win.len : 9 * 3600000, began = win ? win.start : first;
