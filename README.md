@@ -564,6 +564,8 @@ own SAAG when the desk finishes.
 **After Posting closes a claim, anyone can open it to read.** Search (Ctrl+K) finds it for everyone, marked
 "posted · closed". Someone it is not with sees it read only: no entry, no note, no team lead actions, not the
 patient's other claims. Its notes are **locked** for everyone, the biller who wrote them and team leads included.
+A team lead cannot reopen, exclude or close it again (from the claim or the Claims list), and a Needs attention review
+can only keep it closed.
 A claim AR closed itself (not posted) stays with its own people.
 
 **Past TAT, inside the tabs (no separate page).** Each tab shows its own reminders: **Posting & submission** has
@@ -613,7 +615,9 @@ on the desk; the TAT keeps running.
 day under **Resubmitted · recheck** with the time left on the TAT, and can mark it **Accepted** or **Rejected again**
 once it opens (the client's recheck time after submitting; until then the row says when),
 as can the recheck person, the Submission and Rejections people and the client's AR team leads. Rejected again goes
-straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT.
+straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT. With nobody set for
+either, it goes back on the biller's list, unless the claim was already closed or excluded: then it stays so, and the
+rejection is kept on the recheck and in the claim history.
 
 **Supervisor review in Needs attention.** Each escalation (and each claim a department sent back) has **Review**:
 four notes (why it came, what was reviewed, the findings, the next action) go on the claim's timeline only (who escalated it and when, who reviewed it, where it went; the claim's notes and work stay as they were), and the claim

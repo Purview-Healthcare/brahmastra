@@ -763,6 +763,87 @@ await part("B-15: asking the client a second time is never counted as met by the
   void over;
 });
 
+await part("N-01: a team lead cannot unlock a claim Posting closed", async () => {
+  setNow(IST(2027, 1, 4, 10, 0));
+  const REVIEW = { why: "Biller flagged it", reviewed: "The posting and the EOB", findings: "Payment posted as on the EOB", next: "Nothing left for AR" };
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  // flagged in the same save that sends it to Posting, then posted: closed, Payment posted, read only, still in Needs attention
+  for (const id of [a, b, d]) { await call(AR, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(AR, id, SAAG.post, { escalate: true }); await postIt(id); }
+  const locked = async (id) => { const c = await claim(id); return c.state === "closed" && c.handoff_status === "posted" && c.state_reason === "Payment posted" && (await call(TI, "claims.get", { id })).claim.locked; };
+  ok("N-01: (set-up) the posted claims are read only and in Needs attention, marked posted for the review", await locked(a) && (await call(TI, "attention.list")).rows.some((r) => r.id === a && r.posted === true), await brief(a));
+  const rs = [await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "biller", sent_by: U("Arun Agent").id })),
+    await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "other", user_id: U("Bela Agent").id })),
+    await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "dept", dept: "posting" }))];
+  ok("N-01: a review cannot give it to the biller, another biller or back to a desk, and says why", rs.every((r) => !r.ok && /Posting closed this claim \(the payment is posted\): it is read only, so the review can only keep it closed/.test(r.e)), rs.map((r) => r.ok || r.e));
+  ok("N-01: ...the claim stays Posting Closed and read only, with no hand-off opened", await locked(a) && !(await hos(a)).some((h) => ["pending", "assigned", "client"].includes(h.status)), await brief(a));
+  let r = await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "keep" }));
+  ok("N-01: Keep it closed still works (and takes it out of Needs attention)", r.ok && await locked(a) && !(await call(TI, "attention.list")).rows.some((x) => x.id === a), r);
+  r = await T(() => call(TI, "claims.setState", { ids: [b], state: "open" }));
+  const r2 = await T(() => call(TI, "claims.setState", { ids: [b], state: "excluded" })), r3 = await T(() => call(TI, "claims.setState", { ids: [b], state: "closed" }));
+  ok("N-01: Reopen, Exclude and Close on the claim are refused with a plain reason", [r, r2, r3].every((x) => !x.ok && /Posting closed this claim \(the payment is posted\): it is read only and stays as it is/.test(x.e)), [r, r2, r3].map((x) => x.ok || x.e));
+  ok("N-01: ...it stays Posting Closed and read only (reason still Payment posted)", await locked(b), await brief(b));
+  // several at once from the Claims list: the free one changes, the posted one stays, and the answer counts it
+  await save(AR, e, SAAG.fu); await call(TI, "claims.setState", { ids: [e], state: "closed" });
+  r = await T(() => call(TI, "claims.setState", { ids: [d, e], state: "open" }));
+  ok("N-01: Reopen on several at once: the claim the team lead closed reopens, the posted one stays, and the answer says 1 stayed", r.ok && r.r.changed === 1 && r.r.posted === 1 && (await claim(e)).state === "open" && await locked(d), [r, await brief(d)]);
+  ok("N-01: ...and no 'State changed' line on the posted claim", !(await rows("SELECT id FROM claim_events WHERE claim_id = ? AND kind = 'state'", d)).length);
+});
+
+await part("N-02: a rejected recheck with nobody to resubmit leaves a closed claim closed, and says where the rejection went", async () => {
+  setNow(IST(2027, 1, 11, 10, 0));
+  const CLOSE = { status: "Claim Paid", sub_status: "Already Posted", action: "Moved To Closed/Non Workable", bucket: "Closed", effective: "Processing-Closed" };
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  for (const id of [a, b, d, e]) { await save(AR, id, SAAG.resub); await submitIt(QU, id); }
+  // the team lead closes one, the biller closes one with a closing entry, the team lead excludes one; one stays with the biller
+  await call(TI, "claims.setState", { ids: [a], state: "closed" });
+  await call(AR, "queue.open", { id: b }); await call(AR, "queue.complete", { id: b, saag: CLOSE, note: NOTE("Already posted, nothing left to work"), rework: true });
+  await call(TI, "claims.setState", { ids: [d], state: "excluded" });
+  const before = { [a]: await claim(a), [b]: await claim(b), [d]: await claim(d) };
+  // nobody is set for Rejections or Submission any more
+  await sql("UPDATE clients SET rejection_mode = '', submission_mode = '' WHERE id = ?", sun.id);
+  try {
+    setNow(IST(2027, 1, 13, 12, 0));   // the rechecks opened at 10:00
+    const reject = async (id) => T(async () => call(QU, "handoffs.close", { id: (await openH(id, "subcheck")).id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy" }));
+    const ra = await reject(a), rb = await reject(b), rd = await reject(d), re = await reject(e);
+    const same = async (id) => { const c = await claim(id), c0 = before[id]; return c.state === c0.state && c.state_reason === c0.state_reason && c.follow_up_on === c0.follow_up_on && c.first_up === c0.first_up; };
+    ok("N-02: a claim the team lead closed stays closed, with its reason, when the recheck is rejected", ra.ok && await same(a) && (await claim(a)).state === "closed", await brief(a));
+    ok("N-02: a claim the biller closed with a closing entry stays closed", rb.ok && await same(b) && (await claim(b)).state === "closed", await brief(b));
+    ok("N-02: an excluded claim stays excluded", rd.ok && await same(d) && (await claim(d)).state === "excluded", await brief(d));
+    ok("N-02: the answer says where it went: nowhere, the claim stays closed (for the toast)", ra.r && ra.r.went === "kept" && rb.r.went === "kept" && rd.r.went === "kept", [ra.r, rb.r, rd.r]);
+    const ev = await row1("SELECT data_json FROM claim_events WHERE claim_id = ? AND kind = 'handoff_rejected' ORDER BY at DESC LIMIT 1", a);
+    ok("N-02: ...the history keeps the rejection and says the claim stays closed (not 'back on the biller's list')", ev && JSON.parse(ev.data_json).kept === "closed" && JSON.parse(ev.data_json).resent === false && (await row1("SELECT status FROM handoffs WHERE claim_id = ? AND dept = 'subcheck'", a)).status === "rejected", ev);
+    ok("N-02: a claim still with the biller goes back on the biller's list today, as before, and the answer says so", re.ok && re.r.went === "biller" && (await claim(e)).state === "assigned" && (await claim(e)).follow_up_on === nowIso(), [re.r, await brief(e)]);
+  } finally { await A("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "person", lead: U("Quin Submit").id }); await A("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "person", lead: U("Rex Reject").id }); }
+  // with a Rejections person set, an excluded claim also stays excluded (the Rejections task is still made), and the answer names the desk
+  setNow(IST(2027, 1, 18, 10, 0));
+  const [f] = await give("Arun Agent", 1);
+  await save(AR, f, SAAG.resub); await submitIt(QU, f);
+  await call(TI, "claims.setState", { ids: [f], state: "excluded" });
+  setNow(IST(2027, 1, 20, 12, 0));
+  const rf = await T(async () => call(QU, "handoffs.close", { id: (await openH(f, "subcheck")).id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy" }));
+  ok("N-02: with a Rejections person set: the Rejections task is made, an excluded claim stays excluded, and the answer says Rejections", rf.ok && rf.r.went === "rejection" && !!(await openH(f, "rejection")) && (await claim(f)).state === "excluded", [rf, await brief(f)]);
+});
+
+await part("N-03: Inventory status keeps the minus sign of a credit", async () => {
+  setNow(IST(2027, 1, 25, 10, 0));
+  // Lakeview's unassigned claims all carry a credit (made-up demo claims), so their total is below zero
+  const open = await rows("SELECT id, balance FROM claims WHERE client_id = ? AND state = 'open'", lake.id);
+  await sql("UPDATE claims SET balance = -25 WHERE client_id = ? AND state = 'open'", lake.id);
+  try {
+    const total = -25 * open.length, inv = await call(A, "inventory.status", { client_id: lake.id, today: nowIso() });
+    const card = (inv.insights || []).find((c) => /unassigned/.test(c.sub || "")) || {};
+    const want = "-$" + (Math.abs(total) >= 1e3 ? Math.round(Math.abs(total) / 100) / 10 + "k" : Math.abs(total));
+    ok("N-03: the Allocate card shows the unassigned total as a credit (with its minus sign), not as a positive amount", open.length > 0 && card.sub === "unassigned · " + want, [open.length, want, card.sub]);
+    const sunCard = ((await call(A, "inventory.status", { client_id: sun.id, today: nowIso() })).insights || []).find((c) => /unassigned/.test(c.sub || "")) || {};
+    ok("N-03: ...and a positive total still shows without a sign", !sunCard.sub || /unassigned · \$\d/.test(sunCard.sub), sunCard.sub);
+  } finally { for (const c of open) await sql("UPDATE claims SET balance = ? WHERE id = ?", c.balance, c.id); }
+  // the page's own short money format on the same page (stage balances, aging, AR per client): taken from the page code as it is
+  const app = (await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  const fmtK = new Function("return " + app.match(/\nconst fmtK = (\(v\) => \{[^\n]*\});\n/)[1])();
+  const got = [-1400, -12345, -2e6, 2500, 980, -0.4, 0].map(fmtK);
+  ok("N-03: the page's short money format keeps a credit's sign and never shows -$0", got.join(" ") === "-$1.4k -$12k -$2M $2.5k $980 $0 $0", got);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

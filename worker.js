@@ -3639,7 +3639,8 @@ function addWorkingHours(ms, hours) {
   return t;
 }
 /* Where a Needs attention claim can go after review: the departments that have a person on this client. */
-const reviewShape = (r) => ({ ...r, depts: ["posting", "submission", "rejection"].filter((d) => r[d + "_mode"] === "person").map((d) => ({ id: d, label: DEPT_LABEL[d] })) });
+// posted: Posting closed it (read only): the review can only keep it closed
+const reviewShape = (r) => ({ ...r, posted: r.state === "closed" && r.handoff_status === "posted", depts: ["posting", "submission", "rejection"].filter((d) => r[d + "_mode"] === "person").map((d) => ({ id: d, label: DEPT_LABEL[d] })) });
 async function reviewPeople(env, user) {
   return (await visibleUsers(env, user)).filter((u) => u.active && u.role === "user" && !userDesk(u)).map((u) => ({ id: u.id, name: u.name })).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -5222,7 +5223,8 @@ const OPS = {
     for (const r of t90) both(r.client_id, (x) => { for (const f of ["n7", "bal7", "n14", "bal14"]) x.t90[f] += Number(r[f]) || 0; });
     const pfBy = new Map(pf.rows.map((r) => [r.client_id, r]));
     const T = OVER90_TARGET;
-    const money = (v) => { const a = Math.abs(v || 0); return "$" + (a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); };
+    // a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none
+    const money = (v) => { const a = Math.abs(v || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((v || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
     const pl = (n, w) => n + " " + w + (n === 1 ? "" : "s");
     const deptName = { posting: "Posting", submission: "Submission", subcheck: "Submission", rejection: "Rejections" };
     // What to do first, most SLA-damaging first. Each card: the number, why it matters, and the one action.
@@ -6437,10 +6439,15 @@ const OPS = {
     const atDesk = new Map();
     for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT h.claim_id, h.dept FROM handoffs h JOIN claims c ON c.id = h.claim_id
         WHERE h.claim_id IN (${part.map(() => "?").join(",")}) AND h.dept <> 'subcheck' AND h.status IN ('pending','assigned','client')${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user))) atDesk.set(r.claim_id, r.dept);
-    const todo = ids.filter((id) => !atDesk.has(id));
+    // A claim Posting closed (the payment is posted) is read only: Reopen, Exclude or Close leave it exactly as it is.
+    const posted = new Set();
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT id FROM claims WHERE id IN (${part.map(() => "?").join(",")}) AND state = 'closed' AND handoff_status = 'posted'${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user))) posted.add(r.id);
+    const todo = ids.filter((id) => !atDesk.has(id) && !posted.has(id));
+    if (posted.size && !todo.length && !atDesk.size) throw bad(posted.size === 1 ? "Posting closed this claim (the payment is posted): it is read only and stays as it is."
+      : `These ${posted.size} claims were closed by Posting (the payment is posted): they are read only and stay as they are.`);
     if (atDesk.size && !todo.length) { const verb = state === "closed" ? "closed" : state === "excluded" ? "excluded" : "reopened", d = DEPT_LABEL[[...atDesk.values()][0]];
-      throw bad(atDesk.size === 1 ? `This claim is with ${d} now. It can be ${verb} once ${d} finishes it or sends it back to AR.`
-        : `These ${atDesk.size} claims are with Payment Posting, Submission or Rejections now. They can be ${verb} once the desk finishes them or sends them back to AR.`); }
+      throw bad(atDesk.size === 1 && !posted.size ? `This claim is with ${d} now. It can be ${verb} once ${d} finishes it or sends it back to AR.`
+        : `These ${atDesk.size + posted.size} claims stay as they are: ${atDesk.size} with Payment Posting, Submission or Rejections now${posted.size ? `, ${posted.size} closed by Posting (read only)` : ""}.`); }
     for (const part of chunks(todo, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
     for (const chunk of chunks(todo, 60)) {
@@ -6448,8 +6455,8 @@ const OPS = {
         skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
       changed += changesOf(r);
     }
-    // at_desk: how many of the claims picked were left as they are because a desk has them
-    return { changed, at_desk: atDesk.size };
+    // at_desk / posted: how many of the claims picked were left as they are because a desk has them, or Posting closed them
+    return { changed, at_desk: atDesk.size, posted: posted.size };
   },
 
   /* ---- allocation ---- */
@@ -7379,7 +7386,8 @@ const OPS = {
     // The status change runs first, and only while the hand-off still stands as this request found it (on the desk, or waiting
     // on the client), so two choices at once cannot both go through: the first one wins, whatever the two choices are.
     const STILL = h.status === "client" ? "status = 'client'" : "status IN ('pending','assigned')";
-    let guard = null, listed = false;
+    // went: where a rejected recheck went (rejection, submission, biller, or kept: the claim was already closed and stays so)
+    let guard = null, listed = false, went = "";
     if (outcome === "complete") {
       const p = payload.proof || {};
       // amounts: optional, a number when given (Paid is the "amount posted" the reports add up)
@@ -7455,14 +7463,18 @@ const OPS = {
         const due = addWorkingHours(now, tatHours(cl, "submission")), nd = toRej ? "rejection" : "submission", to = rej || sub;
         stmts.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, note, biller_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?)`)
           .bind(uuid(), c.id, h.client_id, nd, now, user.id, user.name, "Rejected: " + reason, due, to.lead, to.backup, note, h.biller_id || c.assigned_to || c.last_worked_by || null));
-        // A claim already closed (Payment posted meanwhile) stays closed: the Rejections hand-off is there, the claim is not reopened.
-        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '', updated_at = ? WHERE id = ? AND state <> 'closed'").bind("with_" + nd, IN_PROCESS, "With " + DEPT_LABEL[nd], now, c.id));
+        // A claim already closed (Posting, AR or the team lead closed it) or excluded stays as it is: the Rejections hand-off is there,
+        // the claim is not opened again.
+        stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '', updated_at = ? WHERE id = ?" + KEEP).bind("with_" + nd, IN_PROCESS, "With " + DEPT_LABEL[nd], now, c.id));
+        went = nd;
       } else {
-        // Nobody set to resubmit: back to the biller today.
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned','closed') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`).bind(today, now, c.id));
+        // Nobody set to resubmit: back to the biller today; a claim already closed or excluded stays as it is (the rejection is on
+        // the recheck and in the claim history).
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ?${KEEP}`).bind(today, now, c.id));
+        went = kept ? "kept" : "biller";
       }
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `Submission rejected (${reason}): ${note}`, now));
-      stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "" }));
+      stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "", ...(kept ? { kept: c.state } : {}) }));
     } else if (outcome === "back") {
       // Need assistance from AR: back on the biller's list today with the reason (the 3rd return also goes to the team lead).
       const reason = str(payload.reason, 80).trim();
@@ -7545,7 +7557,7 @@ const OPS = {
     await env.DB.batch(stmts);
     if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id, outcome); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
     // listed: the claim went on a biller's list now (a team lead's review gave it to them while the desk had it)
-    return { ok: true, ...(listed ? { listed: true } : {}) };
+    return { ok: true, ...(listed ? { listed: true } : {}), ...(went ? { went } : {}) };
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
@@ -7673,7 +7685,7 @@ const OPS = {
     return { ok: true };
   },
   "attention.list": async ({ env, user }) => {
-    const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.state, c.follow_up_on,
+    const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.state, c.handoff_status, c.follow_up_on,
         c.last_status_code, c.last_sub_status, c.last_action_code, c.last_note, c.escalated_at, c.escalated_by, c.assigned_to, u.name AS assigned_name, e.name AS escalated_by_name, cl.name AS client_name, l.name AS location_name,
         cl.posting_mode, cl.submission_mode, cl.rejection_mode,
         (SELECT h.dept FROM handoffs h WHERE h.claim_id = c.id AND h.status IN ('back','assistance') ORDER BY h.done_at DESC LIMIT 1) AS last_dept,
@@ -7700,7 +7712,7 @@ const OPS = {
   /* Sent back to AR: claims Posting, Submission or Rejections returned with "Need assistance from AR" in the last 30 days that
      nobody on AR has worked since. They show for the AR team leads (and up) of the client until a biller saves an entry. */
   "attention.fromDesks": async ({ env, user }) => {
-    const rows = await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.reason, h.note, h.done_at, h.done_by_name, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state,
+    const rows = await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.reason, h.note, h.done_at, h.done_by_name, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.handoff_status,
         c.client_id, c.assigned_to, c.reviewed_at, c.reviewed_by_name, h.biller_id, h.created_by, cl.posting_mode, cl.submission_mode, cl.rejection_mode,
         cl.name AS client_name, l.name AS location_name, u.name AS biller_name,
         (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns
@@ -8171,6 +8183,8 @@ const OPS = {
     const route = ["biller", "other", "dept", "keep"].includes(payload.route) ? payload.route : "";
     if (!route) throw bad("Pick where it goes: the biller who sent it, another biller, or back to the department.");
     if (route === "keep" && c.state !== "closed") throw bad("Only a closed claim can be kept closed: pick where it goes.");
+    // a claim Posting closed is read only: the review can only keep it closed (giving it to a biller or a desk would open it again)
+    if (route !== "keep" && postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): it is read only, so the review can only keep it closed.");
     const now = Date.now(), today = isoDate(payload.today) || isoToday(), cno = c.claim_no || c.account_no || "a claim";
     // The review goes on the claim's timeline only (who escalated it and when, who reviewed it, the four notes, where it went):
     // the claim's notes, work entries and details stay exactly as they were.

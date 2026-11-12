@@ -3568,7 +3568,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   const bulk = async (label, fn) => {
     if (!sel.size) return;
     setBusy(true);
-    try { const r = await fn([...sel]); toast(`${label}: ${plural(r.changed || r.applied || 0, "claim")}.` + (r.at_desk ? ` ${plural(r.at_desk, "claim is", "claims are")} with a desk and stayed as ${r.at_desk === 1 ? "it is" : "they are"}.` : "")); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
+    try { const r = await fn([...sel]); toast(`${label}: ${plural(r.changed || r.applied || 0, "claim")}.` + (r.at_desk ? ` ${plural(r.at_desk, "claim is", "claims are")} with a desk and stayed as ${r.at_desk === 1 ? "it is" : "they are"}.` : "") + (r.posted ? ` ${plural(r.posted, "claim was", "claims were")} closed by Posting (read only) and stayed as ${r.posted === 1 ? "it is" : "they are"}.` : "")); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const sortBy = (k) => { if (f.sort === k) set("dir", f.dir === "asc" ? "desc" : "asc"); else setF((x) => ({ ...x, sort: k, dir: k === "patient" || k === "payer" ? "asc" : "desc", page: 1 })); };
@@ -4657,7 +4657,9 @@ function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, o
 /* Supervisor review of a Needs attention claim: why it came, what was reviewed, the findings and the next action, then where
    it goes: the biller who sent it, another biller, or back to the department. */
 function ReviewModal({ row, people, onClose, onDone }) {
-  const [f, setF] = useState(() => ({ why: row.review_why || "", reviewed: "", findings: "", next: "", route: row.sent_by_id ? "biller" : "other", user_id: "", dept: row.last_dept || (row.depts && row.depts[0] ? row.depts[0].id : "") }));
+  // a claim Posting closed is read only: the review can only keep it closed (the server refuses the other routes)
+  const posted = !!row.posted;
+  const [f, setF] = useState(() => ({ why: row.review_why || "", reviewed: "", findings: "", next: "", route: posted ? "keep" : row.sent_by_id ? "biller" : "other", user_id: "", dept: row.last_dept || (row.depts && row.depts[0] ? row.depts[0].id : "") }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   // "Another biller": only the active AR billers on this claim's client (the server checks the same).
@@ -4687,10 +4689,11 @@ function ReviewModal({ row, people, onClose, onDone }) {
         </div>
         <Field label="Send it to">
           <div className="stack" style={{ gap: 8 }}>
-            <label className="check"><input type="radio" name="rv" checked={f.route === "biller"} disabled={!row.sent_by_id} onChange={() => set("route", "biller")} /> {row.sent_by_id ? <>The biller who sent it: <b>{row.sent_by_name || "the biller"}</b></> : "The biller who sent it (nobody on record)"}</label>
-            <label className="check"><input type="radio" name="rv" checked={f.route === "other"} onChange={() => set("route", "other")} /> Another biller</label>
+            {posted && <div className="tiny" style={{ color: "var(--amber-ink)" }}>Posting closed this claim (the payment is posted): it is read only, so it can only be kept closed.</div>}
+            <label className="check"><input type="radio" name="rv" checked={f.route === "biller"} disabled={!row.sent_by_id || posted} onChange={() => set("route", "biller")} /> {row.sent_by_id ? <>The biller who sent it: <b>{row.sent_by_name || "the biller"}</b></> : "The biller who sent it (nobody on record)"}</label>
+            <label className="check"><input type="radio" name="rv" checked={f.route === "other"} disabled={posted} onChange={() => set("route", "other")} /> Another biller</label>
             {f.route === "other" && <div style={{ marginLeft: 24, maxWidth: 320 }}><Combo value={f.user_id} onChange={(v) => set("user_id", v || "")} placeholder="Pick the biller…" options={billers.filter((p) => p.id !== row.sent_by_id).map((p) => ({ id: p.id, label: p.name }))} /></div>}
-            <label className="check"><input type="radio" name="rv" checked={f.route === "dept"} disabled={!depts.length} onChange={() => set("route", "dept")} /> Back to the department{row.last_dept ? " that sent it" : ""}{!depts.length ? " (none set on this client)" : ""}</label>
+            <label className="check"><input type="radio" name="rv" checked={f.route === "dept"} disabled={!depts.length || posted} onChange={() => set("route", "dept")} /> Back to the department{row.last_dept ? " that sent it" : ""}{!depts.length ? " (none set on this client)" : ""}</label>
             {row.state === "closed" && <label className="check"><input type="radio" name="rv" checked={f.route === "keep"} onChange={() => set("route", "keep")} /> Keep it closed (you agree; the biller gets your notes)</label>}
             {f.route === "dept" && <div className="seg2" style={{ marginLeft: 24 }}>{depts.map((d) => <button key={d.id} type="button" className={f.dept === d.id ? "on" : ""} onClick={() => set("dept", d.id)}>{d.label}{row.last_dept === d.id ? " (sent it)" : ""}</button>)}</div>}
           </div>
@@ -4939,7 +4942,8 @@ function HistEvent({ it, onEdit, onFile }) {
     case "handoff_done": { const pr = (it.data && it.data.proof) || {}; const posting = it.data && it.data.dept === "posting";
       dot = D("#E3FBEF", "✓"); title = (posting ? "Payment posted" : it.data && it.data.dept === "subcheck" ? "Submission accepted by the payer" : it.data && it.data.dept === "rejection" ? "Corrected and resubmitted (Rejections)" : "Submitted") + who; body = <><div className="x">{pr.ref ? <>{posting ? "Check / EFT " : "Batch / claim ID "}<b>{pr.ref}</b></> : null}{pr.code ? (pr.ref ? " · " : "") + "Rejection: " + pr.code : ""}{pr.date ? (pr.ref || pr.code ? " · " : "") + (it.data && it.data.dept === "subcheck" ? "accepted " : "") + fmtDate(pr.date) : ""}{pr.amount != null ? " · " + fmtMoney(pr.amount, 2) : ""}{pr.mode ? " · " + pr.mode : ""}{it.data.note ? "\n" + it.data.note : ""}</div>{pr.files && pr.files.length ? <div className="m">📎 proof: {pr.files.join(", ")}</div> : null}<div className="m">{it.data.within_tat ? "within TAT" : "after the TAT"}{it.data.listed ? " · on the biller's list now (given by the team lead's review)" : ""}</div></>; break; }
     case "handoff_check": dot = D("#E0F7F4", "⏱"); title = "Recheck set for " + (it.text || "someone") + who; body = it.data && it.data.available_at ? <div className="m">check from {fmtWhen(it.data.available_at)} · due {fmtWhen(it.data.due_at)}</div> : null; break;
-    case "handoff_rejected": dot = D("#FDEAEA", "✗"); title = "Submission rejected" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.resent ? "sent to " + (it.data.to === "Rejections" ? "the Rejections person (first priority)" : "the Submission team") + " to correct and resubmit" : "back on the biller's list"}</div></>; break;
+    case "handoff_rejected": dot = D("#FDEAEA", "✗"); title = "Submission rejected" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.resent ? "sent to " + (it.data.to === "Rejections" ? "the Rejections person (first priority)" : "the Submission team") + " to correct and resubmit" + (it.data.kept ? "; the claim was already " + (it.data.kept === "excluded" ? "excluded" : "closed") + " and stays so" : "")
+              : it.data && it.data.kept ? "nobody is set for Rejections or Submission, and the claim was already " + (it.data.kept === "excluded" ? "excluded" : "closed") + ": it stays so" : "back on the biller's list"}</div></>; break;
     case "handoff_back": dot = D("#FFF3D6", "↩"); title = (it.text || "The department") + " needs assistance from AR" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.kept ? "the claim was already " + (it.data.kept === "excluded" ? "excluded" : "closed") + ": it stays as it is" : "on the biller's list today"}{it.data && it.data.within_tat === false ? " · after the TAT" : ""}{it.data && it.data.returns ? " · returned " + it.data.returns + "×" : ""}{it.data && it.data.bounced ? " · escalated to the team lead" : ""}</div></>; break;
     case "handoff_client_sent": dot = D("#E4EEFA", "✉"); title = "Sent to the client for " + (it.text || "the department") + who; body = <><div className="x"><b>{it.data && it.data.how}</b>{it.data && it.data.reason ? " · " + it.data.reason : ""}{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">chased in 3 working days if the client has not answered</div></>; break;
     case "handoff_pending": dot = D("#EEF1F4", "…"); title = (it.text || "The department") + " · pending" + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
@@ -5258,7 +5262,11 @@ function HandoffCloseModal({ act, onClose, onDone }) {
       // seen: where the hand-off stood on this screen, so a choice made after someone else moved it is refused (409) and the list reloads
       const r = await rpc("handoffs.close", { id: h.id, outcome, proof: { ...p, files: names }, reason, note, seen: h.status });
       // listed: a team lead's review gave the claim to a biller while it was here, so it is on their list now (no 15-day wait)
-      toast((r && r.listed ? "Completed: submitted, on the biller's list now (the team lead's review gave it to them); recheck in " + (h.recheck_hours || 48) + " working hours." : done[outcome]) + (names.length ? " Proof attached to the claim." : "")); onDone();
+      // where a rejected recheck went: the Rejections person, the Submission team, the biller's list, or nowhere (the claim was closed)
+      const went = r && r.went && { rejection: "Rejected: sent to the Rejections person to correct and resubmit.", submission: "Rejected: sent to the Submission team to correct and resubmit.",
+        biller: "Rejected: nobody is set for Rejections or Submission on this client, so it is back on the biller's list.",
+        kept: "Rejected: nobody is set for Rejections or Submission on this client, and the claim was already closed, so it stays closed. The rejection is in its history." }[r.went];
+      toast((went ? went : r && r.listed ? "Completed: submitted, on the biller's list now (the team lead's review gave it to them); recheck in " + (h.recheck_hours || 48) + " working hours." : done[outcome]) + (names.length ? " Proof attached to the claim." : "")); onDone();
     } catch (e) { if (e.status === 409) { toast(e.message, "err"); onDone(); } else setErr(e.message); }
     setBusy(false);
   };
@@ -5472,7 +5480,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
                 <Combo sm width={220} value={user} onChange={setUser} placeholder="Assign to…" options={ctx.users.filter((u) => u.active && (u.role === "user" || u.id === me.id)).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
                 <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }))}>Assign</button>
                 {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }))}>Unassign</button>}
-                {!atDesk && (c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
+                {!atDesk && !c.locked && (c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
                 {!atDesk && c.state !== "closed" && <button className="btn sm danger" disabled={busy} onClick={() => act("Closed.", () => rpc("claims.setState", { ids: [id], state: "closed" }))}>Close</button>}
                 {!atDesk && c.state !== "excluded" && c.state !== "closed" && <button className="btn sm" disabled={busy} onClick={() => act("Excluded.", () => rpc("claims.setState", { ids: [id], state: "excluded" }))}>Exclude</button>}
                 {atDesk && <span className="tiny muted">With {DEPT_NAME[atDesk.dept]} now: it can be closed or excluded once the desk finishes it or sends it back to AR.</span>}
@@ -6622,7 +6630,8 @@ const drDot = (b) => <i className={"psla-dot " + (b || "none")} />;
    target, the pace to clear, the SLA checks the inventory answers today, and what to do first to meet the SLA. Every client, or one. */
 const INV_STAGES = [["open", "Unassigned", "#9AA5B1"], ["list", "On a biller's list", "#22CAE4"], ["later", "Worked, follow-up later", "#30C48D"], ["due", "Follow-up due today", "#F5A623"],
   ["overdue", "Follow-up overdue", "#E5484D"], ["waiting", "Waiting on the client", "#7C5CFF"], ["desk", "At Posting / Submission", "#2563EB"]];
-const fmtK = (v) => { const a = Math.abs(Number(v) || 0); return "$" + (a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); };
+// a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none (the same rule as the server's cards)
+const fmtK = (v) => { const a = Math.abs(Number(v) || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((Number(v) || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
 function InvStrip({ stages, mini }) {
   const tot = INV_STAGES.reduce((t, [k]) => t + (stages[k] ? stages[k].n : 0), 0);
   if (!tot) return <div className={mini ? "inv-mini" : "inv-strip"} style={{ background: "var(--soft)" }} />;
