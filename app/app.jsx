@@ -1447,7 +1447,7 @@ function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {
   const results = [];
   pages.filter(([, l]) => !needle || has(l)).slice(0, needle ? 6 : 14).forEach(([k, l]) => results.push({ kind: "Page", key: "p" + k, label: l, run: () => go(k) }));
   if (needle && me.role === "supervisor") ctx.clients.filter((c) => c.active && (has(c.name) || has(c.code))).slice(0, 5).forEach((c) => results.push({ kind: "Client", key: "c" + c.id, label: c.name, sub: "open Client 360", run: () => go("client", { client_id: c.id }) }));
-  if (needle && me.role === "supervisor" && can("live")) (ctx.users || []).filter((u) => u.active && u.role === "user" && (has(u.name) || has(u.email))).slice(0, 5).forEach((u) => results.push({ kind: "Person", key: "u" + u.id, label: u.name, sub: "coaching card", run: () => openCoach(u.id) }));
+  if (needle && me.role === "supervisor" && can("live")) (ctx.users || []).filter((u) => u.active && u.role === "user" && u.in_span !== false && (has(u.name) || has(u.email))).slice(0, 5).forEach((u) => results.push({ kind: "Person", key: "u" + u.id, label: u.name, sub: "coaching card", run: () => openCoach(u.id) }));
   found.rows.forEach((c) => results.push({ kind: "Claim", key: "k" + c.id, label: c.claim_no, phi: c.patient, sub: [c.client_name, c.payer, fmtMoney(c.balance), c.posted ? "posted · closed" : c.assigned_name ? "with " + c.assigned_name : c.state].filter(Boolean).join(" · "), run: () => openClaim(c.id) }));
   results.sort((a, b) => CMDK_ORDER.indexOf(a.kind) - CMDK_ORDER.indexOf(b.kind));
   const pick = (r) => { if (!r) return; onClose(); r.run(); };
@@ -1530,7 +1530,8 @@ function Bell({ notify, allowed, onGo }) {
     </div>
   );
 }
-/* Signed out after 5 minutes without a key, click, scroll or touch in any Brahmastra tab; a warning shows for the last minute. */
+/* Signed out after 24 hours without a key, click, scroll or touch in any Brahmastra tab (the embedded Third Eye and SLA pages
+   included); a warning shows for the last minute. */
 const IDLE_MIN = Number(window.BRAHMASTRA_IDLE_MIN) || 24 * 60, IDLE_WARN_SEC = Math.min(60, IDLE_MIN * 30), ACTIVE_KEY = "brahmastra2:active";
 function useIdleSignOut(on, signOut) {
   const [left, setLeft] = useState(null);
@@ -1542,16 +1543,30 @@ function useIdleSignOut(on, signOut) {
     const mark = () => { last = Date.now(); setLeft(null); if (last - wrote > 15000) { wrote = last; try { localStorage.setItem(ACTIVE_KEY, String(last)); } catch (e) {} } };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "wheel"];
     evs.forEach((e) => window.addEventListener(e, mark, { passive: true }));
+    // Working inside the embedded Sasha's Third Eye or SLA page counts too, but only real input there: their pages are on the same
+    // address as Brahmastra, so each page the frames load gets the same listeners (a scroll the page makes by itself does not
+    // count). Focus left in a frame is not activity. Clicking into a frame counts once (the window loses focus to it).
+    const frameEvs = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"], watched = new WeakSet(), docs = [];
+    const watchFrames = () => {
+      for (const f of document.getElementsByTagName("iframe")) {
+        let d = null; try { d = f.contentDocument; } catch (e) { d = null; }
+        if (!d || watched.has(d)) continue;
+        watched.add(d); docs.push(d);
+        frameEvs.forEach((e) => d.addEventListener(e, mark, { passive: true, capture: true }));
+      }
+    };
+    const intoFrame = () => { setTimeout(() => { if (document.activeElement && document.activeElement.tagName === "IFRAME") mark(); }, 0); };
+    window.addEventListener("blur", intoFrame);
     mark();
     const t = setInterval(() => {
-      // working inside the embedded Sasha's Third Eye or SLA page counts as activity too
-      if (document.hasFocus() && document.activeElement && document.activeElement.tagName === "IFRAME") mark();
+      watchFrames();
       let shared = 0; try { shared = Number(localStorage.getItem(ACTIVE_KEY)) || 0; } catch (e) {}
       const ms = IDLE_MIN * 60000 - (Date.now() - Math.max(last, shared));
       if (ms <= 0) { clearInterval(t); setLeft(null); Promise.resolve(out.current()).then(() => setTimeout(() => toast(`Signed out after ${IDLE_MIN < 1 ? "a while" : IDLE_MIN >= 60 ? Math.round(IDLE_MIN / 60) + " hours" : IDLE_MIN + " minutes"} without activity, to keep patient data safe.`), 100)); }
       else setLeft(ms <= IDLE_WARN_SEC * 1000 ? Math.ceil(ms / 1000) : null);
     }, 1000);
-    return () => { evs.forEach((e) => window.removeEventListener(e, mark)); clearInterval(t); };
+    return () => { evs.forEach((e) => window.removeEventListener(e, mark)); window.removeEventListener("blur", intoFrame); clearInterval(t);
+      docs.forEach((d) => { try { frameEvs.forEach((e) => d.removeEventListener(e, mark, { capture: true })); } catch (e) { /* the frame is gone */ } }); };
   }, [on]);
   return left;
 }
@@ -2080,7 +2095,8 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td className="num">{floorCell(r, d.floor_source)}</td><td className="num">{idleCell(r)}</td><td className="num">{breakCell(r)}</td>
                   <td>{perfCell(r, d.perf_mark)}{r.out_today ? <div className="tiny muted">{r.out_today === "half" ? "half day today" : "out today"}</div> : null}</td>
                   <td className="num">{r.esc_n ? <button type="button" className="esc-ts" title="See the escalations" onClick={() => setEscOf(r)}>{r.esc_ext ? <span className="badge red">{r.esc_ext} external</span> : null}{r.esc_int ? <span className="badge purple">{r.esc_int} internal</span> : null}<span className="tiny link-ink">see</span></button> : <span className="muted">0</span>}</td>
-                  <td><button type="button" className="btn sm note-btn" title={r.comment || "Add a start, end or comment"} onClick={() => setEdit({ r, start: r.start_date, end: r.end_date, comment: r.comment })}>{r.comment ? <span className="clamp3">{r.comment}</span> : <span className="muted">+ Add note</span>}</button></td>
+                  <td>{r.can_act === false ? (r.comment ? <span className="small clamp3" title={r.comment}>{r.comment}</span> : <span className="muted">–</span>)
+                    : <button type="button" className="btn sm note-btn" title={r.comment || "Add a start, end or comment"} onClick={() => setEdit({ r, start: r.start_date, end: r.end_date, comment: r.comment })}>{r.comment ? <span className="clamp3">{r.comment}</span> : <span className="muted">+ Add note</span>}</button>}</td>
                 </tr>)}
               </React.Fragment>; })}</tbody></table></div>
           <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> comes from Purview Shastra (finished shifts, breaks taken out; a shift still open counts up to now) and is met or short on the finished days; Shastra's attendance also decides half days, leave and week offs. <b>Idle</b> is what Shastra Guard saw while they were punched in, breaks left out: no movement plus screen locked. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. Claims worked and <b>team task items</b> done both count toward it. <b>Tasks:</b> items from Needs attention › Team tasks marked done in these dates (the night shift's early hours count to the day before, as for claims). <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
@@ -3837,7 +3853,7 @@ function TaskFormModal({ ctx, clientId, task, onClose, onDone }) {
   const tat = f.tat === "24" || f.tat === "72" ? { kind: f.tat } : f.tat === "hours" ? { kind: "hours", hours: Number(f.hours) } : f.tat === "date" ? { kind: "date", date: f.date } : null;
   // in Edit, working hours count from when the task was given (as the server does); a date is the end of that day
   const dueHint = f.tat === "24" || f.tat === "72" || (f.tat === "hours" && Number(f.hours) > 0) ? fmtWhen(taskDueHint(f.tat === "hours" ? f.hours : Number(f.tat), edit ? task.created_at : 0)) : f.tat === "date" && f.date ? fmtMDY(f.date) + ", end of the day" : "";
-  const clientOpts = [{ id: "", label: "No client (internal task)" }, ...ctx.clients.filter((c) => c.active || c.id === f.client_id).map((c) => ({ id: c.id, label: c.name + (c.code ? ` (${c.code})` : "") }))];
+  const clientOpts = [{ id: "", label: "No client (internal task)" }, ...ctx.clients.filter((c) => (c.active && c.can_edit !== false) || c.id === f.client_id).map((c) => ({ id: c.id, label: c.name + (c.code ? ` (${c.code})` : "") }))];
   const options = ((pq.data && pq.data.people) || []).filter((u) => !people.some((p) => p.user_id === u.id)).map((u) => ({ id: u.id, label: u.name, sub: [u.on_client ? "on this client" : "", u.designation || (u.role === "user" ? "Biller" : "")].filter(Boolean).join(" · ") || undefined }));
   const missing = [!f.title.trim() || f.title.trim().length < 3 ? "what the task is" : "", !edit && !(count >= 1) ? "the task count" : "", !people.length ? "who does it" : "", people.length && sum !== count ? `shares that add up to ${count} (now ${sum})` : "",
     people.some((p) => !(Number(p.share) >= 1)) ? "a share of at least 1 for each person" : "", (f.tat === "hours" && !(Number(f.hours) >= 1)) || (f.tat === "date" && !f.date) ? "the TAT" : ""].filter(Boolean);
@@ -5310,7 +5326,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
               </div>
             )}
             {!ro && <Suggestions claim={c} subStatus={c.last_sub_status} />}
-            {!ro && (c.mine || (sup && !q.data.handoff_role)) && <div className="card stack" style={{ paddingBottom: 0 }}>
+            {!ro && (c.mine || (sup && !q.data.handoff_role && !deskOf(me, null))) && <div className="card stack" style={{ paddingBottom: 0 }}>
               <div className="row between"><h2 style={{ margin: 0 }}>Work this claim</h2><span className="tiny muted">{canSaveEntry(c) ? "Save entry records the SAAG and the note; Add as note keeps just the note (for example on a closed claim)" : c.state === "in_process" ? "It is with a desk now: add a note here; a SAAG entry is saved when it is back on a biller's list." : "Not on a biller's list (" + ((STATE_META[c.state] || [])[1] || c.state) + "): add a note here, or allocate it to save a SAAG entry."}</span></div>
               <WorkForm key={"wf" + ver} claim={c}
                 newFiles={(q.data.attachments || []).filter((a) => a.created_at > Math.max(0, ...q.data.notes.filter((n) => n.kind === "work").map((n) => n.created_at))).length}
@@ -5922,6 +5938,7 @@ function TeamView({ ctx, reload, me }) {
     setBusy(true);
     try {
       const { projects_text, email_missing, ...payload } = edit;
+      delete payload.was;   // what the profile was when it opened: for the form only
       payload.projects = parseProjectsText(projects_text);
       if (edit.id && (!(me.is_admin || email_missing) || !String(edit.email || "").trim())) delete payload.email;
       if (!edit.id && edit.tempPw) { const pw = randomPassword(); payload.passHash = await sha256Hex(pw); const r = await rpc("users.save", payload); setTempPw({ user: r.user, pw }); }
@@ -5965,7 +5982,7 @@ function TeamView({ ctx, reload, me }) {
       <div className="card">
         <div className="table-wrap"><table className="t"><thead><tr>{tSort.Th("name", "Name")}{tSort.Th("designation", "Designation")}{tSort.Th("email", "Email")}{tSort.Th("role", "Role")}{tSort.Th("projects", "Projects")}{tSort.Th("reports_to_name", "Reports to")}{tSort.Th("capacity", "Claims / day", "r")}{tSort.Th("status", "Status")}{tSort.Th("last_login", "Last sign in")}<th></th></tr></thead>
           <tbody>{shownUsers.map((u) => <tr key={u.id}><td><b>{u.name}</b>{u.id === me.id && <span className="tiny muted"> (you)</span>}{u.emp_id ? <div className="tiny muted mono">{u.emp_id}{u.source === "roster" ? " · roster" : ""}</div> : null}</td><td className="small">{u.designation || "–"}{u.department ? <div className="tiny muted">{u.department}</div> : null}</td><td className="small">{u.email_missing ? <span className="badge amber">no email</span> : u.email}</td><td>{u.is_admin ? <span className="badge purple">Admin</span> : u.role === "supervisor" ? <span className="badge ink">Team lead</span> : <span className="badge">Biller</span>}{u.access_all ? <div className="tiny muted">every project</div> : null}</td><td className="small">{projectsText(u.projects) || "–"}</td><td className="small">{u.reports_to_name || "–"}</td><td className="num">{u.capacity}</td><td>{!u.active ? <span className="badge red">inactive</span> : u.must_change ? <span className="badge amber">temporary password</span> : <span className="badge green">active</span>}{u.roster_status && u.roster_status !== "Working" ? <div><span className={"badge " + (STATUS_TONE[u.roster_status.toLowerCase()] || "gray")}>{u.roster_status}</span></div> : null}{u.has_password ? null : <div className="tiny muted">code sign-in only</div>}</td><td className="small">{u.last_login ? fmtWhen(u.last_login) : "never"}</td>
-            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email_missing ? "" : u.email, email_missing: u.email_missing, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active, projects_text: projectsText(u.projects), reports_to: u.reports_to || "", emp_id: u.emp_id || "", is_admin: u.is_admin })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}{me.is_admin && u.id !== me.id && <> <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => setDelFor(u)}>Delete</button></>}</td></tr>)}</tbody></table></div>
+            <td className="r" style={{ whiteSpace: "nowrap" }}>{u.in_span === false ? <span className="tiny muted" title="You see this person through a client. Their own team lead or the admin changes their account.">on another team</span> : <><button className="btn sm" onClick={() => setEdit({ id: u.id, first_name: u.first_name || (u.name || "").split(" ")[0] || "", last_name: u.last_name || (u.name || "").split(" ").slice(1).join(" "), email: u.email_missing ? "" : u.email, email_missing: u.email_missing, designation: u.designation || "", role: u.role, capacity: u.capacity, active: u.active, projects_text: projectsText(u.projects), reports_to: u.reports_to || "", emp_id: u.emp_id || "", is_admin: u.is_admin, was: { role: u.role, designation: u.designation || "", source: u.source } })}>Edit</button> <button className="btn sm link" disabled={busy || !u.active} onClick={() => getCode(u)} title="Issue a one-time sign-in code to pass on when their email has not arrived">Sign-in code</button>{u.has_password ? <> <button className="btn sm link" onClick={() => setResetFor(u)}>Reset password</button></> : null}{me.is_admin && u.id !== me.id && <> <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => setDelFor(u)}>Delete</button></>}</>}</td></tr>)}</tbody></table></div>
       </div>
       <div className="card">
         <div className="row between"><div><h3>Productivity</h3><div className="sub">Claims worked per person per day (one note per claim worked)</div></div>
@@ -5986,10 +6003,10 @@ function TeamView({ ctx, reload, me }) {
             <Field label="Email" hint={edit.email_missing ? "The roster had no usable email for this person: add it here so they can sign in." : "Allowed: " + domainHint()}><input className="input" type="email" value={edit.email} disabled={!!edit.id && !me.is_admin && !edit.email_missing} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
             {!edit.id && edit.email && mailOk(edit.email) && !domainOk(edit.email) && <div className="alert warn">That email's domain is not allowed (allowed: {domainHint()}).</div>}
             <div className="grid g2">
-              <Field label="Designation"><Combo value={edit.designation} onChange={(v) => setEdit({ ...edit, designation: v })} placeholder="Pick…" options={DESIGNATIONS.map((d) => ({ id: d, label: d }))} /></Field>
-              <Field label="Role in Brahmastra"><Combo clearable={false} value={edit.role} onChange={(v) => setEdit({ ...edit, role: v || "user" })} options={[{ id: "user", label: "Biller (works claims)" }, { id: "supervisor", label: "Team lead (allocates)" }]} /></Field>
+              <Field label="Designation"><Combo value={edit.designation} disabled={!me.is_admin && !!edit.was && edit.was.source === "roster" && isSmeUI(edit.was)} onChange={(v) => setEdit({ ...edit, designation: v })} placeholder="Pick…" options={DESIGNATIONS.map((d) => ({ id: d, label: d }))} /></Field>
+              <Field label="Role in Brahmastra" hint={!me.is_admin && edit.was && edit.was.role !== "supervisor" ? "Only the admin makes someone a team lead" : undefined}><Combo clearable={false} value={edit.role} disabled={!me.is_admin && !!edit.was && edit.was.role !== "supervisor"} onChange={(v) => setEdit({ ...edit, role: v || "user" })} options={[{ id: "user", label: "Biller (works claims)" }, { id: "supervisor", label: "Team lead (allocates)" }]} /></Field>
             </div>
-            {edit.id && <Field label="Emp ID (from Shastra)" hint="Matches this account to the roster: on the next roster load their name, email, projects and manager come from Shastra, their password stays, and any duplicate roster copy is switched off."><input className="input mono" placeholder="PHC000" value={edit.emp_id || ""} onChange={(e) => setEdit({ ...edit, emp_id: e.target.value })} /></Field>}
+            {edit.id && <Field label="Emp ID (from Shastra)" hint={me.is_admin ? "Matches this account to the roster: on the next roster load their name, email, projects and manager come from Shastra, their password stays, and any duplicate roster copy is switched off." : "It matches this account to the roster. Only the admin changes it."}><input className="input mono" placeholder="PHC000" value={edit.emp_id || ""} disabled={!me.is_admin} onChange={(e) => setEdit({ ...edit, emp_id: e.target.value })} /></Field>}
             <Field label="Projects" hint={"Separate with ; and add a share if any, e.g. VEC; NAEC 33%. Billers get these projects' claims; team leads see these projects."}><input className="input" value={edit.projects_text || ""} onChange={(e) => setEdit({ ...edit, projects_text: e.target.value })} /></Field>
             {edit.id && <PersonClientAccess userId={edit.id} ctx={ctx} me={me} />}
             <Field label="Reports to"><Combo value={edit.reports_to || ""} onChange={(v) => setEdit({ ...edit, reports_to: v })} placeholder="Nobody here" options={[{ id: "", label: "Nobody here" }, ...ctx.users.filter((u) => u.id !== edit.id && u.role === "supervisor").map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))]} /></Field>
@@ -6014,7 +6031,7 @@ function TeamView({ ctx, reload, me }) {
       {codeFor && (
         <Modal title={"Sign-in code for " + codeFor.user.name} onClose={() => setCodeFor(null)} narrow footer={<button className="btn primary" onClick={() => setCodeFor(null)}>Done</button>}>
           <div className="stack">
-            <div>Pass this to <b>{codeFor.user.name}</b> ({codeFor.email}). On the sign-in screen they choose "Sign in with a code", enter their email, then this code. It works for {codeFor.expires_in_min} minutes and replaces any code emailed earlier.</div>
+            <div>Pass this to <b>{codeFor.user.name}</b> ({codeFor.email}). On the sign-in screen they choose "Sign in with a code", enter their email, then this code. It works for {codeFor.expires_in_min} minutes, once.</div>
             <div className="pre mono" style={{ fontSize: 26, textAlign: "center", letterSpacing: 8 }}>{codeFor.code}</div>
             <button className="btn sm" onClick={() => { navigator.clipboard && navigator.clipboard.writeText(codeFor.code).then(() => toast("Copied.")); }}>Copy</button>
           </div>
@@ -6084,6 +6101,8 @@ function MissedModal({ row, kind, onClose }) {
   );
 }
 function RaciView({ me, go }) {
+  // Payment posting and Submission people open the missed list of their own desk only (AR's are claims on billers' lists)
+  const missedOpen = (k) => { const d = deskOf(me, null); return !d || (d === "both" ? k !== "ar" : k === d); };
   const q = useRpc("raci.list", {}, []);
   const [edit, setEdit] = useState(null);
   const [missed, setMissed] = useState(null);
@@ -6105,7 +6124,7 @@ function RaciView({ me, go }) {
               <td><RaciCell people={r.c} /></td>
               <td><RaciCell people={r.i} lockId={vp && vp.id} /></td>
               <td style={{ whiteSpace: "nowrap" }}>{[["ar", "AR"], ["posting", "Post"], ["submission", "Sub"]].map(([k, l]) => { const n = (r.missed && r.missed[k]) || 0; return (
-                <button key={k} className="btn link sm" style={{ padding: "0 4px" }} title={MISSED_KINDS[k][1] + (n ? " Click for the claims." : "")} disabled={!n} onClick={() => setMissed({ row: r, kind: k })}>
+                <button key={k} className="btn link sm" style={{ padding: "0 4px" }} title={MISSED_KINDS[k][1] + (n && missedOpen(k) ? " Click for the claims." : "")} disabled={!n || !missedOpen(k)} onClick={() => setMissed({ row: r, kind: k })}>
                   <span className={"badge " + (n ? "red" : "gray")}>{l} {n}</span></button>); })}</td>
               <td className="small muted" style={{ whiteSpace: "nowrap" }}>{r.saved ? <>{fmtWhen(r.updated_at)}<div className="tiny">{r.updated_by_name}</div></> : <span className="tiny">from the roster</span>}</td>
               <td style={{ textAlign: "right" }}>{r.can_edit ? <button className="btn sm" onClick={() => setEdit(r)}>Edit</button> : <span className="tiny muted" title="This client's team leads and managers edit it; you read it.">view</span>}</td>
@@ -6341,8 +6360,8 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
       {q.error ? <div className="alert err mt8">{q.error}</div> : !q.data ? <div className="mt8"><Spinner label="Loading…" /></div> : !rows.length ? <div className="mt8"><Empty>{filtered ? "Nobody here for this selection." : "Nobody on your team yet. Billers come from the roster and the clients' teams."}</Empty></div> : <>
         {missing.map((r) => <div key={r.id} className="sh-alert mt8"><div className="ic">⚠</div>
           <div style={{ flex: 1, minWidth: 240 }}><b className="red-ink">{r.name} has not logged in to Shastra</b><div className="small">Shift {r.shift} · {r.shastra.sub} · no leave, week off or holiday in Shastra. May be absent. <b>{fmtInt(r.untouched)} claim{r.untouched === 1 ? "" : "s"}</b> on their desk {r.untouched === 1 ? "is" : "are"} not started.</div></div>
-          {r.untouched > 0 && <button type="button" className="btn primary" disabled={busy} onClick={() => shareOut(r)}>Reallocate {fmtInt(r.untouched)} equally</button>}
-          <button type="button" className="btn" disabled={busy} onClick={() => setOutFor({ r, reason: "Not logged in to Shastra" })}>Mark out today</button></div>)}
+          {r.can_act !== false && r.untouched > 0 && <button type="button" className="btn primary" disabled={busy} onClick={() => shareOut(r)}>Reallocate {fmtInt(r.untouched)} equally</button>}
+          {r.can_act !== false && <button type="button" className="btn" disabled={busy} onClick={() => setOutFor({ r, reason: "Not logged in to Shastra" })}>Mark out today</button>}</div>)}
         <div className="table-wrap mt8"><table className="t">
           <thead><tr><th>Biller</th><th title="From Purview Shastra, read every 2 minutes">Shastra</th><th>Now</th><th>Working on</th><th>Pace today</th><th className="num">On desk</th><th className="num">Closed today</th><th title="Allocated before this shift and not worked yet">Left over</th><th /></tr></thead>
           <tbody>{groups.map((g) => { const open = !closed[g.key || "none"]; return <React.Fragment key={g.key || "none"}>
@@ -6361,7 +6380,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 <td className="num">{r.closed || <span className="muted">0</span>}</td>
                 <td>{leftCell(r)}</td>
                 <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  {r.status === "out" ? <><button className="btn sm" disabled={busy} onClick={() => setOut(r, false)}>In after all</button> {r.untouched > 0 && <button className="btn sm primary" disabled={busy} title="Share the untouched claims equally between the people in today on the same clients" onClick={() => rebalance(r)}>Rebalance {r.untouched}</button>}</>
+                  {r.can_act === false ? null : r.status === "out" ? <><button className="btn sm" disabled={busy} onClick={() => setOut(r, false)}>In after all</button> {r.untouched > 0 && <button className="btn sm primary" disabled={busy} title="Share the untouched claims equally between the people in today on the same clients" onClick={() => rebalance(r)}>Rebalance {r.untouched}</button>}</>
                     : <>{r.shastra && r.shastra.state === "missing" && r.untouched > 0 && <button className="btn sm primary" disabled={busy} onClick={() => shareOut(r)}>Reallocate {r.untouched}</button>}{" "}<button className="btn sm" disabled={busy} onClick={() => setOutFor({ r, reason: "" })}>Out today</button></>}
                 </td>
               </tr>))}
@@ -6640,7 +6659,9 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
 const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took a share back", "raci.save": "Changed the RACI", "feedback.recipients": "Changed who gets feedback",
   "client.responsibility": "Changed posting / submission responsibility", "settings.save": "Changed settings", "client.delete": "Deleted a client", "client.save": "Edited a client",
   "user.save": "Changed a team member", "client.log": "Logged a client call", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
-  "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL" };
+  "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL",
+  "project.map": "Matched a roster project to a client", "user.code": "Gave a sign-in code", "user.reset": "Reset a password", "user.email": "Changed an email address",
+  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
   const q = useRpc("audit.list", { client_id: f.client_id || undefined, action: f.action || undefined }, [f.client_id, f.action]);
@@ -8419,8 +8440,10 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
      before anything is calculated; a file chosen there afterwards replaces it. */
   const fedZones = useRef(new WeakSet());
   const fState = useRef(f); fState.current = f;
+  // the AR Inventory is AR's: a Payment posting or Submission person (team leads too) neither feeds it nor saves it
+  const arInv = !deskOf(me, null);
   useEffect(() => {
-    if (frame.loading) return;
+    if (frame.loading || !arInv) return;
     let alive = true, working = false;
     const tick = async () => {
       if (!alive || working) return;
@@ -8454,7 +8477,7 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
     };
     const id = setInterval(tick, 1500);
     return () => { alive = false; clearInterval(id); };
-  }, [frame.loading, frame.nonce]);
+  }, [frame.loading, frame.nonce, arInv]);
   const saveInv = async () => {
     setBusy(true); setSaved(null);
     try {
@@ -8471,13 +8494,13 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
       <SlaHead title={title} sub={sub} onHow={onHow} frame={pick == null && sso.state !== "loading" ? frame : null} />
       {pick == null && <><div className="card rh-bar">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => { setF({ client_id: v, location_id: "" }); setSaved(null); }} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
-        <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>
+        {arInv && <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>}
         <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : <><i className="rh-dot wait" />Sign in below</>}</div>
       </div>
       <div className="rh-status">
         {saved ? <span><i className="rh-dot" />{saved.name} · {fmtInt(saved.n)} claims · saved {saved.at} to {saved.folders.join(" and ")}</span>
-          : <span><i className="rh-dot off" />{f.client_id ? "AR Inventory goes to " + rc.folder("SLA & KPI") : "Pick a client to put its AR Inventory report in OneDrive"}</span>}
-        <span>Then below: Upload from OneDrive, and pick it with the period's other files</span>
+          : arInv ? <span><i className="rh-dot off" />{f.client_id ? "AR Inventory goes to " + rc.folder("SLA & KPI") : "Pick a client to put its AR Inventory report in OneDrive"}</span> : null}
+        {arInv && <span>Then below: Upload from OneDrive, and pick it with the period's other files</span>}
       </div>
       {fed && fed.state === "ok" && <div className="alert info mb rh-note"><b>Already added from Brahmastra.</b> Today's AR Inventory for {fed.client} ({fmtInt(fed.n)} claims, {fed.at}) is in {fed.dName}'s uploads below, matched to its slot for you to check before anything is calculated. To use a different file, upload it in the same box and it takes its place.</div>}
       {fed && fed.state === "pick" && <div className="alert warn mb rh-note">{fed.dName ? <><b>{fed.dName}</b> is not a Brahmastra client name I can match.</> : null} Pick its client above and its AR Inventory goes into the uploads below by itself.</div>}

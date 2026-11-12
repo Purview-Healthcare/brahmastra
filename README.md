@@ -120,7 +120,9 @@ sign-in), then **Clients** and **Inventory**.
 
 The roster comes only from Purview Shastra (below); there is no file upload. People are
 matched by Emp ID (then email, then name) and their department, projects, manager, status
-and date of joining are kept. People are changed in Shastra, not in Brahmastra.
+and date of joining are kept. People are changed in Shastra, not in Brahmastra: a team lead
+can correct a team member's details on Team until the next roster load, but only the admin
+can make someone a team lead or change an SME's designation.
 
 - Agents become billers; SMEs, Team Leads and Sr Team Leads become team leads
   for their own projects; Assistant Managers, Managers and Sr Managers become
@@ -139,7 +141,12 @@ and date of joining are kept. People are changed in Shastra, not in Brahmastra.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
-  inventory or allocation.
+  inventory or allocation. The server holds them to it whatever the screen: no AR
+  Inventory report, claims pool, Needs attention, My day, Live status, AR entries
+  or Client 360 report, and no excluding or reprioritising claims; Search, Claims
+  and the claim profile give them the claims sent to their own desk (and every
+  claim of a client they are set responsible for), the Past TAT list and its
+  reminder emails their own desk's tasks only.
 
 #### Client 360
 
@@ -334,7 +341,9 @@ bar to narrow the charts), then:
   sync.
 - **Audit trail** (admins and the VP): who shared a client or took it back, changed the RACI, who gets feedback, a
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
-  with when and what.
+  with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
+  address or an Emp ID, added or deleted an account, changed the extra sign-in emails, or matched a roster project
+  to a client. A code or a password is never written there: only who did it, for whom and when.
 
 #### SLA
 
@@ -403,8 +412,9 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
   and on every page change; the number counts what is new since you last opened it.
 - **Phones**: every page fits a phone screen; the menu sits under the logo and wide tables scroll sideways.
 - **Signing out when idle**: after 24 hours without a key, click, scroll or touch in any Brahmastra tab (working
-  inside the embedded Sasha's Third Eye or SLA page counts), a 1-minute warning shows, then the person is signed
-  out to keep patient data safe. Time spent in another program or browser tab (a payer portal,
+  inside the embedded Sasha's Third Eye or SLA page counts: a key, click, mouse move or touch there; the page left
+  open with nothing done does not), a 1-minute warning shows, then the person is signed out to keep patient data
+  safe. Time spent in another program or browser tab (a payer portal,
   a phone call) does not count as activity in Brahmastra.
 
 #### Monday digest email
@@ -470,6 +480,15 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 
 Shares are personal (one person, one client), show who shared and when, and can
 be taken back any time. SMEs cannot share; a view-only share cannot be passed on.
+
+A share is about the client, never about its people. Sign-in codes, password
+resets, changes to a person's account, switching them off and 1:1 coaching notes
+stay with the person's own team lead (the people who report up to them and the
+people on their own projects), the managers above them and the admin. Holding a
+share of a client, or putting someone on a client's team, does not make that
+person yours: on the Team list they show as "on another team". With a view-only
+share the client's people are there to look at only: no Out today, Team status
+note, rebalance or team task for them, and no team task on that client.
 
 #### RACI (the first tab)
 
@@ -690,7 +709,11 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
 (it still shows under Open now and Needs you now).
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once). Active AR agents on a project become
-  that client's billers.
+  that client's billers. A team lead matches their project only to a client of
+  their own span: one they are responsible for on its profile, one they added,
+  or one another of their projects is already matched to (or a new client).
+  Matching it to any other client is the admin's call (Roster). Every match is
+  in the audit trail.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
   when it has one), each up to their daily target, minus anyone marked **Out today** on Live status. Automatic
   allocation after an upload and the Allocate screen both use that; there is no daily ticking.
@@ -749,7 +772,11 @@ Worker's `ALLOWED_DOMAINS` variable can tighten it). Passwords are hashed in
 the browser and hashed again on the server with a per-user salt and the
 `PEPPER` secret. Codes are six digits, hashed on the server, valid for ten
 minutes, five attempts, at most one per 45 seconds and ten per hour per
-email. Sessions last at least 24 hours after the last use and extend while in use.
+email. Asking for a new code does not cancel one that is still valid: any of
+them works, once, and signing in uses them all up. After ten in an hour a new
+one is still sent when none is valid any more and nobody typed a wrong code in
+that hour, so nobody can lock a person (or the admin) out by asking for codes
+in their name. Sessions last at least 24 hours after the last use and extend while in use.
 
 **Email delivery** (needed for codes in production). Set these on the Worker:
 
@@ -937,7 +964,10 @@ computer or downloaded to be uploaded again. Third Eye has no sign-in. **How it 
 
 Brahmastra then signs people in to Drishti with Drishti's own 12-hour session token. Someone who has no Drishti
 account yet gets one, created from their Brahmastra profile under the manager they report to (that manager must
-be on Drishti's People tab). Brahmastra's admin opens Drishti as its Admin. Never put the secret in the repository.
+be on Drishti's People tab). Brahmastra's admin opens Drishti as its Admin, and nobody else does. Everyone else
+gets the Drishti account of their own email, and only of an email from Purview Shastra or one the admin set: an
+address the person or their team lead typed on Team (where Shastra had none) still gets their sign-in codes, but
+it does not open Drishti until the email is added in Shastra. Never put the secret in the repository.
 
 **E. Test.** Sign in as a team lead → Team → **Send a test email**. When it
 arrives, sign out and try **Sign in with a code**.
