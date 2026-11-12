@@ -441,7 +441,14 @@ function rawPick(raw, ...names) {
   for (const n of names) { const v = m.get(normKey(n)); if (v) return v; }
   return "";
 }
-const moneyCell = (v) => { if (v === "" || v == null) return ""; const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[$,\s]/g, "")); return isFinite(n) ? Math.round(n * 100) / 100 : String(v); };
+// an amount from the client's file; a credit (in brackets, or with a minus sign or CR before or after it: 45.00CR, CR 45.00) is negative
+const moneyCell = (v) => {
+  if (v === "" || v == null) return "";
+  if (typeof v === "number") return isFinite(v) ? Math.round(v * 100) / 100 : String(v);
+  const t = String(v).toUpperCase().replace(/[$,\s]/g, ""), credit = /^(\(|\u2212|CR)/.test(t) || /(-|\u2212|CR)$/.test(t);
+  const n = parseFloat(t.replace(/^(\(|\u2212|CR)/, ""));
+  return isFinite(n) ? Math.round((credit ? -Math.abs(n) : n) * 100) / 100 : String(v);
+};
 // the claim type the AR biller's SAAG action already says (editable in the form)
 const claimTypeOf = (action) => (/^Need to Resubmit$/i.test(action || "") ? "Resubmission" : /^Need to Submit Paper Claim$/i.test(action || "") ? "Paper claim"
   : /^Correction, Resubmission & Reprocessing$/i.test(action || "") ? "Corrected claim" : "");

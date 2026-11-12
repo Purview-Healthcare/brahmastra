@@ -222,8 +222,11 @@ function parseMoney(v) {
   let s = String(v).trim().toUpperCase();
   // a formula written as text in a CSV ("=SUM(F2:F9)") is not an amount
   if (!s || /^(-+|N\/?A|#N\/A|NULL|NONE)$/.test(s) || s[0] === "=") return null;
-  const neg = /\(.*\)/.test(s) || /^-|^\$\s*-|-$/.test(s) || /\bCR$/.test(s);
-  const n = parseFloat(s.replace(/\b(CR|DR)$/, "").replace(/[^0-9.]/g, ""));
+  // a credit: in brackets, a minus sign (a hyphen or the minus character U+2212) before or after the amount, or CR before or
+  // after it (45.00CR, 45.00 CR, CR 45.00)
+  const lead = s.slice(0, Math.max(0, s.search(/[0-9.]/)));
+  const neg = /\(.*\)/.test(s) || /[-\u2212]/.test(lead) || /[-\u2212]$/.test(s) || /^CR|CR$/.test(s.replace(/\s+/g, ""));
+  const n = parseFloat(s.replace(/[^0-9.]/g, ""));
   if (isNaN(n)) return null;
   return neg ? -n : n;
 }

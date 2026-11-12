@@ -7,7 +7,37 @@ const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 500))); };
 const J = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "Content-Type": "application/json" } });
-const rig = await makeRig({});
+// ---- a fake Microsoft Graph for the OneDrive checks (as suite34 has): folders, files and worksheets per workbook. A new month's
+// file starts the way OneDrive makes it from the template, with the AR header on Sheet1 (OD.blankNext: the next file starts empty). ----
+const AR_HEADER = ["Sr. No", "Location", "Project", "Practice", "Uni", "IG Claim ID#/Charge ID#", "Patient Name", "DOS", "Payer", "Age", "Bucket", "Billed Amount($)", "Balance Amount($)", "CPT",
+  "Comments/Notes", "Status", "Sub Status", "Action", "Bucket", "Mode of Work", "Start Time", "End Time", "Total Duration", "Date Worked", "Emp. ID", "Associate Name", "Status", "Errors", "Team Lead", "Date Range", "Week"];
+const OD = { items: new Map(), seq: 0, books: new Map(), blankNext: false };
+const odMk = (name, parent, kind) => { const id = "it" + (++OD.seq); const it = { id, name, parent, kind, webUrl: "https://od.example/" + id }; OD.items.set(id, it);
+  if (kind === "file") { OD.books.set(id, { n: 1, sheets: [{ id: "s1", name: "Sheet1", rows: OD.blankNext ? [] : [AR_HEADER.slice()], fmts: [] }] }); OD.blankNext = false; } return it; };
+const odChild = (parent, name) => [...OD.items.values()].find((i) => i.parent === parent && i.name.toLowerCase() === name.toLowerCase());
+const odOut = (it) => ({ id: it.id, name: it.name, webUrl: it.webUrl, parentReference: { driveId: "d1" }, ...(it.kind === "folder" ? { folder: {} } : { file: {} }) });
+const colNum = (c) => [...c].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+const graph = async (url, init) => {
+  const m = (init && init.method) || "GET", path = decodeURIComponent(new URL(url).pathname.replace(/^\/v1\.0/, "")); let r;
+  const bk = (id) => OD.books.get(id), sh = (b, sid) => b && b.sheets.find((s) => s.id === sid);
+  if (m === "POST" && (r = path.match(/^\/users\/[^/]+\/drive\/root\/children$/))) { const b = JSON.parse(init.body); if (odChild("root", b.name)) return J({}, 409); return J(odOut(odMk(b.name, "root", "folder")), 201); }
+  if (m === "GET" && (r = path.match(/^\/users\/[^/]+\/drive\/root:\/(.+)$/))) { const it = odChild("root", r[1]); return it ? J(odOut(it)) : J({}, 404); }
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/children$/))) { const b = JSON.parse(init.body); if (odChild(r[1], b.name)) return J({}, 409); return J(odOut(odMk(b.name, r[1], "folder")), 201); }
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/createLink$/))) return J({ link: { webUrl: "https://purview.sharepoint.example/share/" + r[1] } });
+  if (m === "PUT" && (r = path.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+):\/content$/))) { if (odChild(r[1], r[2])) return J({}, 409); return J(odOut(odMk(r[2], r[1], "file")), 201); }
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+?):?$/))) { const it = odChild(r[1], r[2].replace(/:$/, "")); return it ? J(odOut(it)) : J({}, 404); }
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets$/))) return J({ value: bk(r[1]).sheets.map((s) => ({ id: s.id, name: s.name })) });
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/add$/))) { const b = bk(r[1]), s = { id: "s" + (++b.n), name: JSON.parse(init.body).name, rows: [], fmts: [] }; b.sheets.push(s); return J({ id: s.id, name: s.name }); }
+  if (m === "PATCH" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/([^/]+)$/))) { const s = sh(bk(r[1]), r[2]); s.name = JSON.parse(init.body).name; return J({ id: s.id, name: s.name }); }
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/([^/]+)\/usedRange/))) { const s = sh(bk(r[1]), r[2]), n = Math.max(1, s.rows.length); return J({ rowCount: n, address: s.name + "!A1:AE" + n, values: s.rows.length ? s.rows : [[""]] }); }
+  if (m === "PATCH" && path.match(/\/range\(address='[A-Z]+\d+:[A-Z]+\d+'\)\/format\//)) return J({});
+  if (m === "PATCH" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/([^/]+)\/range\(address='([A-Z]+)(\d+):[A-Z]+\d+'\)$/))) {
+    const s = sh(bk(r[1]), r[2]), at = Number(r[4]) - 1, c0 = colNum(r[3]) - 1, body = JSON.parse(init.body);
+    body.values.forEach((row, i) => { const cur = s.rows[at + i] || []; row.forEach((v, k) => { cur[c0 + k] = v; }); s.rows[at + i] = cur; s.fmts[at + i] = body.numberFormat ? body.numberFormat[i] : null; }); return J({}); }
+  return J({ error: "fake graph: no route " + m + " " + path }, 404);
+};
+const fetchMock = async (url, init) => (url.includes("login.microsoftonline.com") ? J({ access_token: "t" }) : url.includes("graph.microsoft.com") ? graph(url, init) : new Response("nope", { status: 500 }));
+const rig = await makeRig({ envExtra: { MS_TENANT_ID: "t", MS_CLIENT_ID: "c", MS_CLIENT_SECRET: "s" }, fetchMock });
 const { as, tryOp, sha, app } = rig; const T = (fn) => tryOp(fn);
 const DB = rig.backend.env.DB;
 const q = async (sql, ...a) => (await DB.prepare(sql).bind(...a).all()).results;
@@ -45,6 +75,11 @@ const upload = async (cl, rows, { kind = "fresh", name = "inventory.csv" } = {})
   return { built, r };
 };
 const claimsOf = (cl) => q("SELECT * FROM claims WHERE client_id = ? ORDER BY claim_no", cl.id);
+// OneDrive copies are off in demo mode: a check that needs them switches them on for its own steps
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const withOneDrive = async (fn) => { rig.liveEnv.DEMO = false; try { return await fn(); } finally { await sleep(300); rig.liveEnv.DEMO = true; } };
+const odFile = (clientName, scopeFolder, prefix) => { const root = odChild("root", "Brahmastra Clients"), f = root && odChild(root.id, clientName), prod = f && odChild(f.id, "Production"), sc = prod && odChild(prod.id, scopeFolder);
+  const it = sc && odChild(sc.id, `${prefix} Production - ${clientName} - Nov 2026.xlsx`); return it ? OD.books.get(it.id) : null; };
 const H = ["Claim ID", "Account #", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "Comments"];
 
 S("A-08: a CSV is read as text");
@@ -145,6 +180,44 @@ S("A-01: a file status of Unpaid or Not paid is open money");
   // a later file that says Unpaid does not close a claim already on file
   await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "CPT", "AR Balance", "Status"], ["9801003", "Test Patient Three", "UHC", "09/22/2026", "99213", "400.00", "Unpaid"]], { name: "next.csv" });
   ok("A-01: a later file with Unpaid leaves the claim open", (await q1("SELECT state FROM claims WHERE client_id = ? AND claim_no = '9801003'", cl.id)).state === "open");
+}
+
+S("A-02: credit balances");
+{
+  const pm = (v) => app.parseMoney(v);
+  ok("A-02: 45.00CR, 45.00 CR, CR 45.00, CR45.00 and a minus sign (U+2212) are all a credit of 45", [pm("45.00CR"), pm("45.00 CR"), pm("CR 45.00"), pm("CR45.00"), pm("\u221245.00"), pm("45.00 cr")].every((n) => n === -45),
+    [pm("45.00CR"), pm("45.00 CR"), pm("CR 45.00"), pm("CR45.00"), pm("\u221245.00")]);
+  ok("A-02: the forms read before still read: (45.00), -45, 45-, $-45, $1,234.50, 45.00DR, a plain number", pm("(45.00)") === -45 && pm("-45") === -45 && pm("45-") === -45 && pm("$-45") === -45 && pm("$1,234.50") === 1234.5 && pm("45.00DR") === 45 && pm(12.5) === 12.5 && pm("N/A") === null,
+    [pm("(45.00)"), pm("-45"), pm("45-"), pm("$-45"), pm("$1,234.50"), pm("45.00DR")]);
+  const cl = await mkClient("Made-up Clinic S35 A02");
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"],
+    ["9802001", "Test Patient One", "Aetna", "09/15/2026", "45.00CR", "Pending"], ["9802002", "Test Patient Two", "Aetna", "09/15/2026", "45.00 CR", "Pending"],
+    ["9802003", "Test Patient Three", "Aetna", "09/15/2026", "CR 45.00", "Pending"], ["9802004", "Test Patient Four", "Aetna", "09/15/2026", "\u221245.00", "Pending"],
+    ["9802005", "Test Patient Five", "Aetna", "09/15/2026", "45.00", "Pending"]]);
+  const got = await claimsOf(cl), credits = got.filter((c) => c.claim_no !== "9802005");
+  ok("A-02: the four credits are set aside as credit balances (-45), not loaded as workable claims", credits.length === 4 && credits.every((c) => c.balance === -45 && c.state === "excluded" && c.state_reason === "credit balance"), got.map((c) => [c.claim_no, c.balance, c.state, c.state_reason]));
+  const st = await A("inventory.status", { client_id: cl.id, today: TODAY });
+  ok("A-02: Inventory status counts only the real balance: AR $45", st.ar === 45, st.ar);
+  // the same reading on the server: the client's own balance column in the Submission file
+  const sc = await mkClient("Made-up Clinic S35 A02 Sub");
+  await upload(sc, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "VEC Patient Balance"],
+    ["9802101", "Test Patient One", "Aetna", "09/15/2026", "300.00", "Rejected", "45.00CR"], ["9802102", "Test Patient Two", "Aetna", "09/16/2026", "200.00", "Rejected", "$1,035.50"]]);
+  const row = await withOneDrive(async () => {
+    await A("clients.saveResponsibility", { client_id: sc.id, dept: "submission", mode: "person", lead: adminId });
+    const ids = (await claimsOf(sc)).map((c) => c.id);
+    await A("alloc.reassign", { ids, user_id: adminId });
+    for (const id of ids) {
+      await A("queue.complete", { id, today: TODAY, saag: { status: "Claim In Process", sub_status: "Need to allow some time", action: "Correction, Resubmission & Reprocessing", bucket: "Payer", effective: "Pending-Collectible Insurance" }, note: { source: "Portal", findings: "Member ID corrected, to be resubmitted", action: "follow up" } });
+      const h = await q1("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'submission'", id);
+      const r = await T(() => A("handoffs.close", { id: h && h.id, outcome: "complete", today: TODAY, note: "Resubmitted", proof: { date: TODAY, ref: "B-1", mode: "Portal", inv_status: "Resubmitted", bucket: "Payer", claim_type: "Resubmission", type: "" } }));
+      if (!r.ok) return r;
+      await sleep(400);
+    }
+    const book = odFile("Made-up Clinic S35 A02 Sub", "Submission", "Submission"), tab = book && book.sheets.find((t) => t.name === "Submission");
+    return tab ? tab.rows : null;
+  });
+  const iBal = Array.isArray(row) && row[0] ? row[0].indexOf("VEC Patient Balance") : -1;
+  ok("A-02: in the Submission file a client balance written 45.00CR is -45, and $1,035.50 stays 1035.5", iBal >= 0 && row[1][iBal] === -45 && row[2][iBal] === 1035.5, row && row.e ? row.e : row && row.slice(0, 3).map((x) => x[iBal]));
 }
 
 globalThis.Date = RealDate;
