@@ -6214,10 +6214,11 @@ const OPS = {
     for (const e of evs) {
       const d = jsonObj(e.data_json), st = d.changes && d.changes.state;
       if (d.batch !== b.id || !Array.isArray(st) || e.state !== st[1] || !["open", "assigned", "completed", "closed", "excluded"].includes(st[0])) continue;
-      back.push(env.DB.prepare("UPDATE claims SET state = ?, state_reason = 'Upload undone', updated_at = ? WHERE id = ? AND state = ?").bind(st[0], now, e.claim_id, st[1]));
+      back.push(env.DB.prepare("UPDATE claims SET state = ?, state_reason = 'Upload undone', updated_at = ? WHERE id = ? AND state = ? RETURNING id").bind(st[0], now, e.claim_id, st[1]));
       back.push(claimEvent(env, e.claim_id, user, "state", "Upload undone", { changes: { state: [st[1], st[0]] } }));
     }
-    if (back.length) { const res = await batchAll(env, back, 40); reverted = res.filter((_, i) => i % 2 === 0).reduce((n, x) => n + changesOf(x), 0); }
+    // the claims put back (RETURNING), not D1's changes: one put back to closed would count twice (the closed_at trigger)
+    if (back.length) { const res = await batchAll(env, back, 40); reverted = res.filter((_, i) => i % 2 === 0).reduce((n, x) => n + ((x && x.results) || []).length, 0); }
     const refreshed = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE batch_id = ? AND first_batch_id <> ?", b.id, b.id);
     await run(env, "UPDATE batches SET undone_at = ? WHERE id = ?", now, b.id);
     // Month-end "inventory loaded" was ticked by itself: it goes when no other file with claims is left for that month.
@@ -6505,10 +6506,11 @@ const OPS = {
         : `These ${atDesk.size + posted.size} claims stay as they are: ${atDesk.size} with Payment Posting, Submission or Rejections now${posted.size ? `, ${posted.size} closed by Posting (read only)` : ""}.`); }
     for (const part of chunks(todo, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
+    // the claims are counted (RETURNING), not D1's changes: D1 also counts the trigger that stamps closed_at, so 3 closed read 6
     for (const chunk of chunks(todo, 60)) {
-      const r = await run(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
-        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
-      changed += changesOf(r);
+      const r = await all(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
+        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")} RETURNING id`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
+      changed += r.length;
     }
     // at_desk / posted: how many of the claims picked were left as they are because a desk has them, or Posting closed them
     return { changed, at_desk: atDesk.size, posted: posted.size };

@@ -1,6 +1,8 @@
 /* Suite 44: what only showed on Cloudflare's own runtime (workerd + D1) in the second bug test (tester I). The test rig's
    database (lib/local-backend.js, which the demo uses too) now refuses what D1 refuses, in D1's words, so these checks and every
    other suite run under D1's rules:
+   I-03: closing claims answers how many claims were closed: D1 counts the closed_at trigger's change too (3 closed read 6), so
+         the claims are counted (RETURNING); the rig now counts changes the way D1 does.
    I-04: a call that leaves out the id it needs answers the op's own message ("Claim not found."), never a 500: D1 refuses an
          undefined value, and the database helpers now bind a left-out value as NULL.
    Made-up data only. */
@@ -54,6 +56,32 @@ for (const op of ["claims.get", "claims.timeline", "queue.open", "queue.complete
   const r = await tryOp(() => B(op, {})); if (!r.ok && !(r.status < 500)) bad.push(op + " " + r.status + " " + r.e);
 }
 ok("I-04: the same calls by a biller answer a message, none crashes", !bad.length, bad);
+
+S("I-03: closing claims counts the claims; the rig counts changes the way D1 does (the closed_at trigger too)");
+const sun = (await A("clients.list")).clients.find((c) => c.name === "Sunrise Eye Care");
+const todayIst = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+const mk = (i) => ({ match_key: "s44-close-" + i, claim_no: "4419" + (10 + i), account_no: "C44" + i, patient: "Sample, Close " + i, payer: "Aetna", dos: "2026-09-0" + i, balance: 100 * i, billed: 150 * i,
+  lines: 1, status_class: "denied", file_status: "Denied", bucket: "61–90", age_days: 70 });
+const upload = (file, claims) => A("inventory.upload", { client_id: sun.id, location_id: sun.locations[0].id, kind: "fresh", file_name: file, rows_read: claims.length, claims, final: true, summary: {}, today: todayIst });
+await upload("s44-close-1.xlsx", [1, 2, 3].map(mk));
+const closeIds = (await A("claims.list", { client_id: sun.id, q: "Sample, Close", state: "", page_size: 50 })).rows.map((r) => r.id);
+// D1's meta.changes (miniflare's D1: total_changes() before and after) counts the trigger that stamps closed_at on the same claim
+{ const c0 = closeIds[0], now = Date.now();
+  const r1 = await DB.prepare("UPDATE claims SET state = 'closed', updated_at = ? WHERE id = ?").bind(now, c0).run();
+  const r2 = await DB.prepare("UPDATE claims SET state = 'open', updated_at = ? WHERE id = ?").bind(now, c0).run();
+  ok("rig: closing one claim counts 2 changes, as on D1 (the claim and its closed_at trigger); reopening counts 1", r1.meta.changes === 2 && r2.meta.changes === 1, [r1.meta.changes, r2.meta.changes]); }
+const cl3 = await A("claims.setState", { ids: closeIds, state: "closed" });
+const nClosed = (await A("claims.list", { client_id: sun.id, q: "Sample, Close", state: "closed", page_size: 50 })).total;
+ok("I-03: closing 3 claims answers changed: 3 (the page says Closed: 3 claims.), and 3 are closed", closeIds.length === 3 && cl3.changed === 3 && nClosed === 3, { cl3, nClosed });
+ok("I-03: reopening the 3 answers changed: 3", (await A("claims.setState", { ids: closeIds, state: "open" })).changed === 3);
+ok("I-03: excluding the 3 answers changed: 3", (await A("claims.setState", { ids: closeIds, state: "excluded" })).changed === 3);
+ok("I-03: closing 1 claim (from excluded) answers changed: 1", (await A("claims.setState", { ids: closeIds.slice(0, 1), state: "closed" })).changed === 1);
+await A("claims.setState", { ids: closeIds, state: "closed" });
+// a later file has the 3 closed claims again, so it reopens them; undoing that file puts them back to closed
+const up2 = await upload("s44-close-2.xlsx", [1, 2, 3].map(mk));
+const und = await A("inventory.undoBatch", { batch_id: up2.batch_id });
+const backClosed = (await A("claims.list", { client_id: sun.id, q: "Sample, Close", state: "closed", page_size: 50 })).total;
+ok("I-03: undoing a file that reopened 3 closed claims puts 3 back and says reverted: 3", up2.reopened === 3 && und.reverted === 3 && backClosed === 3, { reopened: up2.reopened, und, backClosed });
 
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
