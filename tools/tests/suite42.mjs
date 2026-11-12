@@ -169,6 +169,16 @@ const tab = rule(".topbar-in.nav-row>.nav", "(min-width:761px)");
 ok("H-06: a marked bar puts the menu on its own full-width row (above phone width; phones keep their own rule)", tab.order === "3" && /^1 1 100%/.test(tab.flex || ""), tab);
 ok("H-06: a top-bar menu that would run off the right edge opens leftwards from its button", /setFlip\(true\)/.test(fnSrc("NavMenu")) && rule(".nav .menu.flip", "(min-width:761px)").right === "0" && /<NavMenu>/.test(shell));
 
+S("Long names on a phone wrap instead of pushing the page sideways (H-09)");
+const narrow = (sel) => rule(sel, "(max-width:1100px)")["grid-template-columns"];
+ok("H-09: Team status suggestions: below 1100 px the column may be narrower than a long name (minmax(0,1fr), not 1fr)", narrow(".sg-grid") === "minmax(0,1fr)" && narrow(".ts-foot") === "minmax(0,1fr)", [narrow(".sg-grid"), narrow(".ts-foot")]);
+ok("H-09: a suggestion's text block can shrink, and the person's name wraps inside it", rule(".sg>div")["min-width"] === "0" && rule(".sg .biller-link")["white-space"] === "normal" && rule(".sg .biller-link")["overflow-wrap"] === "anywhere");
+const wrapB = rule(".badge.wrap");
+ok("H-09: a name badge marked wrap breaks inside the line instead of running past it", wrapB["white-space"] === "normal" && wrapB["overflow-wrap"] === "anywhere" && wrapB["max-width"] === "100%", wrapB);
+ok("H-09: Clients & locations: the AR billers and the people a client is shared with are wrap badges", /className="badge teal wrap"/.test(fnSrc("ClientPeople")) && /className="badge gray wrap"/.test(fnSrc("AccessRow")));
+ok("H-09: Roster › Projects and clients (and the same table when a team lead matches projects): fixed columns, 45% for the project, so a long client name in the dropdown cannot widen it",
+  /<table className="t" style=\{\{ tableLayout: "fixed" \}\}><thead><tr><th style=\{\{ width: "45%" \}\}>Roster project<\/th><th>Client<\/th>/.test(fnSrc("RosterView")) && /tableLayout: "fixed"/.test(fnSrc("ProjectMapModal")));
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

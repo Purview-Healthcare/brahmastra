@@ -399,7 +399,9 @@ kbd{font:600 11px/1 inherit;font-family:inherit;padding:3px 6px;border:1px solid
 .sgdot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:0 0 9px}.sgdot.red{background:#C94F4F}.sgdot.amber{background:#E8A13C}.sgdot.green{background:var(--teal)}
 .sgdo{font-weight:700;font-size:13px;margin-top:4px;color:var(--ink)}
 .ts-foot{grid-template-columns:3fr 2fr}
-@media(max-width:1100px){.sg-grid{grid-template-columns:1fr}.ts-foot{grid-template-columns:1fr}}
+@media(max-width:1100px){.sg-grid{grid-template-columns:minmax(0,1fr)}.ts-foot{grid-template-columns:minmax(0,1fr)}}
+/* a long name wraps inside its column or badge instead of pushing the page sideways on a phone */
+.sg>div{min-width:0}.sg .biller-link{white-space:normal;text-align:left;overflow-wrap:anywhere}.badge.wrap{white-space:normal;overflow-wrap:anywhere;max-width:100%}
 .dash-strip .ink{color:var(--ink)}
 .lead-grp td{background:var(--card2);font-size:12.5px;padding:6px 10px}
 .biller-link{text-decoration:underline;text-decoration-color:var(--brand-line);text-underline-offset:3px}
@@ -673,4 +675,4 @@ tr.inv-risk td{background:color-mix(in srgb,var(--sc-r) 4%,var(--card))}
 .claim-tips .tip{font-size:12.8px;line-height:1.45;margin-top:3px}.claim-tips .tip.red b{color:var(--red-ink)}.claim-tips .tip.amber b{color:var(--amber-ink)}
 </style>
 </head><body><div id="root"></div>
-<script src="app/app.js?v=2b748f53fa"></script></body></html>
+<script src="app/app.js?v=6ea7d4debb"></script></body></html>

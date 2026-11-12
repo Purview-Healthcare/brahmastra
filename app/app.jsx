@@ -2467,7 +2467,7 @@ function ClientPeople({ c, ctx, ro, onSaved, focus, dir }) {
     .map((u) => ({ id: u.id, label: u.name, sub: [u.designation || (u.role === "user" ? "Biller" : "Supervisor"), u.department].filter(Boolean).join(" · ") }));
   return (
     <div ref={ref} className="small mt8 people-row">
-      <b>AR billers on this client:</b> {team.length ? team.map((id) => <span key={id} className="badge teal" style={{ marginRight: 4 }}>{nameOf(id)}{!ro && <button type="button" className="btn link sm" style={{ padding: "0 0 0 4px" }} title="Take off this client" disabled={busy} onClick={() => save(team.filter((x) => x !== id), nameOf(id) + " taken off " + c.name + ".")}>×</button>}</span>) : <span className="muted">none yet (claims go to these people when they load and in Allocate)</span>}
+      <b>AR billers on this client:</b> {team.length ? team.map((id) => <span key={id} className="badge teal wrap" style={{ marginRight: 4 }}>{nameOf(id)}{!ro && <button type="button" className="btn link sm" style={{ padding: "0 0 0 4px" }} title="Take off this client" disabled={busy} onClick={() => save(team.filter((x) => x !== id), nameOf(id) + " taken off " + c.name + ".")}>×</button>}</span>) : <span className="muted">none yet (claims go to these people when they load and in Allocate)</span>}
       {!ro && !adding && <button className="btn sm" style={{ marginLeft: 6 }} onClick={() => setAdding(true)}>+ Add people</button>}
       {!ro && adding && <span className="row" style={{ display: "inline-flex", gap: 6, marginLeft: 6, verticalAlign: "middle" }}>
         <span style={{ minWidth: 240 }}><Combo sm value={pick} onChange={setPick} placeholder="Pick a biller…" options={opts} /></span>
@@ -2839,8 +2839,8 @@ function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
   return (
     <Modal title="Match roster projects to clients" sub="These projects come from the Purview Shastra roster but do not match a client here by name. Pick the client each one is, or create it. People on a project get its claims and access once it is matched." onClose={onClose}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Later</button><button className="btn primary" onClick={save} disabled={busy || !Object.values(pick).some(Boolean)}>{busy ? "Saving…" : "Confirm"}</button></>}>
-      <table className="t"><thead><tr><th>Roster project</th><th>Brahmastra client</th></tr></thead>
-        <tbody>{names.map((n) => <tr key={n}><td><b>{n}</b></td><td><Combo value={pick[n] || ""} onChange={(v) => setPick({ ...pick, [n]: v })} placeholder="Not sure yet"
+      <table className="t" style={{ tableLayout: "fixed" }}><thead><tr><th style={{ width: "45%" }}>Roster project</th><th>Brahmastra client</th></tr></thead>
+        <tbody>{names.map((n) => <tr key={n}><td style={{ overflowWrap: "anywhere" }}><b>{n}</b></td><td><Combo value={pick[n] || ""} onChange={(v) => setPick({ ...pick, [n]: v })} placeholder="Not sure yet"
           options={[{ id: "", label: "Not sure yet" }, ...clients.map((c) => ({ id: c.id, label: c.name + (c.code ? ` (${c.code})` : "") })), ...(canCreate ? [{ id: "__new", label: `+ Create a new client called "${n}"` }] : [])]} />
           {pick[n] && pick[n] !== "__new" && guess(n) === pick[n] && <div className="tiny muted">suggested from the name, please confirm</div>}</td></tr>)}</tbody></table>
     </Modal>
@@ -2919,8 +2919,8 @@ function RosterView({ ctx, reload, me }) {
         <div className="card stack">
           <h3>Projects and clients</h3>
           <div className="small muted">Each roster project is one Brahmastra client. Change a match here; team leads are asked about any project that is not matched.</div>
-          {meta.data && <table className="t"><thead><tr><th>Roster project</th><th>Client</th></tr></thead>
-            <tbody>{meta.data.projects.map((p) => <tr key={p.name}><td><b>{p.name}</b></td><td><Combo sm clearable={false} value={p.client_id || ""} disabled={!!busy} onChange={(v) => v && remap(p.name, v)} placeholder="Not matched yet"
+          {meta.data && <table className="t" style={{ tableLayout: "fixed" }}><thead><tr><th style={{ width: "45%" }}>Roster project</th><th>Client</th></tr></thead>
+            <tbody>{meta.data.projects.map((p) => <tr key={p.name}><td style={{ overflowWrap: "anywhere" }}><b>{p.name}</b></td><td><Combo sm clearable={false} value={p.client_id || ""} disabled={!!busy} onChange={(v) => v && remap(p.name, v)} placeholder="Not matched yet"
               options={[{ id: "", label: "Not matched yet" }, ...projOptions.map((c) => ({ id: c.id, label: c.name })), { id: "__new", label: `+ Create a client called "${p.name}"` }]} /></td></tr>)}
               {!meta.data.projects.length && <tr><td colSpan={2} className="muted">Click Sync now first.</td></tr>}</tbody></table>}
         </div>
@@ -4913,7 +4913,7 @@ function AccessRow({ c, ctx, me, onSaved, dir }) {
   return (
     <div className="small mt8" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
       <b>Shared with:</b>
-      {rows.map((r) => <span key={r.user_id} className="badge gray" title={"Shared by " + (r.granted_by_name || "?") + " · " + fmtWhen(r.at)}>{r.name} · {r.level === "edit" ? "can edit" : "view only"}{canShare && <button type="button" className="btn link sm" style={{ padding: "0 2px" }} disabled={busy} onClick={() => rm(r)}>×</button>}</span>)}
+      {rows.map((r) => <span key={r.user_id} className="badge gray wrap" title={"Shared by " + (r.granted_by_name || "?") + " · " + fmtWhen(r.at)}>{r.name} · {r.level === "edit" ? "can edit" : "view only"}{canShare && <button type="button" className="btn link sm" style={{ padding: "0 2px" }} disabled={busy} onClick={() => rm(r)}>×</button>}</span>)}
       {!rows.length && <span className="muted">nobody outside its own span</span>}
       {canShare && !open && <button className="btn sm" onClick={() => setOpen(true)} title="Give one person view-only or edit access to this client">+ Share this client</button>}
       {canShare && open && <>
