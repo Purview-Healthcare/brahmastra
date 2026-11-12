@@ -7435,7 +7435,10 @@ const OPS = {
     const clean = rows.map((r) => {
       const o = { claim_no: str(r.claim_no, 80).trim(), account_no: str(r.account_no, 80).trim().replace(/\.0+$/, "") };
       for (const k of FIELDS_E) if (k !== "account_no") o[k] = str(r[k], 160).trim();
-      if (o.patient_dob) o.patient_dob = isoDate(o.patient_dob) || o.patient_dob;
+      // a date of birth is stored only when it is a real date, up to today: one that could not be read (N/A, or text the page could
+      // not read) never fills or replaces a claim's DOB, and the row is counted as "DOB not read"
+      const dob = o.patient_dob; o.patient_dob = isoDate(dob) && isoDate(dob) <= istISO(Date.now()) ? isoDate(dob) : "";
+      o._dobUnread = (!!dob && !o.patient_dob) || !!r.dob_unread;
       o.extra = {}; if (r.extra && typeof r.extra === "object") for (const [k, v] of Object.entries(r.extra).slice(0, 40)) { const t = str(v, 200).trim(); if (t) o.extra[str(k, 80)] = t; }
       o._alt = altKeyOf(o.claim_no);
       return o;
@@ -7459,7 +7462,9 @@ const OPS = {
         const c = touched.get(c0.id) || { ...c0, _set: {}, _raw: null };
         for (const k of FIELDS_E) {
           const v = o[k];
-          if (!v || String(c[k] || "") === v || (!overwrite && String(c[k] || "").trim())) continue;
+          // a DOB on file that is no date (text an older upload stored, such as N/A) counts as empty: a real one fills it
+          const has = k === "patient_dob" ? !!isoDate(String(c[k] || "")) : !!String(c[k] || "").trim();
+          if (!v || String(c[k] || "") === v || (!overwrite && has)) continue;
           c._set[k] = v; c[k] = v;
         }
         const ex = Object.entries(o.extra);
@@ -7467,6 +7472,8 @@ const OPS = {
         touched.set(c.id, c);
       }
     }
+    const dobUnread = clean.filter((o) => o._dobUnread).length;
+    if (dobUnread) fieldCounts.dob_unread = (fieldCounts.dob_unread || 0) + dobUnread;
     const stmts = [];
     let updated = 0;
     for (const c of touched.values()) {

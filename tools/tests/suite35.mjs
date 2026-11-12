@@ -496,6 +496,32 @@ S("N-05: a date with no year (or no day) is no date, and the screen says so");
   ok("N-05: the EV upload leaves a check dated 26-Oct out (and says how many) instead of filing it in 2001", ev.n === 1 && ev.skipped === 1 && ev.from === "2026-10-27" && ev.to === "2026-10-27", [ev.n, ev.skipped, ev.from, ev.to]);
 }
 
+S("N-04: an unreadable date of birth never replaces a good one");
+{
+  const cl = await mkClient("Made-up Clinic S35 N04");
+  await upload(cl, [["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"],
+    ...["9804401", "9804402", "9804403", "9804404"].map((n, i) => [n, "Test Patient " + i, "Medicare", "09/15/2026", "300", "Pending"])]);
+  const fill = async (rows, overwrite, name = "details.csv") => { const t = readCsv(rows, name);
+    return A("inventory.enrich", { client_id: cl.id, purpose: "DOB / member ID needed for calls", file_name: name, overwrite, rows: app.detailRows({ rows: t.rows, map: app.detailAutoMap(t.headers) }) }); };
+  const dobs = async () => Object.fromEntries((await claimsOf(cl)).map((c) => [c.claim_no, c.patient_dob]));
+  await fill([["Claim ID", "DOB"], ["9804401", "06/15/1952"], ["9804403", "01/02/1960"]], false);
+  const r = await fill([["Claim ID", "DOB"], ["9804401", "N/A"], ["9804402", "Unknown"], ["9804403", "03/04/1961"], ["9804404", "12/15/2027"]], true, "next.csv");
+  let d = await dobs();
+  ok("N-04: with Overwrite ticked, DOB N/A leaves the good DOB on file (06/15/1952)", d["9804401"] === "1952-06-15", d);
+  ok("N-04: an unreadable DOB (Unknown) or one in the future (12/15/2027) is not stored where there was none", d["9804402"] === "" && d["9804404"] === "", d);
+  ok("N-04: a DOB that reads still replaces the one on file when Overwrite is ticked (01/02/1960 to 03/04/1961)", d["9804403"] === "1961-03-04", d);
+  ok("N-04: the upload counts the three rows as DOB not read, and Upload history shows it", r.fields.dob_unread === 3 && (await A("inventory.enrichList", {})).rows.find((h) => h.id === r.upload_id).fields.dob_unread === 3, [r.fields, r.updated]);
+  ok("N-04: the page never sends the unreadable text (the row says DOB not read instead)", (() => { const rows = app.detailRows({ rows: [{ "Claim ID": "1", DOB: "N/A" }], map: { claim_no: "Claim ID", patient_dob: "DOB" } }); return rows[0].patient_dob === "" && rows[0].dob_unread === 1; })());
+  // the server on its own, as an older page would call it: text that is no date is not stored, and counted
+  const r2 = await A("inventory.enrich", { client_id: cl.id, purpose: "DOB / member ID needed for calls", file_name: "old page.csv", overwrite: true, rows: [{ claim_no: "9804401", patient_dob: "N/A" }, { claim_no: "9804403", patient_dob: "1961-03-05" }] });
+  d = await dobs();
+  ok("N-04: the server never stores a DOB that is not a real date, even sent as text", d["9804401"] === "1952-06-15" && d["9804403"] === "1961-03-05" && r2.fields.dob_unread === 1, [d, r2.fields]);
+  // a DOB on file that is no date (stored by an older upload) counts as empty: a real one fills it without Overwrite
+  await x("UPDATE claims SET patient_dob = 'N/A' WHERE client_id = ? AND claim_no = '9804402'", cl.id);
+  await fill([["Claim ID", "DOB"], ["9804402", "07/08/1949"]], false, "fix.csv");
+  ok("N-04: a DOB on file that is not a date (N/A) is filled by a real one, Overwrite or not", (await dobs())["9804402"] === "1949-07-08", await dobs());
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

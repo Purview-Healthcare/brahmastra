@@ -2950,7 +2950,7 @@ const INV_TABS = [
 /* ---------- patient details report ----------
    Some inventory files lack patient details. A second report (demographics / PM system report) is matched to the claims already loaded
    by claim # (or by account #, which fills every claim of that patient) and fills what is missing. */
-const DETAIL_FIELD_LABEL = { patient: "Patient name", account_no: "Account # / MRN", payer: "Payer / Insurance", provider: "Provider", patient_dob: "Date of birth", member_id: "Member / subscriber ID", patient_phone: "Phone" };
+const DETAIL_FIELD_LABEL = { dob_unread: "rows with a DOB not read", patient: "Patient name", account_no: "Account # / MRN", payer: "Payer / Insurance", provider: "Provider", patient_dob: "Date of birth", member_id: "Member / subscriber ID", patient_phone: "Phone" };
 const DETAIL_TARGETS = ["patient", "account_no", "payer", "provider", "patient_dob", "member_id", "patient_phone"];
 const DETAIL_RULES = {
   patient_dob: ["dob", "date of birth", "birth date", "birthdate", "patient dob", "pt dob"],
@@ -2969,15 +2969,15 @@ function detailAutoMap(headers) {
   return out;
 }
 /* What a patient details report sends for each row: its claim # / account #, the fields mapped and (when kept) its other columns.
-   The date of birth is read as one (1900 to today, a two-digit year in the future is in the 1900s); an Excel date that cannot be
-   read is left out, never sent as a bare number. */
+   The date of birth is read as one (1900 to today, a two-digit year in the future is in the 1900s); one that cannot be read (N/A,
+   a number that is no date) is never sent: the row says so (dob_unread), so it is counted and no claim's DOB changes. */
 function detailRows({ rows, map, others = [], keepOther = false }) {
   const cell = (r, h) => (h ? r[h] : "");
   const dobOf = dateReader(map.patient_dob ? rows.map((r) => r[map.patient_dob]) : [], { dob: true });
   return rows.map((r) => {
     const o = { claim_no: String(cell(r, map.claim_no) ?? "").trim(), account_no: String(cell(r, map.account_no) ?? "").trim() };
     for (const k of DETAIL_TARGETS) if (k !== "account_no" && map[k]) o[k] = String(cell(r, map[k]) ?? "").trim();
-    if (o.patient_dob) { const v = cell(r, map.patient_dob); o.patient_dob = dobOf(v) || (typeof v === "number" ? "" : o.patient_dob); }
+    if (o.patient_dob) { o.patient_dob = dobOf(cell(r, map.patient_dob)); if (!o.patient_dob) o.dob_unread = 1; }
     if (keepOther) { o.extra = {}; for (const h of others.slice(0, 40)) { const v = r[h]; if (v !== "" && v != null) o.extra[h] = typeof v === "number" && /date|dob/i.test(h) ? (parseDateAny(v, { dob: /dob|birth/i.test(h) }) || String(v)) : String(v); } }
     return o;
   }).filter((o) => o.claim_no || o.account_no);
