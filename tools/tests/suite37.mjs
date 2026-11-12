@@ -669,6 +669,33 @@ await part("A-10: the posting form never shows -$0.00", async () => {
   ok("A-10: a real balance left, or a real overpayment, still shows as it is", afterOf(250.45, "200.15", "40.30") === "$10.00" && afterOf(100, "90", "20") === "-$10.00", [afterOf(250.45, "200.15", "40.30"), afterOf(100, "90", "20")]);
 });
 
+await part("B-04: the 09:00 email and the bell state the TAT each task was given, not the client's TAT now", async () => {
+  // Lakeview has its own desk here, so its reminders hold only this section's tasks
+  await A("clients.saveResponsibility", { client_id: lake.id, dept: "posting", mode: "person", lead: U("Lex Lakepost").id });
+  await sql("UPDATE clients SET posting_tat_hours = 24 WHERE id = ?", lake.id);
+  const LL = await firstIn("Lara Lead");
+  setNow(IST(2026, 11, 16, 9, 0));
+  const [a, b] = await give("Cyra Agent", 2, lake);
+  for (const id of [a, b]) { await call(CY, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(CY, id, SAAG.post); }
+  await sql("UPDATE clients SET posting_tat_hours = 48 WHERE id = ?", lake.id);   // the client's TAT is changed afterwards
+  setNow(IST(2026, 11, 18, 9, 0));
+  const groupLine = (m) => (m.text.split("\n").find((l) => l.startsWith(lake.name + " · Payment posting")) || "");
+  let m = (await call(LL, "tat.preview", { kind: "desks" })).mail || { text: "" };
+  ok("B-04: the email's heading for the group says TAT 24 (the TAT the two tasks were given), not the client's 48 now", /· TAT 24 working hours$/.test(groupLine(m)), groupLine(m));
+  const bell = ((await call(LL, "notify.list")).items || []).find((i) => i.key === `tat:${lake.id}:posting`);
+  ok("B-04: the bell says the oldest one's own TAT (24)", bell && /\(TAT 24 h\)$/.test(bell.sub), bell && bell.sub);
+  // a third task sent after the change has the 48: the heading then gives each row its own TAT
+  setNow(IST(2026, 11, 18, 10, 0));
+  const [d] = await give("Cyra Agent", 1, lake);
+  await call(CY, "attachments.add", { claim_id: d, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(CY, d, SAAG.post);
+  setNow(IST(2026, 11, 23, 12, 0));
+  m = (await call(LL, "tat.preview", { kind: "desks" })).mail || { text: "" };
+  const lines = m.text.split("\n"), i = lines.findIndex((l) => l.startsWith(lake.name + " · Payment posting")), rowsOf = lines.slice(i + 1, i + 4);
+  ok("B-04: tasks given different TATs: the heading says each claim's own TAT, and each row has its own (24, 24, 48)", /each claim's own TAT$/.test(lines[i] || "") && rowsOf.filter((l) => /TAT 24 h\)/.test(l)).length === 2 && rowsOf.filter((l) => /TAT 48 h\)/.test(l)).length === 1, [lines[i], rowsOf]);
+  ok("B-04: the email carries claim numbers only (no patient names)", !(await rows("SELECT patient FROM claims WHERE id IN (?, ?, ?)", a, b, d)).some((c) => c.patient && m.text.includes(c.patient)));
+  await sql("UPDATE clients SET posting_tat_hours = 24 WHERE id = ?", lake.id);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

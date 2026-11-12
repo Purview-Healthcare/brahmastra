@@ -115,7 +115,9 @@ ok("Leo sees Lakeview's past TAT only", nl.items.some((x) => x.key === `tat:${la
 
 S("The reminder email");
 const pv = await at(now, () => TI("tat.preview", { kind: "desks" }));
-ok("09:00: Payment posting and Submission past TAT, with the claim numbers", pv.hour === 9 && pv.mail && pv.mail.n === 4 && pv.mail.html.includes(pool[1].claim_no) && /Payment posting · TAT 36 working hours/.test(pv.mail.html), pv.mail && pv.mail.subject);
+// the heading states the TAT the tasks were given (B-04), not the client's TAT now: these were made 36 calendar hours before their
+// due time, over a weekend (48, 6 and 8 working hours), so the heading says each claim's own TAT and each row gives its own
+ok("09:00: Payment posting and Submission past TAT, with the claim numbers", pv.hour === 9 && pv.mail && pv.mail.n === 4 && pv.mail.html.includes(pool[1].claim_no) && /Payment posting · each claim's own TAT/.test(pv.mail.html) && /\(5 h over, TAT 6 h\)/.test(pv.mail.text), pv.mail && pv.mail.subject);
 ok("no patient names in it", ![pool[1], pool[2], pool[6]].some((c) => c.patient && pv.mail.html.includes(c.patient)));
 const pa = await at(now, () => TI("tat.preview", { kind: "ar" }));
 ok("19:00: Needs attention past 48 working hours (flagged, client request)", pa.hour === 19 && pa.mail && pa.mail.n === 2 && /Flagged by billers/.test(pa.mail.html) && /Client requests to send/.test(pa.mail.html), pa.mail && pa.mail.text);

@@ -1285,7 +1285,8 @@ function tatMailFor(u, kind, clients, board, now, appUrl = "", tasks = []) {
     const t = board.get(c.id); if (!t) continue;
     const late = t.late.filter((x) => x.group === kind);
     if (!late.length) continue;
-    if (kind === "desks") for (const [k, label] of TAT_DEPTS) { const xs = late.filter((x) => x.dept === k); if (xs.length) groups.push({ c, label, tat: tatHours(c, k), xs }); }
+    // the TAT each task was given (its due time came from it), not the client's TAT now: one number when the tasks agree, else each row's own
+    if (kind === "desks") for (const [k, label] of TAT_DEPTS) { const xs = late.filter((x) => x.dept === k); if (xs.length) { const ts = [...new Set(xs.map((x) => x.tat))]; groups.push({ c, label, tat: ts.length === 1 ? ts[0] : null, xs }); } }
     else for (const [p, label] of ATTN_PARTS) { const xs = late.filter((x) => x.part === p); if (xs.length) groups.push({ c, label: "Needs attention · " + label, tat: ATTN_TAT_HOURS, xs }); }
   }
   const tks = kind === "ar" ? (tasks || []) : [];
@@ -1302,15 +1303,15 @@ function tatMailFor(u, kind, clients, board, now, appUrl = "", tasks = []) {
   const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;color:#0f1b24;max-width:640px;margin:0 auto;border:1px solid #dfe4ea;border-radius:10px;overflow:hidden;background:#ffffff">
 <div style="background:#0b2740;color:#fff;padding:16px 22px"><div style="font-size:18px;font-weight:700">${n} ${n === 1 ? "task is" : "tasks are"} past ${n === 1 ? "its" : "their"} TAT</div>
 <div style="color:#bcd0e2;font-size:13px;margin-top:3px">${htmlEsc(TAT_MAIL[kind].title)} · every supervisor, SME and above on these clients gets this until they are closed.</div></div>
-<div style="padding:16px 22px">` + groups.map((g) => `<div style="font-weight:700;font-size:13px;margin-top:10px">${htmlEsc(g.c.name)} · ${htmlEsc(g.label)} · TAT ${g.tat} working hours</div>
+<div style="padding:16px 22px">` + groups.map((g) => `<div style="font-weight:700;font-size:13px;margin-top:10px">${htmlEsc(g.c.name)} · ${htmlEsc(g.label)} · ${g.tat != null ? "TAT " + g.tat + " working hour" + (g.tat === 1 ? "" : "s") : "each claim's own TAT"}</div>
 <table style="width:100%;border-collapse:collapse;margin:6px 0 10px"><tr><th style="${th}">Claim #</th><th style="${th}">${kind === "desks" ? "Sent" : "What"}</th><th style="${th}">Waiting</th>${kind === "desks" ? `<th style="${th}">With</th>` : ""}</tr>` +
-    g.xs.map((x) => `<tr><td style="${td};white-space:nowrap">${htmlEsc(x.claim_no || "–")}</td><td style="${td}">${htmlEsc(who(x))}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${x.waited_h} h</b> (${x.over_h} h over)</td>${kind === "desks" ? `<td style="${td}">${htmlEsc(x.with || "–")}</td>` : ""}</tr>`).join("") + "</table>").join("") +
+    g.xs.map((x) => `<tr><td style="${td};white-space:nowrap">${htmlEsc(x.claim_no || "–")}</td><td style="${td}">${htmlEsc(who(x))}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${x.waited_h} h</b> (${x.over_h} h over${g.tat == null ? ", TAT " + x.tat + " h" : ""})</td>${kind === "desks" ? `<td style="${td}">${htmlEsc(x.with || "–")}</td>` : ""}</tr>`).join("") + "</table>").join("") +
     (tks.length ? `<div style="font-weight:700;font-size:13px;margin-top:10px">Team tasks you gave · past the TAT</div>
 <table style="width:100%;border-collapse:collapse;margin:6px 0 10px"><tr><th style="${th}">Client · scope</th><th style="${th}">Done</th><th style="${th}">Due</th><th style="${th}">With</th></tr>` +
       tks.map((x) => `<tr><td style="${td}">${htmlEsc(x.client_name)} · ${htmlEsc(x.scope)}</td><td style="${td};white-space:nowrap">${x.done} of ${x.count}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${htmlEsc(fmtAt(x.due_at))}</b> (${x.over_h} h over)</td><td style="${td}">${htmlEsc(x.with)}</td></tr>`).join("") + `</table>` : "") +
     (link ? `<p style="margin:16px 0 4px"><a href="${htmlEsc(link)}" style="display:inline-block;background:#17b39a;color:#ffffff;border-radius:7px;padding:9px 16px;font-weight:700;text-decoration:none">Open Brahmastra</a></p>` : "") +
     `<p style="font-size:12px;color:#627079;margin-top:14px">Working hours: Monday to Friday, Shastra holidays left out. Claim numbers only: no patient details and no note text. You get this because you are a supervisor, SME or above on these clients.</p></div></div>`;
-  const text = `${n} ${n === 1 ? "task is" : "tasks are"} past TAT (${TAT_MAIL[kind].title}).\n\n` + groups.map((g) => `${g.c.name} · ${g.label} · TAT ${g.tat} working hours\n` + g.xs.map((x) => `  ${x.claim_no || "–"} · ${who(x)} · waiting ${x.waited_h} h (${x.over_h} h over)${x.with ? " · with " + x.with : ""}`).join("\n")).join("\n\n")
+  const text = `${n} ${n === 1 ? "task is" : "tasks are"} past TAT (${TAT_MAIL[kind].title}).\n\n` + groups.map((g) => `${g.c.name} · ${g.label} · ${g.tat != null ? "TAT " + g.tat + " working hour" + (g.tat === 1 ? "" : "s") : "each claim's own TAT"}\n` + g.xs.map((x) => `  ${x.claim_no || "–"} · ${who(x)} · waiting ${x.waited_h} h (${x.over_h} h over${g.tat == null ? ", TAT " + x.tat + " h" : ""})${x.with ? " · with " + x.with : ""}`).join("\n")).join("\n\n")
     + (tks.length ? (groups.length ? "\n\n" : "") + "Team tasks you gave · past the TAT\n" + tks.map((x) => `  ${x.client_name} · ${x.scope} · ${x.done} of ${x.count} done · due ${fmtAt(x.due_at)} (${x.over_h} h over) · with ${x.with}`).join("\n") : "")
     + (link ? "\n\nOpen Brahmastra: " + link : "") + "\n\nWorking hours: Monday to Friday.";
   return { subject, html, text, n };
@@ -4631,7 +4632,9 @@ const OPS = {
         const t = tb.get(c.id); if (!t) continue;
         for (const [k, label] of TAT_DEPTS) {
           const b = t.desks[k], what = (n) => `${n} ${label} ${n === 1 ? "claim" : "claims"}`;
-          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${tatHours(c, k)} h)`, view: "handoffs", params: { client_id: c.id, dept: k } }); pastTat += b.late; }
+          // the oldest one's own TAT (the one its due time came from), not the client's TAT now
+          const oldest = t.late.filter((x) => x.group === "desks" && x.dept === k).reduce((m, x) => (!m || x.waited_h > m.waited_h ? x : m), null);
+          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${oldest ? oldest.tat : tatHours(c, k)} h)`, view: "handoffs", params: { client_id: c.id, dept: k } }); pastTat += b.late; }
           if (b.soon) items.push({ key: `soon:${c.id}:${k}`, cat: "desks", tone: "amber", n: b.soon, text: `${what(b.soon)} due in the next ${DUE_SOON_HOURS} hours · ${c.name}`, sub: "Still within TAT", view: "handoffs", params: { client_id: c.id } });
         }
         const a = t.attn;
