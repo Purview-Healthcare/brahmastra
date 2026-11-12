@@ -8333,12 +8333,12 @@ function SlaHead({ title, sub, onHow, frame }) {
 function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) {
   const [sso, setSso] = useState({ state: "loading" });
   const ssoRef = useRef(sso); ssoRef.current = sso;
-  const signedAt = useRef(0), alive = useRef(true);
+  const signedAt = useRef(0), lastTok = useRef(""), alive = useRef(true);
   // Signs in to Drishti again (a new 12-hour session): on opening, on Load again, an hour before the session ends, and when
   // Drishti drops its token because its session ended. Never resolves to an error: the state says what went wrong.
   const signIn = () => {
     signedAt.current = Date.now();
-    return drishtiSignIn().then((r) => { if (alive.current) setSso({ state: "ok", name: r.name, role: r.role, created: r.created }); })
+    return drishtiSignIn().then((r) => { lastTok.current = r.token; if (alive.current) setSso({ state: "ok", name: r.name, role: r.role, created: r.created }); })
       .catch((e) => { if (alive.current) setSso({ state: e.status === 503 && /not switched on/.test(e.message) ? "off" : "error", msg: e.message, status: e.status }); });
   };
   useEffect(() => {
@@ -8349,7 +8349,9 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
     const id = setInterval(check, 5 * 60000);
     // Drishti's page (same web address) takes its token away when its session has ended: put a new one in its place, and
     // Drishti opens again signed in (embed.js reloads it when a token arrives while its sign-in card is up)
-    const onStore = (e) => { if (e.key === DRISHTI_TOKEN_KEY && !e.newValue && due()) signIn(); };
+    // (not when Drishti refuses the session made a minute ago: that is no ended session, and signing in again would go round)
+    const onStore = (e) => { if (e.key !== DRISHTI_TOKEN_KEY || e.newValue || ssoRef.current.state === "off") return;
+      if (!(e.oldValue && e.oldValue === lastTok.current && Date.now() - signedAt.current < 60000)) signIn(); };
     window.addEventListener("storage", onStore);
     return () => { alive.current = false; clearInterval(id); window.removeEventListener("storage", onStore); };
   }, []);
