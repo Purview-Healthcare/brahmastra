@@ -84,6 +84,8 @@ ok("recheck opens 48 working hours later (2 to 4 calendar days)", hrs >= 47.9 &&
 S("Rejections responsibility");
 r = await T(async () => A("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "person", lead: U("Rina Rej").id })); ok("set Rina as Rejections person", r.ok, r);
 ok("Rina's desk is Submission (with rejections)", (await RI("handoffs.count")).depts.includes("rejection"), await RI("handoffs.count"));
+// the recheck can be marked once it has opened (48 working hours after submitting): move its opening into the past
+await rig.backend.env.DB.prepare("UPDATE handoffs SET available_at = ? WHERE id = ?").bind(Date.now() - 60000, chk.id).run();
 r = await T(async () => MK("handoffs.close", { id: chk.id, outcome: "rejected", reason: "Clearinghouse rejection", note: "Rejected for invalid subscriber ID" })); ok("Mark marks the recheck Rejected", r.ok, r);
 const rl = await RI("handoffs.list", {}); const rj = rl.rows.find((h) => h.claim_id === c2.id);
 ok("rejection lands with Rina", rj && rj.dept === "rejection", rl.rows.map((h) => h.dept));

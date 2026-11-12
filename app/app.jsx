@@ -4845,7 +4845,7 @@ function HandoffCard({ handoffs, role, onChanged, compact }) {
 function HandoffCardOne({ h, role, onChanged, compact }) {
   const [act, setAct] = useState(null);
   const open = ["pending", "assigned", "client"].includes(h.status);
-  const canClose = open && (role === "lead" || role === "member");
+  const canClose = open && (role === "lead" || role === "member") && !recheckLater(h);
   return (
     <div className="card tight" style={{ borderLeft: "4px solid " + (h.status === "complete" ? "#12B886" : h.status === "assistance" || h.overdue ? "#A32D2D" : "#7C5CD6") }}>
       <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -4907,6 +4907,8 @@ const PROOF_WHY = {
 /* The 24-hour clock on a hand-off: time left, past the TAT, paused while waiting on the client, or (the follow-up check)
    when the recheck opens, the client's recheck time after submitting (48 working hours unless set lower). */
 const durText = (ms) => { const a = Math.abs(ms); return a >= 86400000 ? Math.floor(a / 86400000) + "d " + Math.floor((a % 86400000) / 3600000) + "h" : Math.floor(a / 3600000) + "h " + Math.floor((a % 3600000) / 60000) + "m"; };
+/* A recheck after a submission that has not opened yet (the client's recheck time): nothing can be marked on it before then. */
+const recheckLater = (h) => h.dept === "subcheck" && !!h.available_at && Date.now() < h.available_at;
 function TatTag({ h }) {
   const now = Date.now();
   if (h.dept === "subcheck" && h.available_at && now < h.available_at) return <div><span className="badge gray">Recheck from {fmtWhen(h.available_at)}</span><div className="tiny muted">the client's recheck time after submitting (48 working hours unless set lower)</div></div>;
@@ -5195,7 +5197,7 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
                 : h.assigned_name || (isOpen ? <span className="muted">with {h.lead_name}</span> : h.done_by_name)}
                 {!isOpen && h.status === "complete" && <div className="tiny muted">{h.proof.ref}{h.proof.date ? " · " + fmtDate(h.proof.date) : ""}{h.proof.files && h.proof.files.length ? " · 📎 proof" : ""}</div>}
                 {!isOpen && (h.status === "assistance" || h.status === "rejected") && <div className="tiny" style={{ color: "var(--red-ink)" }}>{h.reason}</div>}</td>
-              <td className="r"><HandoffActions h={h} canClose={isOpen && h.can_close} onOpen={() => setOpen(h.claim_id)} onAct={(outcome) => setAct({ h, outcome })} /></td>
+              <td className="r"><HandoffActions h={h} canClose={isOpen && h.can_close && !recheckLater(h)} onOpen={() => setOpen(h.claim_id)} onAct={(outcome) => setAct({ h, outcome })} /></td>
             </tr>); })}
             {q.data && !rows.length && <tr><td colSpan={10}><Empty>{view === "open" ? "Nothing waiting. Claims arrive here when a biller saves a posting or submission action on a client that has a person set for it (Clients & locations)." : "Nothing here."}</Empty></td></tr>}</tbody></table></div>
       </div>
@@ -8829,7 +8831,7 @@ function MyRechecks({ ctx, me }) {
               : r.overdue ? <span className="badge red">{r.left_wh != null ? Math.round(-r.left_wh) + " working h" : left(r.left_ms)} past TAT</span> : <span className={"badge " + (r.due_soon ? "amber" : "teal")}>{r.left_wh != null ? (r.left_wh < 1 ? Math.max(1, Math.round(r.left_wh * 60)) + " min" : Math.round(r.left_wh) + " working h") : left(r.left_ms)} left</span>}<div className="tiny muted">due {fmtWhen(r.due_at)}</div></td>
             <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
             <td className="small"><span className={"badge " + (r.from_dept === "rejection" ? "red" : "blue")}>{r.from_label}</span><div className="tiny muted">{r.created_by_name} · {fmtWhen(r.created_at)}</div>{r.check_name && r.assigned_to !== me.id ? <div className="tiny muted">recheck with {r.check_name} too</div> : null}</td>
-            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setAct({ h: r, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h: r, outcome: "rejected" })}>✗ Rejected again</button></td>
+            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button>{r.open && <> <button className="btn sm primary" onClick={() => setAct({ h: r, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h: r, outcome: "rejected" })}>✗ Rejected again</button></>}</td>
           </tr>))}</tbody></table></div>
       {act && <HandoffCloseModal act={act} onClose={() => setAct(null)} onDone={() => { setAct(null); q.reload(); }} />}
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => { setOpen(null); q.reload(); }} onChanged={() => q.reload()} />}

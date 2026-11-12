@@ -6935,6 +6935,12 @@ const OPS = {
     const seen = str(payload.seen, 20), side = (st) => (st === "client" ? "client" : "desk");
     if (["pending", "assigned", "client"].includes(seen) && side(seen) !== side(h.status))
       throw new ApiError(409, "This hand-off has changed since you opened it: " + (h.status === "client" ? "it is waiting on the client now" : "the client has answered and it is back on the desk") + ". See where it stands, then choose again.");
+    // The recheck after a submission opens after the client's recheck time (48 working hours unless set lower): the point is to
+    // check once the payer has had that time, so nothing is marked on it before then.
+    if (h.dept === "subcheck" && h.available_at && Date.now() < h.available_at) {
+      const o = istDate(h.available_at), p2 = (x) => String(x).padStart(2, "0");
+      throw bad(`This recheck opens ${MONTHS_LONG[o.getUTCMonth()]} ${o.getUTCDate()}, ${p2(o.getUTCHours())}:${p2(o.getUTCMinutes())} IST, when the payer has had time to show the claim. Mark it then.`);
+    }
     const pfx = HO_PREFIX[h.dept] || h.dept;
     // The four choices: completed, pending (still working, with a comment), need assistance from AR, need assistance from client.
     // ("assistance" is the older name for assistance from AR.)

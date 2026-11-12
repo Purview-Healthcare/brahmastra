@@ -559,7 +559,8 @@ assistance from client, and Other (with a reason and a comment). In process, Pen
 on the desk; the TAT keeps running.
 
 **Recheck by the biller.** After Submission or Rejections resubmits a claim, the biller who worked it sees it on My
-day under **Resubmitted · recheck** with the time left on the TAT, and can mark it **Accepted** or **Rejected again**,
+day under **Resubmitted · recheck** with the time left on the TAT, and can mark it **Accepted** or **Rejected again**
+once it opens (the client's recheck time after submitting; until then the row says when),
 as can the recheck person, the Submission and Rejections people and the client's AR team leads. Rejected again goes
 straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT.
 

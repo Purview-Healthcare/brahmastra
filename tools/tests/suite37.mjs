@@ -628,6 +628,26 @@ await part("C-16: an open rejection is at the top of the desk's Open list", asyn
   await A("clients.saveResponsibility", { client_id: sun.id, dept: "rejection", mode: "person", lead: U("Rex Reject").id });
 });
 
+await part("C-17: a recheck cannot be marked before it opens", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const [a] = await give("Arun Agent", 1);
+  await save(AR, a, SAAG.resub); await submitIt(QU, a);
+  const rc = await openH(a, "subcheck");
+  setNow(IST(2026, 11, 10, 10, 30));
+  let r = await T(() => call(AR, "handoffs.close", { id: rc.id, outcome: "complete", proof: { date: nowIso() }, note: "" }));
+  ok("C-17: Accepted 30 minutes after submitting is refused, with when it opens", !r.ok && /This recheck opens Nov 12, 10:00 IST/.test(r.e), r);
+  r = await T(() => call(AR, "handoffs.close", { id: rc.id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy" }));
+  const r2 = await T(() => call(QU, "handoffs.close", { id: rc.id, outcome: "back", reason: "Payer has no record yet", note: "Payer portal shows no claim on file yet" }));
+  ok("C-17: ...so are Rejected again and Need assistance", !r.ok && /opens Nov 12/.test(r.e) && !r2.ok && /opens Nov 12/.test(r2.e), [r, r2]);
+  ok("C-17: ...the recheck is still open, and My day says it opens later (no buttons until then)", (await row1("SELECT status FROM handoffs WHERE id = ?", rc.id)).status === "assigned" && (await call(AR, "handoffs.myRechecks")).rows.some((x) => x.id === rc.id && x.open === false));
+  const strangers = await T(() => call(CY, "handoffs.close", { id: rc.id, outcome: "complete", proof: { date: nowIso() } }));
+  ok("C-17: someone who may not mark it is still told so first", !strangers.ok && strangers.status === 403, strangers);
+  setNow(IST(2026, 11, 12, 10, 5));   // it opened at 10:00 (48 working hours)
+  ok("C-17: once it opens My day offers it", (await call(AR, "handoffs.myRechecks")).rows.some((x) => x.id === rc.id && x.open === true));
+  r = await T(() => call(AR, "handoffs.close", { id: rc.id, outcome: "complete", proof: { date: nowIso() }, note: "" }));
+  ok("C-17: ...and Accepted is saved", r.ok && (await row1("SELECT status FROM handoffs WHERE id = ?", rc.id)).status === "complete", r);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
