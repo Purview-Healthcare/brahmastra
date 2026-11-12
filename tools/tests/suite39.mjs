@@ -39,7 +39,7 @@ const DR_SECRET = "s".repeat(40), DR_ADMIN_EMAIL = "drishti.admin" + D;
 function drishtiStub() {
   const users = [{ id: "du-milan", email: "milan" + D, name: "Milan Manager", role: "manager" }, { id: "du-only", email: "drishti.only" + D, name: "Drishti Only", role: "manager" }, { id: "du-lara", email: "lara" + D, name: "Lara Lead", role: "tl" }];
   const managers = [{ id: "dm-milan", email: "milan" + D, name: "Milan Manager" }];
-  const calls = [];
+  const calls = [], state = { adminEmail: DR_ADMIN_EMAIL };
   const verify = (t) => { const [p, s] = String(t || "").split("."); if (!p || !s) return null; const payload = Buffer.from(p.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString();
     const sig = crypto.createHmac("sha256", DR_SECRET).update(payload).digest("base64").replace(/\+/g, "-").replace(/\//g, "_"); return sig === s ? payload.split("|") : null; };
   const handle = async (url, init) => {
@@ -47,12 +47,12 @@ function drishtiStub() {
     const b = JSON.parse(init.body); calls.push(b.a);
     if (b.a === "signup") { const u = { id: "du-" + users.length, email: b.email, name: b.name, role: b.role }; users.push(u); return J({ ok: true, user: u }); }
     const me = verify(b.t); if (!me) return J({ ok: false, code: "auth", error: "Please sign in again." });
-    if (b.a === "me") return J({ ok: true, user: me[0] === "admin" ? { id: "admin", email: DR_ADMIN_EMAIL, role: "admin" } : users.find((u) => u.id === me[0]) });
+    if (b.a === "me") return J({ ok: true, user: me[0] === "admin" ? { id: "admin", email: state.adminEmail, role: "admin" } : users.find((u) => u.id === me[0]) });
     if (b.a === "users.list") return J({ ok: true, users });
     if (b.a === "managers.list") return J({ ok: true, managers });
     return J({ ok: false, error: "not in the stand-in" });
   };
-  return { handle, users, calls, verify };
+  return { handle, users, calls, verify, state };
 }
 /* A fresh world: the demo data, the roster synced, and a session for everyone. w.c(name) calls the server as that person. */
 async function makeWorld({ feed = FEED(), envExtra = {} } = {}) {
@@ -350,6 +350,59 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   const n1 = au.length;
   await A("projects.map", { name: "Delta Practice", client_id: echo });
   ok("D-03: a match that changes nothing adds no audit row", (await mapAudits()) === n1);
+}
+
+/* ================= D-04: the Drishti account is picked by an email the person cannot set themselves ================= */
+{
+  const feed = [...FEED(), P({ emp_id: "N2", name: "Noor Nomail", position: "Team Lead", project: LAKE, reports_to: "Milan Manager", email: "" }),
+    P({ emp_id: "N3", name: "Dora Lead", position: "Team Lead", project: LAKE, reports_to: "Milan Manager", email: "dora" + D })];
+  const w = await makeWorld({ feed });
+  const { A, T, id, st } = w;
+  const NN = await w.c("Nil Nomail"), NO = await w.c("Noor Nomail"), MI = await w.c("Milan Manager"), LA = await w.c("Lara Lead"), DO = await w.c("Dora Lead");
+  const typed = async (n) => (await w.U(n)).email_typed;
+  const who = (r) => (r.ok ? st.dr.verify(r.r.token) : null);
+
+  S("D-04: an email typed in Brahmastra does not pick a Drishti account");
+  let r = await T(() => NN("reports.drishtiSession", {}));
+  ok("D-04: with no email on the account, Drishti is not opened and no Drishti account is made", !r.ok && /no email address yet/.test(r.e) && !st.dr.calls.includes("signup"), [r, st.dr.calls]);
+  r = await T(() => NN("users.save", { id: id["Nil Nomail"], first_name: "Nil", last_name: "Nomail", role: "supervisor", email: DR_ADMIN_EMAIL }));
+  ok("D-04: a person the roster has no email for can still add one on their own profile (to sign in with codes)", r.ok && (await w.U("Nil Nomail")).email === DR_ADMIN_EMAIL && (await typed("Nil Nomail")) === 1, [r, await typed("Nil Nomail")]);
+  r = await T(() => NN("reports.drishtiSession", {}));
+  ok("D-04: typing the address of Drishti's Admin does not open Drishti as its Admin", refused(r, /added in Brahmastra, not in Purview Shastra/) && !who(r), r);
+  r = await T(() => MI("users.save", { id: id["Noor Nomail"], first_name: "Noor", last_name: "Nomail", role: "supervisor", email: "drishti.only" + D }));
+  const r2 = await T(() => NO("reports.drishtiSession", {}));
+  ok("D-04: nor does an address their manager typed for them: no token for that Drishti account", r.ok && (await typed("Noor Nomail")) === 1 && refused(r2, /added in Brahmastra/) && !st.dr.calls.includes("signup"), [r, r2]);
+  r = await T(() => w.anon("auth.sendOtp", { email: "drishti.only" + D }));
+  ok("D-04: the typed address still gets the sign-in codes, as before", r.ok && /^\d{6}$/.test(r.r.demo_code || ""), r);
+  await w.sync();
+  ok("D-04: a roster sync that still has no email for them keeps the address, and keeps it marked as typed", (await w.U("Noor Nomail")).email === "drishti.only" + D && (await typed("Noor Nomail")) === 1 && (await typed("Nil Nomail")) === 1);
+  // as if Drishti's Admin address were the Shastra email of someone who is not Brahmastra's admin
+  st.dr.state.adminEmail = "dora" + D;
+  r = await T(() => DO("reports.drishtiSession", {}));
+  ok("D-04: only Brahmastra's admin opens Drishti as its Admin, whatever email someone else has", refused(r, /belongs to Drishti's Admin/) && !who(r), r);
+  st.dr.state.adminEmail = DR_ADMIN_EMAIL;
+
+  S("D-04: an email from Purview Shastra, or set by the admin, does");
+  r = await T(() => LA("reports.drishtiSession", {}));
+  ok("D-04: a team lead with a Shastra email opens their own Drishti account", r.ok && who(r)[0] === "du-lara" && who(r)[1] === "tl" && (await typed("Lara Lead")) === 0, [r.ok ? who(r) : r]);
+  r = await T(() => A("reports.drishtiSession", {}));
+  ok("D-04: Brahmastra's admin opens Drishti as its Admin", r.ok && who(r)[0] === "admin" && who(r)[1] === "admin" && r.r.role === "admin", r.ok ? who(r) : r);
+  r = await T(() => A("users.save", { id: id["Noor Nomail"], first_name: "Noor", last_name: "Nomail", role: "supervisor", email: "noor" + D }));
+  ok("D-04: an address the admin sets counts as the person's own", r.ok && (await typed("Noor Nomail")) === 2, [r, await typed("Noor Nomail")]);
+  r = await T(() => NO("reports.drishtiSession", {}));
+  const made = st.dr.users.find((u) => u.email === "noor" + D);
+  ok("D-04: with it Drishti opens: a new Drishti account of their own, under the manager they report to", r.ok && r.r.created === true && made && who(r)[0] === made.id && who(r)[1] !== "admin", [r.ok ? who(r) : r, made]);
+  await w.sync();
+  ok("D-04: the admin's address stays through a roster sync", (await w.U("Noor Nomail")).email === "noor" + D && (await typed("Noor Nomail")) === 2);
+  st.feed = st.feed.map((x) => (x.name === "Nil Nomail" ? { ...x, email: "nil" + D } : x));
+  await w.sync();
+  r = await T(() => NN("reports.drishtiSession", {}));
+  const nil = st.dr.users.find((u) => u.email === "nil" + D);
+  ok("D-04: once Shastra sends the person's email, it replaces the typed one and Drishti opens as them", (await w.U("Nil Nomail")).email === "nil" + D && (await typed("Nil Nomail")) === 0 && r.ok && nil && who(r)[0] === nil.id, [(await w.U("Nil Nomail")).email, await typed("Nil Nomail"), r.ok ? who(r) : r]);
+  // an address kept from before this was tracked: Shastra does not send it, nobody vouched for it
+  await w.sql("UPDATE users SET email = ?, email_missing = 0, email_typed = 0 WHERE id = ?", "noor.old" + D, id["Noor Nomail"]);
+  await w.sync();
+  ok("D-04: an address from before, that Shastra does not send, counts as typed after the next sync", (await typed("Noor Nomail")) === 1 && refused(await T(() => NO("reports.drishtiSession", {})), /added in Brahmastra/));
 }
 
 const fails = results.filter((x) => !x.pass);

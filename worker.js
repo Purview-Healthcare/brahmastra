@@ -242,7 +242,10 @@ const EXTRA_COLUMNS = {
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
     ["department", "TEXT NOT NULL DEFAULT ''"], ["departments_also", "TEXT NOT NULL DEFAULT ''"], ["roster_status", "TEXT NOT NULL DEFAULT ''"], ["exit_date", "TEXT NOT NULL DEFAULT ''"],
     ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
-    ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"]],
+    ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"],
+    // Where the email came from: 0 Purview Shastra (or an account made by hand), 1 typed in Brahmastra by the person or a team lead
+    // where Shastra had none, 2 set by the admin. A typed one signs the person in here but never picks their Drishti account.
+    ["email_typed", "INTEGER NOT NULL DEFAULT 0"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
   handoffs: [["available_at", "INTEGER"], ["paused_at", "INTEGER"], ["client_answered_at", "INTEGER"],
     // Need client assistance: who asked, the AR team lead who sent it to the client (how, when, comment), and when to chase the client.
@@ -1976,6 +1979,9 @@ async function importRoster(env, user, payload) {
     const next = { emp_id: row.emp_id, name: row.name, email: issues.some((x) => x.startsWith("email already")) && match ? match.email : email, free_email_from: freeable ? holder.id : null, email_missing: emailOk ? 0 : (match && !match.email_missing ? 0 : 1),
       role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
       roster_status: row.status, exit_date: row.exit_date, doj: row.doj, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
+    // An email Shastra sends is Shastra's (0). One kept from before, that Shastra does not send, counts as typed in Brahmastra (1)
+    // unless the admin set it (2) or the account was made by hand and is matched now (2).
+    next.email_typed = emailOk && next.email === row.email ? 0 : !match || match.email_missing ? 0 : match.email_typed === 2 || (match.source !== "roster" && match.email_typed !== 1) ? 2 : 1;
     // Last check: an email another row (or another account) already has is never written twice.
     const holderNow = byEmail.get(next.email);
     if (planMail.has(next.email) || (holderNow && (!match || holderNow.id !== match.id) && !next.free_email_from)) {
@@ -2021,8 +2027,8 @@ async function importRoster(env, user, payload) {
       const [first, ...rest] = n.name.split(/\s+/);
       await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
     }
-    await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, shift = ?, city = ? WHERE id = ?`,
-      n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.shift, n.city, id);
+    await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, email_typed = ?, shift = ?, city = ? WHERE id = ?`,
+      n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, id);
     p.id = id;
     if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
   }
@@ -3798,7 +3804,7 @@ const OPS = {
       }
       const boss = reportsTo ? await one(env, "SELECT name FROM users WHERE id = ?", reportsTo) : null;
       await env.DB.batch([
-        ...(newEmail !== ex.email ? [env.DB.prepare("UPDATE users SET email = ?, email_missing = 0 WHERE id = ?").bind(newEmail, ex.id)] : []),
+        ...(newEmail !== ex.email ? [env.DB.prepare("UPDATE users SET email = ?, email_missing = 0, email_typed = ? WHERE id = ?").bind(newEmail, user.is_admin ? 2 : 1, ex.id)] : []),
         ...(empChanged ? [env.DB.prepare("UPDATE users SET emp_id = ? WHERE id = ?").bind(empId, ex.id)] : []),
         ...(projects ? [env.DB.prepare("UPDATE users SET projects_json = ? WHERE id = ?").bind(JSON.stringify(projects), ex.id)] : []),
         ...(reportsTo !== undefined ? [env.DB.prepare("UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?").bind(reportsTo, boss ? boss.name : "", ex.id)] : []),
@@ -6592,10 +6598,16 @@ const OPS = {
       return j;
     };
     const admin = await drishtiToken(env, "admin", "admin");
-    const email = String(user.email || "").toLowerCase();
     const adminEmail = String(((await call({ a: "me", t: admin })).user || {}).email || "").toLowerCase();
-    // Brahmastra's admin and Drishti's own Admin open Drishti as its Admin.
-    if (user.is_admin || (email && email === adminEmail)) return { token: admin, name: "Admin", role: "admin", created: false };
+    // Brahmastra's admin opens Drishti as its Admin. Nobody else does, whatever email is on their profile.
+    if (user.is_admin) return { token: admin, name: "Admin", role: "admin", created: false };
+    // Everyone else gets the Drishti account of their own email, and only of an email they could not have put there themselves:
+    // one from Purview Shastra, or set by the admin. An address typed in Brahmastra by the person or a team lead does not count.
+    const me = await one(env, "SELECT email, email_missing, email_typed FROM users WHERE id = ?", user.id);
+    const email = me && !me.email_missing ? String(me.email || "").toLowerCase() : "";
+    if (!email) throw bad("Your account has no email address yet. Ask for it to be added in Purview Shastra.");
+    if (me.email_typed === 1) throw denied("Your email address was added in Brahmastra, not in Purview Shastra, so it does not pick your Drishti account. Ask for it to be added in Purview Shastra.");
+    if (email === adminEmail) throw denied("That email address belongs to Drishti's Admin. Only Brahmastra's admin opens Drishti as its Admin.");
     const find = async () => ((await call({ a: "users.list", t: admin })).users || []).find((u) => String(u.email || "").toLowerCase() === email);
     let du = await find(), created = false;
     if (!du) {
@@ -6606,8 +6618,8 @@ const OPS = {
       if (!asManager) {
         let cur = await one(env, "SELECT reports_to FROM users WHERE id = ?", user.id);
         for (let i = 0; i < 6 && cur && cur.reports_to && !managerId; i++) {
-          const up = await one(env, "SELECT id, email, reports_to FROM users WHERE id = ?", cur.reports_to);
-          const m = up && mgrs.find((x) => String(x.email || "").toLowerCase() === String(up.email || "").toLowerCase());
+          const up = await one(env, "SELECT id, email, email_missing, email_typed, reports_to FROM users WHERE id = ?", cur.reports_to);
+          const m = up && !up.email_missing && up.email_typed !== 1 && mgrs.find((x) => String(x.email || "").toLowerCase() === String(up.email || "").toLowerCase());
           if (m) managerId = m.id; cur = up;
         }
         if (!managerId) throw bad("Nobody you report to in Brahmastra is a manager in Drishti yet, so Drishti cannot place you. Ask Drishti's Admin to add your manager on Drishti's People tab.");

@@ -933,7 +933,10 @@ computer or downloaded to be uploaded again. Third Eye has no sign-in. **How it 
 
 Brahmastra then signs people in to Drishti with Drishti's own 12-hour session token. Someone who has no Drishti
 account yet gets one, created from their Brahmastra profile under the manager they report to (that manager must
-be on Drishti's People tab). Brahmastra's admin opens Drishti as its Admin. Never put the secret in the repository.
+be on Drishti's People tab). Brahmastra's admin opens Drishti as its Admin, and nobody else does. Everyone else
+gets the Drishti account of their own email, and only of an email from Purview Shastra or one the admin set: an
+address the person or their team lead typed on Team (where Shastra had none) still gets their sign-in codes, but
+it does not open Drishti until the email is added in Shastra. Never put the secret in the repository.
 
 **E. Test.** Sign in as a team lead → Team → **Send a test email**. When it
 arrives, sign out and try **Sign in with a code**.
