@@ -141,7 +141,12 @@ can make someone a team lead or change an SME's designation.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
-  inventory or allocation.
+  inventory or allocation. The server holds them to it whatever the screen: no AR
+  Inventory report, claims pool, Needs attention, My day, Live status, AR entries
+  or Client 360 report, and no excluding or reprioritising claims; Search, Claims
+  and the claim profile give them the claims sent to their own desk (and every
+  claim of a client they are set responsible for), the Past TAT list and its
+  reminder emails their own desk's tasks only.
 
 #### Client 360
 

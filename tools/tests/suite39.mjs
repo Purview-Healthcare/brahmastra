@@ -528,6 +528,109 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   } finally { Date.now = real; }
 }
 
+/* ================= D-08: Payment posting and Submission people, team leads too, get only their desk ================= */
+{
+  const feed = [...FEED(), P({ emp_id: "R1", name: "Ria Both", position: "Team Lead", department: "Posting", also_in_departments: "AR", project: SUN, reports_to: "Mona Manager", email: "ria" + D })];
+  const w = await makeWorld({ feed });
+  const { A, T, id, sun, sql, rows, row } = w;
+  // Sunrise's desks: Pia is its Payment posting person, Suri its Submission person; Pooja is a posting team lead on the project but not set on the client
+  await sql("UPDATE clients SET posting_mode = 'person', posting_lead = ?, submission_mode = 'person', submission_lead = ? WHERE id = ?", id["Pia Postlead"], id["Suri Sublead"], sun.id);
+  const ids = (await rows("SELECT id FROM claims WHERE client_id = ? AND state = 'open' ORDER BY id LIMIT 6", sun.id)).map((x) => x.id);
+  const [toPost, toSub, other, flagged] = ids, now = Date.now();
+  await sql("UPDATE claims SET patient = 'Postdesk Zq', account_no = 'PDACCT1' WHERE id = ?", toPost);
+  await sql("UPDATE claims SET patient = 'Subdesk Zq', account_no = 'SDACCT1' WHERE id = ?", toSub);
+  await sql("UPDATE claims SET patient = 'Notadesk Zq', account_no = 'NDACCT1' WHERE id = ?", other);
+  await sql("UPDATE claims SET patient = 'Flagged Zq', account_no = 'FLACCT1', escalated = 1, escalated_at = ?, assigned_to = ?, state = 'completed' WHERE id = ?", now - 10 * 86400000, id["Arun Agent"], flagged);
+  const ho = (hid, claim, dept, lead, status, due) => sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, biller_id, created_by, created_by_name, lead_id, reason, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    hid, claim, sun.id, dept, status, now - 9 * 86400000, due, id["Arun Agent"], id["Arun Agent"], "Arun Agent", lead, "", "made-up hand-off note");
+  await ho("ho-post", toPost, "posting", id["Pia Postlead"], "pending", now - 5 * 86400000);
+  await ho("ho-sub", toSub, "submission", id["Suri Sublead"], "client", now - 5 * 86400000);
+  await sql("UPDATE handoffs SET paused_at = ? WHERE id = 'ho-sub'", now - 6 * 86400000);
+  await sql("UPDATE claims SET state = 'in_process', handoff_status = 'posting' WHERE id = ?", toPost);
+  const PO = await w.c("Pooja Postlead"), PI = await w.c("Pia Postlead"), SU = await w.c("Suri Sublead"), TI = await w.c("Tina Lead"), RB = await w.c("Ria Both");
+  const has = (r, txt) => r.ok && JSON.stringify(r.r).includes(txt);
+  const blocked = (r) => !r.ok && r.status === 403 && /AR's work/.test(r.e || "");
+
+  S("D-08: a posting team lead who is not the client's posting person: the claims sent to the posting desk, nothing else");
+  let r = await T(() => PO("claims.list", { client_id: sun.id, page_size: 500 }));
+  ok("D-08: Claims shows the one claim sent to the posting desk, as before", r.ok && r.r.total === 1 && r.r.rows[0].id === toPost, r.ok ? r.r.total : r);
+  for (const [op, p] of [["reports.arInventory", { client_id: sun.id }], ["reports.saveArInventory", { client_id: sun.id, name: "x", file_b64: "AAAA" }], ["claims.eligible", { client_id: sun.id }],
+    ["claims.setState", { ids: [other], state: "excluded", reason: "made-up" }], ["claims.setPriority", { ids: [other], level: "top", category: "Other", comment: "a made-up reason here" }], ["claims.priorityLog", {}],
+    ["attention.list", {}], ["attention.clientRequests", {}], ["queue.open", { id: other }], ["reports.work", { from_ms: 0, to_ms: now + 86400000 }], ["reports.desk", { from_ms: 0, to_ms: now + 86400000 }],
+    ["creport.get", { client_id: sun.id, from: "2026-10-01", to: "2026-10-31" }], ["team.huddle", {}], ["denials.repeats", {}], ["supervisor.allocations", {}], ["inventory.status", {}], ["alloc.unassign", { ids: [flagged] }]]) {
+    r = await T(() => PO(op, p));
+    ok(`D-08: ${op} is refused (AR's work)`, blocked(r), r);
+  }
+  ok("D-08: nothing was excluded, reprioritised or taken off a list", (await row("SELECT state, priority_set FROM claims WHERE id = ?", other)).state === "open" && !(await row("SELECT priority_set FROM claims WHERE id = ?", other)).priority_set && (await row("SELECT assigned_to FROM claims WHERE id = ?", flagged)).assigned_to === id["Arun Agent"]);
+  r = await T(() => PO("claims.get", { id: other }));
+  ok("D-08: a claim not sent to the desk does not open", !r.ok && r.status === 403, r);
+  r = await T(() => PO("claims.get", { id: toSub }));
+  ok("D-08: nor one sent to Submission", !r.ok && r.status === 403, r);
+  r = await T(() => PO("claims.timeline", { id: other }));
+  ok("D-08: nor its history", !r.ok && r.status === 403, r);
+  r = await T(() => PO("claims.get", { id: toPost }));
+  ok("D-08: the claim on the posting desk opens", r.ok && r.r.claim.id === toPost, r);
+  r = await T(() => PO("notes.add", { claim_id: other, comment: "a made-up note on another claim" }));
+  ok("D-08: no note on a claim outside the desk", !r.ok && r.status === 403, r);
+  r = await T(() => PO("search.global", { q: "Zq" }));
+  ok("D-08: Search finds the desk's claim and none of the others", r.ok && r.r.claims.some((c) => c.id === toPost) && !has(r, "Notadesk") && !has(r, "Subdesk") && !has(r, "Flagged"), r.ok ? r.r.claims.map((c) => c.patient) : r);
+  r = await T(() => PO("claims.suggest", { q: "Zq" }));
+  ok("D-08: the search suggestions name no patient outside the desk", r.ok && r.r.values.includes("Postdesk Zq") && !r.r.values.some((v) => /Notadesk|Subdesk|Flagged/.test(v)), r.ok ? r.r.values : r);
+  r = await T(() => PO("claims.byPatient", { id: toPost }));
+  ok("D-08: All claims of this patient lists only the desk's claims", r.ok && r.r.rows.every((x) => x.id === toPost), r);
+  r = await T(() => PO("claims.byPatient", { id: other }));
+  ok("D-08: and not from a claim outside the desk", !r.ok, r);
+  r = await T(() => PO("claims.stats", { client_id: sun.id }));
+  ok("D-08: the claim figures count the desk's claims only", r.ok && r.r.states.reduce((t, x) => t + x.n, 0) === 1, r.ok ? r.r.states : r);
+  r = await T(() => PO("handoffs.list", { dept: "submission", view: "all" }));
+  ok("D-08: the desk list never gives Submission's hand-offs to a posting lead", r.ok && !has(r, "ho-sub") && !has(r, "Subdesk"), r);
+  r = await T(() => PO("raci.missed", { client_id: sun.id, kind: "ar" }));
+  const r2 = await T(() => PO("raci.missed", { client_id: sun.id, kind: "posting" }));
+  ok("D-08: RACI's missed tasks: AR's refused, the posting desk's shown", !r.ok && r.status === 403 && r2.ok && r2.r.rows.some((x) => x.id === "ho-post"), [r, r2.ok ? r2.r.rows.length : r2]);
+  r = await T(() => PO("client.overview", { client_id: sun.id, from_ms: 0, to_ms: now + 86400000 }));
+  ok("D-08: Client 360's waiting on the client lists no other desk's claim", r.ok && !has(r, "Subdesk") && !has(r, "SDACCT1"), r.ok ? r.r.waiting : r);
+  r = await T(() => PO("tat.list", {}));
+  ok("D-08: the Past TAT list has the posting desk's task, not Submission's or AR's", r.ok && r.r.late.some((x) => x.ref_id === "ho-post") && r.r.late.every((x) => x.group === "desks" && x.dept === "posting"), r.ok ? r.r.late.map((x) => x.type) : r);
+  const pv = await PO("tat.preview", { kind: "desks" }), pa = await PO("tat.preview", { kind: "ar" });
+  const cno = async (cid) => (await row("SELECT claim_no FROM claims WHERE id = ?", cid)).claim_no;
+  ok("D-08: the 09:00 reminder email has the posting desk only, and the 19:00 AR one has nothing for them", pv.mail && pv.mail.text.includes(await cno(toPost)) && !pv.mail.text.includes(await cno(toSub)) && !/· Submission ·/.test(pv.mail.text) && !pa.mail,
+    [pv.mail && pv.mail.text.slice(0, 300), pa.mail && pa.mail.text.slice(0, 200)]);
+  const sv = await SU("tat.preview", { kind: "desks" }), tv = await TI("tat.preview", { kind: "ar" });
+  ok("D-08: the Submission lead's 09:00 email has Submission's task; an AR team lead's 19:00 email still has AR's flagged claim", sv.mail && sv.mail.text.includes(await cno(toSub)) && !sv.mail.text.includes(await cno(toPost)) && tv.mail && tv.mail.text.includes(await cno(flagged)),
+    [sv.mail && sv.mail.text.slice(0, 200), tv.mail && tv.mail.text.slice(0, 200)]);
+  r = await T(() => PO("tat.hold", { kind: "flag", id: flagged, reason: "Other", note: "made-up", until: w.today() }));
+  ok("D-08: no Can't close yet on AR's flagged claim", !r.ok, r);
+  r = await T(() => PO("reports.production", { scope: "ar", from_ms: 0, to_ms: now + 86400000 }));
+  const r3 = await T(() => PO("reports.production", { scope: "pp", from_ms: 0, to_ms: now + 86400000 }));
+  ok("D-08: Third Eye gets their own desk's production, never AR's entries", !r.ok && r.status === 403 && r3.ok, [r, r3.ok]);
+
+  S("D-08: the client's own posting person keeps what README gives them, and still no AR inventory");
+  r = await T(() => PI("claims.list", { client_id: sun.id, page_size: 500 }));
+  ok("D-08: the client's posting person (a team lead) still lists every claim of the client (README: responsible means access)", r.ok && r.r.total > 100, r.ok ? r.r.total : r);
+  r = await T(() => PI("claims.get", { id: other }));
+  ok("D-08: and opens one to read", r.ok, r);
+  for (const [op, p] of [["reports.arInventory", { client_id: sun.id }], ["claims.eligible", { client_id: sun.id }], ["claims.setState", { ids: [other], state: "excluded", reason: "made-up" }], ["attention.list", {}]]) {
+    r = await T(() => PI(op, p));
+    ok(`D-08: but ${op} is refused for them too`, blocked(r), r);
+  }
+  r = await T(() => SU("claims.get", { id: toSub }));
+  ok("D-08: the Submission lead opens the claim on their desk", r.ok, r);
+  r = await T(() => SU("handoffs.list", { dept: "posting", view: "all" }));
+  ok("D-08: and never lists the posting desk", r.ok && !has(r, "ho-post"), r);
+
+  S("D-08: AR keeps everything");
+  for (const [op, p] of [["reports.arInventory", { client_id: sun.id }], ["claims.eligible", { client_id: sun.id }], ["attention.list", {}], ["claims.priorityLog", {}], ["team.huddle", {}], ["creport.get", { client_id: sun.id, from: "2026-10-01", to: "2026-10-31" }]]) {
+    r = await T(() => TI(op, p));
+    ok(`D-08: an AR team lead still uses ${op}`, r.ok, r);
+  }
+  r = await T(() => TI("claims.get", { id: other }));
+  ok("D-08: and opens any claim of their client", r.ok, r);
+  r = await T(() => RB("claims.eligible", { client_id: sun.id }));
+  ok("D-08: someone on Posting who is also on AR keeps the AR view", r.ok, r);
+  r = await T(() => A("reports.arInventory", { client_id: sun.id }));
+  ok("D-08: and the admin", r.ok, r);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

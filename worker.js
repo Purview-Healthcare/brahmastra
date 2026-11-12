@@ -1276,10 +1276,12 @@ async function lateTeamTasks(env, now) {
    they gave that are past the TAT. null when nothing is late. */
 function tatMailFor(u, kind, clients, board, now, appUrl = "", tasks = []) {
   const groups = [];
+  // a Payment posting / Submission person (team leads too) hears about their own desk only: not AR's Needs attention, not another desk
+  const dd = deskDepts(u);
   for (const c of clients) {
-    if (!onClient(u, c.id)) continue;
+    if (!onClient(u, c.id) || (dd && kind !== "desks")) continue;
     const t = board.get(c.id); if (!t) continue;
-    const late = t.late.filter((x) => x.group === kind);
+    const late = t.late.filter((x) => x.group === kind && (!dd || dd.includes(x.dept)));
     if (!late.length) continue;
     if (kind === "desks") for (const [k, label] of TAT_DEPTS) { const xs = late.filter((x) => x.dept === k); if (xs.length) groups.push({ c, label, tat: tatHours(c, k), xs }); }
     else for (const [p, label] of ATTN_PARTS) { const xs = late.filter((x) => x.part === p); if (xs.length) groups.push({ c, label: "Needs attention · " + label, tat: ATTN_TAT_HOURS, xs }); }
@@ -3446,6 +3448,14 @@ async function handoffRole(env, user, claimId) {
   return "";
 }
 async function canSeeClaim(env, user, c) {
+  const dd = deskDepts(user);
+  if (dd) {
+    // Payment posting and Submission people, team leads too, see the claims handed to their desk, and every claim of a client they
+    // are responsible for (README); never the rest of the client's claims, whatever their role
+    if (user.resp_clients && user.resp_clients.has(c.client_id)) return true;
+    if (await handoffRole(env, user, c.id)) return true;
+    return leadFor(user, c.client_id) && !!(await one(env, `SELECT 1 AS x FROM handoffs WHERE claim_id = ? AND dept IN (${dd.map(() => "?").join(",")}) LIMIT 1`, c.id, ...dd));
+  }
   if (leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id) return true;
   if (user.resp_clients && user.resp_clients.has(c.client_id)) return true;
   return !!(await handoffRole(env, user, c.id));
@@ -3543,6 +3553,13 @@ function userDesk(user) {
   return p && s ? "both" : p ? "posting" : s ? "submission" : null;
 }
 const deskSql = (user, col) => { const d = userDesk(user); return d && !user.is_admin ? ` AND ${col} IN (SELECT claim_id FROM handoffs WHERE dept IN (${DESK_DEPTS[d].map((x) => "'" + x + "'").join(",")}))` : ""; };
+// A Payment posting / Submission person's desk (null for AR people and the admin), and the departments it covers.
+const deskOf = (user) => (user && !user.is_admin ? userDesk(user) : null);
+const deskDepts = (user) => { const d = deskOf(user); return d ? DESK_DEPTS[d] : null; };
+/* What is AR's and never a desk person's (team leads too), whatever the call: inventory, allocation and the claims pool, excluding or
+   reprioritising claims and their log, Needs attention, My day, Live status and the day's team, the AR entries, Team allocations,
+   repeat denials, the Client 360 report and the AR Inventory report. */
+const DESK_NOT = /^(inventory\.|alloc\.|attention\.|queue\.|creport\.|denials\.|claims\.(eligible|setState|setPriority|priorityLog)$|reports\.(arInventory|saveArInventory|work|desk)$|supervisor\.allocations$|team\.(huddle|today|saveToday)$)/;
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
 /* Read-only claim lists a biller may open for the clients they are responsible for (posting, submission...). */
 const DESK_READ_OPS = /^claims\.(list|stats)$/;
@@ -4532,7 +4549,8 @@ const OPS = {
       WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?) AND (${sup ? "1 = 1" + scopeSql(user, "c.client_id") : "c.assigned_to = ? OR c.last_worked_by = ?"} OR ${POSTED_CLOSED_SQL})
       ORDER BY CASE WHEN c.claim_no = ? OR c.account_no = ? THEN 0 ELSE 1 END, CASE WHEN c.state IN ('open','assigned','in_progress') THEN 0 ELSE 1 END, c.balance DESC LIMIT 40`,
       like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id]), q, q);
-    const ok = rows.filter((c) => leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c)).slice(0, 8);
+    const ok = [];
+    for (const c of rows) if (ok.length < 8 && (deskOf(user) ? postedClosed(c) || (await canSeeClaim(env, user, c)) : leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c))) ok.push(c);
     return { claims: ok.map(({ assigned_to, last_worked_by, handoff_status, ...c }) => ({ ...c, posted: handoff_status === "posted" && c.state === "closed" })) };
   },
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
@@ -4563,7 +4581,9 @@ const OPS = {
     const label = (x) => x.group === "desks" ? (TAT_DEPTS.find(([k]) => k === x.dept) || [, x.dept])[1] + (x.recheck ? " · recheck" : "") : "Needs attention · " + (ATTN_PARTS.find(([k]) => k === x.part) || [, x.part])[1];
     const shape = (c, x) => ({ ...x, client_id: c.id, client_name: c.name, type: label(x), tat: x.group === "desks" ? (x.tat != null ? x.tat : tatHours(c, x.dept)) : ATTN_TAT_HOURS, can_hold: canEditClient(user, c.id) });
     const late = [], soon = [], held = [];
-    for (const c of cls) { const t = board.get(c.id); if (!t) continue; t.late.forEach((x) => late.push(shape(c, x))); t.soon.forEach((x) => soon.push(shape(c, x))); t.held.forEach((x) => held.push(shape(c, x))); }
+    // desk people: their own desk's tasks only (never AR's Needs attention, nor another desk's)
+    const dd = deskDepts(user), mine = (x) => !dd || (x.group === "desks" && dd.includes(x.dept));
+    for (const c of cls) { const t = board.get(c.id); if (!t) continue; t.late.filter(mine).forEach((x) => late.push(shape(c, x))); t.soon.filter(mine).forEach((x) => soon.push(shape(c, x))); t.held.filter(mine).forEach((x) => held.push(shape(c, x))); }
     late.sort((a, b) => b.over_h - a.over_h); soon.sort((a, b) => a.due - b.due); held.sort((a, b) => a.hold.until.localeCompare(b.hold.until));
     return { late, soon, held, reasons: TAT_HOLD_REASONS, due_soon_hours: DUE_SOON_HOURS, max_days: 30, clients: cls.map((c) => ({ id: c.id, name: c.name })) };
   },
@@ -4572,13 +4592,13 @@ const OPS = {
     const kind = payload.kind === "flag" ? "flag" : "handoff", id = str(payload.id, 60), now = Date.now();
     let clientId, claimId, since = null;
     if (kind === "handoff") {
-      const h = await one(env, "SELECT id, client_id, claim_id, status FROM handoffs WHERE id = ?", id);
-      if (!h) throw notFound("That task was not found.");
+      const h = await one(env, "SELECT id, client_id, claim_id, status, dept FROM handoffs WHERE id = ?", id);
+      if (!h || (deskDepts(user) && !deskDepts(user).includes(h.dept))) throw notFound("That task was not found.");
       if (!["pending", "assigned", "client", "assistance", "back"].includes(h.status)) throw bad("This task is already closed.");
       clientId = h.client_id; claimId = h.claim_id;
     } else {
       const c = await one(env, "SELECT id, client_id, escalated, escalated_at FROM claims WHERE id = ?", id);
-      if (!c) throw notFound("That claim was not found.");
+      if (!c || deskOf(user)) throw notFound("That claim was not found.");
       if (!c.escalated) throw bad("This claim is no longer flagged for a team lead.");
       clientId = c.client_id; claimId = c.id; since = c.escalated_at;
     }
@@ -4599,7 +4619,8 @@ const OPS = {
   },
   "tat.unhold": async ({ env, user, payload }) => {
     const h = await one(env, "SELECT * FROM tat_holds WHERE id = ? AND cleared_at IS NULL", str(payload.id, 60));
-    if (!h) throw notFound("That hold was not found, or it was already cleared.");
+    const hd = h && deskDepts(user) && h.kind === "handoff" ? await one(env, "SELECT dept FROM handoffs WHERE id = ?", h.ref_id) : null;
+    if (!h || (deskDepts(user) && !(hd && deskDepts(user).includes(hd.dept)))) throw notFound("That hold was not found, or it was already cleared.");
     editableOr(user, h.client_id);
     await env.DB.batch([
       env.DB.prepare("UPDATE tat_holds SET cleared_at = ?, cleared_by_name = ? WHERE id = ?").bind(Date.now(), user.name || "", h.id),
@@ -5260,7 +5281,7 @@ const OPS = {
     const paid = async (a, b) => (await one(env, `SELECT COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt, COUNT(*) AS n FROM handoffs WHERE client_id = ? AND dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ?`, clientId, a, b));
     const coll = await paid(from, to), collPrev = await paid(from - span, from);
     const waiting = await all(env, `SELECT h.id, h.dept, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.chase_at, c.claim_no, c.patient, c.balance
-      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client' ORDER BY h.paused_at ASC LIMIT 100`, clientId);
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client'${deskDepts(user) ? ` AND h.dept IN (${deskDepts(user).map(() => "?").join(",")})` : ""} ORDER BY h.paused_at ASC LIMIT 100`, clientId, ...(deskDepts(user) || []));
     const replyAvg = async (cid) => { const r = await one(env, `SELECT AVG(client_answered_at - COALESCE(client_sent_at, paused_at)) AS ms, COUNT(*) AS n FROM handoffs WHERE client_answered_at IS NOT NULL AND client_answered_at > ?${cid ? " AND client_id = ?" : ""}`, now - 90 * 86400000, ...(cid ? [cid] : [])); return r && r.n ? { days: Math.round(r.ms / 864000) / 100, n: r.n } : null; };
     const reasons = await all(env, `SELECT COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, COUNT(DISTINCT n.claim_id) AS n, COALESCE(SUM(c.balance), 0) AS bal
       FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ? AND COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Denied', 'Claim Rejected')
@@ -5391,6 +5412,8 @@ const OPS = {
     const clientId = str(payload.client_id, 60);
     if (!inScope(user, clientId)) throw outOfScope();
     const kind = ["ar", "posting", "submission"].includes(payload.kind) ? payload.kind : "ar";
+    // desk people see the missed tasks of their own desk only, never AR's (claims on billers' lists)
+    if (deskDepts(user) && !deskDepts(user).includes(kind)) throw denied("That is AR's work or another desk's. Your desk is " + DESK_NAME[deskOf(user)] + ".");
     const now = Date.now(), since = now - 30 * 86400000;
     const dayStart = (() => { const t = isoDate(payload.today); const off = Math.round(num(payload.tz_offset_min, IST_MIN)); return t ? Date.parse(t + "T00:00:00Z") - off * 60000 : now - (now % 86400000); })();
     if (kind === "ar") {
@@ -5854,6 +5877,8 @@ const OPS = {
     const where = ["state <> 'excluded'"], params = [];
     if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
     if (user.role !== "supervisor") { where.push("(assigned_to = ? OR last_worked_by = ?)"); params.push(user.id, user.id); }
+    // desk people: values from the claims sent to their desk (and the clients they are responsible for), as Claims lists them
+    if (deskOf(user)) { const rc = [...(user.resp_clients || [])]; where.push(`(${deskSql(user, "id").replace(/^ AND /, "")}${rc.length ? ` OR client_id IN (${rc.map(() => "?").join(",")})` : ""})`); params.push(...rc); }
     if (payload.client_id) { where.push("client_id = ?"); params.push(str(payload.client_id, 60)); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(str(payload.location_id, 60)); }
     const w = where.join(" AND ");
@@ -5876,6 +5901,10 @@ const OPS = {
     const ro = respOnly(user);
     if (ro) { where.push(`client_id IN (${ro.map(() => "?").join(",")})`); params.push(...ro); }
     if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
+    // desk people: the claims sent to their desk (and the clients they are responsible for), as Claims lists them (one "id IN" clause,
+    // as the queries below put "c." in front of each clause)
+    if (deskOf(user) && !ro) { const rc = [...(user.resp_clients || [])], dd = deskDepts(user);
+      where.push(`id IN (SELECT h.claim_id FROM handoffs h WHERE h.dept IN (${dd.map(() => "?").join(",")})${rc.length ? ` UNION SELECT k.id FROM claims k WHERE k.client_id IN (${rc.map(() => "?").join(",")})` : ""})`); params.push(...dd, ...rc); }
     // Dashboard date range: only claims with activity in the window (loaded, refreshed, worked or closed then).
     if (payload.from_ms != null || payload.to_ms != null) { where.push("updated_at BETWEEN ? AND ?"); params.push(num(payload.from_ms, 0), num(payload.to_ms, Date.now())); }
     if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
@@ -5926,12 +5955,13 @@ const OPS = {
     const c = await one(env, "SELECT id, client_id, account_no, patient, assigned_to, last_worked_by FROM claims WHERE id = ?", str(payload.id, 60));
     if (!c) throw bad("Claim not found.");
     if (user.role === "supervisor" && !inScope(user, c.client_id)) throw outOfScope();
-    // Everyone else only from a claim they may open themselves (as claims.get).
-    if (user.role !== "supervisor" && !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    // Everyone else, and desk people (team leads too), only from a claim they may open themselves (as claims.get).
+    const dk = deskOf(user) && !(user.resp_clients && user.resp_clients.has(c.client_id));
+    if ((user.role !== "supervisor" || deskOf(user)) && !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const rows = await all(env, `SELECT c.id, c.claim_no, c.account_no, c.patient, c.dos, c.cpt, c.payer, c.provider, c.balance, c.age_days, c.tier, c.state, c.assigned_to, u.name AS assigned_name, c.priority, c.follow_up_on,
         c.last_status_code, c.last_sub_status, c.last_action_code, c.last_bucket, c.last_note, c.last_worked_on, c.file_status, c.file_sub_status, l.name AS location_name
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id
-      WHERE c.client_id = ? AND ${samePatientSql("c.")} ORDER BY c.state IN ('open','assigned','in_progress','completed') DESC, c.priority DESC LIMIT 200`,
+      WHERE c.client_id = ? AND ${samePatientSql("c.")}${dk ? deskSql(user, "c.id") : ""} ORDER BY c.state IN ('open','assigned','in_progress','completed') DESC, c.priority DESC LIMIT 200`,
       c.client_id, ...samePatientArgs(c));
     return { patient: c.patient, account_no: c.account_no, rows: rows.map((r) => ({ ...r, mine: r.assigned_to === user.id })) };
   },
@@ -6313,6 +6343,7 @@ const OPS = {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", n.claim_id);
     if (n.user_id !== user.id && !(c && leadFor(user, c.client_id))) throw denied("Only the author or a team lead can edit this note.");
     if (!c) throw bad("Claim not found.");
+    if (deskOf(user) && !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     if (postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): its notes can no longer be edited.");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
@@ -6423,7 +6454,8 @@ const OPS = {
   "attachments.delete": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
-    const ac = await one(env, "SELECT client_id FROM claims WHERE id = ?", a.claim_id);
+    const ac = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", a.claim_id);
+    if (deskOf(user) && !(ac && (await canSeeClaim(env, user, ac)))) throw denied("This claim is not in your queue.");
     if (!(ac && leadFor(user, ac.client_id)) && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
     await env.DB.batch([
       env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id),
@@ -6473,6 +6505,8 @@ const OPS = {
      hand-off (Payment Posting, Submission), so Third Eye reads Brahmastra's work without anyone exporting a conso. */
   "reports.production": async ({ env, user, payload }) => {
     const scope = ["pp", "sub"].includes(payload.scope) ? payload.scope : "ar";
+    // desk people: their own desk's production only (Quality, for their own work), never AR's entries
+    if (deskDepts(user) && !deskDepts(user).includes(scope === "pp" ? "posting" : scope === "sub" ? "submission" : "ar")) throw denied("That is AR's work or another desk's. Your desk is " + DESK_NAME[deskOf(user)] + ".");
     const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
     const people = await all(env, "SELECT id, name, emp_id, city, reports_to FROM users");
     const byId = new Map(people.map((p) => [p.id, p]));
@@ -6731,7 +6765,8 @@ const OPS = {
       vis = "(" + or.join(" OR ") + ")";
     }
     const desk = user.is_admin ? null : userDesk(user);
-    const dept = ["posting", "submission", "subcheck", "rejection"].includes(payload.dept) ? payload.dept : desk && desk !== "both" ? desk : "";
+    // a desk person asks only for their own desk's departments (a posting lead never lists Submission's hand-offs)
+    const dept = ["posting", "submission", "subcheck", "rejection"].includes(payload.dept) && (!desk || DESK_DEPTS[desk].includes(payload.dept)) ? payload.dept : desk && desk !== "both" ? desk : "";
     // The Submission chip also shows the follow-up checks after submitting and the rejections.
     let base = vis + (dept === "submission" ? " AND h.dept IN ('submission','subcheck','rejection')" : dept ? " AND h.dept = ?" : ""); const bargs = [...vargs, ...(dept && dept !== "submission" ? [dept] : [])];
     // One client, and the dates a claim was sent to the desk (the day the AR biller saved the entry that sent it)
@@ -8023,7 +8058,7 @@ export default {
         if (user && user.must_change && !["auth.changePassword", "auth.me", "auth.logout", "auth.deleteMyAccount", "meta.info"].includes(op)) throw new ApiError(403, "Please set a new password first.");
         if (SUPERVISOR_OPS.test(op) && (!user || user.role !== "supervisor") && !(user && DESK_READ_OPS.test(op))) throw denied("Supervisor access is needed for this.");
         if (ADMIN_OPS.test(op) && (!user || !user.is_admin)) throw denied("Admin access is needed for this.");
-        if (user && !user.is_admin && userDesk(user) && /^(inventory\.|alloc\.)/.test(op)) throw denied("Inventory and allocation are for AR. Your desk is " + DESK_NAME[userDesk(user)] + ".");
+        if (user && deskOf(user) && DESK_NOT.test(op)) throw denied("That is AR's work. Your desk is " + DESK_NAME[deskOf(user)] + ": you see the claims sent to it.");
         if (user) {
           user.scope = await scopeOf(env, user);
           // Matching a roster project to a client is how a client comes into scope, so that one call is exempt.

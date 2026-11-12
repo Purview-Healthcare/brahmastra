@@ -5237,7 +5237,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
               </div>
             )}
             {!ro && <Suggestions claim={c} subStatus={c.last_sub_status} />}
-            {!ro && (c.mine || (sup && !q.data.handoff_role)) && <div className="card stack" style={{ paddingBottom: 0 }}>
+            {!ro && (c.mine || (sup && !q.data.handoff_role && !deskOf(me, null))) && <div className="card stack" style={{ paddingBottom: 0 }}>
               <div className="row between"><h2 style={{ margin: 0 }}>Work this claim</h2><span className="tiny muted">{canSaveEntry(c) ? "Save entry records the SAAG and the note; Add as note keeps just the note (for example on a closed claim)" : c.state === "in_process" ? "It is with a desk now: add a note here; a SAAG entry is saved when it is back on a biller's list." : "Not on a biller's list (" + ((STATE_META[c.state] || [])[1] || c.state) + "): add a note here, or allocate it to save a SAAG entry."}</span></div>
               <WorkForm key={"wf" + ver} claim={c}
                 newFiles={(q.data.attachments || []).filter((a) => a.created_at > Math.max(0, ...q.data.notes.filter((n) => n.kind === "work").map((n) => n.created_at))).length}
@@ -6012,6 +6012,8 @@ function MissedModal({ row, kind, onClose }) {
   );
 }
 function RaciView({ me, go }) {
+  // Payment posting and Submission people open the missed list of their own desk only (AR's are claims on billers' lists)
+  const missedOpen = (k) => { const d = deskOf(me, null); return !d || (d === "both" ? k !== "ar" : k === d); };
   const q = useRpc("raci.list", {}, []);
   const [edit, setEdit] = useState(null);
   const [missed, setMissed] = useState(null);
@@ -6033,7 +6035,7 @@ function RaciView({ me, go }) {
               <td><RaciCell people={r.c} /></td>
               <td><RaciCell people={r.i} lockId={vp && vp.id} /></td>
               <td style={{ whiteSpace: "nowrap" }}>{[["ar", "AR"], ["posting", "Post"], ["submission", "Sub"]].map(([k, l]) => { const n = (r.missed && r.missed[k]) || 0; return (
-                <button key={k} className="btn link sm" style={{ padding: "0 4px" }} title={MISSED_KINDS[k][1] + (n ? " Click for the claims." : "")} disabled={!n} onClick={() => setMissed({ row: r, kind: k })}>
+                <button key={k} className="btn link sm" style={{ padding: "0 4px" }} title={MISSED_KINDS[k][1] + (n && missedOpen(k) ? " Click for the claims." : "")} disabled={!n || !missedOpen(k)} onClick={() => setMissed({ row: r, kind: k })}>
                   <span className={"badge " + (n ? "red" : "gray")}>{l} {n}</span></button>); })}</td>
               <td className="small muted" style={{ whiteSpace: "nowrap" }}>{r.saved ? <>{fmtWhen(r.updated_at)}<div className="tiny">{r.updated_by_name}</div></> : <span className="tiny">from the roster</span>}</td>
               <td style={{ textAlign: "right" }}>{r.can_edit ? <button className="btn sm" onClick={() => setEdit(r)}>Edit</button> : <span className="tiny muted" title="This client's team leads and managers edit it; you read it.">view</span>}</td>
@@ -8347,8 +8349,10 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
      before anything is calculated; a file chosen there afterwards replaces it. */
   const fedZones = useRef(new WeakSet());
   const fState = useRef(f); fState.current = f;
+  // the AR Inventory is AR's: a Payment posting or Submission person (team leads too) neither feeds it nor saves it
+  const arInv = !deskOf(me, null);
   useEffect(() => {
-    if (frame.loading) return;
+    if (frame.loading || !arInv) return;
     let alive = true, working = false;
     const tick = async () => {
       if (!alive || working) return;
@@ -8382,7 +8386,7 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
     };
     const id = setInterval(tick, 1500);
     return () => { alive = false; clearInterval(id); };
-  }, [frame.loading, frame.nonce]);
+  }, [frame.loading, frame.nonce, arInv]);
   const saveInv = async () => {
     setBusy(true); setSaved(null);
     try {
@@ -8399,13 +8403,13 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
       <SlaHead title={title} sub={sub} onHow={onHow} frame={pick == null && sso.state !== "loading" ? frame : null} />
       {pick == null && <><div className="card rh-bar">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => { setF({ client_id: v, location_id: "" }); setSaved(null); }} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
-        <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>
+        {arInv && <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>}
         <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : <><i className="rh-dot wait" />Sign in below</>}</div>
       </div>
       <div className="rh-status">
         {saved ? <span><i className="rh-dot" />{saved.name} · {fmtInt(saved.n)} claims · saved {saved.at} to {saved.folders.join(" and ")}</span>
-          : <span><i className="rh-dot off" />{f.client_id ? "AR Inventory goes to " + rc.folder("SLA & KPI") : "Pick a client to put its AR Inventory report in OneDrive"}</span>}
-        <span>Then below: Upload from OneDrive, and pick it with the period's other files</span>
+          : arInv ? <span><i className="rh-dot off" />{f.client_id ? "AR Inventory goes to " + rc.folder("SLA & KPI") : "Pick a client to put its AR Inventory report in OneDrive"}</span> : null}
+        {arInv && <span>Then below: Upload from OneDrive, and pick it with the period's other files</span>}
       </div>
       {fed && fed.state === "ok" && <div className="alert info mb rh-note"><b>Already added from Brahmastra.</b> Today's AR Inventory for {fed.client} ({fmtInt(fed.n)} claims, {fed.at}) is in {fed.dName}'s uploads below, matched to its slot for you to check before anything is calculated. To use a different file, upload it in the same box and it takes its place.</div>}
       {fed && fed.state === "pick" && <div className="alert warn mb rh-note">{fed.dName ? <><b>{fed.dName}</b> is not a Brahmastra client name I can match.</> : null} Pick its client above and its AR Inventory goes into the uploads below by itself.</div>}
