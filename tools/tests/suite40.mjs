@@ -280,6 +280,14 @@ S("A-12: a table's Total row is the sum of the rows it shows");
   ok("A-12: a claims table is unchanged (whole numbers, Total 6)", /<td>Total<\/td><td class="n">6<\/td>/.test(cnt), cnt.slice(-200));
 }
 
+S("N-14: the 'Claims behind this view' total is the sum of the rows as they are shown");
+{ const tot = X("crShownTotal"), rowsOf = (a) => a.map((v) => ({ amount: v }));
+  ok("N-14: three claims of $100.40 shown as $100 each total $300 (it said $301)", tot(rowsOf([100.4, 100.4, 100.4])) === 300, tot(rowsOf([100.4, 100.4, 100.4])));
+  ok("N-14: $12,345.60 + $8,901.70 + $3,210.80 shown as $12,346 + $8,902 + $3,211 total $24,459", tot(rowsOf([12345.6, 8901.7, 3210.8])) === 24459, tot(rowsOf([12345.6, 8901.7, 3210.8])));
+  ok("N-14: a credit counts as shown (-$100 and $51: -$49)", tot(rowsOf([-100.4, 50.6])) === -49, tot(rowsOf([-100.4, 50.6])));
+  ok("N-14: the drawer's total uses it", /crShownTotal\(rows\)/.test(fs.readFileSync(new URL("../../app/app.js", import.meta.url), "utf8")));
+}
+
 S("N-21 (the same slip as Third Eye's): an amount that rounds to zero carries no sign on the report");
 { const f = X("crF"), hair = 0.3 - 0.1 - 0.2;                        // -0.0000000000000000277 in floating point
   ok("N-21: a hair below zero is $0.00 and $0 (never -$0.00 / -$0)", f.money(hair) === "$0.00" && f.money(hair, 0) === "$0" && f.moneyK(hair) === "$0", [f.money(hair), f.money(hair, 0), f.moneyK(hair)]);
