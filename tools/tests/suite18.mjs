@@ -7,12 +7,16 @@ const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond, info }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 400))); };
 const FEED_KEY = "k".repeat(48);
-// shifts around the time the suite runs (IST), so the states do not depend on the clock
-const IST = 330 * 60000, now0 = Date.now();
+// shifts around the time the suite runs (IST), so the states do not depend on the clock. Kim's shift starts in half an
+// hour, or sooner in the half hour before the 05:00 IST day roll (a start after it belongs to the next business day);
+// in the last 3 minutes before the roll the suite waits for it.
+const IST = 330 * 60000, toRoll = (t) => ((5 * 3600000 - (t + IST)) % 86400000 + 86400000) % 86400000;
+if (toRoll(Date.now()) < 3 * 60000) await new Promise((r) => setTimeout(r, toRoll(Date.now()) + 5000));
+const now0 = Date.now(), kimIn = Math.min(30 * 60000, toRoll(now0) - 2 * 60000);
 const hm = (ms) => new Date(ms + IST).toISOString().slice(11, 16);
 const shiftFrom = (startMs) => hm(startMs) + "-" + hm(startMs + 9 * 3600000);
 const iso = (ms) => new Date(ms).toISOString();
-const SH = { arun: shiftFrom(now0 - 65 * 60000), gita: shiftFrom(now0 - 3 * 3600000), dev: shiftFrom(now0 - 2 * 3600000), cara: shiftFrom(now0 - 3 * 3600000), kim: shiftFrom(now0 + 30 * 60000), bela: shiftFrom(now0 - 3 * 3600000) };
+const SH = { arun: shiftFrom(now0 - 65 * 60000), gita: shiftFrom(now0 - 3 * 3600000), dev: shiftFrom(now0 - 2 * 3600000), cara: shiftFrom(now0 - 3 * 3600000), kim: shiftFrom(now0 + kimIn), bela: shiftFrom(now0 - 3 * 3600000) };
 const P = (o) => ({ emp_id: "", name: "", position: "Agent", function: "Operations", department: "AR", also_in_departments: "", status: "Working", project: "", also_on_projects: "", reports_to: "", shift: "", location: "Pune", doj: "2025-01-01", exit_date: null, email: "", ...o });
 const feed = [
   P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", email: "sasha@purview-healthcare.com" }),
