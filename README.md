@@ -566,7 +566,9 @@ straight back to the Rejections person (or Submission) to fix and resubmit, with
 **Supervisor review in Needs attention.** Each escalation (and each claim a department sent back) has **Review**:
 four notes (why it came, what was reviewed, the findings, the next action) go on the claim's timeline only (who escalated it and when, who reviewed it, where it went; the claim's notes and work stay as they were), and the claim
 goes to the biller who sent it, another biller (first on their list, with a notice), or back to the department that
-sent it (with the client's TAT).
+sent it (with the client's TAT). A claim still with a desk stays there: when Submission or Rejections finish it, it
+goes on that biller's list, first (Payment posting closes it instead), and the desk's notices and the recheck go to
+that biller.
 
 **Sent back to AR.** Need assistance from AR goes straight to the biller, first on their list with a notice, and also lands in the client's AR team leads' (and managers') **Needs attention →
 Sent back by Posting / Submission**: when, who sent it, the department, the reason and comment, the biller, and how many

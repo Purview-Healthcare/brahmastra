@@ -6929,7 +6929,7 @@ const OPS = {
     // The status change runs first, and only while the hand-off still stands as this request found it (on the desk, or waiting
     // on the client), so two choices at once cannot both go through: the first one wins, whatever the two choices are.
     const STILL = h.status === "client" ? "status = 'client'" : "status IN ('pending','assigned')";
-    let guard = null;
+    let guard = null, listed = false;
     if (outcome === "complete") {
       const p = payload.proof || {};
       // amounts: optional, a number when given (Paid is the "amount posted" the reports add up)
@@ -6969,8 +6969,12 @@ const OPS = {
         // Submitted: back to the biller with a 15-day follow-up, and always a check after 48 working hours (accepted, or rejected?):
         // the follow-up person set on the client, the biller when the client says so, otherwise whoever submitted it.
         const fu = workingDayOnOrAfter(addDays(today, 15));
+        // A team lead's review gave the claim to a biller while this desk had it ("comes to your list when they finish"):
+        // it goes on that biller's list now instead of waiting for the 15-day follow-up.
+        listed = c.state === IN_PROCESS && !!c.assigned_to && !!(await one(env, "SELECT 1 AS x FROM claim_events WHERE claim_id = ? AND kind = 'review_to_biller' AND at >= ? LIMIT 1", c.id, h.created_at));
         // a claim Posting closed meanwhile (a rejected recheck sent it here) keeps its Posting Closed status and read-only lock
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`).bind(fu, now, c.id));
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN ? ELSE state END, state_reason = '', first_up = CASE WHEN ? = 1 THEN 1 ELSE first_up END, updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`)
+          .bind(listed ? today : fu, listed ? "assigned" : "completed", listed ? 1 : 0, now, c.id));
         const cl = await one(env, "SELECT submission_check_mode, submission_check_person, submission_tat_hours, subcheck_hours FROM clients WHERE id = ?", h.client_id);
         // "The biller" is the AR biller of the claim (biller_id): on a Rejections hand-off created_by is whoever rejected the last recheck.
         const checker = cl && cl.submission_check_mode === "person" && cl.submission_check_person ? await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", cl.submission_check_person) : null;
@@ -6986,7 +6990,7 @@ const OPS = {
         // Submission follow-up: accepted by the payer, the final check is done.
         stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'submission_accepted', updated_at = ? WHERE id = ?").bind(now, c.id));
       }
-      stmts.push(claimEvent(env, c.id, user, "handoff_done", DEPT_LABEL[h.dept], { dept: h.dept, proof, note, within_tat: now <= h.due_at }));
+      stmts.push(claimEvent(env, c.id, user, "handoff_done", DEPT_LABEL[h.dept], { dept: h.dept, proof, note, within_tat: now <= h.due_at, ...(listed ? { listed: true } : {}) }));
     } else if (outcome === "rejected" && h.dept === "subcheck") {
       // Rejected: straight back to the Submission team to resubmit, with the reason.
       const reason = str(payload.reason, 80).trim();
@@ -7072,10 +7076,10 @@ const OPS = {
     // a claim that stays closed is not sent back to anyone's list, so nobody is told it is
     if (billerId && tellBiller && h.dept !== "subcheck" && !(outcome === "back" && kept)) {
       const cno = c.claim_no || c.account_no || "a claim";
-      const text = outcome === "complete" ? `${user.name} ${tellBiller} claim ${cno} (${DEPT_LABEL[h.dept]} complete)`
+      const text = outcome === "complete" ? `${user.name} ${tellBiller} claim ${cno} (${DEPT_LABEL[h.dept]} complete)` + (listed ? ". It is first on your list now." : "")
         : outcome === "back" ? `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${cno} back to you (${str(payload.reason, 80).trim()})`
         : `${DEPT_LABEL[h.dept]}: claim ${cno} is waiting on the client (${str(payload.reason, 80).trim()})`;
-      stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), billerId, now, text.slice(0, 300), outcome === "back" ? "queue" : "history", h.client_id));
+      stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), billerId, now, text.slice(0, 300), outcome === "back" || listed ? "queue" : "history", h.client_id));
     }
     // Sent back to AR: the biller whose list it is on hears too (when that is someone else), and it is first on their list.
     if (outcome === "back" && !kept && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
@@ -7088,7 +7092,8 @@ const OPS = {
     }
     await env.DB.batch(stmts);
     if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id, outcome); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
-    return { ok: true };
+    // listed: the claim went on a biller's list now (a team lead's review gave it to them while the desk had it)
+    return { ok: true, ...(listed ? { listed: true } : {}) };
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
@@ -7760,7 +7765,12 @@ const OPS = {
       const atDesk = c.state === IN_PROCESS ? await one(env, "SELECT dept FROM handoffs WHERE claim_id = ? AND dept <> 'subcheck' AND status IN ('pending','assigned','client') ORDER BY created_at DESC LIMIT 1", c.id) : null;
       if (atDesk) {
         stmts.push(env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = CASE WHEN assigned_to = ? THEN assigned_at ELSE ? END, skipped_at = NULL WHERE id = ?").bind(b.id, b.id, now, c.id));
-        stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), b.id, now, `${user.name} reviewed claim ${cno} and gave it to you. It is with ${DEPT_LABEL[atDesk.dept]} now and comes to your list when they finish. Next action: ${next}`.slice(0, 300), "queue", c.client_id));
+        // the open hand-offs follow this biller: the desk's notices and the recheck after a submission go to them, and when
+        // Submission or Rejections finish the claim goes on their list (handoffs.close looks for this review)
+        stmts.push(env.DB.prepare("UPDATE handoffs SET biller_id = ? WHERE claim_id = ? AND status IN ('pending','assigned','client')").bind(b.id, c.id));
+        const then = atDesk.dept === "posting" ? "It is with Payment Posting now, which closes it once the payment is posted (if they send it back, it is first on your list)."
+          : `It is with ${DEPT_LABEL[atDesk.dept]} now and comes to your list when they finish.`;
+        stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), b.id, now, `${user.name} reviewed claim ${cno} and gave it to you. ${then} Next action: ${next}`.slice(0, 300), "queue", c.client_id));
       } else {
         // A closed claim the team lead sends to a biller is opened again: it is first on their list, as the notice says.
         stmts.push(env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = CASE WHEN assigned_to = ? THEN assigned_at ELSE ? END,

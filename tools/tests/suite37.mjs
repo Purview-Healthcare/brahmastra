@@ -374,6 +374,49 @@ await part("C-06: two different choices on one hand-off at the same moment: the 
   await A("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "person", lead: U("Quin Submit").id });
 });
 
+await part("C-09: a claim at a desk that the team lead's review gives to another biller reaches that biller", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const REVIEW = { why: "Biller flagged it", reviewed: "Claim history and the portal", findings: "Bela knows this payer better", next: "Bela takes it after the desk" };
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  // flagged in the same save that sends it to Submission; the team lead gives it to Bela
+  await save(AR, a, SAAG.resub, { escalate: true });
+  await sql("DELETE FROM user_notices");
+  let r = await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "other", user_id: U("Bela Agent").id }));
+  let h = await openH(a, "submission");
+  ok("C-09: the review is saved; the claim stays with Submission and the hand-off's AR biller is now the new biller", r.ok && r.r.waits === "Submission" && (await claim(a)).state === "in_process" && h.biller_id === U("Bela Agent").id, [r, h && h.biller_id]);
+  ok("C-09: the notice says it comes to her list when the desk finishes", (await rows("SELECT text FROM user_notices WHERE user_id = ?", U("Bela Agent").id)).some((n) => /It is with Submission now and comes to your list when they finish/.test(n.text)), await rows("SELECT text FROM user_notices"));
+  setNow(IST(2026, 11, 10, 12, 0));
+  await sql("DELETE FROM user_notices");
+  r = await T(() => submitIt(QU, a));
+  let c = await claim(a);
+  ok("C-09: when Submission finishes, the claim is on the new biller's list, first, for today", r.ok && r.r.listed === true && c.state === "assigned" && c.assigned_to === U("Bela Agent").id && c.first_up === 1 && c.follow_up_on === "2026-11-10" && c.handoff_status === "submitted", [r, await brief(a)]);
+  const nx = await call(BE, "queue.next");
+  ok("C-09: ...Work the next claim opens it for her", nx.claim && nx.claim.id === a, nx.claim && nx.claim.claim_no);
+  const told = await rows("SELECT user_id, text FROM user_notices WHERE text LIKE '%submitted claim%'");
+  ok("C-09: ...the desk's notice goes to her (not the first biller) and says so", told.length === 1 && told[0].user_id === U("Bela Agent").id && /first on your list now/.test(told[0].text), told);
+  const rc = (await hos(a)).find((x) => x.dept === "subcheck");
+  ok("C-09: ...and the recheck is hers on My day", rc && rc.biller_id === U("Bela Agent").id && (await call(BE, "handoffs.myRechecks")).rows.some((x) => x.id === rc.id) && !(await call(AR, "handoffs.myRechecks")).rows.some((x) => x.id === rc.id), rc && rc.biller_id);
+  // not reviewed: Submission finishing keeps the usual 15-day follow-up with the first biller
+  await save(AR, b, SAAG.resub);
+  r = await T(() => submitIt(QU, b)); c = await claim(b);
+  ok("C-09: a claim nobody reviewed still comes back as before (worked, 15-day follow-up)", r.ok && !r.r.listed && c.state === "completed" && c.follow_up_on === "2026-11-25" && c.assigned_to === U("Arun Agent").id, await brief(b));
+  // at Payment posting: Posting closes it, and the notice says that instead of promising the list
+  await call(AR, "attachments.add", { claim_id: d, name: "eob.pdf", type: "application/pdf", data: PDF });
+  await save(AR, d, SAAG.post, { escalate: true });
+  await sql("DELETE FROM user_notices");
+  r = await T(() => call(TI, "attention.review", { id: d, ...REVIEW, route: "other", user_id: U("Bela Agent").id }));
+  ok("C-09: at Payment posting the notice says Posting closes it (no promise of the list)", r.ok && (await rows("SELECT text FROM user_notices WHERE user_id = ?", U("Bela Agent").id)).some((n) => /It is with Payment Posting now, which closes it once the payment is posted/.test(n.text) && !/comes to your list/.test(n.text)), await rows("SELECT text FROM user_notices"));
+  await postIt(d);
+  ok("C-09: ...and Posting completing it closes the claim as always", (await claim(d)).state === "closed" && (await claim(d)).handoff_status === "posted", await brief(d));
+  // sent back by the desk instead: first on the new biller's list, and she is the one told
+  await save(AR, e, SAAG.resub, { escalate: true });
+  await call(TI, "attention.review", { id: e, ...REVIEW, route: "other", user_id: U("Bela Agent").id });
+  await sql("DELETE FROM user_notices");
+  await call(QU, "handoffs.close", { id: (await openH(e, "submission")).id, outcome: "back", reason: "Missing claim data", note: "Need the NPI on line two" });
+  c = await claim(e);
+  ok("C-09: if the desk sends it back instead, it is first on the new biller's list and she is told", c.state === "assigned" && c.assigned_to === U("Bela Agent").id && c.first_up === 1 && (await rows("SELECT user_id FROM user_notices WHERE text LIKE '%back to you%'")).every((n) => n.user_id === U("Bela Agent").id), [await brief(e), await rows("SELECT user_id, text FROM user_notices")]);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
