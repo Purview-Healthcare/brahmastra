@@ -351,15 +351,17 @@ Click **allocations** under a person's name for what was allocated to them and w
 
 #### Dashboard › Inventory status
 
-For team leads and above (a team lead sees their own clients, a manager their span), **Inventory status** lists
-every client worst first: health with its reasons, team lead and manager, AR against a month
-ago, unassigned, over 90, collected for the dates, the **SLA score** from Drishti (the score, its band and the change
-since the period before, with a dot per scope: AR, Submission, Payment Posting, EV, SLA tasks), **pulling it down**
-(the red and amber KPIs by name), missed tasks, dollars waiting on the client, timely-filing risk, **days to clear**
-(claims still to work divided by the team's entries a working day over the last two weeks; a client nobody worked
-shows that instead of a made-up number) and when its inventory was last uploaded. On top: Workable AR, unassigned,
-over 90, collected, **KPIs in the red** across the clients and the **SLA score, average** with the green, amber and
-red count. Click a client for its Client 360, **scorecard ›** for its scorecard. Below, the **claims in detail**
+For team leads and above (a team lead sees their own clients, a manager their span), **Inventory status** shows all
+of them, or one client: **where the inventory stands** (each open claim in one stage, and what was closed this
+month), what is **pending with the desks and team leads**, the **age of the workable AR** against the over-90 target,
+the **pace to clear** (**days to clear**: claims still to work divided by the team's entries a working day over the
+last two weeks; a client nobody worked shows that instead of a made-up number), the **SLA checks** the inventory
+answers today with Drishti's last scorecard (the average with the green, amber and red count, or the client's score),
+and **to meet the SLA this month, do these first**. Then **by client, worst first**: health, team lead, where its
+inventory stands, workable AR, over 90, overdue, waiting, days to clear, the **SLA score** from Drishti with
+**scorecard ›**, and what to do first; click a client for its own stages and do-first list. A client's SLA score is
+its last finished month in Drishti; for a client Drishti has only weeks for, it is the last week's score, and the page
+says so ("week of 2 Nov 2026"). Below, the **claims in detail**
 (by client and location, value tier, age, status, buckets after work, SAAG statuses, payers, time on calls; click a
 bar to narrow the charts), then:
 

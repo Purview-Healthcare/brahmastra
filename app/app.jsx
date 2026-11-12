@@ -4563,7 +4563,7 @@ function DigestDashboard({ params, go }) {
           <div key={c.id} className={"dd-card " + b}>
             <div className="dd-hd"><div className={"dd-dial " + b}>{c.card ? c.card.score + "%" : "–"}</div>
               <div><div className="nm">{c.name} {c.card && <span className={"badge " + drBandUi(c.card.band)[1]}>{bandWord[c.card.band]}</span>}</div>
-                <div className="mt">{c.card ? `${c.card.period} · ${c.card.kpi_ok} of ${c.card.kpi_n} KPIs on target` : "Not scored in Drishti yet"}{c.card && c.card.delta != null ? <> · {c.card.delta ? <b className={c.card.delta > 0 ? "teal-ink" : "red-ink"}>{c.card.delta > 0 ? "▲" : "▼"} {Math.abs(c.card.delta)} pts</b> : <span className="muted">no change</span>}</> : null}</div>
+                <div className="mt">{c.card ? `${c.card.period} · ${c.card.kpi_ok} of ${c.card.kpi_n} KPIs on target` : "No month scored in Drishti yet"}{c.card && c.card.delta != null ? <> · {c.card.delta ? <b className={c.card.delta > 0 ? "teal-ink" : "red-ink"}>{c.card.delta > 0 ? "▲" : "▼"} {Math.abs(c.card.delta)} pts</b> : <span className="muted">no change</span>}</> : null}</div>
                 {ppl && <div className="mt">{ppl}</div>}</div></div>
             <div className="dd-fte"><div><span>Billable FTE</span><b>{c.wfm ? f1(c.wfm.billable) : "–"}</b></div><div><span>Assign FTE</span><b className={c.wfm && c.wfm.billable != null && c.wfm.assigned_fte < c.wfm.billable ? "amber-ink" : ""}>{c.wfm ? f1(c.wfm.assigned_fte) : "–"}</b></div></div>
             <div className="dd-mini">
@@ -6646,6 +6646,9 @@ const isPortfolioUser = (me) => !!me && me.role === "supervisor" && (me.is_admin
 const DR_BAND = { ok: ["teal-ink", "green", "Green"], warn: ["amber-ink", "amber", "Amber"], miss: ["red-ink", "red", "Red"] };
 const drBandUi = (b) => DR_BAND[b] || ["muted", "gray", "Not scored"];
 const drDot = (b) => <i className={"psla-dot " + (b || "none")} />;
+/* A client's Drishti score is its last finished month; for a client Drishti has only weeks for, it is a week's score, and the
+   page says which ("week of 2 Nov 2026", Drishti's own name for the period). Nothing for a month. */
+function drPerNote(dr) { const l = dr && dr.kind && dr.kind !== "month" ? String(dr.label || "").trim() : ""; return l ? l.charAt(0).toLowerCase() + l.slice(1) : ""; }
 /* Dashboard › Inventory status: where every workable claim stands today (one stage each), the age of the AR against the over-90
    target, the pace to clear, the SLA checks the inventory answers today, and what to do first to meet the SLA. Every client, or one. */
 const INV_STAGES = [["open", "Unassigned", "#9AA5B1"], ["list", "On a biller's list", "#22CAE4"], ["later", "Worked, follow-up later", "#30C48D"], ["due", "Follow-up due today", "#F5A623"],
@@ -6741,7 +6744,7 @@ function InventoryStatusTab(props) {
               <tbody>{d.checks.map((c) => <tr key={c.key}><td>{c.name}</td><td className={"r b " + (c.ok ? "teal-ink" : c.warn ? "amber-ink" : "red-ink")}>{c.now}</td><td className="muted">{c.target}</td>
                 <td>{c.ok ? <span className="badge green">met</span> : c.warn ? <span className="badge amber">watch</span> : <span className="badge red">not met</span>}</td></tr>)}</tbody></table>}
             {d.drishti && d.drishti.state === "ok" && d.drishti.avg != null && !clientId ? <div className="small muted mt8">Last scorecard in Drishti: average <b>{d.drishti.avg}%</b> · {d.drishti.bands.ok} green · {d.drishti.bands.warn} amber · {d.drishti.bands.miss} red</div>
-              : client && client.drishti ? <div className="small muted mt8">Last scorecard in Drishti: <b className={drBandUi(client.drishti.band)[0]}>{client.drishti.score}%</b> <button type="button" className="btn link tiny" style={{ padding: 0 }} onClick={() => go("sla", { tab: "scorecard", client_id: clientId })}>scorecard ›</button></div> : null}</div>
+              : client && client.drishti ? <div className="small muted mt8">Last scorecard in Drishti: <b className={drBandUi(client.drishti.band)[0]}>{client.drishti.score}%</b>{drPerNote(client.drishti) ? " · " + drPerNote(client.drishti) : ""} <button type="button" className="btn link tiny" style={{ padding: 0 }} onClick={() => go("sla", { tab: "scorecard", client_id: clientId })}>scorecard ›</button></div> : null}</div>
         </div>
         <div className="card">
           <div className="row between" style={{ alignItems: "flex-start" }}><div><h3 style={{ margin: 0 }}>To meet the SLA this month · do these first</h3>
@@ -6758,7 +6761,7 @@ function InventoryStatusTab(props) {
               <td><InvStrip stages={c.stages} mini /></td><td className="num mono">{fmtK(c.ar)}</td><td className={"num " + (c.over90_pct > d.target ? "red-ink" : "teal-ink")}>{c.over90_pct}%</td>
               <td className={"num " + (c.overdue ? "red-ink" : "")}>{fmtInt(c.overdue)}</td><td className="num">{fmtInt(c.waiting)}</td>
               <td className={"num " + (c.days_to_clear != null && c.days_to_clear > d.wd_left ? "red-ink" : "")}>{c.days_to_clear == null ? "–" : plural(c.days_to_clear, "day")}</td>
-              <td onClick={(e) => e.stopPropagation()}>{c.drishti ? <><span className={"badge " + drBandUi(c.drishti.band)[1]}>{c.drishti.score}%</span> <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("sla", { tab: "scorecard", client_id: c.client_id })}>scorecard ›</button></> : <span className="tiny muted">–</span>}</td>
+              <td onClick={(e) => e.stopPropagation()}>{c.drishti ? <><span className={"badge " + drBandUi(c.drishti.band)[1]}>{c.drishti.score}%</span>{drPerNote(c.drishti) ? <span className="tiny muted"> {drPerNote(c.drishti)}</span> : null} <button type="button" className="btn link tiny" style={{ padding: 0, fontWeight: 700 }} onClick={() => go("sla", { tab: "scorecard", client_id: c.client_id })}>scorecard ›</button></> : <span className="tiny muted">–</span>}</td>
               <td className="small" style={{ maxWidth: 300 }}>{c.do_first.length ? c.do_first.map((x, k) => <div key={k}>{x}</div>) : <span className="teal-ink">Nothing urgent</span>}</td></tr>)}</tbody></table></div></div>}
         {clientId && <button type="button" className="btn link sm" style={{ alignSelf: "flex-start" }} onClick={() => setClientId("")}>‹ Back to every client</button>}
       </>}
