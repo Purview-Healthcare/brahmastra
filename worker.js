@@ -736,10 +736,13 @@ async function escalationSlaFiles(env, tok, clientId, months) {
 /* The TAT report for the SLA: after a month closes, each client's hand-offs that fell due in it, closed within TAT or not, go to
    the client's SLA & KPI folder under each of its team leads, as
    Brahmastra Reports / <Team lead> / <Client> / SLA & KPI / TAT Report - <Client> - Nov 2026.xlsx,
-   next to the Escalation Tracker copy, for the Payment Posting TAT and Submission TAT on Drishti's scorecard. */
+   next to the Escalation Tracker copy, for the Payment Posting TAT and Submission TAT on Drishti's scorecard.
+   Nothing in it may read as an Escalation Tracker: Drishti takes a file with a Department (or SR No) column for one, and has no
+   slot for this report. So the desk's column is called Desk, and a new file (made from the tracker's template) loses the
+   template's tab name and the rest of its header row. */
 /* A hand-off still with its desk: pending, assigned, or waiting on the client (the TAT clock keeps running while it waits). */
 const HO_OPEN = ["pending", "assigned", "client"];
-const TAT_HEADER = ["Claim #", "Department", "Sent to the desk (IST)", "Due by (IST)", "Closed (IST)", "Within TAT", "Working hours taken", "TAT (working hours)"];
+const TAT_HEADER = ["Claim #", "Desk", "Sent to the desk (IST)", "Due by (IST)", "Closed (IST)", "Within TAT", "Working hours taken", "TAT (working hours)"];
 async function tatReportRows(env, clientId, ym) {
   const cl = await one(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", clientId); if (!cl) return { cl: null, rows: [] };
   const from = istDayStart(ym + "-01"), to = istDayStart(nextMonthISO(ym) + "-01") - 1, now = Date.now();
@@ -776,7 +779,11 @@ async function tatSlaFiles(env, tok, clientId, ym) {
     const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
     const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
     const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(TAT_HEADER.length);
+    // a new file is the Escalation Tracker template: its "Escalations" tab is renamed, and its header row is blanked to the
+    // tracker's last column before the TAT header goes on it
+    if (/^escalations$/i.test(String(sheet.name || "").trim())) { try { await graphCall(tok, "PATCH", ws, { name: "TAT Report" }); } catch (e) {} }
     await graphCall(tok, "POST", ws + `/range(address='A2:${last}20000')/clear`, { applyTo: "Contents" });
+    await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(ESC_HEADER.length)}1')`, { values: [[...TAT_HEADER, ...Array(ESC_HEADER.length - TAT_HEADER.length).fill("")]] });
     await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [TAT_HEADER, ...rows], numberFormat: [TAT_HEADER.map(() => "@"), ...rows.map(() => TAT_HEADER.map((h, i) => (i >= 6 ? "General" : "@")))] });
     saved.push(path.join(" › "));
   }
