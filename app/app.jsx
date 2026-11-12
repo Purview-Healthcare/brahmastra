@@ -7432,14 +7432,16 @@ function crBuildSubmission(c) {
 }
 function crBuildRejection(c) {
   const R = c.R, ds = c.ds("rejection"); if (!ds) return null;
-  const all = c.rows("rejection", null), subRows = c.ds("submission") ? c.rows("submission", null).filter((r) => crSubState(r) === "submitted") : [];
-  // A share of this period's submissions, with the same filter. Rejections of claims sent earlier can outnumber them: no rate then.
-  const base = subRows.length || (c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : 0), more = !!base && all.length > base;
-  const rate = base && !more ? all.length / base : null;
+  // A share of this period's submissions, with the same filter (of the claims worked only for a client with no Submission records at all).
+  // Rejections of claims sent earlier can outnumber them, or come in a period with no submission: no rate then.
+  const subDs = c.ds("submission"), all = c.rows("rejection", null), subRows = subDs ? c.rows("submission", null).filter((r) => crSubState(r) === "submitted") : [];
+  const base = subDs ? subRows.length : c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : 0, more = !!base && all.length > base;
+  const rate = base && !more ? all.length / base : null, noun = subDs ? "submitted" : "worked";
+  const none = subDs && !base ? (Object.values(c.sel || {}).some((x) => x && x.size) ? "no submissions match these filters this period" : "no submissions this period (these were submitted earlier)") : "";
   const prev = c.hasPrev("rejection") ? c.prev("rejection") : null;
   const kpis = [
     crKpi("Rejected claims", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),
-    crKpi("Rejection rate", rate == null ? "–" : crF.pct(rate, 1), { sub: more ? `more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} this period` : subRows.length ? `of ${crF.int(subRows.length)} submitted` : c.ds("worked") ? "of worked claims" : "", upGood: false }),
+    crKpi("Rejection rate", rate == null ? "–" : crF.pct(rate, 1), { sub: more ? `more than the ${crF.int(base)} ${noun} this period` : none || (subDs ? `of ${crF.int(base)} submitted` : c.ds("worked") ? "of worked claims" : ""), upGood: false }),
     crKpi("Rejected amount", crF.moneyK(crSum(all, (r) => r.amount)), { sub: crMoneySub(crSum(all, (r) => r.amount)) }),
   ];
   const cards = [];
@@ -7447,14 +7449,14 @@ function crBuildRejection(c) {
   crAddCard(cards, crCardBar(c, "status", "Rejection reasons", { role: "rejection", cols: 6, emph: true, maxRows: 10, sub: "Top 80% of rejections highlighted" }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action wise breakdown", { role: "rejection", cols: 12, maxRows: 6 }));
   const ins = [], reasons = crAgg(all, "status", ds), acts = crAgg(all, "action", ds);
-  ins.push(`${crF.int(all.length)} claims were rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${subRows.length ? "submitted" : "worked"} in the period (some were submitted earlier)` : ""}.`);
+  ins.push(`${crF.int(all.length)} claims were rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${noun} in the period (some were submitted earlier)` : none ? `; ${none}` : ""}.`);
   if (reasons[0]) ins.push(`The leading rejection reason is ${reasons[0].label} (${crF.pct(reasons[0].share, 0)})${reasons[1] ? `, followed by ${reasons[1].label} (${crF.pct(reasons[1].share, 0)})` : ""}.`);
   if (ds.dateField) { const byDay = new Map(); for (const r of all) { const d = r[ds.dateField]; if (!d) continue; const k = crF.iso(d); let e = byDay.get(k); if (!e) { e = { d, rows: [] }; byDay.set(k, e); } e.rows.push(r); }
     const days = [...byDay.values()].sort((a, b) => b.rows.length - a.rows.length || a.d - b.d).slice(0, 3);
     if (days.length) ins.push(`Most rejections came on ${days.map((e) => `${crF.date(e.d)} (${crF.int(e.rows.length)}: ${crAgg(e.rows, "status", ds).slice(0, 2).map((x) => `${x.label} ${crF.int(x.count)}`).join(", ")})`).join("; ")}.`); }
   const resub = acts.find((x) => /rebill|resubmit|corrected|sent/.test(x.key)); if (resub) ins.push(`${crF.pct(resub.share, 0)} of rejected claims were already corrected and resubmitted (${resub.label}).`);
   if (prev) { const h = crHeadline(R, "Rejections", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); ins.push(...crMovers(R, all, prev, "status", ds, { noun: "reason", share: false, newItems: true })); ins.push(...crMovers(R, all, prev, "payerKey", ds, { noun: "payer", shareOf: "rejections" })); }
-  return { title: "Rejections", headline: `${crF.int(all.length)} claims rejected${rate != null ? `, ${crF.pct(rate, 1)} of submissions` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)}${ds.derivedFrom ? " · from the AR work entries" : ""}`, watermark: "REJECTION", kpis, cards, insights: ins,
+  return { title: "Rejections", headline: `${crF.int(all.length)} claims rejected${rate != null ? `, ${crF.pct(rate, 1)} of ${subDs ? "submissions" : "the claims worked"}` : ""}`, sub: `${R.client} · ${crRangeLabel(c.range)}${ds.derivedFrom ? " · from the AR work entries" : ""}`, watermark: "REJECTION", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "workBy"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "rejection") };
 }
 function crBuildPayment(c) {

@@ -195,7 +195,7 @@ does not count).
 |---|---|
 | Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, Future DOS for a date of service typed in the future, and Unknown age for a claim with no date of service or age), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
 | AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet*; a claim worked twice counts once, at its latest entry, in the KPIs and the charts |
-| Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof) |
+| Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof); the rejection rate is of the claims submitted in the period (of the claims worked for a client with no Submission records), and a period with no submission has no rate |
 | Client assistance | requests sent to the client, with their reason and whether they were answered; a request counts in every period it was waiting, however long ago it was sent |
 | EV | the EV production file uploaded on the start screen (verifications, insurance wise, verification type or status) |
 | Executive summary | the headline of each page and the six-month AR and collections trend |
