@@ -199,6 +199,31 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("E-07: the client's own team lead gives tasks as before", r.ok, r);
 }
 
+/* ================= Team edit (users.save): D-10 checks before writes ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id } = w;
+  const TI = await w.c("Tina Lead"), NN = await w.c("Nil Nomail");
+  const snap = async (name) => { const u = await w.U(name); return [u.email, u.email_missing, u.emp_id, u.projects_json, u.reports_to, u.name, u.capacity, u.active, u.role].join(" | "); };
+
+  S("D-10: a save that is refused changes nothing");
+  let before = await snap("Nil Nomail");
+  let r = await T(() => NN("users.save", { id: id["Nil Nomail"], first_name: "Renamed", last_name: "Nomail", role: "supervisor", capacity: 77, active: false, email: "nil.typed" + D }));
+  ok("D-10: a team lead's refused save of their own profile (Active off) leaves the email, name and target as they were", !r.ok && /deactivate or demote your own/.test(r.e) && (await snap("Nil Nomail")) === before, [r, before, await snap("Nil Nomail")]);
+  const admin = await w.row("SELECT * FROM users WHERE role = 'admin'");
+  before = await snap(admin.name);
+  r = await T(() => A("users.save", { id: admin.id, first_name: "Changed", last_name: "Admin", active: false, email: "changed.admin" + D, emp_id: "ZZ999", projects: [{ name: SUN }], reports_to: id["Vera Vice"] }));
+  ok("D-10: the admin's refused save (Active off on the own account) leaves the email, Emp ID, projects and reports-to as they were", !r.ok && /deactivate or demote your own/.test(r.e) && (await snap(admin.name)) === before, [r, before, await snap(admin.name)]);
+  before = await snap("Arun Agent");
+  r = await T(() => A("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", role: "user", email: "tina" + D, emp_id: "ZZ998", projects: [{ name: LAKE }], reports_to: id["Lara Lead"] }));
+  ok("D-10: a save refused for the email (another account has it) writes none of the rest", !r.ok && /already has an account/.test(r.e) && (await snap("Arun Agent")) === before, [r, before, await snap("Arun Agent")]);
+  r = await T(() => A("users.save", { id: id["Arun Agent"], first_name: "Arun", last_name: "Agent", designation: "Sr Biller", role: "user", capacity: 41, active: true, email: "arun.new" + D, emp_id: "A1", projects: [{ name: SUN }, { name: LAKE, share: 25 }], reports_to: id["Lara Lead"] }));
+  const u = await w.U("Arun Agent");
+  ok("D-10: a save that passes writes all of it together", r.ok && u.email === "arun.new" + D && u.capacity === 41 && u.designation === "Sr Biller" && u.reports_to === id["Lara Lead"] && u.reports_to_name === "Lara Lead" && JSON.parse(u.projects_json).length === 2, [r, u && [u.email, u.capacity, u.designation, u.reports_to_name, u.projects_json]]);
+  r = await T(() => TI("users.save", { id: id["Bela Agent"], first_name: "Bela", last_name: "Agent", role: "user", active: false }));
+  ok("D-10: switching someone off still signs them out and frees their claims", r.ok && (await w.U("Bela Agent")).active === 0, r);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

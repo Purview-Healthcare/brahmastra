@@ -3769,21 +3769,25 @@ const OPS = {
         if (projects && user.scope) { const mine = new Set((user.scope_projects || []).map(projKey)); const extra = projects.filter((x) => !mine.has(projKey(x.name)));
           if (extra.length) throw denied("You can only give people your own projects. Not yours: " + extra.map((x) => x.name).join(", ") + "."); }
       }
+      // Every check comes before the first write, so a save that is refused changes nothing.
       if (newEmail !== ex.email) {
         if (!mailOk(newEmail)) throw bad("Enter a valid email address.");
         if (await one(env, "SELECT id FROM users WHERE email = ? AND id <> ?", newEmail, ex.id)) throw bad("That email already has an account.");
-        await run(env, "UPDATE users SET email = ?, email_missing = 0 WHERE id = ?", newEmail, ex.id);
       }
-      if (payload.emp_id != null) await run(env, "UPDATE users SET emp_id = ? WHERE id = ?", str(payload.emp_id, 20).trim().toUpperCase(), ex.id);
-      if (projects) await run(env, "UPDATE users SET projects_json = ? WHERE id = ?", JSON.stringify(projects), ex.id);
-      if (reportsTo !== undefined) { const r = reportsTo ? await one(env, "SELECT name FROM users WHERE id = ?", reportsTo) : null; await run(env, "UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?", reportsTo, r ? r.name : "", ex.id); }
       if (ex.id === user.id && (!active || (role !== "supervisor" && role !== "admin"))) throw bad("You can't deactivate or demote your own account.");
       if (ex.role === "supervisor" && (role !== "supervisor" || !active)) {
         const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", ex.id);
         if (!n.n) throw bad("Keep at least one active team lead.");
       }
-      await run(env, "UPDATE users SET name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, capacity = ?, active = ? WHERE id = ?", name, first, last, designation, role, capacity, active, ex.id);
-      if (!active) await run(env, "DELETE FROM sessions WHERE user_id = ?", ex.id);
+      const boss = reportsTo ? await one(env, "SELECT name FROM users WHERE id = ?", reportsTo) : null;
+      await env.DB.batch([
+        ...(newEmail !== ex.email ? [env.DB.prepare("UPDATE users SET email = ?, email_missing = 0 WHERE id = ?").bind(newEmail, ex.id)] : []),
+        ...(payload.emp_id != null ? [env.DB.prepare("UPDATE users SET emp_id = ? WHERE id = ?").bind(str(payload.emp_id, 20).trim().toUpperCase(), ex.id)] : []),
+        ...(projects ? [env.DB.prepare("UPDATE users SET projects_json = ? WHERE id = ?").bind(JSON.stringify(projects), ex.id)] : []),
+        ...(reportsTo !== undefined ? [env.DB.prepare("UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?").bind(reportsTo, boss ? boss.name : "", ex.id)] : []),
+        env.DB.prepare("UPDATE users SET name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, capacity = ?, active = ? WHERE id = ?").bind(name, first, last, designation, role, capacity, active, ex.id),
+        ...(!active ? [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(ex.id)] : []),
+      ]);
       // Switched off here as in a roster sync: their claims go back to the pool and their open hand-offs to the backup.
       if (!active && ex.active) await unassignOpen(env, ex.id);
       if (projects || reportsTo !== undefined || role !== ex.role || active !== ex.active) { await recomputeScopes(env); await syncTeams(env); }
