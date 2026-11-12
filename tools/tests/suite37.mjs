@@ -511,6 +511,18 @@ await part("C-07: the 48-hour recheck is not a second claim received and submitt
   ok("C-07: ...and the Rejections task it opens is a claim received (the desk's own work)", t.received === 3 && t.completed === 2, { received: t.received, completed: t.completed });
 });
 
+await part("C-08: 'needed assistance' on the desk dashboard counts Need assistance from AR", async () => {
+  setNow(IST(2026, 11, 19, 10, 0));
+  const dash = () => call(TI, "handoffs.dashboard", { dept: "submission", client_id: sun.id, from_ms: IST(2026, 11, 19, 0, 0), to_ms: Date.now() });
+  const [a] = await give("Arun Agent", 1);
+  await save(AR, a, SAAG.resub);
+  ok("C-08: nothing sent back yet: 0 needed assistance", ((await dash()).totals.assist || 0) === 0, (await dash()).totals.assist);
+  setNow(IST(2026, 11, 19, 12, 0));
+  await call(QU, "handoffs.close", { id: (await openH(a, "submission")).id, outcome: "back", reason: "Missing claim data", note: "Need the NPI on line two" });
+  const t = (await dash()).totals;
+  ok("C-08: after Need assistance from AR the Open now card says 1 needed assistance (the same 1 as 'back to AR')", t.assist === 1 && t.back === 1, { assist: t.assist, back: t.back });
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

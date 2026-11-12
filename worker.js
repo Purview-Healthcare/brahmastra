@@ -6812,7 +6812,7 @@ const OPS = {
     const tot = await one(env, `SELECT SUM(CASE WHEN ${work} AND h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
         SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
-        SUM(CASE WHEN h.status = 'assistance' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
+        SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
         AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
         SUM(CASE WHEN h.status IN ('pending','assigned','client') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now,
         SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN c.balance ELSE 0 END) AS amount,
