@@ -4468,6 +4468,8 @@ const OPS = {
     // Changing a template that is already there needs edit access to the client it belongs to now, as deleting it does.
     const ex = payload.id ? await one(env, "SELECT client_id FROM note_templates WHERE id = ?", id) : null;
     if (ex && ex.client_id) editableOr(user, ex.client_id);
+    // A template for every client is used by every team: only someone who may change every client moves it to one client.
+    if (ex && !ex.client_id && cid && editScope(user) != null) throw denied("This template is for every client, so other teams use it too. To have one for your client, add a new template.");
     await run(env, `INSERT INTO note_templates (id, client_id, title, text, by_id, by_name, at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT (id) DO UPDATE SET client_id = excluded.client_id, title = excluded.title, text = excluded.text, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, cid, title, text, user.id, user.name || "", Date.now());
     return { ok: true, id };

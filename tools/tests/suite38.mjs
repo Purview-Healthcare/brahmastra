@@ -405,6 +405,22 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-15: the page does not take them for SMEs", rows.every((r) => !isSmeUI(r)));
 }
 
+{
+  S("E-17: another team's lead cannot turn an every-client template into their own client's");
+  const w = await world();
+  const TI = await w.firstIn("Tina Lead"), LA = await w.firstIn("Lara Lead"), AR = await w.firstIn("Arun Agent");
+  const g = (await TI("templates.save", { title: "For every client", text: "Called the payer, claim in process." })).id;
+  const r = await w.T(() => LA("templates.save", { id: g, client_id: w.lake.id, title: "For every client", text: "Lara's text now." }));
+  const row = await w.row("SELECT client_id, text, by_name FROM note_templates WHERE id = ?", g);
+  ok("E-17: moving it to one client is refused with plain words", !r.ok && /This template is for every client/.test(r.e), r);
+  ok("E-17: the template stays for every client with its own text", row.client_id === null && row.text === "Called the payer, claim in process.", row);
+  ok("E-17: Sunrise's billers still see it", (await AR("templates.list", { client_id: w.sun.id })).rows.some((x) => x.id === g));
+  const own = await w.T(() => LA("templates.save", { client_id: w.lake.id, title: "Lakeview only", text: "Lakeview's own wording here." }));
+  ok("E-17: the lead can still add a new template for their own client", own.ok, own.e);
+  const adm = await w.T(() => w.A("templates.save", { id: g, client_id: w.sun.id, title: "For every client", text: "Called the payer, claim in process." }));
+  ok("E-17: someone who may change every client (the admin) can still move it", adm.ok && (await w.row("SELECT client_id FROM note_templates WHERE id = ?", g)).client_id === w.sun.id, adm.e);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
