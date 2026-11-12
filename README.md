@@ -240,11 +240,12 @@ appears when filters are set and prints the pages with them. The PDF is saved fr
 location) and **team lead** (assistant managers, managers and the VP; a team lead sees their own team). On top,
 **Needs you** lists escalations, client requests to send and missed tasks; then in today, working now, idle now,
 worked today against the target, closed today and **left over** (allocated before this shift and not worked) split
-into **high priority** (the High tier) and other.
+into **high priority** (the High tier) and other. Worked and closed today count the whole day from midnight IST,
+entries before the shift time too, as Team status and My day do (a night shift's count to the day it began).
 
 - **On the floor now**: each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
   after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
-  been on it (the claim number opens the claim), pace this shift against their target, on desk, closed today and left
+  been on it (the claim number opens the claim), pace today against their target, on desk, closed today and left
   over. Managers and above see the billers grouped by team lead: each group opens and closes (a closed group shows
   working, idle and on desks), **Expand all** / **Collapse all**, or **One list**. Click a biller's name to open
   **their claims**.
@@ -282,7 +283,8 @@ into **high priority** (the High tier) and other.
 **Dashboard** has three parts: **Team status**, **Inventory status** (every client's account at a glance, below)
 and **Client 360 report** (pick the client, then its report pack: the *Dashboard › Client 360 report* section
 above). Team status and Inventory status share the filters client, **team lead** (managers and up) and the dates:
-**Today, This week, This month, Custom**.
+**Today, This week, This month, Custom**. Every page takes today, its weeks and months and the latest date it allows
+from India's clock (IST), whatever the computer's own time zone.
 
 **Team status** is Sasha's Third Eye's Team Status, built from Brahmastra's own entries and the Purview Shastra
 roster, grouped by team lead (no Emp ID):
@@ -290,10 +292,12 @@ roster, grouped by team lead (no Emp ID):
 - **Status** and date of joining from Purview Shastra: Production, Training, OJT, Serving notice, Sabbatical.
 - **Ramp-up**: Training and OJT are due in production 6 weeks from their start (the start date kept on Team status,
   otherwise the date of joining), or on the date the lead agreed. People past it show in a red banner.
-- **Attainment**: entries against the target (the daily target for each working day in the dates; a half day counts
+- **Attainment**: entries against the target (the daily target for each working day in the dates from the date of joining; a half day counts
   half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a Saturday
   worked, and Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
-  way does not count against anyone; with only today picked, it is today's. Production people under 90% are
+  way does not count against anyone; with only today picked, it is today's. A night shift (one that crosses midnight)
+  counts to the day it began, its hours and entries, until an hour and a half after it ends (05:00 IST at the earliest),
+  so that day is not finished while the shift is still running. Production people under 90% are
   **below the mark**; Training and OJT are **in ramp-up** and not judged against it. Claims worked and **team task
   items** done (Needs attention › Team tasks, below) both count toward it: the line under it says how many of each.
 - **Tasks**: the team task items each person marked done in the dates (by the day of the update, the night shift's early
@@ -739,7 +743,8 @@ p_from, p_to)` (`dev/shastra-floor-feed.sql`, run once the same way). It uses th
 returns, for each person and day, the attendance status, time on the floor, time logged in, breaks, and the minutes
 Shastra Guard saw no movement or a locked screen while they were punched in; people are matched by Emp ID, then
 email. Brahmastra keeps the days it fetched, settles a day once it was fetched 12 hours after it ended, and asks
-again for newer days after 10 minutes. Until the function is added, Team status shows – for on floor and idle.
+again for newer days after 10 minutes. The function answers at most 93 days a call, so longer dates are asked for
+in parts and joined. Until the function is added, Team status shows – for on floor and idle.
 
 | Name | Type | Value |
 |---|---|---|

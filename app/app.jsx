@@ -153,10 +153,14 @@ const fmtInt = (n) => Number(n || 0).toLocaleString();
 const fmtPct = (n, dec = 0) => (n == null || isNaN(n)) ? "–" : Number(n).toFixed(dec) + "%";
 const pad2 = (n) => String(n).padStart(2, "0");
 const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const todayISO = () => isoOf(new Date());
+/* Today and a day's first and last millisecond are India's (IST, UTC+5:30, no summer time), whatever the computer's own time
+   zone: the team works in IST and the server counts its days the same way. */
+const IST_MS = 330 * 60000;
+const istISOOf = (ms) => new Date(Number(ms) + IST_MS).toISOString().slice(0, 10);
+const todayISO = () => istISOOf(Date.now());
 function fmtDate(iso) { if (!iso) return "–"; const [y, m, d] = String(iso).split("-").map(Number); if (!y || !m || !d) return String(iso); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
 function fmtWhen(ms) { if (!ms) return "–"; const d = new Date(Number(ms)); return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
-function dayBounds(iso) { const [y, m, d] = iso.split("-").map(Number); return [new Date(y, m - 1, d, 0, 0, 0, 0).getTime(), new Date(y, m - 1, d, 23, 59, 59, 999).getTime()]; }
+function dayBounds(iso) { const start = Date.parse(iso + "T00:00:00Z") - IST_MS; return [start, start + 86400000 - 1]; }
 function addDaysISO(iso, n) { const [y, m, d] = iso.split("-").map(Number); return isoOf(new Date(y, m - 1, d + n)); }
 /* A follow-up on a Saturday, Sunday or Shastra holiday moves to the next working day, as the server does when it saves.
    The coming holidays arrive with auth.me. */
@@ -685,7 +689,7 @@ function getLocalBackend() {
   return localBackendPromise;
 }
 async function rpc(op, payload = {}) {
-  const body = JSON.stringify({ op, payload: { today: todayISO(), tz_offset_min: -new Date().getTimezoneOffset(), ...payload } });
+  const body = JSON.stringify({ op, payload: { today: todayISO(), tz_offset_min: 330, ...payload } });
   const init = { method: "POST", headers: { "Content-Type": "application/json", ...(TOKEN ? { Authorization: "Bearer " + TOKEN } : {}) }, body };
   let res;
   try { res = DEMO ? await (await getLocalBackend()).fetch("https://demo.brahmastra.local/api", init) : await fetch(API_BASE + "/api", init); }
@@ -1588,7 +1592,7 @@ function AskComputer() {
   if (perm !== "default") return null;
   return <button type="button" className="btn sm link" title="Your browser asks once" onClick={async () => { try { setPerm(await Notification.requestPermission()); } catch (e) {} }}>Also show these on this computer</button>;
 }
-const clockNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+const clockNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });   // IST, as the shift times
 function MissingAlertPopup({ alerts, onChanged }) {
   const [hidden, setHidden] = useState({});
   const [busy, setBusy] = useState(false);
@@ -1886,7 +1890,7 @@ function LiveStatusView({ ctx, me, go, params }) {
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === "visible") { live.reload(); stats.reload(); } }, 30000); return () => clearInterval(t); }, [clientId, locId, leadId]);
   const t = (live.data && live.data.totals) || {}, d = stats.data;
   const st = (k) => (d && d.states.find((x) => x.state === k)) || { n: 0, amt: 0 };
-  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
   const openClaims = (extra) => go("claims", { clientId, locationId: locId, ...extra });
   return (
     <div className="stack">
@@ -1900,10 +1904,10 @@ function LiveStatusView({ ctx, me, go, params }) {
       </div>
       <NeedsStrip go={go} />
       {live.data && live.data.rows.length > 0 && <div className="grid dash-k6">
-        <Kpi tone="accent" label="In today" value={(live.data.weekend ? t.in_weekend : t.people - t.out) + " of " + t.people} sub={live.data.weekend ? "weekend, nobody is expected in" : t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
+        <Kpi tone="accent" label="In today" value={(live.data.weekend ? t.in_weekend : t.people - t.out) + " of " + t.people} sub={live.data.holiday ? "holiday" + (live.data.holiday.name ? " (" + live.data.holiday.name + ")" : "") + ", nobody is expected in" : live.data.weekend ? "weekend, nobody is expected in" : t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
         <Kpi label="Working now" value={<span className="teal-ink">{fmtInt(t.working)}</span>} sub="a claim open or entries in the last 30 minutes" />
         <Kpi label="Idle now" value={<span className={t.idle ? "red-ink" : ""}>{t.idle}</span>} sub="no entry for 30 minutes" />
-        <Kpi label="Worked today" value={fmtInt(t.worked)} sub={live.data.weekend ? "no target at the weekend" : "of " + fmtInt(t.capacity) + " target"} />
+        <Kpi label="Worked today" value={fmtInt(t.worked)} sub={live.data.holiday ? "no target on a holiday" : live.data.weekend ? "no target at the weekend" : "of " + fmtInt(t.capacity) + " target"} />
         <Kpi label="Closed today" value={<span className="teal-ink">{fmtInt(t.closed)}</span>} sub="worked to closed" tone="good" />
         <Kpi label="Left over" value={<span className={t.carried ? "amber-ink" : ""}>{fmtInt(t.carried)}</span>} sub={t.carried ? <><span className="red-ink b">{fmtInt(t.left_high)} high priority</span> · {fmtInt(t.carried - t.left_high)} other</> : "allocated before this shift, all worked"} />
       </div>}
@@ -1925,7 +1929,7 @@ function DashboardHub(props) {
   const [tab, setTab] = useState(() => dashTab(params));
   useEffect(() => { if (params && params.tab) setTab(dashTab(params)); }, [params && params.tab]);
   useEffect(() => { navKeep({ tab }); }, [tab]);
-  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
   const SUB = { team: "Team status: production and training, attainment and time on floor, for the dates picked.",
     inventory: "Inventory status: where every claim stands today, and what to work first to meet the SLA this month.",
     report: "Client 360 report: the client's report pack, filled from Brahmastra, to present or send as one PDF." };
@@ -2498,7 +2502,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
               {PROD_SCOPES.filter(([k]) => !(c.scope_of_work || []).length || (c.scope_of_work || []).includes(k)).map(([k, l]) => { const sc = c.od.scopes[k] || {}; const st = wbStatus(k === "ar" ? c.id : c.id + ":" + k); return (
                 <tr key={k}><td className="b">{l} production</td>
                   <td className="small"><span className="mono">{sc.path || "Brahmastra Clients › " + c.name + " › Production › " + PROD_FOLDER[k]}</span>
-                    <div className="tiny muted">this month: {PROD_FOLDER[k]} Production - {c.name} - {new Date().toLocaleString("en-US", { month: "short" })} {new Date().getFullYear()}.xlsx{st ? (st.ok ? " · last row " + fmtWhen(st.at) : "") : " · no rows yet"}{st && !st.ok ? <span className="red-ink"> · last copy failed: {String(st.error || "").slice(0, 120)}</span> : null}</div></td>
+                    <div className="tiny muted">this month: {PROD_FOLDER[k]} Production - {c.name} - {new Date().toLocaleString("en-US", { month: "short", timeZone: "Asia/Kolkata" })} {todayISO().slice(0, 4)}.xlsx{st ? (st.ok ? " · last row " + fmtWhen(st.at) : "") : " · no rows yet"}{st && !st.ok ? <span className="red-ink"> · last copy failed: {String(st.error || "").slice(0, 120)}</span> : null}</div></td>
                   <td style={{ textAlign: "right" }}>{sc.link && <a className="btn sm" href={sc.link} target="_blank" rel="noopener">Open</a>}</td></tr>); })}
             </tbody></table>}
           </div>}
@@ -4730,7 +4734,7 @@ const HIST_FILTERS = [["all", "Everything"], ["work", "Work"], ["note", "Notes"]
 const HIST_GROUP = { work: "work", edited: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff", handoff_client_sent: "handoff", handoff_pending: "handoff", handoff_inprocess: "handoff", handoff_other: "handoff", review_to_biller: "note", review_to_dept: "note" };
 const CHANGE_LABEL = { state: "State", bucket: "Bucket", follow_up: "Follow-up", status: "SAAG status" };
 const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-const dayKey = (ms) => { const d = new Date(Number(ms)); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+const dayKey = (ms) => istISOOf(ms);   // the IST day, as Today and Yesterday below
 const dayLabel = (k) => { const today = todayISO(); const d = new Date(k + "T00:00:00"); const txt = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }); return k === today ? "Today · " + txt : k === addDaysISO(today, -1) ? "Yesterday · " + txt : txt; };
 const chgVal = (k, v) => (!v ? "–" : k === "follow_up" ? fmtDate(v) : k === "state" ? (STATE_META[v] ? STATE_META[v][1] : v) : v);
 function Changes({ changes }) {
@@ -6385,7 +6389,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 </td>
               </tr>))}
           </React.Fragment>; })}</tbody></table></div>
-        <div className="tiny muted mt8">Shastra is each person's attendance in Purview Shastra now (late is 10 minutes past the shift start; not logged in is an hour past it with no punch in, leave, week off or holiday){shState && shState !== "ok" && SH_OFF_NOTE[shState] ? ". " + SH_OFF_NOTE[shState] : "."} Pace compares entries this shift with the target spread over the shift from the roster. Left over is what was allocated before this shift and is still not worked; high priority is the High tier. Rebalance and Reallocate share the untouched claims equally between the people in today on the same client, high priority first.</div>
+        <div className="tiny muted mt8">Shastra is each person's attendance in Purview Shastra now (late is 10 minutes past the shift start; not logged in is an hour past it with no punch in, leave, week off or holiday){shState && shState !== "ok" && SH_OFF_NOTE[shState] ? ". " + SH_OFF_NOTE[shState] : "."} Pace compares the entries today (a night shift's count to the day it began) with the target spread over the shift from the roster. Left over is what was allocated before this shift and is still not worked; high priority is the High tier. Rebalance and Reallocate share the untouched claims equally between the people in today on the same client, high priority first.</div>
       </>}
       {outFor && <Modal title={"Out today · " + outFor.r.name} narrow onClose={() => setOutFor(null)} footer={<><button className="btn" onClick={() => setOutFor(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => setOut(outFor.r, true, outFor.reason)}>Mark out</button></>}>
         <div className="stack"><Field label="Reason (optional)"><Combo value={outFor.reason} onChange={(v) => setOutFor({ ...outFor, reason: v })} placeholder="Pick or leave empty…" options={["Leave", "Sick", "Half day", "Training", "Other work"].map((x) => ({ id: x, label: x }))} /></Field>
@@ -7266,7 +7270,7 @@ const crGrain = (range) => { if (!range) return "month"; const n = crDaysBetween
 const crDelta = (cur, prev) => (prev == null || cur == null ? null : { cur, prev, diff: cur - prev, pct: prev ? (cur - prev) / Math.abs(prev) : null });
 const crPctOf = (a, b) => (b ? a / b : null);
 const crListNames = (items, n = 3) => { const names = items.slice(0, n).map((x) => x.label); const more = items.length - names.length; if (names.length <= 1) return names.join("") + (more > 0 ? ` and ${more} more` : ""); if (more > 0) return names.join(", ") + ` and ${more} more`; return names.slice(0, -1).join(", ") + " and " + names[names.length - 1]; };
-const crSoFar = (range) => { const t = crDay(new Date()); return range.end > t ? t : range.end; };
+const crSoFar = (range) => { const t = crD(todayISO()); return range.end > t ? t : range.end; };
 const crPerDay = (n, wd) => { const v = n / wd; return v < 10 ? String(Math.round(v * 10) / 10) : crF.int(v); };
 const crWorkingDaysIn = (range, rows, dateField) => { if (range) { const e = crSoFar(range); return e < range.start ? null : crWorkingDays(range.start, e); } const ds = rows.map((r) => r[dateField]).filter(Boolean); if (!ds.length) return null; return crWorkingDays(new Date(Math.min(...ds)), new Date(Math.max(...ds))); };
 /* how Third Eye reads a row */
@@ -8043,7 +8047,7 @@ function CrCover({ rep, pages, mode }) {
   return <div className={"crs-cover" + (mode === "print" ? " print" : "")} data-page="cover"><div className="band" />
     <div className="lg"><img src={PURVIEW_MARK} alt="" />PURVIEW HEALTHCARE</div>
     <div className="t"><div className="e">{rep.reportName}</div><h1>{rep.client}</h1><div className="p">{rep.periodLabel}{rep.locName ? " · " + rep.locName : ""}</div>
-      <div className="m">Prepared by Purview Healthcare · {crF.date(new Date())}{rep.prepared ? " · " + rep.prepared : ""}</div></div>
+      <div className="m">Prepared by Purview Healthcare · {crF.date(crD(todayISO()))}{rep.prepared ? " · " + rep.prepared : ""}</div></div>
     <div className="toc"><h6>Contents</h6>{pages.filter((p) => p.id !== "cover").map((p, i) => <div key={p.id}><span>{p.title}</span><span>{i + 2}</span></div>)}</div>
     <div className="cl">{rep.logo ? <img src={rep.logo} alt="" /> : <div className="ini">{crInitials(rep.client)}</div>}{rep.client}</div>
     <div className="conf">Confidential · for {rep.client}</div></div>;
@@ -8154,7 +8158,7 @@ async function crLogoFromBytes(bytes, name) {
 }
 
 /* ---------- Client 360 › Client report: build, edit, filter, present and print the client's report ---------- */
-function crDefaultAnchor() { const t = new Date(); return t.getDate() <= 10 ? crAddM(t, -1) : crMS(t); }   // early in a month, last month's report
+function crDefaultAnchor() { const t = crD(todayISO()); return t.getDate() <= 10 ? crAddM(t, -1) : crMS(t); }   // early in a month, last month's report
 function ClientReportStudio({ ctx, me, go, clientId }) {
   const client = ctx.clients.find((c) => c.id === clientId) || {};
   const [ptype, setPtype] = useState("month");
@@ -8251,7 +8255,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
   };
   if (!clientId) return <div className="card"><Empty>Pick a client.</Empty></div>;
   const periodControls = <>
-    <div className="seg3">{[["month", "Monthly"], ["week", "Weekly"], ["custom", "Custom"]].map(([k, l]) => <button key={k} type="button" className={ptype === k ? "on" : ""} onClick={() => { setPtype(k); if (k !== "custom") setAnchor(range.end <= new Date() ? range.end : crDefaultAnchor()); }}>{l}</button>)}</div>
+    <div className="seg3">{[["month", "Monthly"], ["week", "Weekly"], ["custom", "Custom"]].map(([k, l]) => <button key={k} type="button" className={ptype === k ? "on" : ""} onClick={() => { setPtype(k); if (k !== "custom") setAnchor(range.end <= crD(todayISO()) ? range.end : crDefaultAnchor()); }}>{l}</button>)}</div>
     {ptype === "custom" ? <span className="row" style={{ gap: 6 }}><input type="date" className="input sm" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} /><span className="muted small">to</span><input type="date" className="input sm" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></span>
       : <span className="crx-per"><button type="button" onClick={() => step(-1)} title="Previous period">‹</button><b>{crRangeLabel(range)}</b><button type="button" onClick={() => step(1)} title="Next period">›</button></span>}
     <label className="crx-cmp" title={"Compare with the " + crPrevWord(R)}><input type="checkbox" checked={compare} onChange={(e) => setCompare(e.target.checked)} /> Compare with {crRangeLabel(prevRange)}</label>
@@ -8401,7 +8405,7 @@ function CrPrintJob({ title, pages, slideFor, onDone }) {
 const DRISHTI_TOKEN_KEY = "drishti:token:v1";
 /* The SLA tab's heading, with Drishti's frame buttons (load again, own browser tab, full screen) while a Drishti tab is open. */
 function SlaHead({ title, sub, onHow, frame }) {
-  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
   return (
     <div className="row between top sla-head" style={{ marginBottom: 12, flexWrap: "nowrap", gap: 16 }}>
       <div style={{ minWidth: 0, flex: "1 1 auto" }}><h1>{title}</h1><div className="sub">{sub}</div></div>
@@ -8923,14 +8927,17 @@ function MyRechecks({ ctx, me }) {
     </div>
   );
 }
-/* The working day as the server counts it (Live status, My day): it starts at 05:00 IST, so a night shift (18:30 to 03:30)
-   is one day and "Worked today" does not drop to 0 at midnight. */
-const bizDayBounds = () => { const now = Date.now(), ist = now + 330 * 60000; const start = now - (((ist - 5 * 3600000) % 86400000) + 86400000) % 86400000; return [start, start + 86400000 - 1]; };
+/* The working day My day counts: it starts at 05:00 IST, so a night shift (18:30 to 03:30) is one day and "Worked today" does
+   not drop to 0 at midnight. A night shift that ends later (22:30 to 07:30) keeps its day to an hour and a half after it ends,
+   as Team status and Live status count it. */
+const dayRollMin = (shift) => { const m = String(shift || "").match(/(\d{1,2})[:.](\d{2})\s*[-–to]+\s*(\d{1,2})[:.](\d{2})/i); if (!m) return 300;
+  const s = +m[1] * 60 + +m[2], e = +m[3] * 60 + +m[4]; return e < s ? Math.min(s, Math.max(300, e + 90)) : 300; };
+const bizDayBounds = (shift) => { const now = Date.now(), ist = now + 330 * 60000, roll = dayRollMin(shift) * 60000; const start = now - (((ist - roll) % 86400000) + 86400000) % 86400000; return [start, start + 86400000 - 1]; };
 function QueueView({ ctx, me, go, refreshTasks }) {
   const today = todayISO();
-  const [[from, to], setBizDay] = useState(bizDayBounds);
+  const [[from, to], setBizDay] = useState(() => bizDayBounds(me && me.shift));
   // Back on the tab after the day rolled over: count the new day.
-  useEffect(() => { const f = () => setBizDay((b) => { const n = bizDayBounds(); return n[0] === b[0] ? b : n; });
+  useEffect(() => { const f = () => setBizDay((b) => { const n = bizDayBounds(me && me.shift); return n[0] === b[0] ? b : n; });
     window.addEventListener("focus", f); document.addEventListener("visibilitychange", f); const t = setInterval(f, 5 * 60000);
     return () => { window.removeEventListener("focus", f); document.removeEventListener("visibilitychange", f); clearInterval(t); }; }, []);
   const summary = useRpc("queue.summary", { day_from_ms: from, day_to_ms: to }, [from]);

@@ -32,7 +32,7 @@ const cl = (await A("clients.list")).clients; const sun = cl.find((c) => /Sunris
 const CA = await firstIn("Cara Agent", "cara@purview-healthcare.com");
 const pub = as(null);
 const arun = U("Arun Agent"), cara = U("Cara Agent");
-const IST = 330 * 60000, today = ((d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"))(new Date());   // the local date, as the app sends it with every call
+const IST = 330 * 60000, today = new Date(Date.now() + IST).toISOString().slice(0, 10);   // India's date, as the app sends it with every call
 const work = (extra = {}) => ({ saag: { status: "Claim In Process", sub_status: "Need to allow some time", action: "Correction, Resubmission & Reprocessing", bucket: "Payer", effective: "Pending-Collectible Insurance" },
   note: { source: "Portal", findings: "Claim is in process per the payer portal", action: "follow up", ...extra } });
 

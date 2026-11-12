@@ -2142,13 +2142,18 @@ async function shastraFloor(env, from, to, today, off) {
   const stale = [];
   for (let d = from; d <= last; d = addDays(d, 1)) { const at = st.days[d] || 0; if (!(at > dayEnd(d) + 12 * 3600000 || now - at < FLOOR_FRESH_MS)) stale.push(d); }
   if (stale.length && !(st.fail_at && now - st.fail_at < FLOOR_FRESH_MS)) {
-    const a = stale[0], b = stale[stale.length - 1], res = await fetchFloor(env, a, b);
-    if (res.ok) {
-      const us = await all(env, "SELECT id, emp_id, email FROM users");
-      const byEmp = new Map(), byMail = new Map();
-      for (const u of us) { if (u.emp_id) byEmp.set(String(u.emp_id).trim().toUpperCase(), u.id); if (u.email) byMail.set(String(u.email).trim().toLowerCase(), u.id); }
-      const n = (v) => (v == null || v === "" || !isFinite(+v) ? null : Math.max(0, Math.round(+v)));
-      const put = []; let unmatched = 0;
+    // Shastra answers at most 93 days a call (dev/shastra-floor-feed.sql): longer dates are asked in parts and the answers joined
+    const a = stale[0], b = stale[stale.length - 1];
+    let byEmp = null, byMail = null, unmatched = 0, failed = null;
+    const n = (v) => (v == null || v === "" || !isFinite(+v) ? null : Math.max(0, Math.round(+v)));
+    for (let p = a; p <= b; ) {
+      const q = addDays(p, 92) < b ? addDays(p, 92) : b, res = await fetchFloor(env, p, q);
+      if (!res.ok) { failed = res; break; }
+      if (!byEmp) {
+        byEmp = new Map(); byMail = new Map();
+        for (const u of await all(env, "SELECT id, emp_id, email FROM users")) { if (u.emp_id) byEmp.set(String(u.emp_id).trim().toUpperCase(), u.id); if (u.email) byMail.set(String(u.email).trim().toLowerCase(), u.id); }
+      }
+      const put = [];
       for (const x of res.rows) {
         const day = isoDate(x && x.date); if (!day) continue;
         const uid = (x.emp_id && byEmp.get(String(x.emp_id).trim().toUpperCase())) || (x.email && byMail.get(String(x.email).trim().toLowerCase()));
@@ -2157,29 +2162,36 @@ async function shastraFloor(env, from, to, today, off) {
         put.push(env.DB.prepare("INSERT OR REPLACE INTO floor_days (user_id, day, status, tof_min, idle_min, locked_min, logged_min, break_min, open, guard) VALUES (?,?,?,?,?,?,?,?,?,?)")
           .bind(uid, day, str(x.status, 30).toLowerCase(), n(x.tof_min), g ? n(x.idle_min) : null, g ? n(x.locked_min) : null, n(x.logged_min), n(x.break_min), x.open ? 1 : 0, g ? 1 : 0));
       }
-      await batchAll(env, [env.DB.prepare("DELETE FROM floor_days WHERE day BETWEEN ? AND ?").bind(a, b), ...put]);
-      for (let d = a; d <= b; d = addDays(d, 1)) st.days[d] = now;
-      const keep = addDays(today, -120); for (const d of Object.keys(st.days)) if (d < keep) delete st.days[d];
-      Object.assign(st, { ok_at: now, fail_at: 0, state: "ok", error: "", unmatched });
-    } else Object.assign(st, { fail_at: now, state: res.state, error: res.error });
+      await batchAll(env, [env.DB.prepare("DELETE FROM floor_days WHERE day BETWEEN ? AND ?").bind(p, q), ...put]);
+      for (let d = p; d <= q; d = addDays(d, 1)) st.days[d] = now;
+      Object.assign(st, { ok_at: now, state: "ok", unmatched });
+      p = addDays(q, 1);
+    }
+    // when each day was fetched, for the last 120 days (or back to the dates asked for, so a long range is not asked again at once)
+    const keep = addDays(today, -120) < from ? addDays(today, -120) : from; for (const d of Object.keys(st.days)) if (d < keep) delete st.days[d];
+    if (failed) Object.assign(st, { fail_at: now, state: failed.state, error: failed.error });
+    else Object.assign(st, { fail_at: 0, error: "" });
     await setSetting(env, "floor_sync", st);
   }
-  // until the feed has answered once, there is nothing to show; after that, the kept days (with a note if the last ask failed)
+  // until the feed has answered once, there is nothing to show; after that, the kept days (with a note if the last ask failed,
+  // even when its first part was answered)
   const state = st.ok_at ? "ok" : st.state || "pending";
   const byUser = new Map();
   if (state === "ok") for (const x of await all(env, "SELECT * FROM floor_days WHERE day BETWEEN ? AND ?", from, last)) { if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Map()); byUser.get(x.user_id).set(x.day, x); }
-  return { state, error: st.fail_at && st.fail_at > (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser };
+  return { state, error: st.fail_at && st.fail_at >= (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser };
 }
 /* Shastra's attendance status for a day: in (a full day), a half day, unplanned (absent, sick, leave without pay),
    leave (approved, maternity, sabbatical) or off (week off, holiday, comp off: not a working day). Unknown or missing:
-   Brahmastra's own Out today mark decides. */
+   Brahmastra's own Out today mark decides. Shastra still reads its older spellings "half-day" and "leave" (approved
+   leave), and counts Overtime as a day at work. */
 function shastraDay(status) {
   const s = String(status || "").trim().toLowerCase();
   if (!s) return null;
   if (["present", "late", "p", "l"].includes(s)) return { share: 1, kind: "in" };
-  if (["half_day", "half_day_lwp", "hd", "hd-lwp"].includes(s)) return { share: 0.5, kind: "half" };
+  if (["overtime", "ot"].includes(s)) return { share: 1, kind: "in", overtime: true };
+  if (["half_day", "half-day", "half_day_lwp", "hd", "hd-lwp"].includes(s)) return { share: 0.5, kind: "half" };
   if (["absent", "a", "sick_leave", "sl", "lwp"].includes(s)) return { share: 0, kind: "unplanned" };
-  if (["approved_leave", "al", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { share: 0, kind: "leave" };
+  if (["approved_leave", "leave", "al", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { share: 0, kind: "leave" };
   if (["week_off", "wo", "holiday", "h", "ho", "comp_off", "co", "not_joined", "nj", "attrite", "att"].includes(s)) return { share: 0, kind: "off" };
   return null;
 }
@@ -2437,12 +2449,28 @@ const adminEmails = (env) => String(env.ADMIN_EMAILS || "").split(",").map(mailC
 /* ---- team today: shifts ----
    "18:30-03:30" (IST) and the like. The shift a person is in now (or last started) runs from its latest start at or
    before now; without a shift, the day starts at local midnight and lasts nine hours from the first entry. */
-/* A shift that crosses midnight (18:30 to 03:30): its entries after midnight belong to the day it started (the working day runs
-   to 05:00, as My day counts it). */
-const OVERNIGHT_SPILL_H = 5;
-function overnightShift(shift) {
+/* A shift that crosses midnight (18:30 to 03:30, 22:30 to 07:30): its hours and entries belong to the day it started. That day
+   runs on past midnight to an hour and a half after the shift ends, and never ends before 05:00 IST (the working day rolls then,
+   as My day and Shastra count it): 05:00 for 18:30 to 03:30, 09:00 for 22:30 to 07:30. dayRollMin: the minutes after IST midnight
+   at which the person's working day rolls over (0 for a day shift or no shift). */
+function dayRollMin(shift) {
   const m = String(shift || "").match(/(\d{1,2})[:.](\d{2})\s*[-–to]+\s*(\d{1,2})[:.](\d{2})/i);
-  return !!m && Number(m[3]) * 60 + Number(m[4]) < Number(m[1]) * 60 + Number(m[2]);
+  if (!m) return 0;
+  const start = Number(m[1]) * 60 + Number(m[2]), end = Number(m[3]) * 60 + Number(m[4]);
+  return end < start ? Math.min(start, Math.max(300, end + 90)) : 0;
+}
+/* The working day a person is in at now (today: the IST date of now): a night shift still under way after midnight (or within
+   its hour and a half after) is still the day before. from / to: that day's bounds; shift: that day's shift, when the roster
+   has one. */
+function workDayOf(shift, now, today, off = IST_MIN) {
+  const roll = dayRollMin(shift), todayStart = Date.parse(today + "T00:00:00Z") - off * 60000;
+  const day = roll && now >= todayStart && now < todayStart + roll * 60000 ? addDays(today, -1) : today;
+  const dayStart = Date.parse(day + "T00:00:00Z") - off * 60000, from = dayStart + roll * 60000;
+  const m = String(shift || "").match(/(\d{1,2})[:.](\d{2})\s*[-–to]+\s*(\d{1,2})[:.](\d{2})/i);
+  let sh = null;
+  if (m) { const s = Number(m[1]) * 60 + Number(m[2]), e = Number(m[3]) * 60 + Number(m[4]), len = ((e - s + 1440) % 1440 || 1440) * 60000;
+    const start = dayStart + s * 60000; sh = { start, end: start + len, len }; }
+  return { day, from, to: from + 86400000, roll, shift: sh };
 }
 /* A working day for targets: Monday to Friday, not a Shastra holiday. */
 const isWorkDay = (iso) => { const w = new Date(iso + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6 && !HOLIDAYS.has(iso); };
@@ -2528,7 +2556,8 @@ const spanVisible = (user, s) => user.is_admin || user.access_all || (s.manager 
 async function digestData(env, clientId, wk) {
   const today = istISO(wk.to);
   const o = await OPS["client.overview"]({ env, user: DIGEST_SYSTEM, payload: { client_id: clientId, from_ms: wk.from, to_ms: wk.to, today, tz_offset_min: IST_MIN } });
-  const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 7 * 86400000));
+  // a week before: AR at the end of the Sunday before the digest week (so the week's own Monday counts in the change)
+  const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.from - 1));
   // a past week's digest: AR as it stood at that week's end (the day's snapshot), not today's
   const endSnap = digestWeek(Date.now()).week === wk.week ? null
     : await one(env, "SELECT day, ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
@@ -4225,19 +4254,28 @@ const OPS = {
     const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
     const live = await shastraLive(env);
     const weekdayToday = isWorkDay(today);   // Monday to Friday, not a Shastra holiday
+    // a Shastra holiday on a weekday: nobody is expected in, and the page says which holiday (the weekend says weekend)
+    let holiday = null;
+    if (!weekdayToday && ![0, 6].includes(new Date(today + "T12:00:00Z").getUTCDay())) {
+      const hol = await getSetting(env, "holidays", null), h = hol && Array.isArray(hol.rows) ? hol.rows.find((x) => x && x.date === today) : null;
+      holiday = { name: h && h.name ? str(h.name, 80) : "" };
+    }
     const rows = people.map((u) => {
-      const win = shiftWindow(u.shift, now, dayStart);
-      const startOf = win ? win.start : dayStart;
-      const mine = notes.filter((n) => n.user_id === u.id && n.created_at >= startOf);
+      // worked and closed today: the person's whole working day (from midnight IST; a night shift's is the day it began, until
+      // it is over), as Team status and My day count it; the pace is that day's shift from the roster
+      const wday = workDayOf(u.shift, now, today, off), win = wday.shift;
+      const mine = notes.filter((n) => n.user_id === u.id && n.created_at >= wday.from && n.created_at < wday.to);
       const work = mine.filter((n) => n.kind === "work"), skips = mine.length - work.length, workHere = work.filter((n) => n.here).length;
       // a night shift belongs to the day it began: one that began on a Sunday (or a holiday) has no target
-      const workDay = win ? isWorkDay(istISO(win.start)) : weekdayToday;
+      const workDay = isWorkDay(wday.day);
       const first = mine.length ? Math.min(...mine.map((n) => n.created_at)) : null, last = mine.length ? Math.max(...mine.map((n) => n.created_at)) : null;
       const onDesk = desk.filter((c) => c.assigned_to === u.id);
-      // Left over: allocated before this shift and still not worked; high priority (the High tier) apart from the rest.
+      // Left over: allocated before this shift (the one now, or the last one begun) and still not worked; high priority (the
+      // High tier) apart from the rest.
+      const sw = shiftWindow(u.shift, now, dayStart), startOf = sw ? sw.start : dayStart;
       const left = onDesk.filter((c) => c.assigned_at && c.assigned_at < startOf && c.state === "assigned" && !(c.follow_up_on && c.follow_up_on > today));
       const leftHigh = left.filter((c) => c.tier === "High").length;
-      const closed = closedRows.filter((c) => c.user_id === u.id && c.completed_at >= startOf).length;
+      const closed = closedRows.filter((c) => c.user_id === u.id && c.completed_at >= wday.from && c.completed_at < wday.to).length;
       const cur = onDesk.find((c) => c.state === "in_progress") || null;
       const target = Math.max(1, u.capacity || 35);
       const span = win ? win.len : 9 * 3600000, began = win ? win.start : first;
@@ -4264,7 +4302,7 @@ const OPS = {
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
     const present = rows.filter((r) => r.status !== "out");
     const add = (k) => rows.reduce((t, r) => t + r[k], 0);
-    return { rows, weekend: !weekdayToday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
+    return { rows, weekend: !weekdayToday, holiday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
       capacity: weekdayToday ? present.reduce((t, r) => t + r.capacity, 0) : 0, in_weekend: weekdayToday ? null : present.filter((r) => !r.off_day).length, carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
       behind: rows.filter((r) => r.behind).length, working: rows.filter((r) => r.status === "working").length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
   },
@@ -4288,7 +4326,7 @@ const OPS = {
     const closed = await all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?
       AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la);
     const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN (${qs})`, from, to, ...ids);
-    const weekday = (d) => { const w = new Date(d + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6; };
+    const weekday = isWorkDay;   // Monday to Friday, not a Shastra holiday
     let workdays = 0; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) workdays++;
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x]));
     if (f.narrow) people = people.filter((u) => wk.has(u.id) || f.teamIds.has(u.id));
@@ -4317,7 +4355,6 @@ const OPS = {
     const to = to0 > today ? today : to0;
     const off = Math.round(num(payload.tz_offset_min, IST_MIN)), now = Date.now();
     const start = Date.parse(from + "T00:00:00Z") - off * 60000, end = Date.parse(to + "T00:00:00Z") - off * 60000 + 86400000 - 1;
-    const todayStart = Date.parse(today + "T00:00:00Z") - off * 60000;
     const f = await dashTeamFilter(env, user, payload);
     const cw = f.clientIds ? ` AND c.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "", ca = f.clientIds || [];
     const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
@@ -4326,29 +4363,38 @@ const OPS = {
     const days = [], span = []; for (let d = from; d <= to; d = addDays(d, 1)) { span.push(d); if (weekday(d)) days.push(d); }
     if (!people.length) return { rows: [], leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals: { people: 0 }, by_status: [], checks: [], suggestions: { today: [], week: [], good: [] }, floor_source: "pending" };
     const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
-    const ovIds = people.filter((u) => overnightShift(u.shift)).map((u) => u.id), ovs = ovIds.length ? ovIds.map(() => "?").join(",") : "NULL";
+    // A night shift's hours and entries belong to the day it began (to its end and a little after: dayRollMin); while it is
+    // still under way after midnight, that day is the person's today and is not finished yet (workDayOf).
+    const wdOf = new Map(people.map((u) => [u.id, workDayOf(u.shift, now, today, off)])), dayOf = (u) => wdOf.get(u.id).day;
+    const rolls = new Map(); for (const u of people) { const r = wdOf.get(u.id).roll; if (r) rolls.set(r, [...(rolls.get(r) || []), u.id]); }
+    const maxRollMs = Math.max(0, ...rolls.keys()) * 60000, rollArgs = [...rolls.values()].flat();
+    const rollSql = (col) => rolls.size ? `CASE ${[...rolls.keys()].map((r) => `WHEN ${col} IN (${rolls.get(r).map(() => "?").join(",")}) THEN ${r * 60}`).join(" ")} ELSE 0 END` : "0";
+    const late = people.filter((u) => dayOf(u) < today).map((u) => u.id);
+    const doneSql = late.length ? `CASE WHEN user_id IN (${late.map(() => "?").join(",")}) THEN ? ELSE ? END` : "?", doneArgs = late.length ? [...late, addDays(today, -1), today] : [today];
     // escalations where the person is named as who made the error (our error), received in these dates
     const ew = f.clientIds ? ` AND e.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "";
     const [work, closed, att, notes, desk, outNow, escs, tasksDone, tasksClosed] = await Promise.all([
       // a person's entries on every client: picking a client or a team lead shows who is on it, never cuts their own attainment
-      // (the entries on the picked client are counted beside); an overnight shift's entries after midnight go to the day it began
-      all(env, `SELECT user_id, COUNT(*) AS worked, SUM(bday < ?) AS worked_done, COUNT(DISTINCT bday) AS days_worked, SUM(here) AS worked_here FROM (
-          SELECT nt.user_id, date((nt.created_at / 1000) + ? - CASE WHEN nt.user_id IN (${ovs}) THEN ? ELSE 0 END, 'unixepoch') AS bday, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here
+      // (the entries on the picked client are counted beside); a night shift's entries after midnight go to the day it began
+      all(env, `SELECT user_id, COUNT(*) AS worked, SUM(bday < ${doneSql}) AS worked_done, COUNT(DISTINCT bday) AS days_worked, SUM(here) AS worked_here FROM (
+          SELECT nt.user_id, date((nt.created_at / 1000) + ? - ${rollSql("nt.user_id")}, 'unixepoch') AS bday, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here
           FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN (${qs}))
-        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, today, off * 60, ...ovIds, OVERNIGHT_SPILL_H * 3600, ...ca, ...la, start, end + OVERNIGHT_SPILL_H * 3600000, ...ids, from, to),
+        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, ...ca, ...la, start, end + maxRollMs, ...ids, from, to),
       all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ? AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la),
       all(env, `SELECT user_id, day, reason FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN (${qs})`, from, to, ...ids),
       all(env, `SELECT * FROM team_notes WHERE user_id IN (${qs})`, ...ids),
-      all(env, `SELECT c.assigned_to, c.tier FROM claims c WHERE c.state = 'assigned' AND c.assigned_at < ? AND (c.follow_up_on IS NULL OR c.follow_up_on = '' OR c.follow_up_on <= ?) AND c.assigned_to IN (${qs})${cw}${lw}`, todayStart, today, ...ids, ...ca, ...la),
+      // left over: allocated before the person's working day began (a night shift's: the day it began) and not started
+      all(env, `SELECT c.assigned_to, c.tier, c.assigned_at FROM claims c WHERE c.state = 'assigned' AND c.assigned_at < ? AND (c.follow_up_on IS NULL OR c.follow_up_on = '' OR c.follow_up_on <= ?) AND c.assigned_to IN (${qs})${cw}${lw}`,
+        Math.max(...people.map((u) => wdOf.get(u.id).from)), today, ...ids, ...ca, ...la),
       all(env, `SELECT user_id, reason FROM attendance WHERE status = 'out' AND day = ? AND user_id IN (${qs})`, today, ...ids),
       all(env, `SELECT e.id, e.error_by_id AS user_id, e.sr, e.client_id, cl.name AS client_name, e.kind, e.dept, e.day, e.error_dow, e.status FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
         WHERE e.is_error = 'Y' AND e.error_by_id IN (${qs}) AND e.day BETWEEN ? AND ?${ew} ORDER BY e.day DESC, e.sr DESC`, ...ids, from, to, ...ca),
       // team tasks: the items each person marked done in these dates (what each update added), on the day the update was made
-      // (an overnight shift's after midnight to the day it began); they count toward the person's count beside the claims
-      all(env, `SELECT user_id, SUM(delta) AS items, SUM(CASE WHEN bday < ? THEN delta ELSE 0 END) AS items_done, COUNT(DISTINCT task_id) AS tasks FROM (
-          SELECT u.user_id, u.delta, u.task_id, date((u.at / 1000) + ? - CASE WHEN u.user_id IN (${ovs}) THEN ? ELSE 0 END, 'unixepoch') AS bday
+      // (a night shift's after midnight to the day it began); they count toward the person's count beside the claims
+      all(env, `SELECT user_id, SUM(delta) AS items, SUM(CASE WHEN bday < ${doneSql} THEN delta ELSE 0 END) AS items_done, COUNT(DISTINCT task_id) AS tasks FROM (
+          SELECT u.user_id, u.delta, u.task_id, date((u.at / 1000) + ? - ${rollSql("u.user_id")}, 'unixepoch') AS bday
           FROM team_task_updates u WHERE u.kind = 'update' AND u.at BETWEEN ? AND ? AND u.user_id IN (${qs}))
-        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, today, off * 60, ...ovIds, OVERNIGHT_SPILL_H * 3600, start, end + OVERNIGHT_SPILL_H * 3600000, ...ids, from, to),
+        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, start, end + maxRollMs, ...ids, from, to),
       all(env, `SELECT user_id, COUNT(*) AS n FROM team_task_people WHERE status = 'completed' AND completed_at BETWEEN ? AND ? AND user_id IN (${qs}) GROUP BY user_id`, start, end, ...ids),
     ]);
     const tkd = new Map(tasksDone.map((x) => [x.user_id, x])), tkc = new Map(tasksClosed.map((x) => [x.user_id, x.n]));
@@ -4365,21 +4411,26 @@ const OPS = {
       const w = wk.get(u.id) || {}, n = nb.get(u.id) || {}, st = statusOf(u), cap = Math.max(1, u.capacity || 35);
       // each day: a full day, a half day or out. Purview Shastra's attendance decides when it has the day (leave, half
       // day, week off, a Saturday worked); otherwise a weekday is a full day unless marked Out today here (Half day: half).
-      const fd = fl.byUser.get(u.id);
+      // Days before the date of joining have no target and no floor time, and are not days out.
+      const fd = fl.byUser.get(u.id), myDay = dayOf(u), doj = isoDate(u.doj);
       let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0;
       for (const d of span) {
-        const x = fd && fd.get(d), sd = x ? shastraDay(x.status) : null, wd = weekday(d);
+        const x = fd && fd.get(d), sd0 = x ? shastraDay(x.status) : null, wd = weekday(d);
+        // Overtime on a working day is a day in; a weekend or holiday worked as overtime adds no target (its entries still count)
+        const sd = sd0 && sd0.overtime && !wd ? null : sd0;
         let share = 0;
-        if (sd) { share = sd.share; if (sd.kind === "in") full++; else if (sd.kind === "half") half++; else if (sd.kind !== "off") { out++; if (sd.kind === "unplanned") unplanned++; } }
-        else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
-          if (!a) full++; else if (share) half++; else { out++; unplanned++; } }
+        if (!(doj && d < doj)) {
+          if (sd) { share = sd.share; if (sd.kind === "in") full++; else if (sd.kind === "half") half++; else if (sd.kind !== "off") { out++; if (sd.kind === "unplanned") unplanned++; } }
+          else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
+            if (!a) full++; else if (share) half++; else { out++; unplanned++; } }
+        }
         shares += share; needAll += share * 480;
-        if (d < today) { tDone += share * cap; needDone += share * 480; } else if (d === today) tToday = share * cap;
+        if (d < myDay) { tDone += share * cap; needDone += share * 480; } else if (d === myDay) tToday = share * cap;
         if (x) { const tof = x.tof_min || 0, idl = x.guard ? (x.idle_min || 0) + (x.locked_min || 0) : 0;
           onAll += tof; idleAll += idl; if (x.guard) { lockedAll += x.locked_min || 0; guard = true; }
           // breaks taken that day (Shastra's own figure); Shastra allows 60 minutes a day
           brkAll += x.break_min || 0; if (tof > 0) brkDays++; if ((x.break_min || 0) > SH_BREAK_ALLOW_MIN) brkOver++;
-          if (d < today) { onDone += tof; idleDone += idl; } }
+          if (d < myDay) { onDone += tof; idleDone += idl; } }
       }
       const target = Math.round(shares * cap);
       const inShastra = fl.state === "ok" && !!fd && fd.size > 0;
@@ -4403,7 +4454,9 @@ const OPS = {
           ramp = { kind: "ramp", start: startD, due, extended: !!n.end_date, weeks_in: startD ? Math.max(0, Math.round((Date.parse(today) - Date.parse(startD)) / 86400000 / 7 * 10) / 10) : null,
             flag: left < 0 ? "over" : left <= 7 ? "soon" : "track", days: left }; }
       }
-      const mine = desk.filter((c) => c.assigned_to === u.id), leftHigh = mine.filter((c) => c.tier === "High").length;
+      // left over: what was on the person's desk before this working day began (a night shift's day begins at its shift: B-03)
+      const mine = desk.filter((c) => c.assigned_to === u.id && c.assigned_at < wdOf.get(u.id).from), leftHigh = mine.filter((c) => c.tier === "High").length;
+      // can_act: the viewer has power over this person only inside their own span (D-01)
       return { id: u.id, name: u.name, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, can_act: f.canAct(u.id), doj: u.doj || "", status: st, capacity: cap,
         days_full: full, days_half: half, days_out: out, days_unplanned: unplanned, days_worked: w.days_worked || 0, worked, closed: cl.get(u.id) || 0, target, attain, attain_basis: basis,
         worked_here: f.narrow ? w.worked_here || 0 : null,
@@ -4935,9 +4988,10 @@ const OPS = {
     const esc = await trackerEsc(env);
     const tflRows = (await OPS["payers.limits"]({ env, user, payload: { today } })).rows;
     const tfl = new Map(); for (const r of tflRows) { const t = tfl.get(r.client_id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 }; t.soon_n += r.soon_n; t.soon_bal += r.soon_bal; t.past_n += r.past_n; t.past_bal += r.past_bal; tfl.set(r.client_id, t); }
-    // capacity: entries a working day over the last 14 days, against the claims still to work
+    // capacity: entries a working day over the last 14 days, against the claims still to work (working days: Monday to Friday,
+    // Shastra holidays left out, as the TAT clock counts them)
     const since14 = now - 14 * 86400000;
-    let wd = 0; for (let t = since14; t < now; t += 86400000) { const w = new Date(t + IST_MIN * 60000).getUTCDay(); if (w !== 0 && w !== 6) wd++; }
+    let wd = 0; for (let t = since14; t < now; t += 86400000) if (isWorkDay(istISO(t))) wd++;
     const pace = mapOf(await all(env, `SELECT c.client_id, COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND n.created_at > ? GROUP BY c.client_id`, since14));
     const lastInv = mapOf(await all(env, `SELECT client_id, MAX(uploaded_at) AS at FROM batches WHERE undone_at IS NULL GROUP BY client_id`));
     const monthStart = payload.from_ms != null ? num(payload.from_ms, 0) : Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
