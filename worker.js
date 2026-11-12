@@ -4300,7 +4300,10 @@ const OPS = {
       return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, can_act: f.canAct(u.id),
         on_desk: onDesk.length, carried: left.length, left_high: leftHigh, left_other: left.length - leftHigh, closed, worked: work.length, worked_here: f.narrow ? workHere : null, skips, first, last,
         idle_min: last ? Math.floor((now - last) / 60000) : null, expected: workDay ? expected : 0, behind: workDay && status !== "out" && work.length < expected - 3,
-        current: cur ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
+        // the open claim only when its client is one of the viewer's: someone seen through a share or a client's team may be on another
+        // client's claim, and then nothing of it is shown (claim number, client, payer, balance), only that it is elsewhere
+        current: cur ? { ...(inScope(user, cur.client_id) ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance } : { id: null, claim_no: "", client: "", payer: "", balance: null, elsewhere: true }),
+          minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
         status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, off_day: offDay, in_shift: inShift,
         untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null };
     });

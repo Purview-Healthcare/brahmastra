@@ -3,6 +3,7 @@
    the token the way Drishti does, and a mail hook that only counts. Made-up data only. */
 import crypto from "crypto";
 import { makeRig } from "./rig.mjs";
+process.setMaxListeners(50);   // one rig per world, each adds an exit listener
 const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 500))); };
@@ -674,6 +675,33 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-14: focus left inside an embedded page no longer counts as activity every second", tick.length > 100 && !/IFRAME|hasFocus/.test(tick) && !/hasFocus\(\)/.test(hook), tick.slice(0, 300));
   ok("D-14: real input inside the embedded pages counts (mouse, keys, touch, wheel on the frame's own page)", /contentDocument/.test(hook) && /frameEvs\.forEach\(\(e\) => d\.addEventListener\(e, mark/.test(hook) && /"keydown"/.test(hook) && /"mousemove"/.test(hook));
   ok("D-14: the built page carries the same code", fs.readFileSync(new URL("../../app/app.js", import.meta.url), "utf8").includes("contentDocument"));
+}
+
+/* ================= N-07: Live status shows no claim of a client the viewer does not have ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, lake, rows } = w;
+  const TI = await w.c("Tina Lead"), LA = await w.c("Lara Lead"), AR = await w.c("Arun Agent"), DV = await w.c("Dev Agent");
+  const sunIds = (await rows("SELECT id, claim_no FROM claims WHERE client_id = ? AND state = 'open' ORDER BY id LIMIT 2", sun.id));
+  const lakeIds = (await rows("SELECT id, claim_no FROM claims WHERE client_id = ? AND state = 'open' ORDER BY id LIMIT 2", lake.id));
+  await A("alloc.reassign", { ids: sunIds.map((x) => x.id), user_id: id["Arun Agent"] });
+  await A("alloc.reassign", { ids: lakeIds.map((x) => x.id), user_id: id["Dev Agent"] });
+  await AR("queue.open", { id: sunIds[0].id });
+  await DV("queue.open", { id: lakeIds[0].id });
+  await LA("clients.accessSave", { client_id: lake.id, user_id: id["Arun Agent"], level: "view" });   // Lara shares her client with Tina's biller
+  const rowOf = async (who, uid) => { const h = await who("team.huddle", { today: w.today() }); return { h, r: h.rows.find((x) => x.id === uid) }; };
+  S("N-07: a claim open on another client is not shown");
+  let { h, r } = await rowOf(LA, id["Arun Agent"]);
+  ok("N-07: Lara (Lakeview) still sees Tina's biller on Live status once she shared Lakeview with him", !!r, h.rows.map((x) => x.name));
+  ok("N-07: but nothing of the Sunrise claim he has open: no claim number, client, payer or balance", r && r.current && r.current.elsewhere === true && !r.current.id && !r.current.claim_no && !r.current.client && !r.current.payer && r.current.balance == null && !JSON.stringify(h).includes(sunIds[0].claim_no), r && r.current);
+  ({ h, r } = await rowOf(TI, id["Arun Agent"]));
+  ok("N-07: his own team lead sees the claim, as before", r && r.current && r.current.id === sunIds[0].id && r.current.claim_no === sunIds[0].claim_no && r.current.client === "Sunrise Eye Care", r && r.current);
+  ({ h, r } = await rowOf(TI, id["Dev Agent"]));
+  ok("N-07: a team lead's own biller on a client the lead does not have: shown working, the claim not shown", r && r.current && r.current.elsewhere === true && !JSON.stringify(h).includes(lakeIds[0].claim_no), r && r.current);
+  ({ h, r } = await rowOf(LA, id["Dev Agent"]));
+  ok("N-07: the team lead of that client sees it", r && r.current && r.current.claim_no === lakeIds[0].claim_no && r.current.client === "Lakeview Dental Group", r && r.current);
+  ({ h, r } = await rowOf(A, id["Arun Agent"]));
+  ok("N-07: the admin sees every claim, as before", r && r.current && r.current.claim_no === sunIds[0].claim_no, r && r.current);
 }
 
 const fails = results.filter((x) => !x.pass);
