@@ -631,6 +631,38 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-08: and the admin", r.ok, r);
 }
 
+/* ================= D-11: odd input gets a plain refusal, never a server error ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, anon } = w;
+  const TI = await w.c("Tina Lead"), AR = await w.c("Arun Agent");
+  const bad = { toString: 1 }, bad2 = { valueOf: 1, toString: {} };
+  S("D-11: an object with its own toString or valueOf, where text is expected");
+  for (const [label, who, op, p] of [["signed out: auth.login", anon, "auth.login", { email: bad, passHash: "a".repeat(64) }], ["signed out: auth.lookup", anon, "auth.lookup", { q: bad }],
+    ["signed out: auth.sendOtp", anon, "auth.sendOtp", { email: bad2 }], ["a biller: queue.list", AR, "queue.list", { q: bad }], ["a biller: notes.add", AR, "notes.add", { claim_id: "x", comment: bad2 }],
+    ["a team lead: claims.list", TI, "claims.list", { state: bad }], ["a team lead: tasks.create", TI, "tasks.create", { client_id: sun.id, title: bad, scope: "AR follow-up", count: 1, people: [] }],
+    ["deep inside: clients.save profile", A, "clients.save", { name: "Odd Clinic", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 30 }, resp: { ar: { lead: bad } } } }],
+    ["inside a list: alloc.reassign", TI, "alloc.reassign", { ids: [bad], user_id: id["Arun Agent"] }]]) {
+    const r = await T(() => who(op, p));
+    ok(`D-11: ${label} gives a plain 400, not a server error`, !r.ok && r.status === 400 && /plain values/.test(r.e), r);
+  }
+  ok("D-11: nothing was made by the refused calls", !(await w.row("SELECT id FROM clients WHERE name = 'Odd Clinic'")));
+  S("D-11: page numbers");
+  let r = await T(() => TI("claims.list", { client_id: sun.id, page: 1e308 }));
+  ok("D-11: claims.list with a huge page number answers (an empty page), no server error", r.ok && r.r.rows.length === 0 && r.r.page === 1000000 && r.r.total > 0, r.ok ? [r.r.page, r.r.total] : r);
+  r = await T(() => TI("claims.list", { client_id: sun.id, page: -7, page_size: 20 }));
+  const r2 = await T(() => TI("claims.list", { client_id: sun.id, page: "two", page_size: 20 }));
+  ok("D-11: a page below 1 or not a number is page 1", r.ok && r.r.page === 1 && r.r.rows.length === 20 && r2.ok && r2.r.page === 1, [r.ok && r.r.page, r2.ok && r2.r.page]);
+  r = await T(() => TI("claims.list", { client_id: sun.id, page: 2, page_size: 20 }));
+  ok("D-11: an ordinary page 2 is still page 2", r.ok && r.r.page === 2 && r.r.rows.length === 20, r.ok ? r.r.page : r);
+  S("D-11: ordinary input still goes through");
+  r = await T(() => AR("auth.me", {}));
+  const lk = await T(() => anon("auth.lookup", { q: "Tina" }));
+  ok("D-11: plain text, numbers, lists and yes/no are untouched", r.ok && lk.ok && lk.r.matches.length === 1 && (await T(() => TI("claims.list", { client_id: sun.id, state: "open", worked_before: false, page_size: 10 }))).ok);
+  r = await T(() => TI("creport.save", { client_id: sun.id, period_key: "month:2026-10", page_id: "summary", data: { note: "made-up words", toStringish: "kept", rows: [{ a: 1 }] } }));
+  ok("D-11: keys that only look like toString are fine", r.ok, r);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

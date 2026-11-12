@@ -3560,6 +3560,8 @@ const deskDepts = (user) => { const d = deskOf(user); return d ? DESK_DEPTS[d] :
    reprioritising claims and their log, Needs attention, My day, Live status and the day's team, the AR entries, Team allocations,
    repeat denials, the Client 360 report and the AR Inventory report. */
 const DESK_NOT = /^(inventory\.|alloc\.|attention\.|queue\.|creport\.|denials\.|claims\.(eligible|setState|setPriority|priorityLog)$|reports\.(arInventory|saveArInventory|work|desk)$|supervisor\.allocations$|team\.(huddle|today|saveToday)$)/;
+const unreadable = (v, depth = 0) => v !== null && typeof v === "object" && depth < 10
+  && (Object.prototype.hasOwnProperty.call(v, "toString") || Object.prototype.hasOwnProperty.call(v, "valueOf") || Object.values(v).some((x) => unreadable(x, depth + 1)));
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
 /* Read-only claim lists a biller may open for the clients they are responsible for (posting, submission...). */
 const DESK_READ_OPS = /^claims\.(list|stats)$/;
@@ -5860,7 +5862,8 @@ const OPS = {
     const sort = SORTS[payload.sort] || "c.priority";
     const dir = payload.dir === "asc" ? "ASC" : "DESC";
     const size = Math.max(10, Math.min(500, Math.round(num(payload.page_size, 50))));
-    const page = Math.max(1, Math.round(num(payload.page, 1)));
+    // a whole page number in a sane range, so the OFFSET below is always a whole number
+    const page = Math.max(1, Math.min(1000000, Math.round(num(payload.page, 1))));
     const w = where.length ? "WHERE " + where.join(" AND ") : "";
     const total = (await one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt FROM claims c ${w}`, ...params)) || { n: 0, amt: 0 };
     const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.balance, c.billed, c.lines, c.age_days, c.bucket, c.tier,
@@ -8048,6 +8051,9 @@ export default {
         const payload = (body && body.payload) || {};
         // Ids are text (or numbers): an object or a list would reach the database and fail there.
         for (const k of Object.keys(payload)) if ((k === "id" || k.endsWith("_id")) && payload[k] !== null && typeof payload[k] === "object") throw bad("Send " + k + " as text.");
+        // JSON can send an object with its own "toString" or "valueOf" (as a number, say): it cannot be read as text, and would crash
+        // whichever op turns it into text. Refused here, at any depth, before any op runs.
+        if (unreadable(payload)) throw bad("Send plain values: text, numbers, yes or no, or lists of them.");
         const auth = request.headers.get("Authorization") || "";
         const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
         // Only the ops themselves: OPS["constructor"], "__proto__", "toString" and the like are inherited from every object.
