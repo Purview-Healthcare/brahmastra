@@ -229,6 +229,18 @@ S("G-14: Drishti stops answering after a good read: every SLA page says its figu
   await fresh();
 }
 
+S("G-08: Drishti's 12-hour session is made again when it is near its end");
+{ // (the SLA tab itself, Load again and Drishti dropping its token, is the browser proof repro-G-08)
+  const T0 = IST(2026, 11, 10, 12);
+  await at(T0, () => A("auth.me"));   // the page's own sign-in, as the admin
+  const r1 = await at(T0, () => app.drishtiSignIn());
+  ok("G-08: signing in to Drishti leaves its token where Drishti's page reads it", r1.token && app.localStorage.getItem("drishti:token:v1") === r1.token && r1.name === "Admin", r1.name);
+  ok("G-08: the page can tell when that session ends: 12 hours on", app.drTokenEnd(r1.token) === T0 + 12 * 3600000, app.drTokenEnd(r1.token) - T0);
+  const r2 = await at(T0 + 13 * 3600000, () => app.drishtiSignIn());
+  ok("G-08: signing in again 13 hours later gives a new session, 12 hours from then, in the same place", r2.token !== r1.token && app.drTokenEnd(r2.token) === T0 + 25 * 3600000 && app.localStorage.getItem("drishti:token:v1") === r2.token, app.drTokenEnd(r2.token) - T0);
+  ok("G-08: an unreadable token counts as ended (so it is made again)", app.drTokenEnd("") === 0 && app.drTokenEnd("x.y") === 0);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

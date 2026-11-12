@@ -8302,6 +8302,16 @@ function CrPrintJob({ title, pages, slideFor, onDone }) {
 /* Drishti opens already signed in as the Brahmastra user: Brahmastra asks its server for Drishti's own session token
    and leaves it where the Drishti page looks for it (same web address, so the same browser storage). */
 const DRISHTI_TOKEN_KEY = "drishti:token:v1";
+/* When Drishti's session token ends (it lasts 12 hours): its first part is base64url("id|role|end in ms"). 0 if unreadable. */
+function drTokenEnd(tok) {
+  try { const p = String(tok || "").split(".")[0].replace(/-/g, "+").replace(/_/g, "/"); return Number(atob(p).split("|")[2]) || 0; } catch (e) { return 0; }
+}
+/* A new Drishti session for the signed-in person, left where the Drishti page reads it on every call it makes. */
+async function drishtiSignIn() {
+  const r = await rpc("reports.drishtiSession");
+  try { localStorage.setItem(DRISHTI_TOKEN_KEY, r.token); } catch (e) {}
+  return r;
+}
 /* The SLA tab's heading, with Drishti's frame buttons (load again, own browser tab, full screen) while a Drishti tab is open. */
 function SlaHead({ title, sub, onHow, frame }) {
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -8322,16 +8332,31 @@ function SlaHead({ title, sub, onHow, frame }) {
 }
 function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) {
   const [sso, setSso] = useState({ state: "loading" });
+  const ssoRef = useRef(sso); ssoRef.current = sso;
+  const signedAt = useRef(0), alive = useRef(true);
+  // Signs in to Drishti again (a new 12-hour session): on opening, on Load again, an hour before the session ends, and when
+  // Drishti drops its token because its session ended. Never resolves to an error: the state says what went wrong.
+  const signIn = () => {
+    signedAt.current = Date.now();
+    return drishtiSignIn().then((r) => { if (alive.current) setSso({ state: "ok", name: r.name, role: r.role, created: r.created }); })
+      .catch((e) => { if (alive.current) setSso({ state: e.status === 503 && /not switched on/.test(e.message) ? "off" : "error", msg: e.message, status: e.status }); });
+  };
   useEffect(() => {
-    let alive = true;
-    rpc("reports.drishtiSession").then((r) => {
-      try { localStorage.setItem(DRISHTI_TOKEN_KEY, r.token); } catch (e) {}
-      if (alive) setSso({ state: "ok", name: r.name, role: r.role, created: r.created });
-    }).catch((e) => { if (alive) setSso({ state: e.status === 503 && /not switched on/.test(e.message) ? "off" : "error", msg: e.message }); });
-    return () => { alive = false; };
+    alive.current = true;
+    signIn();
+    const due = () => ssoRef.current.state !== "off" && Date.now() - signedAt.current > 60000;
+    const check = () => { let t = ""; try { t = localStorage.getItem(DRISHTI_TOKEN_KEY) || ""; } catch (e) {} if (due() && drTokenEnd(t) - Date.now() < 3600000) signIn(); };
+    const id = setInterval(check, 5 * 60000);
+    // Drishti's page (same web address) takes its token away when its session has ended: put a new one in its place, and
+    // Drishti opens again signed in (embed.js reloads it when a token arrives while its sign-in card is up)
+    const onStore = (e) => { if (e.key === DRISHTI_TOKEN_KEY && !e.newValue && due()) signIn(); };
+    window.addEventListener("storage", onStore);
+    return () => { alive.current = false; clearInterval(id); window.removeEventListener("storage", onStore); };
   }, []);
   const frameRef = useRef(null);
-  const frame = useFrame(DR_BASE);
+  const frame0 = useFrame(DR_BASE);
+  // Load again signs in again first, so a session that ran out while the tab stayed open does not end on Drishti's own sign-in
+  const frame = { ...frame0, reload: () => { signIn().then(() => frame0.reload()); } };
   const [f, setF] = useState({ client_id: onlyClient(ctx), location_id: "" });
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(null);
