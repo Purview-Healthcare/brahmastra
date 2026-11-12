@@ -203,6 +203,34 @@ S("B-02: Team status asks Shastra's floor feed in parts of at most 93 days and j
   ok("B-02: the same dates again 5 minutes later: Shastra is not asked again", floorCalls.length === 0, floorCalls);
 }
 
+S("B-08 and H-07: the page uses India's date, whatever the computer's time zone");
+{
+  const tz0 = process.env.TZ, lb = rig.app.getLocalBackend, sent = [];
+  process.env.TZ = "America/New_York";   // 08:00 Tuesday Nov 10 in India is 21:30 Monday Nov 9 in New York
+  try {
+    rig.app.getLocalBackend = async () => { const b = await lb(); return { fetch: (u, init) => { sent.push(JSON.parse(init.body).payload); return b.fetch(u, init); } }; };
+    await work("Eve Early", IST(2026, 11, 9, 12)); await work("Eve Early", IST(2026, 11, 10, 7));
+    const r = await at(IST(2026, 11, 10, 8), async () => {
+      const today = page("todayISO()"), b = page("dayBounds(todayISO())"), span = page('rangeSpan({ key: "today" })'), wk = page('rangeSpan({ key: "week" })');
+      return { today, b, span, wk, local: page("new Date(Date.now()).toString()"), so_far: page('crF.iso(crSoFar(crRangeMonth(crD("2026-11-15"))))'), day: page("dayKey(" + IST(2026, 11, 10, 7) + ")"),
+        st: await A("team.status", { from: today, to: today }) };   // the page's own today and offset
+    });
+    ok("B-08: on a New York computer at 21:30 Monday, the page's today is India's Tuesday Nov 10, from India's midnight", r.today === D(10) && r.b[0] === IST(2026, 11, 10) && r.b[1] === IST(2026, 11, 11) - 1 && /Mon Nov 09/.test(r.local),
+      { today: r.today, bounds: r.b, local: r.local });
+    ok("B-08: Today and This week follow India's date (Nov 10; Monday Nov 9 to Nov 10)", r.span.join() === D(10) + "," + D(10) && r.wk.join() === D(9) + "," + D(10), [r.span, r.wk]);
+    ok("B-08: every call sends India's today and offset (330), not the computer's", sent.length > 0 && sent.every((p) => p.today === D(10) && p.tz_offset_min === 330), sent.slice(-1));
+    const e = row(r.st, "Eve Early");
+    ok("B-08: Team status Today: 1 of 35 today (Tuesday, a working day; not Monday's Diwali with no target)", e.worked_today === 1 && e.target_today === 35 && e.perf === "pending", pick(e, ["worked_today", "target_today", "perf"]));
+    ok("B-08: (same mistake in the claim history and the Client 360 report) the day of an entry and 'so far' are India's days", r.day === D(10) && r.so_far === D(10), [r.day, r.so_far]);
+    // H-07: 09:00 Wednesday in India (22:30 Tuesday in New York): Log an escalation starts on India's date, and the server takes it
+    const h = await at(IST(2026, 11, 11, 9), async () => { const blank = page('escBlank("")');
+      const s = await rig.tryOp(() => A("escalations.save", { ...blank, kind: "external", client_id: sun.id, location_id: "all", channels: ["Email"], dept: "Account Receivable", raised_who: "Office manager", reported_to: "Tess Lead",
+        email_subject: "Posting delay", description: "Payment not posted for three days", owner_id: U("Tess Lead").id, status: "open", comment: "Logged on India's date for the test" }));
+      return { day: blank.day, today: page("todayISO()"), sr: s.ok ? s.r.sr : null, error: s.ok ? "" : s.e }; });
+    ok("H-07: 22:30 Tuesday in New York (09:00 Wednesday in India): Log an escalation's received date is Wed Nov 11, and it saves", h.day === D(11) && h.today === D(11) && !!h.sr, h);
+  } finally { rig.app.getLocalBackend = lb; if (tz0 === undefined) delete process.env.TZ; else process.env.TZ = tz0; }
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
