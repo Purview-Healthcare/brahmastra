@@ -7734,7 +7734,8 @@ const OPS = {
     const from = c.escalated ? await one(env, "SELECT name FROM users WHERE id = ?", c.escalated_by) : null;
     const sentBack = c.escalated ? null : await one(env, "SELECT dept, done_by_name, done_at, reason FROM handoffs WHERE claim_id = ? AND status IN ('back','assistance') ORDER BY done_at DESC LIMIT 1", c.id);
     // Only what is in Needs attention: an escalation, or a claim a department sent back that nobody has reviewed since.
-    if (!c.escalated && !(sentBack && !(c.reviewed_at && c.reviewed_at > sentBack.done_at))) throw bad("This claim is not waiting for a review: it was not escalated or sent back by a department.");
+    if (!c.escalated && sentBack && c.reviewed_at && c.reviewed_at > sentBack.done_at) throw bad(`This claim was already reviewed${c.reviewed_by_name ? " by " + c.reviewed_by_name : ""} after it was sent back. It stays under Sent back until a biller saves an entry on it.`);
+    if (!c.escalated && !sentBack) throw bad("This claim is not waiting for a review: it was not escalated or sent back by a department.");
     const origin = c.escalated ? { by: from ? from.name : "", at: c.escalated_at, how: "escalated" } : sentBack ? { by: sentBack.done_by_name, at: sentBack.done_at, how: "sent back by " + DEPT_LABEL[sentBack.dept], reason: sentBack.reason } : {};
     const stmts = [env.DB.prepare("UPDATE claims SET escalated = 0, escalation_answered_at = ?, escalation_answered_by = ?, reviewed_at = ?, reviewed_by_name = ?, updated_at = ? WHERE id = ?").bind(now, user.id, now, user.name, now, c.id)];
     let to = "", waits = "", reopened = false;

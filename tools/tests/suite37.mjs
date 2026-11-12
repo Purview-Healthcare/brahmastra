@@ -549,6 +549,22 @@ await part("C-20 / C-21: the desk dashboard counts open and past TAT by the desk
   ok("C-20: after the expected date it is past the TAT again", (await dash()).attention.some((x) => x.id === ha.id && x.why === "past") && (await dash()).totals.overdue_now === (await list()).stats.overdue);
 });
 
+await part("C-10: a sent-back claim is reviewed once", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  const REVIEW = { why: "Submission sent it back", reviewed: "The claim and the desk note", findings: "The NPI is missing on line two", next: "Add the NPI and send it again" };
+  const [a] = await give("Arun Agent", 1);
+  await save(AR, a, SAAG.resub);
+  await call(QU, "handoffs.close", { id: (await openH(a, "submission")).id, outcome: "back", reason: "Missing claim data", note: "Need the NPI on line two" });
+  const rowOf = async () => (await call(TI, "attention.fromDesks")).rows.find((x) => x.claim_id === a);
+  ok("C-10: the sent-back claim waits for a review (not reviewed yet)", (await rowOf()) && (await rowOf()).reviewed === false, await rowOf());
+  let r = await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "biller", sent_by: U("Arun Agent").id }));
+  ok("C-10: the team lead reviews it; the row stays (until a biller saves an entry) marked reviewed, which is what takes the Review button off the page", r.ok && (await rowOf()) && (await rowOf()).reviewed === true && (await rowOf()).reviewed_by_name === "Tina Lead", [r, await rowOf()]);
+  r = await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "biller", sent_by: U("Arun Agent").id }));
+  ok("C-10: a second review is refused with the true reason (already reviewed, and why the row is still there)", !r.ok && /already reviewed by Tina Lead/.test(r.e) && /until a biller saves an entry/.test(r.e) && !/was not escalated or sent back/.test(r.e), r);
+  await call(AR, "queue.complete", { id: a, saag: SAAG.fu, note: NOTE("Added the NPI, following up"), rework: true });
+  ok("C-10: once the biller saves an entry the row leaves the list", !(await rowOf()), await rowOf());
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

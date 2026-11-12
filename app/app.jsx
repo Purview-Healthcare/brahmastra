@@ -4360,7 +4360,7 @@ function FromDesksView({ ctx, me, refreshAttention, clientId, pick, tat, onHold,
               <td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td>
               <td className="small" style={{ maxWidth: 320 }}><b>{r.reason || "–"}</b>{r.note ? <div className="tiny muted" title={r.note}>“{r.note.length > 140 ? r.note.slice(0, 140) + "…" : r.note}”</div> : null}</td>
               <td className="small">{r.biller_name || <span className="muted">not on a desk</span>}</td>
-              <td className="r" style={{ whiteSpace: "nowrap" }}>{r.reviewed && <span className="badge green" title={"Reviewed by " + r.reviewed_by_name}>Reviewed</span>} <button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.dept_label + " sent it back: " + (r.reason || "need assistance from AR"), review_context: r.note })}>Review</button></td>
+              <td className="r" style={{ whiteSpace: "nowrap" }}>{r.reviewed && <span className="badge green" title={"Reviewed by " + r.reviewed_by_name + ". It stays here until a biller saves an entry on the claim."}>Reviewed</span>} <button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button>{!r.reviewed && <> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.dept_label + " sent it back: " + (r.reason || "need assistance from AR"), review_context: r.note })}>Review</button></>}</td>
             </tr>))}
             {q.data && !rows.length && <tr><td colSpan={8}><Empty>{attnEmpty(pick, "sent back", "Nothing sent back by Posting, Submission or Rejections is waiting on AR.")}</Empty></td></tr>}</tbody></table></div>
       </div>
