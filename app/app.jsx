@@ -6543,7 +6543,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 <td><button type="button" className="btn link biller-link" style={{ padding: 0, fontWeight: 700 }} title={"Open " + r.name + "'s claims"} onClick={() => go("claims", { assigned_to: r.id, clientId, locationId: locId, state: "" })}>{r.name} ›</button><div className="tiny muted">{(r.shift || "no shift on the roster") + " · target\u00a0" + r.capacity}</div></td>
                 <td className="sh-cell">{shCell(r)}</td>
                 <td><span className={"badge " + TT_STATUS[r.status][0]}>{TT_STATUS[r.status][1]}{r.status === "idle" && r.idle_min != null ? " · " + r.idle_min + " min" : ""}</span></td>
-                <td style={{ minWidth: 190 }}>{r.current ? <><button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.current.id)}>{r.current.claim_no || "claim"}</button>{r.current.minutes != null ? <span className="small muted"> · {r.current.minutes} min</span> : null}<div className="tiny muted">{[r.current.client, r.current.payer, r.current.balance != null ? fmtMoney(r.current.balance) : ""].filter(Boolean).join(" · ")}</div></>
+                <td style={{ minWidth: 190 }}>{r.current ? <>{r.current.elsewhere ? <span className="small muted" title="A claim of a client that is not one of yours">on another client's claim</span> : <button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.current.id)}>{r.current.claim_no || "claim"}</button>}{r.current.minutes != null ? <span className="small muted"> · {r.current.minutes} min</span> : null}<div className="tiny muted">{[r.current.client, r.current.payer, r.current.balance != null ? fmtMoney(r.current.balance) : ""].filter(Boolean).join(" · ")}</div></>
                   : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" })}</span> : <span className="tiny muted">–</span>}</td>
                 <td style={{ minWidth: 180 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
                   <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div></>}</td>
@@ -6833,7 +6833,7 @@ const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took 
   "user.save": "Changed a team member", "client.log": "Logged a client call", "client.logRemove": "Removed a client call log entry", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL",
   "project.map": "Matched a roster project to a client", "user.code": "Gave a sign-in code", "user.reset": "Reset a password", "user.email": "Changed an email address",
-  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails" };
+  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails", "roster.dupEmp": "The same Emp ID on two Shastra rows" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
   const q = useRpc("audit.list", { client_id: f.client_id || undefined, action: f.action || undefined }, [f.client_id, f.action]);
@@ -8942,7 +8942,7 @@ function kpiInside(it) {
 /* A time Brahmastra read Drishti, or will ask it again: the time if it is today, else the day and the time. A time to ask
    again is rounded up to the next minute, so "from 12:02" is never too early. */
 const drWhen = (ms, up) => { if (!ms) return ""; const t = up ? Math.ceil(Number(ms) / 60000) * 60000 : Number(ms), d = new Date(t);
-  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : fmtWhen(t); };
+  return istISOOf(t) === todayISO() ? d.toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" }) : fmtWhen(t); };   // India's day (B-08), US style (H-08)
 /* The scorecard could not be read: when, why, and when Brahmastra asks Drishti again (one minute after a failed read). */
 function drReadNote(d) {
   if (!d) return "";

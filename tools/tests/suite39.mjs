@@ -3,6 +3,7 @@
    the token the way Drishti does, and a mail hook that only counts. Made-up data only. */
 import crypto from "crypto";
 import { makeRig } from "./rig.mjs";
+process.setMaxListeners(50);   // one rig per world, each adds an exit listener
 const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 500))); };
@@ -674,6 +675,134 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-14: focus left inside an embedded page no longer counts as activity every second", tick.length > 100 && !/IFRAME|hasFocus/.test(tick) && !/hasFocus\(\)/.test(hook), tick.slice(0, 300));
   ok("D-14: real input inside the embedded pages counts (mouse, keys, touch, wheel on the frame's own page)", /contentDocument/.test(hook) && /frameEvs\.forEach\(\(e\) => d\.addEventListener\(e, mark/.test(hook) && /"keydown"/.test(hook) && /"mousemove"/.test(hook));
   ok("D-14: the built page carries the same code", fs.readFileSync(new URL("../../app/app.js", import.meta.url), "utf8").includes("contentDocument"));
+}
+
+/* ================= N-07: Live status shows no claim of a client the viewer does not have ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, lake, rows } = w;
+  const TI = await w.c("Tina Lead"), LA = await w.c("Lara Lead"), AR = await w.c("Arun Agent"), DV = await w.c("Dev Agent");
+  const sunIds = (await rows("SELECT id, claim_no FROM claims WHERE client_id = ? AND state = 'open' ORDER BY id LIMIT 2", sun.id));
+  const lakeIds = (await rows("SELECT id, claim_no FROM claims WHERE client_id = ? AND state = 'open' ORDER BY id LIMIT 2", lake.id));
+  await A("alloc.reassign", { ids: sunIds.map((x) => x.id), user_id: id["Arun Agent"] });
+  await A("alloc.reassign", { ids: lakeIds.map((x) => x.id), user_id: id["Dev Agent"] });
+  await AR("queue.open", { id: sunIds[0].id });
+  await DV("queue.open", { id: lakeIds[0].id });
+  await LA("clients.accessSave", { client_id: lake.id, user_id: id["Arun Agent"], level: "view" });   // Lara shares her client with Tina's biller
+  const rowOf = async (who, uid) => { const h = await who("team.huddle", { today: w.today() }); return { h, r: h.rows.find((x) => x.id === uid) }; };
+  S("N-07: a claim open on another client is not shown");
+  let { h, r } = await rowOf(LA, id["Arun Agent"]);
+  ok("N-07: Lara (Lakeview) still sees Tina's biller on Live status once she shared Lakeview with him", !!r, h.rows.map((x) => x.name));
+  ok("N-07: but nothing of the Sunrise claim he has open: no claim number, client, payer or balance", r && r.current && r.current.elsewhere === true && !r.current.id && !r.current.claim_no && !r.current.client && !r.current.payer && r.current.balance == null && !JSON.stringify(h).includes(sunIds[0].claim_no), r && r.current);
+  ({ h, r } = await rowOf(TI, id["Arun Agent"]));
+  ok("N-07: his own team lead sees the claim, as before", r && r.current && r.current.id === sunIds[0].id && r.current.claim_no === sunIds[0].claim_no && r.current.client === "Sunrise Eye Care", r && r.current);
+  ({ h, r } = await rowOf(TI, id["Dev Agent"]));
+  ok("N-07: a team lead's own biller on a client the lead does not have: shown working, the claim not shown", r && r.current && r.current.elsewhere === true && !JSON.stringify(h).includes(lakeIds[0].claim_no), r && r.current);
+  ({ h, r } = await rowOf(LA, id["Dev Agent"]));
+  ok("N-07: the team lead of that client sees it", r && r.current && r.current.claim_no === lakeIds[0].claim_no && r.current.client === "Lakeview Dental Group", r && r.current);
+  ({ h, r } = await rowOf(A, id["Arun Agent"]));
+  ok("N-07: the admin sees every claim, as before", r && r.current && r.current.claim_no === sunIds[0].claim_no, r && r.current);
+}
+
+/* ================= N-08: a client save that is refused changes nothing ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, row } = w;
+  const TI = await w.c("Tina Lead");
+  const snap = async () => JSON.stringify(await row("SELECT name, code, follow_up_days, active, workbook_link, scope_json, targets_json, ar_lead FROM clients WHERE id = ?", sun.id));
+  const good = { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: id["Tina Lead"] } } };
+  S("N-08: client edit: every check before the first write");
+  let before = await snap();
+  let r = await T(() => TI("clients.save", { id: sun.id, name: "Renamed Sunrise", code: "ZZ", follow_up_days: 9, active: false, workbook_link: "https://example.org/x.xlsx", profile: { scope: ["ar"], targets: {}, resp: {} } }));
+  ok("N-08: a client save the profile check refuses leaves the name, code, follow-up days, active and link as they were", !r.ok && /daily target/.test(r.e) && (await snap()) === before, [r, before, await snap()]);
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Renamed Sunrise", code: "ZZ", follow_up_days: 9, active: true, workbook_link: "not a link", profile: good }));
+  ok("N-08: so does one refused for a bad production file link", !r.ok && /https/.test(r.e) && (await snap()) === before, r);
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Sunrise Eye Care West", code: "SEW", follow_up_days: 21, active: true, profile: good }));
+  const now1 = await row("SELECT name, code, follow_up_days, targets_json FROM clients WHERE id = ?", sun.id);
+  ok("N-08: a save that passes writes the name, code, follow-up days and the profile together", r.ok && now1.name === "Sunrise Eye Care West" && now1.code === "SEW" && now1.follow_up_days === 21 && JSON.parse(now1.targets_json).ar === 40, [r, now1]);
+  ok("N-08: and its change is in the audit trail", (await w.audits("client.save")).some((a) => /name Sunrise Eye Care → Sunrise Eye Care West/.test(a.detail)));
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Sunrise Eye Care", code: "SEC", follow_up_days: 30, active: true }));
+  ok("N-08: a save without a profile still changes the name and code", r.ok && (await row("SELECT name FROM clients WHERE id = ?", sun.id)).name === "Sunrise Eye Care", r);
+}
+
+/* ================= N-15: a field not sent stays as it is ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, row, sql } = w;
+  const TI = await w.c("Tina Lead");
+  const u = async (n) => row("SELECT name, first_name, last_name, active, designation, capacity, role FROM users WHERE id = ?", id[n]);
+  S("N-15: Team edit: what is not sent is not changed");
+  await TI("users.save", { id: id["Bela Agent"], first_name: "Bela", last_name: "Agent", designation: "Sr Biller", role: "user", capacity: 42, active: false });
+  let r = await T(() => A("users.save", { id: id["Bela Agent"], last_name: "Agentova" }));
+  let b = await u("Bela Agent");
+  ok("N-15: a save that leaves out Active does not switch the person back on", r.ok && b.active === 0, b);
+  ok("N-15: nor clears the designation or resets the daily target", b.designation === "Sr Biller" && b.capacity === 42, b);
+  ok("N-15: and changes only what was sent (the last name; the first name kept)", b.name === "Bela Agentova" && b.first_name === "Bela" && b.role === "user", b);
+  r = await T(() => TI("users.save", { id: id["Tina Lead"], capacity: 25 }));
+  const t = await u("Tina Lead");
+  ok("N-15: a team lead's save of their own target alone keeps their role (it is not a demotion)", r.ok && t.role === "supervisor" && t.capacity === 25 && t.name === "Tina Lead", [r, t]);
+  r = await T(() => A("users.save", { id: id["Tina Lead"], designation: "Sr TL" }));
+  ok("N-15: the admin's save of a designation alone keeps the team lead role", r.ok && (await u("Tina Lead")).role === "supervisor" && (await u("Tina Lead")).designation === "Sr TL", r);
+  r = await T(() => TI("users.save", { id: id["Bela Agent"], first_name: "Bela", last_name: "Agent", designation: "Biller", role: "user", capacity: 35, active: true }));
+  b = await u("Bela Agent");
+  ok("N-15: what is sent is still saved (the page sends every field): back on, Biller, 35 a day", r.ok && b.active === 1 && b.designation === "Biller" && b.capacity === 35, b);
+  r = await T(() => TI("users.save", { id: id["Bela Agent"], first_name: "Bela", last_name: "Agent", role: "user", active: false }));
+  ok("N-15: and Active sent as off still switches someone off", r.ok && (await u("Bela Agent")).active === 0, r);
+
+  S("N-15: the same for clients, locations and client teams");
+  const c = async () => row("SELECT name, code, follow_up_days, active, team_json, auto_allocate FROM clients WHERE id = ?", sun.id);
+  await TI("clients.save", { id: sun.id, name: "Sunrise Eye Care", code: "SEC", follow_up_days: 21, active: false });
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Sunrise Eye Care Group" }));
+  let cc = await c();
+  ok("N-15: a client save that sends only the name keeps it inactive, its code and its follow-up days", r.ok && cc.name === "Sunrise Eye Care Group" && cc.active === 0 && cc.code === "SEC" && cc.follow_up_days === 21, cc);
+  await TI("clients.save", { id: sun.id, name: "Sunrise Eye Care", code: "SEC", follow_up_days: 30, active: true });
+  const loc = (await w.rows("SELECT id, name FROM locations WHERE client_id = ? ORDER BY name", sun.id))[0];
+  await TI("locations.save", { id: loc.id, name: loc.name, active: false });
+  r = await T(() => TI("locations.save", { id: loc.id, name: loc.name + " Clinic" }));
+  const l = await row("SELECT name, active FROM locations WHERE id = ?", loc.id);
+  ok("N-15: renaming a switched-off location does not switch it back on", r.ok && l.active === 0 && l.name === loc.name + " Clinic", l);
+  const team0 = (await TI("clients.list")).clients.find((x) => x.id === sun.id).team;
+  await TI("clients.saveTeam", { client_id: sun.id, team: team0, auto_allocate: false });
+  r = await T(() => TI("clients.saveTeam", { client_id: sun.id, team: team0 }));
+  cc = await c();
+  ok("N-15: a team save that leaves out auto-allocation keeps it off", r.ok && cc.auto_allocate === 0, cc);
+  r = await T(() => TI("clients.saveTeam", { client_id: sun.id, auto_allocate: true }));
+  cc = await c();
+  ok("N-15: and one that leaves out the team keeps the team", r.ok && JSON.parse(cc.team_json).length === team0.length && team0.length > 0 && cc.auto_allocate === 1, cc);
+}
+
+/* ================= N-16: two Shastra rows with the same Emp ID: neither takes an account by it ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, st, row, rows, sql } = w;
+  const AR = await w.c("Arun Agent");
+  const u = async (uid) => row("SELECT name, email, active, emp_id, department FROM users WHERE id = ?", uid);
+  const arun0 = await u(id["Arun Agent"]);
+  const dupAudits = async () => (await w.audits("roster.dupEmp")).length;
+  S("N-16: the same Emp ID on two rows");
+  // a new joiner entered with Arun's Emp ID by mistake, listed before him; and an HR row with Bela's Emp ID (HR gets no access)
+  const base = FEED();
+  st.feed = [P({ emp_id: "A1", name: "Neha Newjoiner", project: SUN, reports_to: "Tina Lead", email: "neha" + D }), ...base.map((r) => (r.name === "Cyra Agent" ? { ...r, department: "Posting" } : r)),
+    P({ emp_id: "a2 ", name: "Hari Hr", position: "Executive", department: "HR", email: "hari" + D })];
+  let r = await T(() => A("roster.syncShastra"));
+  const arun = await u(id["Arun Agent"]);
+  ok("N-16: the row listed first does not take the account of that Emp ID: Arun keeps his name, email and access", r.ok && arun.name === arun0.name && arun.email === arun0.email && arun.active === 1, [r.ok || r.e, arun0, arun]);
+  ok("N-16: and no account is made for the other row by it", !(await row("SELECT id FROM users WHERE name = 'Neha Newjoiner' OR email = ?", "neha" + D)));
+  const ws = r.ok ? r.r.warnings.filter((x) => (x.issues || []).some((i) => /same Emp ID/.test(i))) : [];
+  ok("N-16: the sync result says so for both rows, naming the Emp ID and the other person", ws.some((x) => x.name === "Neha Newjoiner" && /\(A1\) as Arun Agent/.test(x.issues.join())) && ws.some((x) => x.name === "Arun Agent" && /\(A1\) as Neha Newjoiner/.test(x.issues.join())), ws);
+  ok("N-16: an HR row with Bela's Emp ID does not switch Bela off either (whatever the spacing or case)", (await u(id["Bela Agent"])).active === 1 && ws.some((x) => x.name === "Hari Hr" && /\(A2\)/.test(x.issues.join())), ws.map((x) => x.name));
+  ok("N-16: the rest of the feed is applied as usual", (await u(id["Cyra Agent"])).department === "Posting");
+  const au = await w.audits("roster.dupEmp");
+  ok("N-16: the audit trail has one row naming both Emp IDs and the people", au.length === 1 && /A1 \(Neha Newjoiner, Arun Agent\)/.test(au[0].detail) && /A2 /.test(au[0].detail), au);
+  r = await T(() => A("roster.syncShastra"));
+  ok("N-16: the next (hourly) sync says it again in its result, without a second audit row", r.ok && r.r.warnings.some((x) => x.name === "Neha Newjoiner") && (await dupAudits()) === 1);
+  ok("N-16: Arun still signs in", (await T(() => AR("auth.me"))).ok);
+  // Shastra is fixed: Neha gets her own Emp ID, the HR row its own
+  st.feed = st.feed.map((x) => (x.name === "Neha Newjoiner" ? { ...x, emp_id: "N7" } : x.name === "Hari Hr" ? { ...x, emp_id: "H1" } : x));
+  r = await T(() => A("roster.syncShastra"));
+  const neha = await row("SELECT name, emp_id, active FROM users WHERE email = ?", "neha" + D);
+  ok("N-16: once fixed in Shastra the new joiner gets an account of her own and Arun keeps his", r.ok && neha && neha.emp_id === "N7" && neha.active === 1 && (await u(id["Arun Agent"])).name === "Arun Agent" && !r.r.warnings.some((x) => (x.issues || []).some((i) => /same Emp ID/.test(i))), [neha, r.ok && r.r.warnings]);
+  ok("N-16: and a later duplicate is in the audit trail again", (await (async () => { st.feed = [...st.feed, P({ emp_id: "T1", name: "Tom Twin", project: SUN, reports_to: "Mona Manager", email: "tom" + D })]; await A("roster.syncShastra"); return dupAudits(); })()) === 2);
 }
 
 const fails = results.filter((x) => !x.pass);

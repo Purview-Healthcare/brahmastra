@@ -2039,7 +2039,19 @@ async function importRoster(env, user, payload) {
   const byMail = new Map(); rows.forEach((r) => { if (rosterClassify(r).reason) return; const k = rowMail(r); byMail.set(k, [...(byMail.get(k) || []), r]); });
   const claimed = new Map(), planMail = new Map();
   const skipRow = (row, match, issue) => { if (match) used.add(match.id); warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues: [issue], skipped: true }); };
+  // Two Shastra rows with the same Emp ID: the one listed first would take the account of that Emp ID (and the other person could be
+  // switched off). Neither takes an account by it: both are skipped with a warning until Shastra is fixed, and no account either
+  // of them points to (by that Emp ID, their email or their name) is switched off meanwhile.
+  const empKey = (r) => String(r.emp_id || "").trim().toUpperCase();
+  const rowsByEmp = new Map(); rows.forEach((r) => { const k = empKey(r); if (k) rowsByEmp.set(k, [...(rowsByEmp.get(k) || []), r]); });
+  const dupEmp = [...rowsByEmp].filter(([, rs]) => rs.length > 1).map(([k]) => k).sort();
   for (const row of rows) {
+    if (dupEmp.includes(empKey(row))) {
+      // (N-16) the accounts this row points to (by that Emp ID, its email or its name) are kept, not switched off
+      for (const u of [empHit(row), mailHit(row), ...(byName.get(nameKey(row)) || [])]) if (u) used.add(u.id);
+      skipRow(row, null, `skipped: the same Emp ID (${empKey(row)}) as ${rowsByEmp.get(empKey(row)).filter((r) => r !== row).map((r) => r.name).join(", ")} in Shastra; neither takes an account by it until it is fixed in Shastra`);
+      continue;
+    }
     const e = empHit(row), m = mailHit(row);
     const named = nameRows.get(nameKey(row)) === 1 ? (byName.get(nameKey(row)) || []).filter((u) => !byPlaceholder.has(u.id)) : [];
     // A name or placeholder match already taken by another row is not this person's account.
@@ -2139,6 +2151,13 @@ async function importRoster(env, user, payload) {
   await recomputeScopes(env);
   await autoMapProjects(env);
   await syncTeams(env);
+  // An Emp ID on more than one Shastra row goes in the audit trail when it first shows (the hourly sync does not repeat it).
+  const dupLast = (await getSetting(env, "roster_dup_emp", [])) || [];
+  if (JSON.stringify(dupEmp) !== JSON.stringify(dupLast)) {
+    const fresh = dupEmp.filter((k) => !dupLast.includes(k));
+    if (fresh.length) await audit(env, user, "roster.dupEmp", null, "The same Emp ID on more than one row in Shastra: " + fresh.map((k) => `${k} (${rowsByEmp.get(k).map((r) => r.name).join(", ")})`).join("; ") + ". Neither row took an account by it; fix it in Shastra.");
+    await setSetting(env, "roster_dup_emp", dupEmp);
+  }
   await setSetting(env, "roster_meta", { at: now, by: user.name || user.email, file: str(payload.file_name, 200), summary });
   return { ...out, applied: true };
 }
@@ -3787,7 +3806,7 @@ const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\
 // settings.get / settings.save: who reads and writes which keys (see the two ops).
 const SETTINGS_OPEN = ["onedrive_folder"], SETTINGS_LEAD = ["onedrive_folder", "digest_enabled"], SETTINGS_LEAD_SAVE = ["onedrive_folder"];
 const SETTINGS_ADMIN_OWN = ["extra_emails", "roster_meta", "feedback_to"];
-const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$)/;
+const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$|roster_dup_emp$)/;
 
 const OPS = {
   "meta.info": async ({ env }) => ({ app: "brahmastra-api", version: VERSION, demo: !!env.DEMO, domains: allowedDomains(env), email: !!env.EMAIL_PROVIDER, email_provider: String(env.EMAIL_PROVIDER || "").toLowerCase(),
@@ -4001,17 +4020,28 @@ const OPS = {
     const projects = Array.isArray(payload.projects) ? payload.projects.map((x) => ({ name: str(x && x.name != null ? x.name : x, 80).trim(), share: x && x.share != null ? num(x.share, 0) : null })).filter((x) => x.name && !/^(none|all)$/i.test(x.name)).slice(0, 30) : null;
     let reportsTo = payload.reports_to === undefined ? undefined : (str(payload.reports_to, 60) || null);
     if (reportsTo) { const r = await one(env, "SELECT id, name FROM users WHERE id = ?", reportsTo); if (!r) throw bad("Pick who they report to."); }
-    const first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
-    const name = fullName(first, last, str(payload.name, 120).trim());
-    const designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
-    // Claims per day: a whole number from 1 to 500, refused otherwise; when it is not sent it stays as it is (35 for someone new)
+    let first = str(payload.first_name, 60).trim(), last = str(payload.last_name, 60).trim();
+    let name = fullName(first, last, str(payload.name, 120).trim());
+    let designation = DESIGNATIONS.includes(payload.designation) ? payload.designation : str(payload.designation, 40).trim();
+    // Claims per day: a whole number from 1 to 500, refused otherwise (H-11); when it is not sent it stays as it is (35 for someone new)
     const capacityOr = (keep) => (payload.capacity == null ? keep : wholeIn(payload.capacity, 1, 500, "Claims per day must be a whole number from 1 to 500."));
-    const active = payload.active === false ? 0 : 1;
+    let capacity = null;   // set below: the checked number, or the person's own when it is not sent
+    let active = payload.active === false ? 0 : 1;
     // People come from Purview Shastra; only the admin adds someone by hand.
     if (!payload.id && !user.is_admin) throw denied("People come from Purview Shastra. Use Sync from Purview Shastra on the Team tab, or ask the admin.");
     if (payload.id) {
       const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown user.");
+      // A field not sent stays as it is (the page sends every field; another caller may send only what it changes): leaving out
+      // Active does not switch someone back on, nor does leaving out the role, designation or daily target change them.
+      const sent = (k) => payload[k] !== undefined && payload[k] !== null;
+      if (!sent("role")) role = ex.role === "supervisor" ? "supervisor" : "user";
+      if (!sent("first_name")) first = ex.first_name || "";
+      if (!sent("last_name")) last = ex.last_name || "";
+      name = fullName(first, last, sent("name") ? str(payload.name, 120).trim() : ex.name);
+      if (!sent("designation")) designation = ex.designation || "";
+      capacity = capacityOr(ex.capacity);   // not sent: their own; sent: 1 to 500 or refused (H-11)
+      if (!sent("active")) active = ex.active ? 1 : 0;
       if (!name) throw bad("Enter the person's name.");
       if (!(await inSpan(env, user, ex.id))) throw notYours();
       if (ex.role === "admin") { if (!user.is_admin) throw denied("Only an admin can change an admin account."); role = "admin"; }
@@ -4036,7 +4066,6 @@ const OPS = {
           if (extra.length) throw denied("You can only give people your own projects. Not yours: " + extra.map((x) => x.name).join(", ") + "."); }
       }
       // Every check comes before the first write, so a save that is refused changes nothing.
-      const capacity = capacityOr(ex.capacity);
       if (newEmail !== ex.email) {
         if (!mailOk(newEmail)) throw bad("Enter a valid email address.");
         if (await one(env, "SELECT id FROM users WHERE email = ? AND id <> ?", newEmail, ex.id)) throw bad("That email already has an account.");
@@ -4073,7 +4102,7 @@ const OPS = {
     if (!first || !last) throw bad("Enter the person's first and last name.");
     const dup = await one(env, "SELECT id FROM users WHERE email = ?", email);
     if (dup) throw bad("That email already has an account.");
-    const capacity = capacityOr(35);
+    capacity = capacityOr(35);
     const id = uuid(), salt = randomHex(16);
     const hash = isHash(payload.passHash) ? await makeHash(env, salt, payload.passHash) : "";
     await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -4399,7 +4428,10 @@ const OPS = {
       return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, can_act: f.canAct(u.id),
         on_desk: onDesk.length, carried: left.length, left_high: leftHigh, left_other: left.length - leftHigh, closed, worked: work.length, worked_here: f.narrow ? workHere : null, skips, first, last,
         idle_min: last ? Math.floor((now - last) / 60000) : null, expected: workDay ? expected : 0, behind: workDay && status !== "out" && work.length < expected - 3,
-        current: cur ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
+        // the open claim only when its client is one of the viewer's: someone seen through a share or a client's team may be on another
+        // client's claim, and then nothing of it is shown (claim number, client, payer, balance), only that it is elsewhere
+        current: cur ? { ...(inScope(user, cur.client_id) ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance } : { id: null, claim_no: "", client: "", payer: "", balance: null, elsewhere: true }),
+          minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
         status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, off_day: offDay, in_shift: inShift,
         untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null };
     });
@@ -5760,11 +5792,12 @@ const OPS = {
     const ex = await one(env, `SELECT id, ${payload.location_id ? "client_id" : "id AS client_id"} FROM ${table} WHERE id = ?`, id);
     if (!ex) throw bad("Unknown " + (payload.location_id ? "location" : "client") + ".");
     editableOr(user, ex.client_id);
-    const ids = [...new Set((Array.isArray(payload.team) ? payload.team : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
+    const old = await one(env, `SELECT team_json, auto_allocate, name FROM ${table} WHERE id = ?`, ex.id);
+    // the team or the auto-allocation switch not sent stays as it is (the page sends both)
+    const ids = [...new Set((Array.isArray(payload.team) ? payload.team : parseTeam(old && old.team_json)).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
     const valid = ids.length ? (await all(env, `SELECT id FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")})`, ...ids)).map((u) => u.id) : [];
     const team = ids.filter((x) => valid.includes(x));
-    const auto = payload.auto_allocate === false ? 0 : 1;
-    const old = await one(env, `SELECT team_json, auto_allocate, name FROM ${table} WHERE id = ?`, ex.id);
+    const auto = payload.auto_allocate == null ? (old && old.auto_allocate == null ? 1 : old && old.auto_allocate ? 1 : 0) : payload.auto_allocate === false ? 0 : 1;
     await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ?`, JSON.stringify(team), auto, ex.id);
     const was = parseTeam(old && old.team_json), add = team.filter((x) => !was.includes(x)), gone = was.filter((x) => !team.includes(x));
     const nm = await namesOf(env, [...add, ...gone]);
@@ -5774,7 +5807,7 @@ const OPS = {
     return { team, auto_allocate: !!auto };
   },
   "clients.save": async ({ env, user, payload }) => {
-    // A change leaves alone what it does not send: no code, Active or follow-up days in it keeps the client's own.
+    // A change leaves alone what it does not send: no code, Active or follow-up days in it keeps the client's own (M-13, N-15).
     const ex = payload.id ? await one(env, "SELECT * FROM clients WHERE id = ?", payload.id) : null;
     if (payload.id && !ex) throw bad("Unknown client.");
     const sent = (k) => !ex || payload[k] !== undefined;
@@ -5790,19 +5823,25 @@ const OPS = {
       if (payload.seen != null && String(payload.seen) !== clientStamp(ex)) throw new ApiError(409, "Someone else changed this client after you opened it, so nothing was saved. Close this, open the client again and make your change.");
       if (plainName(ex.name) !== plainName(name) && (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
       const fu = fuOr(Number(ex.follow_up_days) || 30);
+      // Every check comes before the first write (the profile check included), so a save that is refused changes nothing (N-08).
+      let p = null;
+      if (payload.profile) {
+        const locs = await one(env, "SELECT COUNT(*) AS n FROM locations WHERE client_id = ? AND active = 1", ex.id);
+        p = await checkProfile(env, payload.profile, { isNew: false, locations: (locs && locs.n) || 0 });
+      }
       const changes = [];
       if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);
       if ((ex.code || "") !== code) changes.push(`code ${ex.code || "none"} → ${code || "none"}`);
       if (Number(ex.follow_up_days) !== fu) changes.push(`default follow-up ${ex.follow_up_days} → ${fu} day${fu === 1 ? "" : "s"}`);
       if (!!ex.active !== !!active) changes.push(active ? "made active" : "made inactive");
       if (link != null && (ex.workbook_link || "") !== link) changes.push(link ? "production file link set to " + link : "production file link removed (Brahmastra keeps it by itself)");
-      await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);
-      if (payload.profile) {
-        const locs = await one(env, "SELECT COUNT(*) AS n FROM locations WHERE client_id = ? AND active = 1", ex.id);
-        const p = await checkProfile(env, payload.profile, { isNew: false, locations: (locs && locs.n) || 0 });
-        const before = await describeProfile(env, ex);
-        const sets = Object.keys(p.cols);
-        await run(env, `UPDATE clients SET scope_json = ?, targets_json = ?, ${sets.map((k) => k + " = ?").join(", ")} WHERE id = ?`, JSON.stringify(p.scope), JSON.stringify(p.targets), ...sets.map((k) => p.cols[k]), ex.id);
+      const sets = p ? Object.keys(p.cols) : [];
+      const before = p ? await describeProfile(env, ex) : null;
+      await env.DB.batch([
+        env.DB.prepare("UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?").bind(name, code, fu, active, link, link, ex.id),
+        ...(p ? [env.DB.prepare(`UPDATE clients SET scope_json = ?, targets_json = ?, ${sets.map((k) => k + " = ?").join(", ")} WHERE id = ?`).bind(JSON.stringify(p.scope), JSON.stringify(p.targets), ...sets.map((k) => p.cols[k]), ex.id)] : []),
+      ]);
+      if (p) {
         for (const d of ["posting", "submission", "rejection"]) { const [, l, b] = RESP_COLS[d]; if (p.cols[l]) await followHandoffs(env, ex.id, d, p.cols[l], p.cols[b]); }
         if (p.cols.submission_check_person) await followHandoffs(env, ex.id, "subcheck", p.cols.submission_check_person);
         const after = await describeProfile(env, { ...ex, ...p.cols, scope_json: JSON.stringify(p.scope), targets_json: JSON.stringify(p.targets) });
@@ -5879,10 +5918,12 @@ const OPS = {
       editableOr(user, ex.client_id);
       const old = await one(env, "SELECT name, active, workbook_link FROM locations WHERE id = ?", ex.id);
       if (plainName(old.name) !== plainName(name) && (await all(env, "SELECT name FROM locations WHERE client_id = ? AND id <> ?", ex.client_id, ex.id)).some((l) => plainName(l.name) === plainName(name))) throw bad("That location already exists for this client.");
-      await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
-      const ch = [...(old.name !== name ? [`renamed ${old.name} → ${name}`] : []), ...(!!old.active !== !!active ? [active ? "reactivated" : "deactivated"] : []), ...(link != null && (old.workbook_link || "") !== link ? [link ? "production file link set" : "production file link removed"] : [])];
+      // Active not sent stays as it is (a rename does not switch a location back on)
+      const act = payload.active == null ? (old.active ? 1 : 0) : active;
+      await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, act, link, link, ex.id);
+      const ch = [...(old.name !== name ? [`renamed ${old.name} → ${name}`] : []), ...(!!old.active !== !!act ? [act ? "reactivated" : "deactivated"] : []), ...(link != null && (old.workbook_link || "") !== link ? [link ? "production file link set" : "production file link removed"] : [])];
       if (ch.length) await audit(env, user, "client.location", ex.client_id, `Location ${old.name}: ` + ch.join("; "));
-      return { location: { id: ex.id, client_id: ex.client_id, name, active: !!active, workbook_link: link } };
+      return { location: { id: ex.id, client_id: ex.client_id, name, active: !!act, workbook_link: link } };
     }
     const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!client) throw bad("Unknown client.");
