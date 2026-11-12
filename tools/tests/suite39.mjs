@@ -704,6 +704,27 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("N-07: the admin sees every claim, as before", r && r.current && r.current.claim_no === sunIds[0].claim_no, r && r.current);
 }
 
+/* ================= N-08: a client save that is refused changes nothing ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id, sun, row } = w;
+  const TI = await w.c("Tina Lead");
+  const snap = async () => JSON.stringify(await row("SELECT name, code, follow_up_days, active, workbook_link, scope_json, targets_json, ar_lead FROM clients WHERE id = ?", sun.id));
+  const good = { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: id["Tina Lead"] } } };
+  S("N-08: client edit: every check before the first write");
+  let before = await snap();
+  let r = await T(() => TI("clients.save", { id: sun.id, name: "Renamed Sunrise", code: "ZZ", follow_up_days: 9, active: false, workbook_link: "https://example.org/x.xlsx", profile: { scope: ["ar"], targets: {}, resp: {} } }));
+  ok("N-08: a client save the profile check refuses leaves the name, code, follow-up days, active and link as they were", !r.ok && /daily target/.test(r.e) && (await snap()) === before, [r, before, await snap()]);
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Renamed Sunrise", code: "ZZ", follow_up_days: 9, active: true, workbook_link: "not a link", profile: good }));
+  ok("N-08: so does one refused for a bad production file link", !r.ok && /https/.test(r.e) && (await snap()) === before, r);
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Sunrise Eye Care West", code: "SEW", follow_up_days: 21, active: true, profile: good }));
+  const now1 = await row("SELECT name, code, follow_up_days, targets_json FROM clients WHERE id = ?", sun.id);
+  ok("N-08: a save that passes writes the name, code, follow-up days and the profile together", r.ok && now1.name === "Sunrise Eye Care West" && now1.code === "SEW" && now1.follow_up_days === 21 && JSON.parse(now1.targets_json).ar === 40, [r, now1]);
+  ok("N-08: and its change is in the audit trail", (await w.audits("client.save")).some((a) => /name Sunrise Eye Care → Sunrise Eye Care West/.test(a.detail)));
+  r = await T(() => TI("clients.save", { id: sun.id, name: "Sunrise Eye Care", code: "SEC", follow_up_days: 30, active: true }));
+  ok("N-08: a save without a profile still changes the name and code", r.ok && (await row("SELECT name FROM clients WHERE id = ?", sun.id)).name === "Sunrise Eye Care", r);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

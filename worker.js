@@ -5660,19 +5660,25 @@ const OPS = {
       const ex = await one(env, "SELECT * FROM clients WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown client.");
       editableOr(user, ex.id);
+      // Every check comes before the first write (the profile check included), so a save that is refused changes nothing.
+      let p = null;
+      if (payload.profile) {
+        const locs = await one(env, "SELECT COUNT(*) AS n FROM locations WHERE client_id = ? AND active = 1", ex.id);
+        p = await checkProfile(env, payload.profile, { isNew: false, locations: (locs && locs.n) || 0 });
+      }
       const changes = [];
       if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);
       if ((ex.code || "") !== code) changes.push(`code ${ex.code || "none"} → ${code || "none"}`);
       if (Number(ex.follow_up_days) !== fu) changes.push(`default follow-up ${ex.follow_up_days} → ${fu} day${fu === 1 ? "" : "s"}`);
       if (!!ex.active !== !!active) changes.push(active ? "made active" : "made inactive");
       if (link != null && (ex.workbook_link || "") !== link) changes.push(link ? "production file link set to " + link : "production file link removed (Brahmastra keeps it by itself)");
-      await run(env, "UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, code, fu, active, link, link, ex.id);
-      if (payload.profile) {
-        const locs = await one(env, "SELECT COUNT(*) AS n FROM locations WHERE client_id = ? AND active = 1", ex.id);
-        const p = await checkProfile(env, payload.profile, { isNew: false, locations: (locs && locs.n) || 0 });
-        const before = await describeProfile(env, ex);
-        const sets = Object.keys(p.cols);
-        await run(env, `UPDATE clients SET scope_json = ?, targets_json = ?, ${sets.map((k) => k + " = ?").join(", ")} WHERE id = ?`, JSON.stringify(p.scope), JSON.stringify(p.targets), ...sets.map((k) => p.cols[k]), ex.id);
+      const sets = p ? Object.keys(p.cols) : [];
+      const before = p ? await describeProfile(env, ex) : null;
+      await env.DB.batch([
+        env.DB.prepare("UPDATE clients SET name = ?, code = ?, follow_up_days = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?").bind(name, code, fu, active, link, link, ex.id),
+        ...(p ? [env.DB.prepare(`UPDATE clients SET scope_json = ?, targets_json = ?, ${sets.map((k) => k + " = ?").join(", ")} WHERE id = ?`).bind(JSON.stringify(p.scope), JSON.stringify(p.targets), ...sets.map((k) => p.cols[k]), ex.id)] : []),
+      ]);
+      if (p) {
         for (const d of ["posting", "submission", "rejection"]) { const [, l, b] = RESP_COLS[d]; if (p.cols[l]) await followHandoffs(env, ex.id, d, p.cols[l], p.cols[b]); }
         if (p.cols.submission_check_person) await followHandoffs(env, ex.id, "subcheck", p.cols.submission_check_person);
         const after = await describeProfile(env, { ...ex, ...p.cols, scope_json: JSON.stringify(p.scope), targets_json: JSON.stringify(p.targets) });
