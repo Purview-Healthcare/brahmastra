@@ -262,6 +262,17 @@ S("N-11: a day Shastra's floor feed never answered is not judged (not known, nev
   ok("N-11: once Shastra answers again, every day is judged: 40 h of 40 h, met", f3.floor === "met" && f3.floor_unknown_days === 0 && f3.on_floor_done_min === 40 * 60 && f3.floor_needed_done_min === 40 * 60, pick(f3, ks));
 }
 
+S("N-12: times shown next to dates are India's time, whatever the computer's time zone");
+{
+  const tz0 = process.env.TZ; process.env.TZ = "America/New_York";   // 08:00 Tuesday Nov 10 in India is 21:30 Monday Nov 9 in New York
+  try {
+    const ms = IST(2026, 11, 10, 8), sp = (x) => String(x).replace(/\s/g, " ");
+    const w = sp(page("fmtWhen(" + ms + ")")), tm = sp(page("fmtTime(" + ms + ")")), k = page("dayKey(" + ms + ")");
+    ok("N-12: a note's date and time on a New York computer: Nov 10, 8:00 AM (India's), not Nov 9, 9:30 PM", w === "Nov 10, 8:00 AM", w);
+    ok("N-12: the claim history shows the entry at 08:00 AM under India's day (Nov 10)", tm === "08:00 AM" && k === D(10), [tm, k]);
+  } finally { if (tz0 === undefined) delete process.env.TZ; else process.env.TZ = tz0; }
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -302,7 +302,8 @@ entries before the shift time too, as Team status and My day do (a night shift's
 and **Client 360 report** (pick the client, then its report pack: the *Dashboard › Client 360 report* section
 above). Team status and Inventory status share the filters client, **team lead** (managers and up) and the dates:
 **Today, This week, This month, Custom**. Every page takes today, its weeks and months and the latest date it allows
-from India's clock (IST), whatever the computer's own time zone.
+from India's clock (IST), whatever the computer's own time zone, and shows times (notes, history, last entry, the
+downloads) in India's time too.
 
 **Team status** is Sasha's Third Eye's Team Status, built from Brahmastra's own entries and the Purview Shastra
 roster, grouped by team lead (no Emp ID):
