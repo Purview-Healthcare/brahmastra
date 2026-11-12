@@ -538,6 +538,8 @@ own SAAG when the desk finishes.
 **After Posting closes a claim, anyone can open it to read.** Search (Ctrl+K) finds it for everyone, marked
 "posted · closed". Someone it is not with sees it read only: no entry, no note, no team lead actions, not the
 patient's other claims. Its notes are **locked** for everyone, the biller who wrote them and team leads included.
+A team lead cannot reopen, exclude or close it again (from the claim or the Claims list), and a Needs attention review
+can only keep it closed.
 A claim AR closed itself (not posted) stays with its own people.
 
 **Past TAT, inside the tabs (no separate page).** Each tab shows its own reminders: **Posting & submission** has

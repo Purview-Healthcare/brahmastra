@@ -3418,7 +3418,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   const bulk = async (label, fn) => {
     if (!sel.size) return;
     setBusy(true);
-    try { const r = await fn([...sel]); toast(`${label}: ${fmtInt(r.changed || r.applied || 0)} claims.` + (r.at_desk ? ` ${plural(r.at_desk, "claim is", "claims are")} with a desk and stayed as ${r.at_desk === 1 ? "it is" : "they are"}.` : "")); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
+    try { const r = await fn([...sel]); toast(`${label}: ${fmtInt(r.changed || r.applied || 0)} claims.` + (r.at_desk ? ` ${plural(r.at_desk, "claim is", "claims are")} with a desk and stayed as ${r.at_desk === 1 ? "it is" : "they are"}.` : "") + (r.posted ? ` ${plural(r.posted, "claim was", "claims were")} closed by Posting (read only) and stayed as ${r.posted === 1 ? "it is" : "they are"}.` : "")); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const sortBy = (k) => { if (f.sort === k) set("dir", f.dir === "asc" ? "desc" : "asc"); else setF((x) => ({ ...x, sort: k, dir: k === "patient" || k === "payer" ? "asc" : "desc", page: 1 })); };
@@ -4505,7 +4505,9 @@ function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, o
 /* Supervisor review of a Needs attention claim: why it came, what was reviewed, the findings and the next action, then where
    it goes: the biller who sent it, another biller, or back to the department. */
 function ReviewModal({ row, people, onClose, onDone }) {
-  const [f, setF] = useState(() => ({ why: row.review_why || "", reviewed: "", findings: "", next: "", route: row.sent_by_id ? "biller" : "other", user_id: "", dept: row.last_dept || (row.depts && row.depts[0] ? row.depts[0].id : "") }));
+  // a claim Posting closed is read only: the review can only keep it closed (the server refuses the other routes)
+  const posted = !!row.posted;
+  const [f, setF] = useState(() => ({ why: row.review_why || "", reviewed: "", findings: "", next: "", route: posted ? "keep" : row.sent_by_id ? "biller" : "other", user_id: "", dept: row.last_dept || (row.depts && row.depts[0] ? row.depts[0].id : "") }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   // "Another biller": only the active AR billers on this claim's client (the server checks the same).
@@ -4535,10 +4537,11 @@ function ReviewModal({ row, people, onClose, onDone }) {
         </div>
         <Field label="Send it to">
           <div className="stack" style={{ gap: 8 }}>
-            <label className="check"><input type="radio" name="rv" checked={f.route === "biller"} disabled={!row.sent_by_id} onChange={() => set("route", "biller")} /> {row.sent_by_id ? <>The biller who sent it: <b>{row.sent_by_name || "the biller"}</b></> : "The biller who sent it (nobody on record)"}</label>
-            <label className="check"><input type="radio" name="rv" checked={f.route === "other"} onChange={() => set("route", "other")} /> Another biller</label>
+            {posted && <div className="tiny" style={{ color: "var(--amber-ink)" }}>Posting closed this claim (the payment is posted): it is read only, so it can only be kept closed.</div>}
+            <label className="check"><input type="radio" name="rv" checked={f.route === "biller"} disabled={!row.sent_by_id || posted} onChange={() => set("route", "biller")} /> {row.sent_by_id ? <>The biller who sent it: <b>{row.sent_by_name || "the biller"}</b></> : "The biller who sent it (nobody on record)"}</label>
+            <label className="check"><input type="radio" name="rv" checked={f.route === "other"} disabled={posted} onChange={() => set("route", "other")} /> Another biller</label>
             {f.route === "other" && <div style={{ marginLeft: 24, maxWidth: 320 }}><Combo value={f.user_id} onChange={(v) => set("user_id", v || "")} placeholder="Pick the biller…" options={billers.filter((p) => p.id !== row.sent_by_id).map((p) => ({ id: p.id, label: p.name }))} /></div>}
-            <label className="check"><input type="radio" name="rv" checked={f.route === "dept"} disabled={!depts.length} onChange={() => set("route", "dept")} /> Back to the department{row.last_dept ? " that sent it" : ""}{!depts.length ? " (none set on this client)" : ""}</label>
+            <label className="check"><input type="radio" name="rv" checked={f.route === "dept"} disabled={!depts.length || posted} onChange={() => set("route", "dept")} /> Back to the department{row.last_dept ? " that sent it" : ""}{!depts.length ? " (none set on this client)" : ""}</label>
             {row.state === "closed" && <label className="check"><input type="radio" name="rv" checked={f.route === "keep"} onChange={() => set("route", "keep")} /> Keep it closed (you agree; the biller gets your notes)</label>}
             {f.route === "dept" && <div className="seg2" style={{ marginLeft: 24 }}>{depts.map((d) => <button key={d.id} type="button" className={f.dept === d.id ? "on" : ""} onClick={() => set("dept", d.id)}>{d.label}{row.last_dept === d.id ? " (sent it)" : ""}</button>)}</div>}
           </div>
@@ -5323,7 +5326,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
                 <Combo sm width={220} value={user} onChange={setUser} placeholder="Assign to…" options={ctx.users.filter((u) => u.active && (u.role === "user" || u.id === me.id)).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
                 <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }))}>Assign</button>
                 {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }))}>Unassign</button>}
-                {!atDesk && (c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
+                {!atDesk && !c.locked && (c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
                 {!atDesk && c.state !== "closed" && <button className="btn sm danger" disabled={busy} onClick={() => act("Closed.", () => rpc("claims.setState", { ids: [id], state: "closed" }))}>Close</button>}
                 {!atDesk && c.state !== "excluded" && c.state !== "closed" && <button className="btn sm" disabled={busy} onClick={() => act("Excluded.", () => rpc("claims.setState", { ids: [id], state: "excluded" }))}>Exclude</button>}
                 {atDesk && <span className="tiny muted">With {DEPT_NAME[atDesk.dept]} now: it can be closed or excluded once the desk finishes it or sends it back to AR.</span>}

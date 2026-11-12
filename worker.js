@@ -3542,7 +3542,8 @@ function addWorkingHours(ms, hours) {
   return t;
 }
 /* Where a Needs attention claim can go after review: the departments that have a person on this client. */
-const reviewShape = (r) => ({ ...r, depts: ["posting", "submission", "rejection"].filter((d) => r[d + "_mode"] === "person").map((d) => ({ id: d, label: DEPT_LABEL[d] })) });
+// posted: Posting closed it (read only): the review can only keep it closed
+const reviewShape = (r) => ({ ...r, posted: r.state === "closed" && r.handoff_status === "posted", depts: ["posting", "submission", "rejection"].filter((d) => r[d + "_mode"] === "person").map((d) => ({ id: d, label: DEPT_LABEL[d] })) });
 async function reviewPeople(env, user) {
   return (await visibleUsers(env, user)).filter((u) => u.active && u.role === "user" && !userDesk(u)).map((u) => ({ id: u.id, name: u.name })).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -6272,10 +6273,15 @@ const OPS = {
     const atDesk = new Map();
     for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT h.claim_id, h.dept FROM handoffs h JOIN claims c ON c.id = h.claim_id
         WHERE h.claim_id IN (${part.map(() => "?").join(",")}) AND h.dept <> 'subcheck' AND h.status IN ('pending','assigned','client')${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user))) atDesk.set(r.claim_id, r.dept);
-    const todo = ids.filter((id) => !atDesk.has(id));
+    // A claim Posting closed (the payment is posted) is read only: Reopen, Exclude or Close leave it exactly as it is.
+    const posted = new Set();
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT id FROM claims WHERE id IN (${part.map(() => "?").join(",")}) AND state = 'closed' AND handoff_status = 'posted'${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user))) posted.add(r.id);
+    const todo = ids.filter((id) => !atDesk.has(id) && !posted.has(id));
+    if (posted.size && !todo.length && !atDesk.size) throw bad(posted.size === 1 ? "Posting closed this claim (the payment is posted): it is read only and stays as it is."
+      : `These ${posted.size} claims were closed by Posting (the payment is posted): they are read only and stay as they are.`);
     if (atDesk.size && !todo.length) { const verb = state === "closed" ? "closed" : state === "excluded" ? "excluded" : "reopened", d = DEPT_LABEL[[...atDesk.values()][0]];
-      throw bad(atDesk.size === 1 ? `This claim is with ${d} now. It can be ${verb} once ${d} finishes it or sends it back to AR.`
-        : `These ${atDesk.size} claims are with Payment Posting, Submission or Rejections now. They can be ${verb} once the desk finishes them or sends them back to AR.`); }
+      throw bad(atDesk.size === 1 && !posted.size ? `This claim is with ${d} now. It can be ${verb} once ${d} finishes it or sends it back to AR.`
+        : `These ${atDesk.size + posted.size} claims stay as they are: ${atDesk.size} with Payment Posting, Submission or Rejections now${posted.size ? `, ${posted.size} closed by Posting (read only)` : ""}.`); }
     for (const part of chunks(todo, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
     for (const chunk of chunks(todo, 60)) {
@@ -6283,8 +6289,8 @@ const OPS = {
         skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
       changed += changesOf(r);
     }
-    // at_desk: how many of the claims picked were left as they are because a desk has them
-    return { changed, at_desk: atDesk.size };
+    // at_desk / posted: how many of the claims picked were left as they are because a desk has them, or Posting closed them
+    return { changed, at_desk: atDesk.size, posted: posted.size };
   },
 
   /* ---- allocation ---- */
@@ -7498,7 +7504,7 @@ const OPS = {
     return { ok: true };
   },
   "attention.list": async ({ env, user }) => {
-    const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.state, c.follow_up_on,
+    const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.state, c.handoff_status, c.follow_up_on,
         c.last_status_code, c.last_sub_status, c.last_action_code, c.last_note, c.escalated_at, c.escalated_by, c.assigned_to, u.name AS assigned_name, e.name AS escalated_by_name, cl.name AS client_name, l.name AS location_name,
         cl.posting_mode, cl.submission_mode, cl.rejection_mode,
         (SELECT h.dept FROM handoffs h WHERE h.claim_id = c.id AND h.status IN ('back','assistance') ORDER BY h.done_at DESC LIMIT 1) AS last_dept,
@@ -7525,7 +7531,7 @@ const OPS = {
   /* Sent back to AR: claims Posting, Submission or Rejections returned with "Need assistance from AR" in the last 30 days that
      nobody on AR has worked since. They show for the AR team leads (and up) of the client until a biller saves an entry. */
   "attention.fromDesks": async ({ env, user }) => {
-    const rows = await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.reason, h.note, h.done_at, h.done_by_name, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state,
+    const rows = await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.reason, h.note, h.done_at, h.done_by_name, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.handoff_status,
         c.client_id, c.assigned_to, c.reviewed_at, c.reviewed_by_name, h.biller_id, h.created_by, cl.posting_mode, cl.submission_mode, cl.rejection_mode,
         cl.name AS client_name, l.name AS location_name, u.name AS biller_name,
         (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns
@@ -7988,6 +7994,8 @@ const OPS = {
     const route = ["biller", "other", "dept", "keep"].includes(payload.route) ? payload.route : "";
     if (!route) throw bad("Pick where it goes: the biller who sent it, another biller, or back to the department.");
     if (route === "keep" && c.state !== "closed") throw bad("Only a closed claim can be kept closed: pick where it goes.");
+    // a claim Posting closed is read only: the review can only keep it closed (giving it to a biller or a desk would open it again)
+    if (route !== "keep" && postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): it is read only, so the review can only keep it closed.");
     const now = Date.now(), today = isoDate(payload.today) || isoToday(), cno = c.claim_no || c.account_no || "a claim";
     // The review goes on the claim's timeline only (who escalated it and when, who reviewed it, the four notes, where it went):
     // the claim's notes, work entries and details stay exactly as they were.

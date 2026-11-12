@@ -763,6 +763,32 @@ await part("B-15: asking the client a second time is never counted as met by the
   void over;
 });
 
+await part("N-01: a team lead cannot unlock a claim Posting closed", async () => {
+  setNow(IST(2027, 1, 4, 10, 0));
+  const REVIEW = { why: "Biller flagged it", reviewed: "The posting and the EOB", findings: "Payment posted as on the EOB", next: "Nothing left for AR" };
+  const [a, b, d, e] = await give("Arun Agent", 4);
+  // flagged in the same save that sends it to Posting, then posted: closed, Payment posted, read only, still in Needs attention
+  for (const id of [a, b, d]) { await call(AR, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(AR, id, SAAG.post, { escalate: true }); await postIt(id); }
+  const locked = async (id) => { const c = await claim(id); return c.state === "closed" && c.handoff_status === "posted" && c.state_reason === "Payment posted" && (await call(TI, "claims.get", { id })).claim.locked; };
+  ok("N-01: (set-up) the posted claims are read only and in Needs attention, marked posted for the review", await locked(a) && (await call(TI, "attention.list")).rows.some((r) => r.id === a && r.posted === true), await brief(a));
+  const rs = [await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "biller", sent_by: U("Arun Agent").id })),
+    await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "other", user_id: U("Bela Agent").id })),
+    await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "dept", dept: "posting" }))];
+  ok("N-01: a review cannot give it to the biller, another biller or back to a desk, and says why", rs.every((r) => !r.ok && /Posting closed this claim \(the payment is posted\): it is read only, so the review can only keep it closed/.test(r.e)), rs.map((r) => r.ok || r.e));
+  ok("N-01: ...the claim stays Posting Closed and read only, with no hand-off opened", await locked(a) && !(await hos(a)).some((h) => ["pending", "assigned", "client"].includes(h.status)), await brief(a));
+  let r = await T(() => call(TI, "attention.review", { id: a, ...REVIEW, route: "keep" }));
+  ok("N-01: Keep it closed still works (and takes it out of Needs attention)", r.ok && await locked(a) && !(await call(TI, "attention.list")).rows.some((x) => x.id === a), r);
+  r = await T(() => call(TI, "claims.setState", { ids: [b], state: "open" }));
+  const r2 = await T(() => call(TI, "claims.setState", { ids: [b], state: "excluded" })), r3 = await T(() => call(TI, "claims.setState", { ids: [b], state: "closed" }));
+  ok("N-01: Reopen, Exclude and Close on the claim are refused with a plain reason", [r, r2, r3].every((x) => !x.ok && /Posting closed this claim \(the payment is posted\): it is read only and stays as it is/.test(x.e)), [r, r2, r3].map((x) => x.ok || x.e));
+  ok("N-01: ...it stays Posting Closed and read only (reason still Payment posted)", await locked(b), await brief(b));
+  // several at once from the Claims list: the free one changes, the posted one stays, and the answer counts it
+  await save(AR, e, SAAG.fu); await call(TI, "claims.setState", { ids: [e], state: "closed" });
+  r = await T(() => call(TI, "claims.setState", { ids: [d, e], state: "open" }));
+  ok("N-01: Reopen on several at once: the claim the team lead closed reopens, the posted one stays, and the answer says 1 stayed", r.ok && r.r.changed === 1 && r.r.posted === 1 && (await claim(e)).state === "open" && await locked(d), [r, await brief(d)]);
+  ok("N-01: ...and no 'State changed' line on the posted claim", !(await rows("SELECT id FROM claim_events WHERE claim_id = ? AND kind = 'state'", d)).length);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
