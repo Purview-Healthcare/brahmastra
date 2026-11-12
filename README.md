@@ -723,7 +723,8 @@ again for newer days after 10 minutes. Until the function is added, Team status 
 - **Deleting accounts**: a team lead deletes a team member from the Team list
   (Delete). Anyone can delete their own account from the account menu (Delete
   my account, confirmed by typing the email). Claims on that person's desk go
-  back to the pool; their notes stay in the claim history. The last active team
+  back to the pool and their open hand-offs go to the backup, as when someone is
+  switched off; their notes stay in the claim history. The last active team
   lead cannot be deleted.
 - **Team leads** create their own account from the sign-in screen (Create a
   team lead account: first name, last name, work email, designation from the

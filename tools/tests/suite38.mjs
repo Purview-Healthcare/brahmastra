@@ -282,6 +282,40 @@ const profileOf = async (w, tat, over = {}) => {
   ok("M-12: a save without a stamp still saves", r.ok && (await w.row("SELECT follow_up_days FROM clients WHERE id = ?", w.sun.id)).follow_up_days === 25, r.e);
 }
 
+/* Sunrise with AR and Payment posting (Pavan, backup Pia), and a biller who sends one of their claims to Posting (Need to Post). */
+const postingWorld = async ({ backup = true } = {}) => {
+  const w = await world();
+  const AR = await w.firstIn("Arun Agent");
+  const tina = await w.U("Tina Lead"), pavan = await w.U("Pavan Poster"), pia = await w.U("Pia Postlead"), arun = await w.U("Arun Agent");
+  await w.A("clients.save", { id: w.sun.id, name: w.sun.name, code: w.sun.code, follow_up_days: 30, active: true, profile: { scope: ["ar", "posting"], targets: { ar: 40 }, tat: { posting: 24 }, resp: { ar: { lead: tina.id }, posting: { lead: pavan.id, backup: backup ? pia.id : "" } } } });
+  const c = await w.row("SELECT id, claim_no FROM claims WHERE client_id = ? AND state = 'open' ORDER BY id LIMIT 1", w.sun.id);
+  await w.sql("UPDATE claims SET assigned_to = ?, state = 'assigned', assigned_at = ? WHERE id = ?", arun.id, Date.now(), c.id);
+  await AR("attachments.add", { claim_id: c.id, name: "eob.pdf", type: "application/pdf", data: Buffer.from("%PDF-1.4 made-up eob").toString("base64") });
+  await AR("queue.complete", { id: c.id, saag: { status: "Claim Paid", sub_status: "EOB Available", action: "Need to Post/Posting Correction", bucket: "Purview", effective: "Payment-Cash In Bank" }, note: { source: "Portal", findings: "Paid per EOB, posting needed", action: "follow up" } });
+  const h = await w.row("SELECT id, lead_id, backup_id FROM handoffs WHERE claim_id = ?", c.id);
+  return { w, AR, pavan, pia, arun, claim: c, h };
+};
+{
+  S("E-08: deleting a person moves their open hand-offs on, as switching them off does");
+  let { w, pavan, pia, h } = await postingWorld();
+  ok("E-08: the claim is on Pavan's posting desk, Pia the backup", h && h.lead_id === pavan.id && h.backup_id === pia.id, h);
+  let r = await w.T(() => w.A("users.delete", { id: pavan.id }));
+  const PI = await w.firstIn("Pia Postlead");
+  const after = await w.row("SELECT lead_id, backup_id, status FROM handoffs WHERE id = ?", h.id);
+  const row = (await PI("handoffs.list", {})).rows.find((x) => x.id === h.id);
+  ok("E-08: after Delete the hand-off is Pia's (the backup)", r.ok && after.lead_id === pia.id && after.status === "pending", { e: r.e, after });
+  ok("E-08: Pia sees it on her desk under her name", row && row.lead_name === "Pia Postlead", row);
+  // the same as switching him off
+  ({ w, pavan, pia, h } = await postingWorld());
+  await w.A("users.save", { id: pavan.id, first_name: "Pavan", last_name: "Poster", designation: "Biller", role: "user", capacity: 35, active: false });
+  const off = await w.row("SELECT lead_id FROM handoffs WHERE id = ?", h.id);
+  ok("E-08: switching him off moves it the same way", off.lead_id === pia.id, off);
+  // with no backup set, it stays where switching off leaves it too (for the team lead on the desk dashboard), and the account is gone
+  ({ w, pavan, h } = await postingWorld({ backup: false }));
+  r = await w.T(() => w.A("users.delete", { id: pavan.id }));
+  ok("E-08: no backup: the delete still works and the account is gone", r.ok && !(await w.row("SELECT id FROM users WHERE id = ?", pavan.id)), r.e);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

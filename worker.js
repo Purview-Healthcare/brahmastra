@@ -3516,6 +3516,9 @@ async function backfillKeys(env) {
    under the name they wrote with. */
 async function removeUser(env, id) {
   const now = Date.now();
+  // Their open hand-offs move on first (to the backup, or whoever the client's profile names), as when someone is switched off.
+  await run(env, "UPDATE users SET active = 0 WHERE id = ?", id);
+  await rerouteHandoffs(env, id);
   await env.DB.batch([
     env.DB.prepare("UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = CASE WHEN state IN ('assigned','in_progress') THEN 'open' ELSE state END, updated_at = ? WHERE assigned_to = ?").bind(now, id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id),
