@@ -469,6 +469,15 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 Shares are personal (one person, one client), show who shared and when, and can
 be taken back any time. SMEs cannot share; a view-only share cannot be passed on.
 
+A share is about the client, never about its people. Sign-in codes, password
+resets, changes to a person's account, switching them off and 1:1 coaching notes
+stay with the person's own team lead (the people who report up to them and the
+people on their own projects), the managers above them and the admin. Holding a
+share of a client, or putting someone on a client's team, does not make that
+person yours: on the Team list they show as "on another team". With a view-only
+share the client's people are there to look at only: no Out today, Team status
+note or rebalance for them.
+
 #### RACI (the first tab)
 
 Everyone from SME up (never billers) gets the **RACI** page: one row per client

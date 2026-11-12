@@ -2998,6 +2998,7 @@ const isSME = (u) => u && u.source === "roster" && /\bsme\b|subject matter/i.tes
 const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`);
 const scopeArgs = (user) => (user && user.scope) || [];
 const outOfScope = () => denied("That project is not one of yours.");
+const notYours = () => denied("That person is not on your team: they are not on your own projects and do not report up to you. Ask their team lead or the admin.");
 /* Team status rules: Training and OJT are due in production 6 weeks from their start (4 weeks training + 2 OJT);
    attainment under 90% counts as below the production mark. */
 const RAMP_WEEKS = 6, PERF_MARK = 90;
@@ -3090,33 +3091,47 @@ async function dashTeamFilter(env, user, payload) {
     } else for (const l of await all(env, "SELECT team_json FROM locations WHERE client_id = ?", cid)) parseTeam(l.team_json).forEach((x) => teamIds.add(x));
     for (const g of await all(env, "SELECT user_id FROM client_access WHERE client_id = ?", cid)) teamIds.add(g.user_id);
   } else if (leadId) clientIds = await leadClientIds(env, user, leadId);
-  return { people, leads, canPickLead, leadOf, clientIds, locationId, teamIds, narrow: !!payload.client_id };
+  // Who of them this person may also do something with (out today, the Team status note, rebalance): everyone, except the
+  // people they see only through a view-only share.
+  const act = user.scope && user.scope_view_only && user.scope_view_only.size ? new Set((await visibleUsers(env, user, "edit")).map((u) => u.id)) : null;
+  return { people, leads, canPickLead, leadOf, clientIds, locationId, teamIds, narrow: !!payload.client_id, canAct: (id) => !act || act.has(id) };
 }
-/* The people a scoped team lead may see and edit: themselves, everyone below them, and everyone on their projects. */
-/* Sign-in codes and password resets for someone else: never for an admin unless you are one, and never for a team lead or
-   manager above or beside you: only for people who report up to you (or billers and desk people on your projects). */
+/* Sign-in codes, password resets and edits for someone else: never for an admin unless you are one, and never for a team lead or
+   manager above or beside you: only for people who report up to you, or billers and desk people in your own span (see
+   visibleUsers "span": a client shared with you, or a place on a client's team, never makes a person yours). */
 async function mayActAs(env, user, targetId) {
   if (user.is_admin) return true;
   if (targetId === user.id) return false;
   const t = await one(env, "SELECT id, role, reports_to FROM users WHERE id = ?", targetId);
   if (!t || t.role === "admin") return false;
-  if (t.role !== "supervisor") return true;
+  if (t.role !== "supervisor") return inSpan(env, user, t.id);
   const seen = new Set();
   for (let id = t.reports_to; id && !seen.has(id); ) { if (id === user.id) return true; seen.add(id); const u = await one(env, "SELECT reports_to FROM users WHERE id = ?", id); id = u ? u.reports_to : null; }
   return false;
 }
-async function visibleUsers(env, user) {
+/* The people a scoped team lead sees: themselves, everyone below them, everyone on their projects, and everyone on the teams of
+   their clients or with a share of one (so crossover billers can be picked and allocated, and show on the dashboards).
+   mode "edit": the teams and shares of the clients they may change only. A view-only share shows the client's people; it gives
+     nothing to do with them (out today, the Team status note, rebalance, a team task).
+   mode "span": their own span only: everyone below them and everyone on their own projects. Only these are theirs as people
+     (sign-in codes, password resets, edits, switching off, coaching notes). Holding a share of a client, or putting someone on a
+     client's team, never makes a person theirs. */
+async function visibleUsers(env, user, mode) {
   const users = await all(env, "SELECT * FROM users ORDER BY role DESC, name, email");
   if (!user.scope) return users;
   const names = new Set(user.scope_projects.map(projKey));
   const below = new Set([user.id]);
   for (let grew = true; grew;) { grew = false; for (const u of users) if (u.reports_to && below.has(u.reports_to) && !below.has(u.id)) { below.add(u.id); grew = true; } }
+  const own = (u) => below.has(u.id) || jsonList(u.projects_json).some((p) => names.has(projKey(p.name)));
+  if (mode === "span") return users.filter(own);
+  const sc = mode === "edit" ? editScope(user) : user.scope;
   const teams = new Set();
-  for (const c of await all(env, "SELECT team_json FROM clients WHERE id IN (" + (user.scope.length ? user.scope.map(() => "?").join(",") : "NULL") + ")", ...user.scope)) parseTeam(c.team_json).forEach((id) => teams.add(id));
+  for (const c of await all(env, "SELECT team_json FROM clients WHERE id IN (" + (sc.length ? sc.map(() => "?").join(",") : "NULL") + ")", ...sc)) parseTeam(c.team_json).forEach((id) => teams.add(id));
   // People a client was shared with count as on it, so crossover billers can be picked and allocated.
-  if (user.scope.length) for (const g of await all(env, `SELECT user_id FROM client_access WHERE client_id IN (${user.scope.map(() => "?").join(",")})`, ...user.scope)) teams.add(g.user_id);
-  return users.filter((u) => below.has(u.id) || teams.has(u.id) || jsonList(u.projects_json).some((p) => names.has(projKey(p.name))));
+  if (sc.length) for (const g of await all(env, `SELECT user_id FROM client_access WHERE client_id IN (${sc.map(() => "?").join(",")})`, ...sc)) teams.add(g.user_id);
+  return users.filter((u) => own(u) || teams.has(u.id));
 }
+const inSpan = async (env, user, id) => !user.scope || (await visibleUsers(env, user, "span")).some((u) => u.id === id);
 
 
 /* ---- Purview Shastra roster ----
@@ -3719,7 +3734,9 @@ const OPS = {
   /* ---- users (supervisor) ---- */
   "users.list": async ({ env, user }) => {
     const users = await visibleUsers(env, user);
-    return { users: users.map(publicUser) };
+    // in_span: the people who are theirs (Edit, Sign-in code, Reset password, coaching); the rest are seen through a client only
+    const span = user.scope ? new Set((await visibleUsers(env, user, "span")).map((u) => u.id)) : null;
+    return { users: users.map((u) => ({ ...publicUser(u), in_span: !span || span.has(u.id) })) };
   },
   "users.save": async ({ env, user, payload }) => {
     const now = Date.now();
@@ -3738,7 +3755,7 @@ const OPS = {
       const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown user.");
       if (!name) throw bad("Enter the person's name.");
-      if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
+      if (!(await inSpan(env, user, ex.id))) throw notYours();
       if (ex.role === "admin") { if (!user.is_admin) throw denied("Only an admin can change an admin account."); role = "admin"; }
       // A new email: for someone the roster had no (or a wrong) address for.
       const newEmail = payload.email != null ? mailClean(payload.email) : ex.email;
@@ -3793,7 +3810,7 @@ const OPS = {
     const ex = await one(env, "SELECT id, email, active, name, locked_at FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (ex.locked_at && !user.is_admin) throw denied("This account is locked after wrong passwords. Only the admin, or a code to the person's own official email (Forgot it?), can open it.");
-    if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
+    if (!(await inSpan(env, user, ex.id))) throw notYours();
     if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
     if (!ex.active) throw bad("This account is switched off.");
     const code = await issueOtp(env, ex.email, "login", {}, { byTeamLead: true });
@@ -3803,7 +3820,7 @@ const OPS = {
     if (!isHash(payload.passHash)) throw bad("Set a temporary password.");
     const ex = await one(env, "SELECT id, locked_at FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
-    if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
+    if (!(await inSpan(env, user, ex.id))) throw notYours();
     if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
     if (ex.locked_at && !user.is_admin) throw denied("This account is locked after wrong passwords. Only the admin, or a code to the person's own official email (Forgot it?), can open it.");
     const salt = randomHex(16);
@@ -4087,7 +4104,7 @@ const OPS = {
       else if (!onDesk.length && work.length) status = "done";
       else if (last && now - last > 30 * 60000 && inShift) status = "idle";
       else if (work.length) status = "working";
-      return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name,
+      return { id: u.id, name: u.name, capacity: target, shift: u.shift || "", lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, can_act: f.canAct(u.id),
         on_desk: onDesk.length, carried: left.length, left_high: leftHigh, left_other: left.length - leftHigh, closed, worked: work.length, worked_here: f.narrow ? workHere : null, skips, first, last,
         idle_min: last ? Math.floor((now - last) / 60000) : null, expected: workDay ? expected : 0, behind: workDay && status !== "out" && work.length < expected - 3,
         current: cur ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance, minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
@@ -4238,7 +4255,7 @@ const OPS = {
             flag: left < 0 ? "over" : left <= 7 ? "soon" : "track", days: left }; }
       }
       const mine = desk.filter((c) => c.assigned_to === u.id), leftHigh = mine.filter((c) => c.tier === "High").length;
-      return { id: u.id, name: u.name, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, doj: u.doj || "", status: st, capacity: cap,
+      return { id: u.id, name: u.name, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, can_act: f.canAct(u.id), doj: u.doj || "", status: st, capacity: cap,
         days_full: full, days_half: half, days_out: out, days_unplanned: unplanned, days_worked: w.days_worked || 0, worked, closed: cl.get(u.id) || 0, target, attain, attain_basis: basis,
         worked_here: f.narrow ? w.worked_here || 0 : null,
         worked_done: workedDone, target_done: Math.round(tDone * 10) / 10, worked_today: workedToday, target_today: tToday,
@@ -4295,7 +4312,7 @@ const OPS = {
   /* The start / end dates and comment on someone's Team status row: kept in Brahmastra, seen by every lead who sees them. */
   "team.saveNote": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60);
-    if (!(await visibleUsers(env, user)).some((u) => u.id === id)) throw denied("That person is not in your team.");
+    if (!(await visibleUsers(env, user, "edit")).some((u) => u.id === id)) throw denied("That person is not in your team.");
     const start = payload.start_date ? isoDate(payload.start_date) : "", end = payload.end_date ? isoDate(payload.end_date) : "";
     if (payload.start_date && !start) throw bad("The start date is not a date.");
     if (payload.end_date && !end) throw bad("The end date is not a date.");
@@ -4327,7 +4344,7 @@ const OPS = {
   },
   "team.setOut": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60), today = isoDate(payload.today) || isoToday();
-    if (!(await visibleUsers(env, user)).some((u) => u.id === id)) throw denied("That person is not in your team.");
+    if (!(await visibleUsers(env, user, "edit")).some((u) => u.id === id)) throw denied("That person is not in your team.");
     if (payload.out === false) await run(env, "DELETE FROM attendance WHERE user_id = ? AND day = ?", id, today);
     else await run(env, `INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,'out',?,?,?) ON CONFLICT (user_id, day) DO UPDATE SET status = 'out', reason = excluded.reason, by_name = excluded.by_name, at = excluded.at`,
       id, today, str(payload.reason, 120).trim(), user.name || "", Date.now());
@@ -4336,7 +4353,7 @@ const OPS = {
   /* The not-logged-in alert: Remind me in 30 min (for this person only) or They told me (for everyone, for the day). */
   "team.alertSnooze": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60);
-    if (!(await visibleUsers(env, user)).some((u) => u.id === id)) throw denied("That person is not in your team.");
+    if (!(await visibleUsers(env, user, "edit")).some((u) => u.id === id)) throw denied("That person is not in your team.");
     const live = await shastraLive(env), mins = Math.min(240, Math.max(5, Math.round(num(payload.minutes, 30)))), now = Date.now();
     await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'snoozed',?,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'snoozed', until_at = excluded.until_at, at = excluded.at`,
       id, live.day || istISO(now), user.id, now + mins * 60000, user.name || "", now);
@@ -4344,7 +4361,7 @@ const OPS = {
   },
   "team.alertDismiss": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60);
-    const u = (await visibleUsers(env, user)).find((x) => x.id === id);
+    const u = (await visibleUsers(env, user, "edit")).find((x) => x.id === id);
     if (!u) throw denied("That person is not in your team.");
     const live = await shastraLive(env), now = Date.now();
     await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'dismissed',NULL,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'dismissed', at = excluded.at`, id, live.day || istISO(now), user.id, user.name || "", now);
@@ -4356,7 +4373,7 @@ const OPS = {
   "team.shareOut": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60), today = isoDate(payload.today) || istISO(Date.now());
     if (user.role !== "supervisor") throw denied("Only team leads and above can reallocate.");
-    const src = (await visibleUsers(env, user)).find((u) => u.id === id && u.role === "user");
+    const src = (await visibleUsers(env, user, "edit")).find((u) => u.id === id && u.role === "user");
     if (!src) throw denied("That person is not in your team.");
     const live = await shastraLive(env);
     const res = await shareEqually(env, user, src, { live, today, via: "not logged in", reason: payload.mark_out === false ? "reallocated" : "not logged in today" });
@@ -4374,7 +4391,7 @@ const OPS = {
      today: the same number each, highest priority first (see shareEqually). */
   "team.rebalance": async ({ env, user, payload }) => {
     const from = str(payload.user_id, 60), today = isoDate(payload.today) || istISO(Date.now());
-    const src = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active).find((u) => u.id === from);
+    const src = (await visibleUsers(env, user, "edit")).filter((u) => u.role === "user" && u.active).find((u) => u.id === from);
     if (!src) throw denied("That person is not in your team.");
     const res = await shareEqually(env, user, src, { live: await shastraLive(env), today, via: "rebalance", reason: "out today" });
     if (res.moved) await audit(env, user, "team.rebalance", null, `${src.name}: ${res.moved} claims shared equally to ` + res.to.map((x) => x.name + " " + x.count).join(", "));
@@ -4383,7 +4400,7 @@ const OPS = {
   /* Coaching: one biller's last 30 days and the team lead's 1:1 notes. */
   "coach.profile": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60);
-    const u = (await visibleUsers(env, user)).find((x) => x.id === id);
+    const u = (await visibleUsers(env, user, "span")).find((x) => x.id === id);
     if (!u) throw denied("That person is not in your team.");
     const now = Date.now(), since = now - 30 * 86400000;
     const days = await all(env, "SELECT date((created_at / 1000) + ?, 'unixepoch') AS day, SUM(kind = 'work') AS work, SUM(kind = 'skip') AS skips FROM notes WHERE user_id = ? AND created_at > ? GROUP BY day ORDER BY day", IST_MIN * 60, id, since);
@@ -4404,7 +4421,7 @@ const OPS = {
   },
   "coach.noteAdd": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60);
-    if (!(await visibleUsers(env, user)).some((x) => x.id === id)) throw denied("That person is not in your team.");
+    if (!(await visibleUsers(env, user, "span")).some((x) => x.id === id)) throw denied("That person is not in your team.");
     const kind = ["one_to_one", "praise", "concern", "goal"].includes(payload.kind) ? payload.kind : "one_to_one";
     const text = str(payload.text, 2000).trim();
     if (!commentOk(text)) throw bad("Write what was discussed or agreed, a few words at least.");
