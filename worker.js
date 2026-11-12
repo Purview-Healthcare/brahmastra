@@ -6907,6 +6907,11 @@ const OPS = {
       const ok = recheck && (isRecheckBiller(user, h, c) || (cl0 && [cl0.submission_lead, cl0.submission_backup, cl0.rejection_lead, cl0.rejection_backup].includes(user.id)) || leadFor(user, h.client_id));
       if (!ok) throw denied("This hand-off is not yours.");
     }
+    // The page says where the hand-off stood when the person chose (seen). If someone else has since moved it between the desk and
+    // waiting on the client, the choice was made on an old screen: it is refused, so the first of two different choices wins.
+    const seen = str(payload.seen, 20), side = (st) => (st === "client" ? "client" : "desk");
+    if (["pending", "assigned", "client"].includes(seen) && side(seen) !== side(h.status))
+      throw new ApiError(409, "This hand-off has changed since you opened it: " + (h.status === "client" ? "it is waiting on the client now" : "the client has answered and it is back on the desk") + ". See where it stands, then choose again.");
     const pfx = HO_PREFIX[h.dept] || h.dept;
     // The four choices: completed, pending (still working, with a comment), need assistance from AR, need assistance from client.
     // ("assistance" is the older name for assistance from AR.)
@@ -6921,8 +6926,9 @@ const OPS = {
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const note = str(payload.note, 2000).trim();
     const stmts = [];
-    // The status change runs first and only while the hand-off is still open, so two closes at once cannot both go through.
-    const HO_OPEN = "('pending','assigned','client')";
+    // The status change runs first, and only while the hand-off still stands as this request found it (on the desk, or waiting
+    // on the client), so two choices at once cannot both go through: the first one wins, whatever the two choices are.
+    const STILL = h.status === "client" ? "status = 'client'" : "status IN ('pending','assigned')";
     let guard = null;
     if (outcome === "complete") {
       const p = payload.proof || {};
@@ -6955,7 +6961,7 @@ const OPS = {
       if (h.dept === "rejection") { proof.code = str(p.code, 80).trim(); if (!REJECT_CODES.includes(proof.code)) throw bad("Pick what was wrong with the claim (the rejection code)."); }
       if (h.dept === "subcheck" && !proof.date) throw bad("Enter the date the payer accepted it.");
       if (h.dept !== "subcheck" && (!proof.date || !proof.ref)) throw bad(h.dept === "posting" ? "Enter the posted date and the check / EFT number." : "Enter the submitted date and the batch or claim ID.");
-      guard = env.DB.prepare(`UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, JSON.stringify(proof), note, h.id);
+      guard = env.DB.prepare(`UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ? AND ${STILL}`).bind(now, user.id, user.name, JSON.stringify(proof), note, h.id);
       if (h.dept === "posting") {
         // Payment posted: the work is done, so the claim closes for AR (posting QA audits it later).
         stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'posted', last_effective = CASE WHEN state IN ('in_process','closed') THEN 'Posting Closed' ELSE last_effective END, last_bucket = CASE WHEN state IN ('in_process','closed') THEN 'Closed' ELSE last_bucket END, state = CASE WHEN state = 'in_process' THEN 'closed' ELSE state END, state_reason = CASE WHEN state = 'in_process' THEN 'Payment posted' ELSE state_reason END, updated_at = ? WHERE id = ?").bind(now, c.id));
@@ -6986,7 +6992,7 @@ const OPS = {
       const reason = str(payload.reason, 80).trim();
       if (!reason) throw bad("Pick the rejection reason.");
       if (!commentOk(note)) throw bad("Write what was rejected and why, a few words at least.");
-      guard = env.DB.prepare(`UPDATE handoffs SET status = 'rejected', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, reason, note, h.id);
+      guard = env.DB.prepare(`UPDATE handoffs SET status = 'rejected', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND ${STILL}`).bind(now, user.id, user.name, reason, note, h.id);
       const cl = await one(env, "SELECT submission_mode, submission_lead, submission_backup, rejection_mode, rejection_lead, rejection_backup, submission_tat_hours FROM clients WHERE id = ?", h.client_id);
       // The Rejections person first (their top priority), otherwise the Submission team.
       const rej = await deskPeople(env, cl, "rejection"), sub = await deskPeople(env, cl, "submission");
@@ -7012,7 +7018,7 @@ const OPS = {
       // (a claim that stays closed is not escalated either: nothing comes back to AR)
       const bounced = returns >= BOUNCE_LIMIT && !kept;
       const text = `${DEPT_LABEL[h.dept]} needs assistance from AR (${reason}): ${note}` + (bounced ? ` [returned ${returns} times: for both team leads to review]` : "");
-      guard = env.DB.prepare(`UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, reason, note, h.id);
+      guard = env.DB.prepare(`UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND ${STILL}`).bind(now, user.id, user.name, reason, note, h.id);
       // The third return goes to the AR team lead's Needs attention as well (the department lead sees it on their dashboard).
       stmts.push(bounced
         // "Sent by" for the team lead's review is the AR biller of the claim, not the department person who returned it.
@@ -7023,7 +7029,7 @@ const OPS = {
     } else if (outcome === "pending") {
       // Pending: still with the department, a comment on where it stands; the 24-hour TAT keeps running.
       if (!commentOk(note)) throw bad("Write where it stands, a few words at least.");
-      stmts.push(env.DB.prepare("UPDATE handoffs SET note = ?, pending_at = ?, pending_by_name = ?, desk_state = 'pending' WHERE id = ?").bind(note, now, user.name, h.id));
+      guard = env.DB.prepare(`UPDATE handoffs SET note = ?, pending_at = ?, pending_by_name = ?, desk_state = 'pending' WHERE id = ? AND ${STILL}`).bind(note, now, user.name, h.id);
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]} · pending: ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_pending", DEPT_LABEL[h.dept], { dept: h.dept, note }));
     } else if (outcome === "inprocess" || outcome === "other") {
@@ -7032,7 +7038,7 @@ const OPS = {
       if (outcome === "other" && reason.length < 3) throw bad("Write the reason for Other.");
       if (outcome === "other" && !commentOk(note)) throw bad("Write a comment on where it stands, a few words at least.");
       const label = outcome === "other" ? "Other: " + reason : "In process";
-      stmts.push(env.DB.prepare("UPDATE handoffs SET note = ?, reason = ?, pending_at = ?, pending_by_name = ?, desk_state = ? WHERE id = ?").bind(note, reason || h.reason || "", now, user.name, outcome === "other" ? "other" : "in_process", h.id));
+      guard = env.DB.prepare(`UPDATE handoffs SET note = ?, reason = ?, pending_at = ?, pending_by_name = ?, desk_state = ? WHERE id = ? AND ${STILL}`).bind(note, reason || h.reason || "", now, user.name, outcome === "other" ? "other" : "in_process", h.id);
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]} · ${label}${note ? ": " + note : ""}`, now));
       stmts.push(claimEvent(env, c.id, user, outcome === "other" ? "handoff_other" : "handoff_inprocess", DEPT_LABEL[h.dept], { dept: h.dept, reason, note }));
     } else if (outcome === "client") {
@@ -7075,7 +7081,11 @@ const OPS = {
     if (outcome === "back" && !kept && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), c.assigned_to, now,
         `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${c.claim_no || c.account_no || ""} back to AR (${str(payload.reason, 80).trim()}). It is first on your list.`.slice(0, 300), "queue", h.client_id));
-    if (guard && !changesOf(await guard.run())) throw bad(outcome === "resume" ? "Only a claim waiting on the client can be resumed." : outcome === "client" ? "It is already waiting on the client, or the hand-off is closed." : "This hand-off is already closed.");
+    if (guard && !changesOf(await guard.run())) {
+      const cur = await one(env, "SELECT status FROM handoffs WHERE id = ?", h.id);
+      throw bad(outcome === "resume" ? "Only a claim waiting on the client can be resumed." : outcome === "client" ? "It is already waiting on the client, or the hand-off is closed."
+        : cur && ["pending", "assigned", "client"].includes(cur.status) ? "Someone else changed this hand-off at the same moment. Open it again to see where it stands." : "This hand-off is already closed.");
+    }
     await env.DB.batch(stmts);
     if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id, outcome); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
     return { ok: true };

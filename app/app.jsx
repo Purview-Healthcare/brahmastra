@@ -5021,9 +5021,10 @@ function HandoffCloseModal({ act, onClose, onDone }) {
     try {
       const names = [];
       if (outcome === "complete") for (const f of files) { await rpc("attachments.add", { claim_id: h.claim_id, name: f.name, type: f.type, data: await fileToBase64(f) }); names.push(f.name); }
-      await rpc("handoffs.close", { id: h.id, outcome, proof: { ...p, files: names }, reason, note });
+      // seen: where the hand-off stood on this screen, so a choice made after someone else moved it is refused (409) and the list reloads
+      await rpc("handoffs.close", { id: h.id, outcome, proof: { ...p, files: names }, reason, note, seen: h.status });
       toast(done[outcome] + (names.length ? " Proof attached to the claim." : "")); onDone();
-    } catch (e) { setErr(e.message); }
+    } catch (e) { if (e.status === 409) { toast(e.message, "err"); onDone(); } else setErr(e.message); }
     setBusy(false);
   };
   if (outcome === "back" || outcome === "client" || outcome === "resume" || outcome === "pending" || outcome === "inprocess" || outcome === "other") {

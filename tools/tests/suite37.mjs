@@ -331,6 +331,49 @@ await part("C-05: a hand-off waiting on the client follows a new responsible per
   await setDesk("posting", "Pia Poster", "Otto Poster"); await setDesk("submission", "Quin Submit");
 });
 
+await part("C-06: two different choices on one hand-off at the same moment: the first wins", async () => {
+  setNow(IST(2026, 11, 10, 10, 0));
+  // Quin and Rex both answer for Submission here (lead and backup), so two people can act on one hand-off
+  await A("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "person", lead: U("Quin Submit").id, backup: U("Rex Reject").id });
+  const [a, b, d, e, f] = await give("Arun Agent", 5);
+  for (const id of [a, b, d, e, f]) await save(AR, id, SAAG.resub);
+  const deskNotes = async (id) => (await rows("SELECT comment FROM notes WHERE claim_id = ? AND kind = 'note'", id)).map((n) => n.comment);
+  const BACK = { outcome: "back", reason: "Missing claim data", note: "Need the NPI on line two" }, CLIENT = { outcome: "client", reason: "Need signature or documents", note: "Need the signed form first" };
+  const DONE = () => ({ outcome: "complete", proof: { date: nowIso(), ref: "B-9", mode: "Portal" }, note: "Sent" });
+  // both requests reach the server together (two desk people, the same sign-in path): the status guard decides
+  let h = await openH(a, "submission");
+  let rs = await Promise.all([T(() => call(QU, "handoffs.close", { id: h.id, ...BACK })), T(() => call(RX, "handoffs.close", { id: h.id, ...CLIENT }))]);
+  let c = await claim(a), st = (await row1("SELECT status FROM handoffs WHERE id = ?", h.id)).status;
+  ok("C-06: Need assistance from AR and from client at once: one is accepted, the other refused", rs.filter((r) => r.ok).length === 1, rs.map((r) => r.ok || r.e));
+  ok("C-06: ...the claim follows the one that won, with one desk note (not half of each)", (await deskNotes(a)).length === 1 && (st === "back" ? c.state === "assigned" && c.handoff_status === "submission_back" && c.last_bucket !== "Client" : st === "client" && c.state === "in_process" && c.handoff_status === "submission_client" && c.last_bucket === "Client"), [st, await brief(a), await deskNotes(a)]);
+  ok("C-06: ...and the one refused is told why", /already waiting on the client|already closed|at the same moment/.test((rs.find((r) => !r.ok) || {}).e || ""), rs.map((r) => r.ok || r.e));
+  h = await openH(b, "submission");
+  rs = await Promise.all([T(() => call(RX, "handoffs.close", { id: h.id, ...CLIENT })), T(() => call(QU, "handoffs.close", { id: h.id, ...DONE() }))]);
+  st = (await row1("SELECT status FROM handoffs WHERE id = ?", h.id)).status; c = await claim(b);
+  ok("C-06: Need assistance from client and Completed at once: one is accepted", rs.filter((r) => r.ok).length === 1 && (st === "client" ? c.state === "in_process" && !(await openH(b, "subcheck")) : st === "complete" && c.handoff_status === "submitted" && c.last_bucket === "Payer"), [rs.map((r) => r.ok || r.e), st, await brief(b)]);
+  // one request lands just after the other (the admin's is quicker through sign-in): the page says where the hand-off stood on the
+  // person's screen (seen), and a choice made on an old screen is refused
+  h = await openH(d, "submission");
+  rs = await Promise.all([T(() => call(QU, "handoffs.close", { id: h.id, ...BACK, seen: "pending" })), T(() => call(A, "handoffs.close", { id: h.id, ...CLIENT, seen: "pending" }))]);
+  st = (await row1("SELECT status FROM handoffs WHERE id = ?", h.id)).status;
+  ok("C-06: the same two choices from the page (it says where the hand-off stood): one is accepted, the other refused", rs.filter((r) => r.ok).length === 1 && (await deskNotes(d)).length === 1, [rs.map((r) => r.ok || r.e), st]);
+  ok("C-06: ...the refusal says what changed, with its own code so the page reloads the list", rs.some((r) => !r.ok && r.status === 409 && /has changed since you opened it: it is waiting on the client now/.test(r.e)), rs.map((r) => r.ok || [r.status, r.e]));
+  h = await openH(e, "submission");
+  await call(QU, "handoffs.close", { id: h.id, ...CLIENT, seen: "pending" });
+  let r = await T(() => call(RX, "handoffs.close", { id: h.id, ...DONE(), seen: "assigned" }));
+  ok("C-06: Completed chosen on a screen that still showed it on the desk is refused once it waits on the client", !r.ok && r.status === 409, r);
+  r = await T(() => call(RX, "handoffs.close", { id: h.id, outcome: "resume", note: "The office sent the form", seen: "client" }));
+  const r2 = await T(() => call(QU, "handoffs.close", { id: h.id, ...BACK, seen: "client" }));
+  ok("C-06: Client answered goes through; a choice from a screen that still showed Waiting on client is then refused", r.ok && !r2.ok && r2.status === 409 && /the client has answered and it is back on the desk/.test(r2.e), [r, r2]);
+  r = await T(() => call(QU, "handoffs.close", { id: h.id, ...BACK, seen: "pending" }));
+  ok("C-06: with the screen up to date the choice is saved (pending or assigned is the same place: on the desk)", r.ok, r);
+  // a lead assigning it at the same moment does not block the person completing it (it is still on the desk)
+  h = await openH(f, "submission");
+  rs = await Promise.all([T(() => call(QU, "handoffs.assign", { id: h.id, user_id: U("Rex Reject").id })), T(() => call(RX, "handoffs.close", { id: h.id, ...DONE(), seen: "pending" }))]);
+  ok("C-06: a hand-off assigned at the same moment can still be completed", rs[1].ok && (await row1("SELECT status FROM handoffs WHERE id = ?", h.id)).status === "complete", rs.map((r) => r.ok || r.e));
+  await A("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "person", lead: U("Quin Submit").id });
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
