@@ -180,6 +180,29 @@ S("G-05: one client and month, one SLA score on every page");
   drDown = false; await fresh();
 }
 
+S("G-06: Drishti does not answer: the message says when Brahmastra asks it again, and it does");
+{ DR_CLIENTS = [drClient("d-sun", "Sunrise Eye Care", [month("p-oct", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.1), collectionRate: cell(0.9) })])];
+  await fresh(); drDown = true;
+  const T0 = IST(2026, 11, 10, 12);
+  const a = await at(T0, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+  ok("G-06: Drishti not answering (nothing read yet): an error with when it failed and when Brahmastra asks again, a minute later", a.state === "error" && a.failed_at === T0 && a.retry_at === T0 + 60000, a);
+  ok("G-06: the error is one plain sentence, with no 'try again in a minute' (Brahmastra decides when it asks)", a.error === "Drishti's server did not answer." && !/try again/i.test(a.error), a.error);
+  drDown = false; const c0 = drCalls;
+  const b = await at(T0 + 30000, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+  ok("G-06: within that minute Drishti is not asked again, and the answer says so", b.state === "error" && drCalls === c0 && b.retry_at === T0 + 60000, [b.state, drCalls - c0]);
+  const c = await at(T0 + 61000, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+  ok("G-06: a minute later Drishti is asked again, and the scorecard reads (Drishti is back)", c.state === "ok" && drCalls === c0 + 1 && c.score === 100, [c.state, drCalls - c0]);
+  const note = app.drReadNote(a);
+  ok("G-06: the page names when it failed and from when Brahmastra asks again, once, with no 'try again in a minute' and no 'in a few minutes'", /^Brahmastra could not read Drishti's scorecard at .+: Drishti's server did not answer\. It asks Drishti again from .+: open the scorecard again then\.$/.test(note) && !/try again in a minute|few minutes/i.test(note) && (note.match(/did not answer/g) || []).length === 1, note);
+  // (T0 is not today, so the page names the day too, as fmtWhen does)
+  const late = app.drReadNote({ ...a, failed_at: T0 + 40000, retry_at: T0 + 100000 });
+  ok("G-06: the time to ask again is never earlier than the minute (failed at 12:00:40: from 12:02)", late.includes("from " + app.fmtWhen(T0 + 120000) + ":") && late.includes("at " + app.fmtWhen(T0 + 40000) + ":"), late);
+  await fresh(); drDown = true;
+  const pf = await at(T0, () => A("portfolio.overview", TODAY));
+  ok("G-06: the Portfolio has the same times for its tiles", pf.drishti.state === "error" && pf.drishti.failed_at === T0 && pf.drishti.retry_at === T0 + 60000, pf.drishti);
+  drDown = false; await fresh();
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

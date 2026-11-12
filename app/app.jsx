@@ -6519,7 +6519,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
           <Kpi label="Unassigned" value={fmtInt(t.open_n)} sub={fmtMoney(t.open_bal) + " waiting for allocation"} />
           <Kpi label="Over 90 days" value={<span className={t.over90_pct > d.target ? "red-ink" : "teal-ink"}>{t.over90_pct}%</span>} sub={"target ≤ " + d.target + "%"} />
           <Kpi label={"Collected · " + rangeText(dr).toLowerCase()} value={<span className="teal-ink">{fmtMoney(t.collected_month)}</span>} sub="from payment posting" />
-          <Kpi label="KPIs in the red" value={d.drishti && d.drishti.state === "ok" ? <span className={d.drishti.red ? "red-ink" : "teal-ink"}>{fmtInt(d.drishti.red)}</span> : "–"} sub={d.drishti && d.drishti.state === "ok" ? (d.drishti.red ? d.drishti.red_names.join(", ") + " · " + plural(d.drishti.clients_red, "client") : "no KPI is red on the scorecards") : "Drishti's scorecard is not connected"} />
+          <Kpi label="KPIs in the red" value={d.drishti && d.drishti.state === "ok" ? <span className={d.drishti.red ? "red-ink" : "teal-ink"}>{fmtInt(d.drishti.red)}</span> : "–"} sub={d.drishti && d.drishti.state === "ok" ? (d.drishti.red ? d.drishti.red_names.join(", ") + " · " + plural(d.drishti.clients_red, "client") : "no KPI is red on the scorecards") : d.drishti && d.drishti.state === "error" ? "Drishti did not answer" + (d.drishti.retry_at ? "; Brahmastra asks it again from " + drWhen(d.drishti.retry_at, true) : "") : "Drishti's scorecard is not connected"} />
           <Kpi label="SLA score, average" value={d.drishti && d.drishti.avg != null ? <span className={DR_BAND[d.drishti.avg >= 90 ? "ok" : d.drishti.avg >= 80 ? "warn" : "miss"][0]}>{d.drishti.avg}%</span> : t.sla_avg != null ? <span className={t.sla_avg < 90 ? "amber-ink" : "teal-ink"}>{t.sla_avg}%</span> : "–"}
             sub={d.drishti && d.drishti.avg != null ? `${d.drishti.bands.ok} green · ${d.drishti.bands.warn} amber · ${d.drishti.bands.miss} red (Drishti)` : fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
         </div>
@@ -8586,6 +8586,16 @@ function kpiInside(it) {
   if (!(g >= 0)) return null;
   return { rel: g / (Math.abs(r.good) || 1), txt: (pct ? Math.round(g * 1000) / 10 + " pts" : Math.round(g * 10) / 10 + (r.fmt === "days" ? " days" : "")) + " better" };
 }
+/* A time Brahmastra read Drishti, or will ask it again: the time if it is today, else the day and the time. A time to ask
+   again is rounded up to the next minute, so "from 12:02" is never too early. */
+const drWhen = (ms, up) => { if (!ms) return ""; const t = up ? Math.ceil(Number(ms) / 60000) * 60000 : Number(ms), d = new Date(t);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : fmtWhen(t); };
+/* The scorecard could not be read: when, why, and when Brahmastra asks Drishti again (one minute after a failed read). */
+function drReadNote(d) {
+  if (!d) return "";
+  return `Brahmastra could not read Drishti's scorecard${d.failed_at ? " at " + drWhen(d.failed_at) : ""}: ${d.error || "Drishti did not answer."}` +
+    (d.retry_at ? ` It asks Drishti again from ${drWhen(d.retry_at, true)}: open the scorecard again then.` : "");
+}
 const Ring = ({ pct, band, size = 30, w = 4 }) => (
   <span className="sc-ring" style={{ width: size, height: size, background: `conic-gradient(${band ? KPI_COL[band] : "#C9D1D9"} 0 ${Math.max(2, pct || 0)}%, var(--soft) ${Math.max(2, pct || 0)}% 100%)` }}><i style={{ inset: w }} /></span>
 );
@@ -8647,7 +8657,7 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
       </div>
       {!clientId ? <div className="card"><Empty>Pick a client to see its scorecard.</Empty></div> : q.error ? <ErrorBox error={q.error} /> : !d ? <div className="card"><Spinner label="Reading Drishti's scorecard…" /></div>
         : d.state === "off" ? <div className="alert warn">Drishti's scorecard is not connected yet: the Worker secret DRISHTI_TOKEN_SECRET is not set (README › Drishti opens signed in). Until then, use <b>Inputs (Drishti)</b>.</div>
-        : d.state === "error" ? <div className="alert err">Drishti did not answer: {d.error} Brahmastra tries again in a few minutes.</div>
+        : d.state === "error" ? <div className="alert err">{drReadNote(d)}</div>
         : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it in <b>Inputs (Drishti)</b>.</div>
         : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports in <b>Inputs (Drishti)</b> and it shows here.</div>
         : <>

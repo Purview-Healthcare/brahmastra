@@ -357,7 +357,8 @@ KPI** with its value, standard, **formula** (Drishti's own wording, the same as 
 and comment, with a CSV. Periods: Latest, Monthly or Weekly, with ‹ › between the periods Drishti has. The scoring is
 Drishti's clientScorecard copied line for line (the same thresholds, a client's own overrides, the locked Net
 Collection Rate formula). Brahmastra matches its clients to Drishti's by name; a client not found says so and
-lists Drishti's clients. Needs `DRISHTI_TOKEN_SECRET` (below); Drishti is asked once every ten minutes.
+lists Drishti's clients. Needs `DRISHTI_TOKEN_SECRET` (below); Drishti is asked once every ten minutes, and when it
+did not answer, again a minute later (the scorecard says when it failed and from when Brahmastra asks again).
 
 **Upload this period's reports** on the scorecard goes back to Drishti's own page. **Monday digest** is the
 digest email's page (below).
