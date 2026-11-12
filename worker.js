@@ -759,10 +759,13 @@ async function escalationSlaFiles(env, tok, clientId, months) {
 /* The TAT report for the SLA: after a month closes, each client's hand-offs that fell due in it, closed within TAT or not, go to
    the client's SLA & KPI folder under each of its team leads, as
    Brahmastra Reports / <Team lead> / <Client> / SLA & KPI / TAT Report - <Client> - Nov 2026.xlsx,
-   next to the Escalation Tracker copy, for the Payment Posting TAT and Submission TAT on Drishti's scorecard. */
+   next to the Escalation Tracker copy, for the Payment Posting TAT and Submission TAT on Drishti's scorecard.
+   Nothing in it may read as an Escalation Tracker: Drishti takes a file with a Department (or SR No) column for one, and has no
+   slot for this report. So the desk's column is called Desk, and a new file (made from the tracker's template) loses the
+   template's tab name and the rest of its header row. */
 /* A hand-off still with its desk: pending, assigned, or waiting on the client (the TAT clock keeps running while it waits). */
 const HO_OPEN = ["pending", "assigned", "client"];
-const TAT_HEADER = ["Claim #", "Department", "Sent to the desk (IST)", "Due by (IST)", "Closed (IST)", "Within TAT", "Working hours taken", "TAT (working hours)"];
+const TAT_HEADER = ["Claim #", "Desk", "Sent to the desk (IST)", "Due by (IST)", "Closed (IST)", "Within TAT", "Working hours taken", "TAT (working hours)"];
 async function tatReportRows(env, clientId, ym) {
   const cl = await one(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE id = ?", clientId); if (!cl) return { cl: null, rows: [] };
   const from = istDayStart(ym + "-01"), to = istDayStart(nextMonthISO(ym) + "-01") - 1, now = Date.now();
@@ -799,7 +802,13 @@ async function tatSlaFiles(env, tok, clientId, ym) {
     const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
     const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
     const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(TAT_HEADER.length);
+    // a new file is the Escalation Tracker template: its "Escalations" tab is renamed, and its header row is blanked to the
+    // tracker's last column before the TAT header goes on it
+    if (/^escalations$/i.test(String(sheet.name || "").trim())) { try { await graphCall(tok, "PATCH", ws, { name: "TAT Report" }); } catch (e) {} }
     await graphCall(tok, "POST", ws + `/range(address='A2:${last}20000')/clear`, { applyTo: "Contents" });
+    // the tab's row 1 is the TAT Report's header only: the template's leftover tracker headers are blanked, so Drishti never takes
+    // this file for an Escalation Tracker (G-07); text goes in as text, never as a formula (C-15)
+    await writeRange(tok, ws + `/range(address='A1:${colLetter(ESC_HEADER.length)}1')`, [[...TAT_HEADER, ...Array(ESC_HEADER.length - TAT_HEADER.length).fill("")]]);
     await writeRange(tok, ws + `/range(address='A1:${last}${rows.length + 1}')`, [TAT_HEADER, ...rows], [TAT_HEADER.map(() => "@"), ...rows.map(() => TAT_HEADER.map((h, i) => (i >= 6 ? "General" : "@")))]);
     saved.push(path.join(" › "));
   }
@@ -1543,7 +1552,8 @@ async function drishtiToken(env, id, role) {
    the answer is kept ten minutes. Brahmastra's clients match Drishti's by name. */
 const DR_DEF = {"scopes":[{"key":"ar","name":"Account Receivable","short":"AR","kind":"kpi","group":"kpi","hasAging":true,"sla":["Production SLA"],"criteria":[{"key":"arAging","name":"AR Aging","type":"pct","fmt":null,"std":"Less than 15% older than 90 days","formula":"Balance in >90-day buckets ÷ Total AR balance × 100","rule":{"dir":"lower","good":0.15,"fair":0.15,"fmt":"percent"},"inputs":[]},{"key":"collectionRate","name":"Collection Rate","type":"calc","fmt":"percent","std":"Net collection rate · payments ÷ (charges − contractual adjustments)","formula":"Payments ÷ (Charges − Contractual Adjustments) × 100","rule":{"dir":"higher","good":0.85,"fair":0.7,"fmt":"percent"},"inputs":["Payments received","Charges (billed)","Contractual adjustments"]},{"key":"denialRate","name":"Denial Rate","type":"calc","fmt":"percent","std":"<5% excellent · 5–10% good · >10% red","formula":"Denial count ÷ Posted claim count × 100","rule":{"dir":"lower","good":0.1,"fair":0.1,"best":0.05,"fmt":"percent"},"inputs":["Denied (count)","Posted claims (count)"]},{"key":"daysInAR","name":"Days in AR","type":"calc","fmt":"days","std":"≤30 best practice · 31–40 acceptable · >40 issue","formula":"Total AR ÷ (Total payments ÷ days in the period)","rule":{"dir":"lower","good":30,"fair":40,"fmt":"days"},"inputs":["Total AR inventory ($)","Avg daily payment ($)"]},{"key":"appeal","name":"Appeal %","type":"pct","fmt":null,"std":"<5% green · 5–10% amber · >10% red","formula":"Appeals filed ÷ Denials received × 100","rule":{"dir":"lower","good":0.05,"fair":0.1,"fmt":"percent"},"inputs":[]},{"key":"quality","name":"Quality","type":"pct","fmt":null,"std":"≥98% green · 95–<98% amber · <95% red","formula":"Average of Final Audit Score % (audit report)","rule":{"dir":"higher","good":0.98,"fair":0.95,"fmt":"percent"},"inputs":[]},{"key":"escalations","name":"Escalations","type":"count","fmt":null,"std":"0 green · 1+ red","formula":"Count of escalations (SR no. in tracker)","rule":{"dir":"lower","good":0,"fair":0,"fmt":"count"},"inputs":[]}]},{"key":"submission","name":"Submission","short":"Submission","kind":"kpi","group":"kpi","hasAging":false,"sla":["Claim Submission","Claim Rejection"],"criteria":[{"key":"cleanClaim","name":"Clean Claim","type":"pct","fmt":null,"std":"90%","formula":"","rule":{"dir":"higher","good":0.9,"fair":0.8,"fmt":"percent"},"inputs":[]},{"key":"submissionTAT","name":"Submission TAT","type":"status","fmt":null,"std":"24hr","formula":"","rule":null,"inputs":[]},{"key":"inflowVsSubmitted","name":"Inflow vs Submitted","type":"pct","fmt":null,"std":"100%","formula":"","rule":{"dir":"higher","good":1,"fair":0.95,"fmt":"percent"},"inputs":[]},{"key":"rejectionRate","name":"Rejection Rate","type":"pct","fmt":null,"std":"5%","formula":"","rule":{"dir":"lower","good":0.05,"fair":0.1,"fmt":"percent"},"inputs":[]},{"key":"resubmission","name":"Resubmission","type":"pct","fmt":null,"std":"100%","formula":"","rule":{"dir":"higher","good":1,"fair":0.9,"fmt":"percent"},"inputs":[]},{"key":"quality","name":"Quality","type":"pct","fmt":null,"std":"99%","formula":"","rule":{"dir":"higher","good":0.99,"fair":0.95,"fmt":"percent"},"inputs":[]},{"key":"escalations","name":"Escalations","type":"count","fmt":null,"std":"0","formula":"","rule":{"dir":"lower","good":0,"fair":0,"fmt":"count"},"inputs":[]}]},{"key":"ev","name":"Benefit Verification","short":"EV","kind":"kpi","group":"kpi","hasAging":false,"sla":["Benefits Verification"],"criteria":[{"key":"completionRate","name":"Verification Completion %","type":"pct","fmt":null,"std":"Completed ÷ Total","formula":"Completed verifications ÷ Total verifications × 100","rule":{"dir":"higher","good":0.95,"fair":0.9,"fmt":"percent"},"inputs":[]},{"key":"newPatientsTAT","name":"New Patients TAT","type":"status","fmt":null,"std":"Same Day","formula":"","rule":null,"inputs":[]},{"key":"urgentRequestTAT","name":"Urgent Request TAT","type":"status","fmt":null,"std":"3hr","formula":"","rule":null,"inputs":[]},{"key":"tat","name":"TAT","type":"status","fmt":null,"std":"48–72hr","formula":"","rule":null,"inputs":[]},{"key":"urgentVsRegular","name":"Urgent vs Regular verification","type":"text","fmt":null,"std":"count split","formula":"Urgent count vs Regular count (from EV file)","rule":null,"inputs":[]},{"key":"quality","name":"Quality","type":"pct","fmt":null,"std":"99%","formula":"","rule":{"dir":"higher","good":0.99,"fair":0.95,"fmt":"percent"},"inputs":[]},{"key":"escalations","name":"Escalations","type":"count","fmt":null,"std":"0","formula":"","rule":{"dir":"lower","good":0,"fair":0,"fmt":"count"},"inputs":[]}]},{"key":"pp","name":"Payment Posting","short":"Payment Posting","kind":"kpi","group":"kpi","hasAging":false,"sla":["Payment Posting"],"criteria":[{"key":"ppTAT","name":"Payment Posting TAT","type":"status","fmt":null,"std":"24hr","formula":"","rule":null,"inputs":[]},{"key":"paymentCycle","name":"Payment Cycle","type":"calc","fmt":"days","std":"≤30 good · 31–45 acceptable · >45 flag","formula":"Avg (Paid date − Submission date) in days","rule":{"dir":"lower","good":30,"fair":45,"fmt":"days"},"inputs":[]},{"key":"underpaymentRate","name":"Underpayment Rate","type":"pct","fmt":null,"std":"<5% good, else review","formula":"Total (Allowed − Paid, where Paid<Allowed) ÷ Total Allowed × 100","rule":{"dir":"lower","good":0.05,"fair":0.05,"fmt":"percent"},"inputs":[]},{"key":"varianceRate","name":"Variance Rate","type":"pct","fmt":null,"std":"≤2% good, 2 to 5% watch, over 5% flag","formula":"Discrepancy amount (from discrepancy file) ÷ total received for posting × 100","rule":{"dir":"lower","good":0.02,"fair":0.05,"fmt":"percent"},"inputs":[]},{"key":"paymentAdjustmentRate","name":"Payment Adjustment Rate","type":"pct","fmt":null,"std":"≤5% good, 5 to 10% watch, over 10% flag","formula":"Write-off excluding CO45 ÷ gross charges billed × 100","rule":{"dir":"lower","good":0.05,"fair":0.1,"fmt":"percent"},"inputs":[]},{"key":"quality","name":"Quality","type":"pct","fmt":null,"std":"99%","formula":"","rule":{"dir":"higher","good":0.99,"fair":0.95,"fmt":"percent"},"inputs":[]},{"key":"topPayer","name":"Top Payer (include %)","type":"text","fmt":null,"std":"","formula":"","rule":null,"inputs":[]},{"key":"billedVsAllowed","name":"Billed vs Allowed","type":"text","fmt":null,"std":"","formula":"","rule":null,"inputs":[]},{"key":"websiteTrack","name":"Website Tracker maintained","type":"yesno","fmt":null,"std":"Yes / No, set by supervisor","formula":"","rule":null,"inputs":[]},{"key":"recoupmentRate","name":"Recoupment Rate","type":"pct","fmt":null,"std":"<5% good, else review","formula":"Amount recouped ÷ total payment received × 100","rule":{"dir":"lower","good":0.05,"fair":0.05,"fmt":"percent"},"inputs":[]},{"key":"patientVsInsurance","name":"Patient vs Insurance Collection","type":"text","fmt":null,"std":"ratio, patient ÷ insurance","formula":"Patient collection ÷ Insurance collection","rule":null,"inputs":[]},{"key":"escalations","name":"Escalations","type":"count","fmt":null,"std":"0","formula":"","rule":{"dir":"lower","good":0,"fair":0,"fmt":"count"},"inputs":[]}]},{"key":"cred","name":"Credentialing","short":"Credentialing","kind":"tasks","group":"sla","hasAging":false,"sla":[],"criteria":[]},{"key":"pcc","name":"PCC","short":"PCC","kind":"tasks","group":"sla","hasAging":false,"sla":[],"criteria":[{"key":"inflowVsPicked","name":"Production Inflow vs Picked-up Calls","type":"pct","fmt":null,"std":"≥90% green, 80 to 89% amber, under 80% red","formula":"Picked-up calls ÷ inflow calls × 100","rule":{"dir":"higher","good":0.9,"fair":0.8,"fmt":"percent"},"inputs":[]},{"key":"missedCalls","name":"Missed Calls","type":"count","fmt":null,"std":"count","formula":"","rule":null,"inputs":[]},{"key":"callbacksMade","name":"Callbacks Made on Missed Calls","type":"count","fmt":null,"std":"count","formula":"","rule":null,"inputs":[]},{"key":"callbackRate","name":"Callback Rate","type":"pct","fmt":null,"std":"≥90% green, 80 to 89% amber, under 80% red","formula":"Callbacks made ÷ missed calls × 100","rule":{"dir":"higher","good":0.9,"fair":0.8,"fmt":"percent"},"inputs":[]},{"key":"callsDropped","name":"Calls Dropped (in queue or other)","type":"count","fmt":null,"std":"count","formula":"","rule":null,"inputs":[]},{"key":"dropRate","name":"Call Drop Rate","type":"pct","fmt":null,"std":"lower is better, ≤5% green, 5 to 10% amber, over 10% red","formula":"Calls dropped ÷ total inflow calls × 100","rule":{"dir":"lower","good":0.05,"fair":0.1,"fmt":"percent"},"inputs":[]},{"key":"avgHoldTime","name":"Average Hold Time","type":"text","fmt":null,"std":"time","formula":"","rule":null,"inputs":[]},{"key":"avgHandlingTime","name":"Average Call Handling Time","type":"text","fmt":null,"std":"time","formula":"","rule":null,"inputs":[]},{"key":"avgSpeedAnswer","name":"Average Speed of Answer","type":"text","fmt":null,"std":"time","formula":"","rule":null,"inputs":[]},{"key":"perPersonTarget","name":"Per Person Target vs Actual Calls","type":"text","fmt":null,"std":"user-wise","formula":"","rule":null,"inputs":[]},{"key":"outboundTargetVsActual","name":"Outbound Target vs Actual Calls","type":"pct","fmt":null,"std":"≥90% green, 80 to 89% amber, under 80% red","formula":"Actual outbound ÷ outbound target × 100","rule":{"dir":"higher","good":0.9,"fair":0.8,"fmt":"percent"},"inputs":[]},{"key":"correspondence","name":"Correspondence Received vs Sent","type":"pct","fmt":null,"std":"≥90% green, 80 to 89% amber, under 80% red","formula":"Sent ÷ received × 100","rule":{"dir":"higher","good":0.9,"fair":0.8,"fmt":"percent"},"inputs":[]},{"key":"faxEmail","name":"Fax / Email Received vs Completed","type":"pct","fmt":null,"std":"≥90% green, 80 to 89% amber, under 80% red","formula":"Completed ÷ received × 100","rule":{"dir":"higher","good":0.9,"fair":0.8,"fmt":"percent"},"inputs":[]}]}],"book":{"ar.arAging":{"from":"AR Inventory report"},"ar.collectionRate":{"from":"Payment Posting report"},"ar.denialRate":{"from":"Denial report and Payment Posting report"},"ar.daysInAR":{"from":"AR Inventory report, Payment Posting report and the days in the selected duration","page":"Total AR ÷ (Total payments ÷ days in the period)"},"ar.appeal":{"from":"AR Inventory report (comment or status column) and Denial report"},"ar.quality":{"from":"AR Audit report"},"ar.escalations":{"from":"Escalation Tracker"},"submission.cleanClaim":{"from":"Claim Submission, Claim Rejection and Denial reports","f":"(Submitted − Rejected − Denied) ÷ Submitted × 100"},"submission.submissionTAT":{"from":"Typed in by the supervisor","manual":true,"f":"Marked Met or Not met against the standard"},"submission.inflowVsSubmitted":{"from":"Claim Submission and Submission Inflow reports","f":"Submitted claims ÷ Inflow claims × 100"},"submission.rejectionRate":{"from":"Claim Rejection and Claim Submission reports","f":"Rejected claims ÷ Submitted claims × 100"},"submission.resubmission":{"from":"Typed in by the supervisor","manual":true,"f":"Denied claims resubmitted ÷ Denied claims × 100"},"submission.quality":{"from":"Submission Audit report","f":"Average of Final Audit Score % (audit report)"},"submission.escalations":{"from":"Escalation Tracker, Submission rows","f":"Count of escalations for this department"},"ev.completionRate":{"from":"EV / Benefit Verification report"},"ev.newPatientsTAT":{"from":"Typed in by the supervisor","manual":true,"f":"Marked Met or Not met against the standard"},"ev.urgentRequestTAT":{"from":"Typed in by the supervisor","manual":true,"f":"Marked Met or Not met against the standard"},"ev.tat":{"from":"Typed in by the supervisor","manual":true,"f":"Marked Met or Not met against the standard"},"ev.urgentVsRegular":{"from":"EV / Benefit Verification report"},"ev.quality":{"from":"Typed in by the supervisor","manual":true},"ev.escalations":{"from":"Escalation Tracker, Benefit Verification rows","f":"Count of escalations for this department"},"pp.ppTAT":{"from":"Typed in by the supervisor","manual":true,"f":"Marked Met or Not met against the standard"},"pp.paymentCycle":{"from":"Submission file and Paid-claims file, matched claim by claim"},"pp.underpaymentRate":{"from":"Patient-wise Ledger"},"pp.varianceRate":{"from":"Variance / Discrepancy file and Amount Received for Posting file"},"pp.paymentAdjustmentRate":{"from":"Non-Contractual Adjustment file and Payment Posting report"},"pp.quality":{"from":"Payment Posting Audit report","f":"Average of Final Audit Score % (audit report)"},"pp.topPayer":{"from":"Typed in by the supervisor","manual":true},"pp.billedVsAllowed":{"from":"Typed in by the supervisor","manual":true},"pp.websiteTrack":{"from":"Typed in by the supervisor","manual":true,"f":"Yes or No"},"pp.recoupmentRate":{"from":"Recoupment file and Payment Posting report"},"pp.patientVsInsurance":{"from":"Payment Posting report (payer type column)"},"pp.escalations":{"from":"Escalation Tracker, Payment Posting rows","f":"Count of escalations for this department"},"pcc.inflowVsPicked":{"from":"Call Log"},"pcc.missedCalls":{"from":"Call Log","f":"Count of missed calls"},"pcc.callbacksMade":{"from":"Callbacks on Missed Calls file","f":"Count of completed callbacks"},"pcc.callbackRate":{"from":"Callbacks on Missed Calls file and Call Log"},"pcc.callsDropped":{"from":"Call Log","f":"Count of dropped calls"},"pcc.dropRate":{"from":"Call Log"},"pcc.avgHoldTime":{"from":"Typed in by the supervisor","manual":true},"pcc.avgHandlingTime":{"from":"Typed in by the supervisor","manual":true},"pcc.avgSpeedAnswer":{"from":"Typed in by the supervisor","manual":true},"pcc.perPersonTarget":{"from":"Typed in by the supervisor","manual":true},"pcc.outboundTargetVsActual":{"from":"Typed in by the supervisor","manual":true},"pcc.correspondence":{"from":"Correspondence file"},"pcc.faxEmail":{"from":"Fax / Email file"}}};
 const DR_BY = Object.fromEntries(DR_DEF.scopes.map((x) => [x.key, x]));
-const DR_FRESH_MS = 10 * 60000, DR_TYPED = "Typed in by the supervisor";
+// a good answer from Drishti is kept ten minutes; after one that failed, Drishti is asked again a minute later
+const DR_FRESH_MS = 10 * 60000, DR_RETRY_MS = 60000, DR_TYPED = "Typed in by the supervisor";
 const drNum = (v) => { if (v === "" || v == null) return null; const t = String(v).replace(/[$,%\s]/g, ""); if (t === "") return null; const x = Number(t); return isNaN(x) ? null : x; };
 const drIsNum = (v) => typeof v === "number" && !isNaN(v);
 /* A KPI cell with nothing in it (null, "", NaN) is "not scored yet", like a missing one. */
@@ -1650,18 +1660,19 @@ const drKind = (p) => p.kind === "month" || p.kind === "week" || p.kind === "day
 async function drishtiCall(env, body) {
   const api = env.DRISHTI_API || DRISHTI_API_DEFAULT;
   let r; try { r = await fetchT(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
-  catch (e) { throw new ApiError(502, "Drishti's server did not answer. Try again in a minute."); }
+  catch (e) { throw new ApiError(502, "Drishti's server did not answer."); }
   let j = null; try { j = await r.json(); } catch (e) {}
   if (!j) throw new ApiError(502, "Drishti's server sent an answer Brahmastra could not read.");
   if (!j.ok) throw new ApiError(j.code === "auth" ? 503 : 400, j.code === "auth" ? "Drishti did not accept Brahmastra's sign-in. The DRISHTI_TOKEN_SECRET does not match Drishti's TOKEN_SECRET." : "Drishti: " + (j.error || "it refused."));
   return j;
 }
-/* every client in Drishti with its periods of the last seven months (the short copies Drishti keeps), ten minutes at a time */
+/* every client in Drishti with its periods of the last seven months (the short copies Drishti keeps), ten minutes at a time;
+   after a read that failed, failed_at says when and retry_at when Brahmastra asks Drishti again (a minute later) */
 async function drishtiOverview(env) {
   if (!env.DRISHTI_TOKEN_SECRET) return { state: "off", clients: [], at: null, error: "Drishti single sign-in is not switched on (DRISHTI_TOKEN_SECRET)." };
   const now = Date.now();
   let st = (await getSetting(env, "drishti_sync", null)) || {};
-  if (!(st.at && now - st.at < DR_FRESH_MS) && !(st.fail_at && now - st.fail_at < DR_FRESH_MS)) {
+  if (!(st.at && now - st.at < DR_FRESH_MS) && !(st.fail_at && now - st.fail_at < DR_RETRY_MS)) {
     try {
       const since = new Date(now); since.setUTCMonth(since.getUTCMonth() - 7); since.setUTCDate(1);
       const j = await drishtiCall(env, { a: "overview", t: await drishtiToken(env, "admin", "admin"), since: since.toISOString().slice(0, 10) });
@@ -1673,7 +1684,9 @@ async function drishtiOverview(env) {
     await setSetting(env, "drishti_sync", st);
   }
   // stale: Drishti has failed since the last good read; the scorecards (monthly) are still shown, from `at`.
-  return { state: st.at ? "ok" : "error", stale: !!(st.at && st.fail_at && st.fail_at > st.at), clients: st.clients || [], at: st.at || null, error: st.error || "" };
+  const failed = st.fail_at && (!st.at || st.fail_at > st.at) ? st.fail_at : null;
+  return { state: st.at ? "ok" : "error", stale: !!(st.at && failed), clients: st.clients || [], at: st.at || null, error: st.error || "",
+    failed_at: failed, retry_at: failed ? failed + DR_RETRY_MS : null };
 }
 /* Brahmastra's clients matched to Drishti's by name; each with the latest month (or latest) period scored, and the one before */
 function drSummary(ov, clients, today) {
@@ -1685,7 +1698,10 @@ function drSummary(ov, clients, today) {
     const cur = list[0]; if (!cur) { out.set(c.id, { drishti_id: d.id, owner: d.owner, ambiguous, period: null }); continue; }
     const prev = list.find((p) => p !== cur && p.kind === cur.kind && p.range.to < cur.range.from) || null;
     const sc = drScore(d, cur, prev);
+    // kpi_red: the KPIs in the red by name (SLA task lines are not KPIs; the Portfolio's "KPIs in the red" and the digest's
+    // "N of M KPIs on target" count KPIs only)
     out.set(c.id, { drishti_id: d.id, owner: d.owner, ambiguous, period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to }, score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts,
+      kpi_red: sc.items.filter((x) => x.kind === "KPI" && x.status === "miss").map((x) => x.name),
       scopes: sc.scopes.map((x) => ({ key: x.key, short: x.short, pct: x.pct, band: x.band })), drags: sc.drags.slice(0, 4).map((x) => ({ name: x.name, scope: x.scope, shown: x.shown, status: x.status })) });
   }
   return out;
@@ -1701,6 +1717,32 @@ async function drTickMonthEnd(env, summaries) {
       WHERE client_monthend.auto = 1 AND (client_monthend.score IS NULL OR client_monthend.score <> excluded.score)`).bind(cid, month, now, "Drishti", d.score, "from Drishti's scorecard"));
   }
   if (stmts.length) await batchAll(env, stmts, 50);
+}
+/* One SLA score per client and month, the same on every page: Drishti's score for a month Drishti has scored (what the scorecard,
+   the Portfolio's SLA column and the Monday digest show), and the score typed at month-end only for a month Drishti has not
+   scored. A typed score stays in the month-end table as typed (typed: it, when Drishti's differs). Client 360 (its SLA, health
+   line and month-end step), the Portfolio's reasons and Managers side by side use it. ov: drishtiOverview's answer.
+   Per client: { months: Map(YYYY-MM -> { month, score, drishti, typed }), latest, prev }. */
+async function slaScores(env, clients, today, ov) {
+  const rows = await all(env, "SELECT client_id, month, score, auto FROM client_monthend WHERE step = 'sla' AND score IS NOT NULL");
+  const out = new Map();
+  for (const c of clients) {
+    const months = new Map(rows.filter((r) => r.client_id === c.id).map((r) => [r.month, { month: r.month, score: r.score, drishti: !!r.auto, typed: r.auto ? null : r.score }]));
+    const d = ov && ov.state === "ok" ? drMatch(ov, c.name).d : null;
+    const seen = new Set();
+    // Drishti's finished months, newest first: of two copies of one month the newer counts, as on the scorecard
+    for (const p of (d && d.periods) || []) {
+      if (p.kind !== "month" || (p.range.to && p.range.to >= today)) continue;
+      const m = String(p.range.from || "").slice(0, 7); if (!/^\d{4}-\d{2}$/.test(m) || seen.has(m)) continue;
+      seen.add(m);
+      const pct = drScore(d, p, null).pct; if (pct == null) continue;
+      const was = months.get(m);
+      months.set(m, { month: m, score: pct, drishti: true, typed: was && was.typed != null && was.typed !== pct ? was.typed : null });
+    }
+    const keys = [...months.keys()].sort().reverse();
+    out.set(c.id, { months, latest: keys.length ? months.get(keys[0]) : null, prev: keys.length > 1 ? months.get(keys[1]) : null });
+  }
+  return out;
 }
 /* ---- the SAAG entry and the standard note ----
    A worked claim carries a SAAG selection (Status > Sub-status > Action, with
@@ -2693,6 +2735,7 @@ function spanEmail(span, wk, ds, appUrl, extra = {}) {
 <tr><td style="padding:16px 22px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr>
 ${box(R.sla_avg == null ? "–" : R.sla_avg + "%", "avg SLA score" + (R.sla_month ? " · " + htmlEsc(R.sla_month.slice(0, 3)) : ""))}${box(R.esc ? R.esc.n + " · " + (R.esc.internal || 0) : "–", `external · internal escalations ${R.esc ? htmlEsc(R.esc.month.slice(0, 3)) + " " : ""}· target ${ESC_SLA_TARGET}`, R.esc && R.esc.n ? "#BA2340" : "#127A4D")}${box(dShort(R.ar), "AR" + (R.ar_ago != null ? (R.ar_ago <= 0 ? " · down " : " · up ") + dShort(Math.abs(R.ar_ago)) : ""))}${box(R.pct + "%", "over 90 · target " + R.target + "%", R.pct > R.target ? "#BA2340" : "#0F1B24")}
 </tr></table></td></tr>
+${extra.drStale ? `<tr><td style="padding:0 22px 6px;font-size:12px;color:#935300">${htmlEsc(drStaleText(extra.drStale))}</td></tr>` : ""}
 ${sec("CLIENT BY CLIENT")}
 <tr><td style="padding:0 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12.5px;border-collapse:collapse">
 <tr>${hcell("Client")}${hcell("SLA", "center")}${hcell("Escalations<br>external · internal", "center")}${hcell("Billable / Assign FTE", "center")}${hcell("Over 90", "right")}</tr>
@@ -2710,7 +2753,7 @@ ${link ? `<tr><td style="padding:16px 22px 4px"><table role="presentation" cellp
   const text = [`Brahmastra Monday digest: ${span.title}, week of ${weekTxt}`,
     `Manager name: ${extra.manager ? extra.manager.name : "No manager"} · Designation: ${extra.manager ? extra.manager.designation : "-"} · Period: week of ${weekTxt}`,
     ...(wf.length ? [`Total team: Billable FTE: ${fteTxt(wsum("billable"))} · Assign FTE: ${fteTxt(wsum("assigned_fte"))}`] : []),
-    `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} external (target ${ESC_SLA_TARGET}) and ${R.esc.internal || 0} internal` : ""), "", "Client by client:",
+    `AR ${dMoney(R.ar)}, over 90 ${R.pct}% (target ${R.target}%)` + (R.sla_avg != null ? `, average SLA ${R.sla_avg}%` : "") + (R.esc ? `, escalations ${R.esc.n} external (target ${ESC_SLA_TARGET}) and ${R.esc.internal || 0} internal` : ""), ...(extra.drStale ? [drStaleText(extra.drStale)] : []), "", "Client by client:",
     ...order.map((d) => `- ${d.client.name}: SLA ${d.card ? d.card.score + "% (" + BAND_LOOK[d.card.band][0].toLowerCase() + ")" : "not scored"}` + (d.esc ? `, escalations ${d.esc.n} external and ${d.esc.internal || 0} internal` : "") + (d.wfm ? `, Billable FTE ${fteTxt(d.wfm.billable)}, Assign FTE ${fteTxt(d.wfm.assigned_fte)}` : "") + `, over 90 ${d.ar.over90_pct}%`),
     ...(ds.some((d) => d.tat) ? ["", "TAT last week (working hours, Monday to Friday):", ...TAT_PARTS.filter(([k]) => R.tat[k]).map(([k, label]) => `- ${label}: ${R.tat[k].pct}% (${R.tat[k].met} of ${R.tat[k].due})`),
       ...order.filter((d) => d.tat).map((d) => `- ${d.client.name}: ${tatLine(d.tat)}`)] : []),
@@ -2750,11 +2793,15 @@ async function spanData(env, span, wk) {
   // TAT last week: Payment posting, Submission and Needs attention, and where it was missed most (no claim numbers in the digest)
   const ts = await tatStats(env, ds.map((d) => d.client.id), wk.from, wk.to);
   for (const d of ds) d.tat = tatDigest(ts.get(d.client.id));
-  return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null };
+  // Drishti not answering when the digest is made: the cards are its last read, and the digest says from when
+  const old = ds.find((d) => d.card && d.card.stale && d.card.at);
+  return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null, drStale: old ? { at: old.card.at } : null };
 }
+// "SLA scores are from Brahmastra's last read of Drishti, Nov 9 14:05 IST": for the digest when Drishti did not answer
+const drStaleText = (s) => (s && s.at ? `Drishti did not answer when this digest was made, so the SLA scores are from Brahmastra's last read of Drishti, ${dDay(istISO(s.at))} ${istStamp(s.at).slice(9)} IST.` : "");
 async function spanMail(env, span, wk) {
-  const { ds, manager } = await spanData(env, span, wk);
-  return spanEmail(span, wk, ds, env.APP_URL || "", { manager });
+  const { ds, manager, drStale } = await spanData(env, span, wk);
+  return spanEmail(span, wk, ds, env.APP_URL || "", { manager, drStale });
 }
 /* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
 async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, by = "Monday job" } = {}) {
@@ -5004,7 +5051,8 @@ const OPS = {
     const want = weeks.find((w) => w.week === isoDate(payload.week)) || weeks[0];
     if (askWeek && want.week !== askWeek) notices.push(`The week in the link (${askWeek}) is not one of the last 9 Mondays. This is the week of ${dDay(want.first)}.`);
     const wk = digestWeek(Date.parse(want.week + "T12:00:00Z"));
-    const { ds, manager } = await spanData(env, s, wk);
+    const { ds, manager, drStale } = await spanData(env, s, wk);
+    if (drStale) notices.push(drStaleText(drStale));
     const R = digestRollup(ds);
     const card = (c) => c ? { score: c.score, band: c.band, period: c.period.label, delta: c.delta, prev: c.prev ? c.prev.label : "", kpi_ok: c.items.filter((i) => i.kind === "KPI" && i.status === "ok").length,
       kpi_n: c.items.filter((i) => i.kind === "KPI" && ["ok", "warn", "miss"].includes(i.status)).length, scopes: c.scopes.filter((x) => x.scored).map((x) => ({ name: x.short || x.name, pct: x.pct, band: x.band })),
@@ -5051,7 +5099,6 @@ const OPS = {
         SUM(CASE WHEN state = 'open' THEN 1 ELSE 0 END) AS open_n, COALESCE(SUM(CASE WHEN state = 'open' THEN balance ELSE 0 END), 0) AS open_bal
       FROM (SELECT client_id, balance, state, ${ageSql} AS age FROM claims WHERE state IN ${WORKABLE}) GROUP BY client_id`, today));
     const ago = mapOf(await all(env, `SELECT s.client_id, s.ar_balance FROM client_snapshots s WHERE s.day = (SELECT MAX(day) FROM client_snapshots WHERE client_id = s.client_id AND day <= ?)`, istISO(now - 30 * 86400000)));
-    const sla = mapOf(await all(env, `SELECT m.client_id, m.score, m.month FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`));
     const missed = await missedByClient(env, payload);
     const wait = mapOf(await all(env, `SELECT h.client_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS bal, MIN(COALESCE(h.client_sent_at, h.paused_at)) AS first FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.status = 'client' GROUP BY h.client_id`));
     const esc = await trackerEsc(env);
@@ -5069,8 +5116,9 @@ const OPS = {
     const raci = new Map((await OPS["raci.list"]({ env, user, payload })).rows.map((r) => [r.client_id, r]));
     const closing = closingMonth(today), slaDue = nthWorkingDayAfter(closing, 4);
     const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, clients, today) : new Map();
-    if (drs.size) { await drTickMonthEnd(env, drs); for (const [cid, d] of drs) { if (!(d.period && d.period.kind === "month" && d.score != null)) continue; const m = String(d.period.from).slice(0, 7), cur = sla.get(cid);
-      if (!cur || cur.month < m) sla.set(cid, { client_id: cid, score: d.score, month: m }); } }
+    if (drs.size) await drTickMonthEnd(env, drs);
+    // each client's SLA for its health line: Drishti's score for a month it has scored, else the one typed at month-end (as Client 360)
+    const slaAll = await slaScores(env, clients, today, drOv), sla = new Map(clients.map((c) => [c.id, slaAll.get(c.id).latest]).filter(([, v]) => v));
     const rows = clients.map((c) => {
       const a = ar.get(c.id) || { bal: 0, n: 0, o90: 0, to_work: 0 }, w = wait.get(c.id), e = esc.get(c.id), m = missed.get(c.id) || { ar: 0, posting: 0, submission: 0 }, t = tfl.get(c.id) || { soon_n: 0, soon_bal: 0, past_n: 0, past_bal: 0 };
       const pct = a.balp ? Math.round(a.o90p / a.balp * 1000) / 10 : 0;
@@ -5082,7 +5130,7 @@ const OPS = {
       const r = raci.get(c.id);
       return { client_id: c.id, client: c.name, code: c.code, health: hh.health, reasons: hh.reasons.map((x) => x.text), tl: r ? r.a.map((p) => p.name) : [], manager: r ? r.c.map((p) => p.name) : [],
         ar: a.bal, ar_owed: a.balp || 0, o90_owed: a.o90p || 0, claims: a.n, ar_month_ago: ago.get(c.id) ? ago.get(c.id).ar_balance : null, over90_pct: pct, sla: sl ? { score: sl.score, month: sl.month } : null,
-        drishti: dr && dr.period && dr.score != null ? { score: dr.score, band: dr.band, delta: dr.delta, label: dr.period.label, kind: dr.period.kind, counts: dr.counts, scopes: dr.scopes, drags: dr.drags } : null,
+        drishti: dr && dr.period && dr.score != null ? { score: dr.score, band: dr.band, delta: dr.delta, label: dr.period.label, kind: dr.period.kind, counts: dr.counts, kpi_red: dr.kpi_red, scopes: dr.scopes, drags: dr.drags } : null,
         missed: missN, waiting: w ? { n: w.n, bal: w.bal, oldest } : null, escalations_late: e ? e.late || 0 : 0, tfl_soon: t.soon_bal, tfl_soon_n: t.soon_n, tfl_past_n: t.past_n,
         to_work: a.to_work || 0, per_day: Math.round(perDay * 10) / 10, people: pc ? pc.people : 0, days_to_clear: perDay ? Math.ceil((a.to_work || 0) / perDay) : null,
         last_inventory: lastInv.get(c.id) ? lastInv.get(c.id).at : null, collected_month: coll.get(c.id) ? coll.get(c.id).amt : 0,
@@ -5104,9 +5152,10 @@ const OPS = {
     const sum = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
     const totAr = sum("ar"), withAgo = rows.filter((r) => r.ar_month_ago != null), totAgo = withAgo.reduce((t, r) => t + r.ar_month_ago, 0), arComparable = withAgo.reduce((t, r) => t + (r.ar || 0), 0), totO90 = sum("o90_owed"), totOwed = sum("ar_owed");
     const slas = rows.filter((r) => r.sla); const drAll = rows.filter((r) => r.drishti), drRows = drAll.filter((r) => r.drishti.kind === "month");
-    const drishti = { state: drOv.state, stale: !!drOv.stale, error: drOv.error || "", avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
+    const drishti = { state: drOv.state, stale: !!drOv.stale, at: drOv.at, error: drOv.error || "", failed_at: drOv.failed_at, retry_at: drOv.retry_at, avg: drRows.length ? Math.round(drRows.reduce((t, r) => t + r.drishti.score, 0) / drRows.length) : null,
       bands: { ok: drRows.filter((r) => r.drishti.band === "ok").length, warn: drRows.filter((r) => r.drishti.band === "warn").length, miss: drRows.filter((r) => r.drishti.band === "miss").length },
-      weeks_only: drAll.length - drRows.length, red: drRows.reduce((t, r) => t + r.drishti.counts.miss, 0), red_names: [...new Set(drRows.flatMap((r) => r.drishti.drags.filter((d) => d.status === "miss").map((d) => d.name)))].slice(0, 4), clients_red: drRows.filter((r) => r.drishti.counts.miss > 0).length };
+      // KPIs in the red: KPIs only (an SLA task line under 70% is red on the scorecard, but it is not a KPI)
+      weeks_only: drAll.length - drRows.length, red: drRows.reduce((t, r) => t + r.drishti.kpi_red.length, 0), red_names: [...new Set(drRows.flatMap((r) => r.drishti.kpi_red))].slice(0, 4), clients_red: drRows.filter((r) => r.drishti.kpi_red.length > 0).length };
     
     return { rows, freshness: fresh, drishti, totals: { clients: rows.length, ar: totAr, ar_month_ago: totAgo || null, ar_comparable: arComparable, over90_pct: totOwed ? Math.round(totO90 / totOwed * 1000) / 10 : 0,
       sla_avg: slas.length ? Math.round(slas.reduce((t, r) => t + r.sla.score, 0) / slas.length * 10) / 10 : null, collected_month: sum("collected_month"),
@@ -5270,17 +5319,24 @@ const OPS = {
     const work = new Map((await all(env, "SELECT user_id, COUNT(*) AS n FROM notes WHERE kind = 'work' AND created_at BETWEEN ? AND ? GROUP BY user_id", from, to)).map((r) => [r.user_id, r.n]));
     const skips = new Map((await all(env, "SELECT user_id, COUNT(*) AS n FROM notes WHERE kind = 'skip' AND created_at BETWEEN ? AND ? GROUP BY user_id", from, to)).map((r) => [r.user_id, r.n]));
     const missed = await missedByClient(env, payload);
-    const sla = new Map((await all(env, `SELECT m.client_id, m.score FROM client_monthend m WHERE m.step = 'sla' AND m.score IS NOT NULL AND m.month = (SELECT MAX(month) FROM client_monthend WHERE client_id = m.client_id AND step = 'sla' AND score IS NOT NULL)`)).map((r) => [r.client_id, r.score]));
+    // SLA average: the Portfolio's, for the manager's clients: Drishti's last finished month of each client it has scored (so it
+    // matches the Portfolio and the digest for the same clients); with none of them in Drishti, the scores typed at month-end
+    const today = isoDate(payload.today) || isoToday();
+    const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, clients, today) : new Map();
+    if (drs.size) await drTickMonthEnd(env, drs);
+    const slaAll = await slaScores(env, clients, today, drOv);
+    const drMonth = (id) => { const x = drs.get(id); return x && x.period && x.period.kind === "month" && x.score != null ? x.score : null; };
     const escT = await trackerEsc(env), esc = new Map([...escT].map(([k, v]) => [k, v.late]));
     const rows = managers.map((m) => {
       const names = new Set(jsonList(m.scope_projects_json).map(projKey));
       const mine = clients.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n))));
       const team = below(m.id);
       let entries = 0, sk = 0; team.forEach((id) => { entries += work.get(id) || 0; sk += skips.get(id) || 0; });
-      const scores = mine.map((c) => sla.get(c.id)).filter((x) => x != null);
+      const drScores = mine.map((c) => drMonth(c.id)).filter((x) => x != null), scores = mine.map((c) => slaAll.get(c.id).latest).filter(Boolean).map((x) => x.score);
+      const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
       return { id: m.id, name: m.name, clients: mine.map((c) => c.name), people: team.size, entries, skips: sk,
         missed: mine.reduce((t, c) => { const x = missed.get(c.id); return t + (x ? x.ar + x.posting + x.submission : 0); }, 0),
-        escalations_late: mine.reduce((t, c) => t + (esc.get(c.id) || 0), 0), sla_avg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10 : null };
+        escalations_late: mine.reduce((t, c) => t + (esc.get(c.id) || 0), 0), sla_avg: drScores.length ? Math.round(avg(drScores)) : scores.length ? Math.round(avg(scores) * 10) / 10 : null };
     }).sort((a, b) => a.name.localeCompare(b.name));
     return { rows };
   },
@@ -5526,10 +5582,15 @@ const OPS = {
     const missed = (await missedByClient(env, payload)).get(clientId) || { ar: 0, posting: 0, submission: 0 };
     const worked = await one(env, "SELECT COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, from, to);
     const month = okMonth(payload.month, today) ? payload.month : closingMonth(today);
+    // The SLA here is the one the scorecard, the Portfolio and the digest show: Drishti's score for a month Drishti has scored,
+    // the score typed at month-end only for a month it has not. The month-end step ticks itself from Drishti on this page too.
+    const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, [c], today) : new Map();
+    if (drs.size) await drTickMonthEnd(env, drs);
+    const slaAll = (await slaScores(env, [c], today, drOv)).get(c.id), slaRow = slaAll.latest, slaPrev = slaAll.prev;
     const me = new Map((await all(env, "SELECT * FROM client_monthend WHERE client_id = ? AND month = ?", clientId, month)).map((r) => [r.step, r]));
-    const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key); return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: r ? r.score : null, note: r ? r.note : "" }; });
-    const slaRow = await one(env, "SELECT month, score, done_at FROM client_monthend WHERE client_id = ? AND step = 'sla' AND score IS NOT NULL ORDER BY month DESC LIMIT 2", clientId);
-    const slaPrev = slaRow ? await one(env, "SELECT score FROM client_monthend WHERE client_id = ? AND step = 'sla' AND score IS NOT NULL AND month < ? ORDER BY month DESC LIMIT 1", clientId, slaRow.month) : null;
+    // the SLA step shows the score in use; typed: what a person typed for the month, when Drishti's score for it differs
+    const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key), dm = key === "sla" && r ? slaAll.months.get(month) : null;
+      return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: dm ? dm.score : r ? r.score : null, typed: dm && dm.typed != null ? dm.typed : null, note: r ? r.note : "" }; });
     const log = await all(env, "SELECT id, at, kind, text, next_on, by_name, by_id FROM client_log WHERE client_id = ? ORDER BY at DESC LIMIT 30", clientId);
     const raci = (await OPS["raci.list"]({ env, user, payload })).rows.find((r) => r.client_id === clientId) || null;
     const team = parseTeam(c.team_json).length;
@@ -6871,8 +6932,8 @@ const OPS = {
     const scored = rows.filter((x) => x.score != null);
     return { state: ov.state, stale: !!ov.stale, error: ov.error || "", at: ov.at, rows, totals: { avg: scored.length ? Math.round(scored.reduce((t, x) => t + x.score, 0) / scored.length) : null,
       bands: { ok: scored.filter((x) => x.band === "ok").length, warn: scored.filter((x) => x.band === "warn").length, miss: scored.filter((x) => x.band === "miss").length },
-      red: scored.reduce((t, x) => t + x.counts.miss, 0), amber: scored.reduce((t, x) => t + x.counts.warn, 0),
-      red_names: [...new Set(rows.flatMap((x) => (x.drags || []).filter((d) => d.status === "miss").map((d) => d.name)))].slice(0, 5) } };
+      red: scored.reduce((t, x) => t + x.kpi_red.length, 0), amber: scored.reduce((t, x) => t + x.counts.warn, 0),
+      red_names: [...new Set(scored.flatMap((x) => x.kpi_red))].slice(0, 5) } };
   },
   /* One client's scorecard in full: the period picked (the latest month unless asked), every KPI with its value, standard,
      formula, status, where it comes from and the comment; the scopes; what pulls it down; the score by period. */
@@ -6883,7 +6944,7 @@ const OPS = {
     const client = await one(env, "SELECT id, name FROM clients WHERE id = ?", clientId); if (!client) throw bad("Unknown client.");
     const today = isoDate(payload.today) || istISO(Date.now());
     const ov = await drishtiOverview(env);
-    if (ov.state !== "ok") return { state: ov.state, error: ov.error || "", client: { id: client.id, name: client.name }, drishti: null };
+    if (ov.state !== "ok") return { state: ov.state, error: ov.error || "", failed_at: ov.failed_at || null, retry_at: ov.retry_at || null, client: { id: client.id, name: client.name }, drishti: null };
     const { d, ambiguous } = drMatch(ov, client.name);
     if (!d) return { state: "unmatched", client: { id: client.id, name: client.name }, drishti: null, others: ov.clients.map((c) => c.name).slice(0, 50) };
     const done = d.periods.filter((p) => !p.range.to || p.range.to < today);
@@ -6915,7 +6976,8 @@ const OPS = {
       prev: prev ? { id: prev.id, label: prev.label, from: prev.range.from, to: prev.range.to, pct: drScore(d, prev, null).pct } : null,
       score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts, scored: sc.scored, kpi_pct: sc.kpi_pct, sla_pct: sc.sla_pct,
       scopes: sc.scopes.map((x) => ({ key: x.key, name: x.name, short: x.short, ok: x.ok, warn: x.warn, miss: x.miss, scored: x.scored, pct: x.pct, band: x.band, missing: x.missing || [], items: x.items.map((i) => ({ name: i.name, shown: i.shown, status: i.status })) })),
-      items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at };
+      // stale: Drishti has not answered since the read these figures come from (at); the page says so
+      items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at, stale: !!ov.stale, failed_at: ov.failed_at || null, retry_at: ov.retry_at || null };
   },
   /* Beside the scorecard: the client's people from Shastra WFM and its escalations in the period (SLA threshold 0). */
   "sla.extras": async ({ env, user, payload }) => {
@@ -6963,7 +7025,7 @@ const OPS = {
     const api = env.DRISHTI_API || DRISHTI_API_DEFAULT;
     const call = async (body) => {
       let r; try { r = await fetchT(api, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), redirect: "follow" }); }
-      catch (e) { throw new ApiError(502, "Drishti's server did not answer. Try again in a minute."); }
+      catch (e) { throw new ApiError(502, "Drishti's server did not answer."); }
       let j = null; try { j = await r.json(); } catch (e) {}
       if (!j) throw new ApiError(502, "Drishti's server sent an answer Brahmastra could not read.");
       if (!j.ok) throw new ApiError(j.code === "auth" ? 503 : 400, j.code === "auth" ? "Drishti did not accept Brahmastra's sign-in. The DRISHTI_TOKEN_SECRET does not match Drishti's TOKEN_SECRET." : "Drishti: " + (j.error || "it refused."));
@@ -6999,7 +7061,7 @@ const OPS = {
       const role = asManager ? "manager" : /\bsme\b/i.test(user.designation || "") ? "sme" : /team lead|\btl\b/i.test(user.designation || "") ? "tl" : "supervisor";
       await call({ a: "signup", email, name: user.name || email, role, managerId, password: randomHex(24) });
       du = await find(); created = true;
-      if (!du) throw new ApiError(502, "Drishti created the account but did not list it. Try again.");
+      if (!du) throw new ApiError(502, "Drishti made the account but did not list it.");
     }
     return { token: await drishtiToken(env, du.id, du.role), name: du.name, role: du.role, created };
   },

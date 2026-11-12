@@ -6766,9 +6766,9 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
           <Kpi label="Unassigned" value={fmtInt(t.open_n)} sub={fmtMoney(t.open_bal) + " waiting for allocation"} />
           <Kpi label="Over 90 days" value={<span className={t.over90_pct > d.target ? "red-ink" : "teal-ink"}>{t.over90_pct}%</span>} sub={"target ≤ " + d.target + "%"} />
           <Kpi label={"Collected · " + rangeText(dr).toLowerCase()} value={<span className="teal-ink">{fmtMoney(t.collected_month)}</span>} sub="from payment posting" />
-          <Kpi label="KPIs in the red" value={d.drishti && d.drishti.state === "ok" ? <span className={d.drishti.red ? "red-ink" : "teal-ink"}>{fmtInt(d.drishti.red)}</span> : "–"} sub={d.drishti && d.drishti.state === "ok" ? (d.drishti.red ? d.drishti.red_names.join(", ") + " · " + plural(d.drishti.clients_red, "client") : "nothing red on the scorecards") : "Drishti's scorecard is not connected"} />
+          <Kpi label="KPIs in the red" value={d.drishti && d.drishti.state === "ok" ? <span className={d.drishti.red ? "red-ink" : "teal-ink"}>{fmtInt(d.drishti.red)}</span> : "–"} sub={d.drishti && d.drishti.state === "ok" ? (d.drishti.red ? d.drishti.red_names.join(", ") + " · " + plural(d.drishti.clients_red, "client") : "no KPI is red on the scorecards") : d.drishti && d.drishti.state === "error" ? "Drishti did not answer" + (d.drishti.retry_at ? "; Brahmastra asks it again from " + drWhen(d.drishti.retry_at, true) : "") : "Drishti's scorecard is not connected"} />
           <Kpi label="SLA score, average" value={d.drishti && d.drishti.avg != null ? <span className={DR_BAND[d.drishti.avg >= 90 ? "ok" : d.drishti.avg >= 80 ? "warn" : "miss"][0]}>{d.drishti.avg}%</span> : t.sla_avg != null ? <span className={t.sla_avg < 90 ? "amber-ink" : "teal-ink"}>{t.sla_avg}%</span> : "–"}
-            sub={d.drishti && d.drishti.avg != null ? `${d.drishti.bands.ok} green · ${d.drishti.bands.warn} amber · ${d.drishti.bands.miss} red (Drishti)` : fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
+            sub={d.drishti && d.drishti.avg != null ? `${d.drishti.bands.ok} green · ${d.drishti.bands.warn} amber · ${d.drishti.bands.miss} red (Drishti)` + (d.drishti.stale && d.drishti.at ? ` · as read at ${drWhen(d.drishti.at)}: Drishti has not answered since` : "") : fmtInt(t.missed) + " missed tasks · " + fmtMoney(t.waiting_bal) + " waiting on clients"} />
         </div>
         <div className="card tight"><div className="table-wrap"><table className="t">
           <thead><tr><th>Client · health</th><th>Team lead · manager</th><th className="num">AR</th><th className="num">Unassigned</th><th className="num">Over 90</th><th className="num">Collected</th><th>SLA score <span className="tiny muted" style={{ fontWeight: 400 }}>· Drishti</span></th><th>Pulling it down</th><th className="num">Missed</th><th>Waiting<br />on client</th><th className="num">TFL risk</th><th title="Claims still to work, at the pace of the last two weeks">Days to<br />clear</th><th>Last<br />inventory</th></tr></thead>
@@ -6798,7 +6798,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
         <div className="c3-g2">
           {mgr && <div className="card"><div className="row between"><h3 className="c3-h">Managers side by side · {rangeText(dr).toLowerCase()}</h3></div>
             {!mq.data ? <Spinner label="Loading…" /> : !mq.data.rows.length ? <Empty>No managers on the roster yet.</Empty> : <div className="table-wrap"><table className="t">
-              <thead><tr><th>Manager</th><th className="num">Clients</th><th className="num">People</th><th className="num">Entries</th><th className="num">Skips</th><th className="num">Missed</th><th className="num" title="Client escalations in the Escalation tracker, open over 24 hours with no reason given">Client escalations &gt; 24 h</th><th className="num">SLA avg</th></tr></thead>
+              <thead><tr><th>Manager</th><th className="num">Clients</th><th className="num">People</th><th className="num">Entries</th><th className="num">Skips</th><th className="num">Missed</th><th className="num" title="Client escalations in the Escalation tracker, open over 24 hours with no reason given">Client escalations &gt; 24 h</th><th className="num" title="Drishti's last finished month of each client it has scored, as in the SLA score average above and the Monday digest. With none of the clients scored in Drishti: the scores typed at month-end.">SLA avg</th></tr></thead>
               <tbody>{mq.data.rows.map((m) => <tr key={m.id}><td className="b">{m.name}</td><td className="num" title={m.clients.join(", ")}>{m.clients.length}</td><td className="num">{m.people}</td><td className="num">{fmtInt(m.entries)}</td><td className="num">{m.skips}</td><td className="num">{m.missed}</td><td className={"num " + (m.escalations_late ? "red-ink b" : "")}>{m.escalations_late}</td><td className="num">{m.sla_avg != null ? m.sla_avg + "%" : "–"}</td></tr>)}</tbody></table></div>}
             <div className="tiny muted mt8">Entries and skips by everyone under each manager in the roster; missed tasks, escalations and SLA for the clients in their span.</div></div>}
           <div className="card"><h3 className="c3-h">Data freshness</h3>
@@ -6971,7 +6971,7 @@ function ClientView({ ctx, me, go, params }) {
                   onClick={() => (stp.done ? tick(stp, false) : stp.key === "sla" ? setScoreFor("") : tick(stp, true))}>{stp.done ? "✓" : late ? "!" : ""}</button>
                 <div style={{ flex: 1 }}><div className={stp.done ? "" : "b"}>{stp.label}{stp.key === "sla" && stp.score != null ? <span className="badge teal" style={{ marginLeft: 6 }}>{stp.score}%</span> : null}
                   {stp.key === "pack" && <button type="button" className="btn sm link no-print" style={{ padding: "0 0 0 8px" }} onClick={() => go("dashboard", { tab: "report", client_id: cid })}>Open Client 360 report</button>}</div>
-                  <div className="tiny muted">{stp.done ? (stp.by_itself ? "done by itself" : "done") + " · " + fmtWhen(stp.done_at) + (stp.done_by_name && !stp.by_itself ? " · " + stp.done_by_name : "") : (late ? "was due " : "due ") + fmtDate(stp.due)}{!stp.done && stp.auto ? " · ticks by itself" : ""}</div>
+                  <div className="tiny muted">{stp.done ? (stp.by_itself ? "done by itself" : "done") + " · " + fmtWhen(stp.done_at) + (stp.done_by_name && !stp.by_itself ? " · " + stp.done_by_name : "") : (late ? "was due " : "due ") + fmtDate(stp.due)}{!stp.done && stp.auto ? " · ticks by itself" : ""}{stp.key === "sla" && stp.typed != null ? ` · typed as ${stp.typed}%. Drishti scored the month ${stp.score}%, so ${stp.score}% is used.` : ""}</div>
                   {stp.key === "sla" && scoreFor !== null && !stp.done && <div className="row mt8" style={{ gap: 6 }}><input className="input sm" type="number" min="0" max="100" step="0.1" style={{ width: 110 }} placeholder="Score %" value={scoreFor} onChange={(e) => setScoreFor(e.target.value)} autoFocus />
                     <button className="btn sm primary" disabled={busy || scoreFor === ""} onClick={() => tick(stp, true, scoreFor)}>Save score</button><button className="btn sm link" onClick={() => setScoreFor(null)}>cancel</button><span className="tiny muted">from the SLA tab</span></div>}
                 </div></div>); })}</div>
@@ -6985,7 +6985,7 @@ function ClientView({ ctx, me, go, params }) {
             {d.log.length ? d.log.slice(0, 12).map((l) => <div key={l.id} className={"c3-log " + l.kind}><b>{l.kind === "next" ? "Next call · " + fmtDate(l.next_on) : C360_KIND.find(([k]) => k === l.kind)[1] + " · " + fmtWhen(l.at)} · {l.by_name}{(l.mine || (me.role === "supervisor" && d.monthend.can_edit)) && <button className="btn link sm no-print" style={{ padding: "0 4px" }} disabled={busy} onClick={() => delLog(l)}>remove</button>}</b>{l.text}</div>)
               : <Empty>No calls logged yet. Note what the client agreed and when the next call is, so the next person does not start from zero.</Empty>}</div>
         </div>
-        <div className="tiny muted">Figures are Brahmastra's: AR from the latest inventory, collected from payment posting hand-offs, SLA from the score ticked at month-end. Over-90 target {d.ar.target}%.</div>
+        <div className="tiny muted">Figures are Brahmastra's: AR from the latest inventory, collected from payment posting hand-offs, SLA from Drishti's scorecard (the score typed at month-end for a month Drishti has not scored). Over-90 target {d.ar.target}%.</div>
       </>}
     </div>
   );
@@ -8600,6 +8600,22 @@ function CrPrintJob({ title, pages, slideFor, onDone }) {
 /* Drishti opens already signed in as the Brahmastra user: Brahmastra asks its server for Drishti's own session token
    and leaves it where the Drishti page looks for it (same web address, so the same browser storage). */
 const DRISHTI_TOKEN_KEY = "drishti:token:v1";
+/* When Drishti's session token ends (it lasts 12 hours): its first part is base64url("id|role|end in ms"). 0 if unreadable. */
+function drTokenEnd(tok) {
+  try { const p = String(tok || "").split(".")[0].replace(/-/g, "+").replace(/_/g, "/"); return Number(atob(p).split("|")[2]) || 0; } catch (e) { return 0; }
+}
+/* A new Drishti session for the signed-in person, left where the Drishti page reads it on every call it makes. */
+/* Why Drishti could not be opened signed in, and what to do. Drishti's own sign-in is not used inside Brahmastra, so this never
+   points to it; when Drishti's server does not answer (502), Drishti's page below cannot reach it either: Load again later. */
+function drSsoNote(sso) {
+  if (!sso || sso.state !== "error") return "";
+  return (sso.msg || "Drishti did not answer.") + (sso.status === 502 ? " Use Load again (the ↻ button above) in a minute." : "");
+}
+async function drishtiSignIn() {
+  const r = await rpc("reports.drishtiSession");
+  try { localStorage.setItem(DRISHTI_TOKEN_KEY, r.token); } catch (e) {}
+  return r;
+}
 /* The SLA tab's heading, with Drishti's frame buttons (load again, own browser tab, full screen) while a Drishti tab is open. */
 function SlaHead({ title, sub, onHow, frame }) {
   const stamp = new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
@@ -8620,16 +8636,33 @@ function SlaHead({ title, sub, onHow, frame }) {
 }
 function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) {
   const [sso, setSso] = useState({ state: "loading" });
+  const ssoRef = useRef(sso); ssoRef.current = sso;
+  const signedAt = useRef(0), lastTok = useRef(""), alive = useRef(true);
+  // Signs in to Drishti again (a new 12-hour session): on opening, on Load again, an hour before the session ends, and when
+  // Drishti drops its token because its session ended. Never resolves to an error: the state says what went wrong.
+  const signIn = () => {
+    signedAt.current = Date.now();
+    return drishtiSignIn().then((r) => { lastTok.current = r.token; if (alive.current) setSso({ state: "ok", name: r.name, role: r.role, created: r.created }); })
+      .catch((e) => { if (alive.current) setSso({ state: e.status === 503 && /not switched on/.test(e.message) ? "off" : "error", msg: e.message, status: e.status }); });
+  };
   useEffect(() => {
-    let alive = true;
-    rpc("reports.drishtiSession").then((r) => {
-      try { localStorage.setItem(DRISHTI_TOKEN_KEY, r.token); } catch (e) {}
-      if (alive) setSso({ state: "ok", name: r.name, role: r.role, created: r.created });
-    }).catch((e) => { if (alive) setSso({ state: e.status === 503 && /not switched on/.test(e.message) ? "off" : "error", msg: e.message }); });
-    return () => { alive = false; };
+    alive.current = true;
+    signIn();
+    const due = () => ssoRef.current.state !== "off" && Date.now() - signedAt.current > 60000;
+    const check = () => { let t = ""; try { t = localStorage.getItem(DRISHTI_TOKEN_KEY) || ""; } catch (e) {} if (due() && drTokenEnd(t) - Date.now() < 3600000) signIn(); };
+    const id = setInterval(check, 5 * 60000);
+    // Drishti's page (same web address) takes its token away when its session has ended: put a new one in its place, and
+    // Drishti opens again signed in (embed.js reloads it when a token arrives while its sign-in card is up)
+    // (not when Drishti refuses the session made a minute ago: that is no ended session, and signing in again would go round)
+    const onStore = (e) => { if (e.key !== DRISHTI_TOKEN_KEY || e.newValue || ssoRef.current.state === "off") return;
+      if (!(e.oldValue && e.oldValue === lastTok.current && Date.now() - signedAt.current < 60000)) signIn(); };
+    window.addEventListener("storage", onStore);
+    return () => { alive.current = false; clearInterval(id); window.removeEventListener("storage", onStore); };
   }, []);
   const frameRef = useRef(null);
-  const frame = useFrame(DR_BASE);
+  const frame0 = useFrame(DR_BASE);
+  // Load again signs in again first, so a session that ran out while the tab stayed open does not end on Drishti's own sign-in
+  const frame = { ...frame0, reload: () => { signIn().then(() => frame0.reload()); } };
   const [f, setF] = useState({ client_id: onlyClient(ctx), location_id: "" });
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(null);
@@ -8696,7 +8729,7 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
       {pick == null && <><div className="card rh-bar">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => { setF({ client_id: v, location_id: "" }); setSaved(null); }} locId={f.location_id} setLocId={(v) => setF((x) => ({ ...x, location_id: v }))} />
         {arInv && <button className="btn rh-go" disabled={!f.client_id || busy} onClick={saveInv} title="Today's AR inventory, in the columns the scorecard's AR Inventory report reads">{busy ? "Saving…" : "Save AR Inventory to OneDrive"}</button>}
-        <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : <><i className="rh-dot wait" />Sign in below</>}</div>
+        <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : sso.state === "error" ? <><i className="rh-dot off" />Not signed in to Drishti</> : <><i className="rh-dot wait" />Sign in below</>}</div>
       </div>
       <div className="rh-status">
         {saved ? <span><i className="rh-dot" />{saved.name} · {plural(saved.n, "claim")} · saved {saved.at} to {saved.folders.join(" and ")}</span>
@@ -8709,7 +8742,7 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
       {fed && fed.state === "error" && <div className="alert warn mb rh-note">The AR Inventory could not be added by itself: {fed.msg}</div>}
       {sso.state === "ok" && sso.created && <div className="alert info mb">Your scorecard account was made from your Brahmastra profile, under your reporting manager. From now on it opens signed in.</div>}
       {sso.state === "off" && <div className="alert info mb">The scorecard will open signed in once single sign-in is switched on (a one-time setting). Until then, sign in below.</div>}
-      {sso.state === "error" && <div className="alert warn mb"><b>Drishti could not be opened signed in.</b> {sso.msg} You can still sign in below.</div>}</>}
+      {sso.state === "error" && <div className="alert warn mb"><b>Drishti could not be opened signed in.</b> {drSsoNote(sso)}</div>}</>}
       <EmbedPanel frame={frame} frameRef={frameRef} title="Drishti" ready={sso.state !== "loading"} waitLabel="Signing you in…" more={more} pick={pick} setPick={setPick}>{children}</EmbedPanel>
     </div>
   );
@@ -8794,13 +8827,15 @@ function drishtiProps(el, test) {
   } catch (e) {}
   return null;
 }
-/* A Brahmastra client whose name matches another app's client name (case, spaces and punctuation ignored). */
+/* The Brahmastra client a Drishti client's name stands for, by the scorecard's own rule (drMatch in worker.js): the whole name,
+   ignoring case, spaces and punctuation, never part of a name (Drishti's "Sunrise Eye Care Pediatrics" is not "Sunrise Eye Care");
+   when two match, the one spelt exactly the same, else the first. */
 function matchClient(clients, name) {
-  const k = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, ""), want = k(name);
+  const k = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, ""), want = k(name);
   if (!want) return null;
-  const act = (clients || []).filter((c) => c.active);
-  return act.find((c) => k(c.name) === want) || act.find((c) => (c.roster_names || []).some((r) => k(r) === want))
-    || act.find((c) => want.length >= 5 && (k(c.name).includes(want) || want.includes(k(c.name)))) || null;
+  const same = (clients || []).filter((c) => c.active && k(c.name) === want);
+  const exact = same.filter((c) => String(c.name).trim().toLowerCase() === String(name || "").trim().toLowerCase());
+  return (exact.length === 1 ? exact[0] : same[0]) || null;
 }
 /* The client to start on: the only active one someone has, else none. */
 const onlyClient = (ctx) => { const a = (ctx.clients || []).filter((c) => c.active); return a.length === 1 ? a[0].id : ""; };
@@ -8886,6 +8921,22 @@ function kpiInside(it) {
   if (!(g >= 0)) return null;
   return { rel: g / (Math.abs(r.good) || 1), txt: (pct ? Math.round(g * 1000) / 10 + " pts" : Math.round(g * 10) / 10 + (r.fmt === "days" ? " days" : "")) + " better" };
 }
+/* A time Brahmastra read Drishti, or will ask it again: the time if it is today, else the day and the time. A time to ask
+   again is rounded up to the next minute, so "from 12:02" is never too early. */
+const drWhen = (ms, up) => { if (!ms) return ""; const t = up ? Math.ceil(Number(ms) / 60000) * 60000 : Number(ms), d = new Date(t);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : fmtWhen(t); };
+/* The scorecard could not be read: when, why, and when Brahmastra asks Drishti again (one minute after a failed read). */
+function drReadNote(d) {
+  if (!d) return "";
+  return `Brahmastra could not read Drishti's scorecard${d.failed_at ? " at " + drWhen(d.failed_at) : ""}: ${d.error || "Drishti did not answer."}` +
+    (d.retry_at ? ` It asks Drishti again from ${drWhen(d.retry_at, true)}: open the scorecard again then.` : "");
+}
+/* Drishti stopped answering after a good read: the figures shown are that read's, and the page says so. */
+function drStaleNote(d) {
+  if (!d || !d.stale) return "";
+  return `Drishti did not answer${d.failed_at ? " at " + drWhen(d.failed_at) : ""}, so these are its figures as Brahmastra read them${d.at ? " at " + drWhen(d.at) : " before"}.` +
+    (d.retry_at ? ` Brahmastra asks Drishti again from ${drWhen(d.retry_at, true)}.` : "");
+}
 const Ring = ({ pct, band, size = 30, w = 4 }) => (
   <span className="sc-ring" style={{ width: size, height: size, background: `conic-gradient(${band ? KPI_COL[band] : "#C9D1D9"} 0 ${Math.max(2, pct || 0)}%, var(--soft) ${Math.max(2, pct || 0)}% 100%)` }}><i style={{ inset: w }} /></span>
 );
@@ -8946,11 +8997,12 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
         <button className="btn sm primary" onClick={openInputs} title="Drishti's page: upload the period's reports or type a value">Reports →</button>
       </div>
       {!clientId ? <div className="card"><Empty>Pick a client to see its scorecard.</Empty></div> : q.error ? <ErrorBox error={q.error} /> : !d ? <div className="card"><Spinner label="Reading Drishti's scorecard…" /></div>
-        : d.state === "off" ? <div className="alert warn">Drishti's scorecard is not connected yet: the Worker secret DRISHTI_TOKEN_SECRET is not set (README › Drishti opens signed in). Until then, use <b>Inputs (Drishti)</b>.</div>
-        : d.state === "error" ? <div className="alert err">Drishti did not answer: {d.error} Brahmastra tries again in a few minutes.</div>
-        : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it in <b>Inputs (Drishti)</b>.</div>
-        : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports in <b>Inputs (Drishti)</b> and it shows here.</div>
+        : d.state === "off" ? <div className="alert warn">Drishti's scorecard is not connected yet: the Worker secret DRISHTI_TOKEN_SECRET is not set (README › Drishti opens signed in). Until then, open Drishti's own pages with <b>Reports →</b> and read the scores there.</div>
+        : d.state === "error" ? <div className="alert err">{drReadNote(d)}</div>
+        : d.state === "unmatched" ? <div className="alert warn"><b>{first}</b> is not in Drishti under this name. Drishti knows: {(d.others || []).join(", ") || "no clients yet"}. Name the client the same in both, or add it on Drishti's <b>Clients</b> tab.</div>
+        : d.state === "no_period" ? <div className="alert info">Drishti has no scored period for <b>{first}</b> yet. Upload the period's reports with <b>Reports →</b> and it shows here.</div>
         : <>
+          {d.stale && <div className="alert warn">{drStaleNote(d)}</div>}
           {fellBack && <div className="alert info">Drishti has no {fellBack === "month" ? "monthly" : fellBack === "week" ? "weekly" : fellBack} scorecard for <b>{first}</b>, so its {d.period.kind === "week" ? "weeks are" : d.period.kind === "month" ? "months are" : "periods are"} shown.</div>}
           {(d.ambiguous || []).length > 1 && <div className="alert warn">Drishti has {d.ambiguous.length} clients whose names match <b>{first}</b>: {d.ambiguous.join(", ")}. This is <b>{d.drishti.name}</b>. Rename the others in Drishti so the scores cannot mix.</div>}
           <div className={"card sc-hero glow " + (d.band || "none")}>
