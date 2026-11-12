@@ -7301,15 +7301,16 @@ const crPl = (n, one, many) => crF.int(n) + " " + (Math.round(n) === 1 ? one : m
 const crMoneySub = (v) => (crF.moneyK(v) !== crF.money(v, 0) ? crF.money(v, 0) : "");
 const crF = {
   int: (n) => (n == null || isNaN(n)) ? "–" : Math.round(n).toLocaleString("en-US"),
-  money: (n, d) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n), dd = d == null ? (v < 1000 ? 2 : 0) : d; return (neg ? "-$" : "$") + v.toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd }); },
-  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg ? "-$" : "$") + s; },
+  // no sign on an amount that rounds to zero at the decimals shown (a total a hair below zero is $0.00, as fmtMoney writes it)
+  money: (n, d) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n), dd = d == null ? (v < 1000 ? 2 : 0) : d, s = v.toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
+  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
   num: (n) => (n == null || isNaN(n)) ? "–" : (Math.abs(n) >= 1e4 ? (n / 1e3).toFixed(1) + "K" : Math.round(n).toLocaleString("en-US")),
   pct: (n, d = 0) => (n == null || isNaN(n) || !isFinite(n)) ? "–" : (n * 100).toFixed(d) + "%",
   date: (d) => d ? `${String(d.getDate()).padStart(2, "0")} ${CRM_S[d.getMonth()]} ${d.getFullYear()}` : "–",
   dateShort: (d) => d ? `${String(d.getDate()).padStart(2, "0")} ${CRM_S[d.getMonth()]}` : "–",
   iso: (d) => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : "",
   monthYear: (d) => d ? `${CRM_L[d.getMonth()]} ${d.getFullYear()}` : "–",
-  signed: (n, f) => n == null || isNaN(n) ? "–" : (n > 0 ? "+" : "") + f(n),
+  signed: (n, f) => n == null || isNaN(n) ? "–" : (n > 0 && /[1-9]/.test(f(n)) ? "+" : "") + f(n),
 };
 /* dates (local, day precision) */
 const crD = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
@@ -8292,13 +8293,15 @@ function crCell(ds, r, c, exact) {
   if (c === "amount" || c === "charge" || c === "paid") return exact ? (Math.round((Number(v) || 0) * 100) / 100).toFixed(2) : crF.money(v, 0);
   return String(v);
 }
+/* the total of the rows as they are shown (each in whole dollars), so it always adds up to them; the CSV keeps the cents */
+const crShownTotal = (rows) => crSum(rows, (r) => Number(crF.money(Number(r.amount) || 0, 0).replace(/[^0-9.-]/g, "")) || 0);
 function CrClaims({ spec, ctx, me, title, onOpen }) {
   const [q, setQ] = useState("");
   if (!spec) return null;
   const rows = q ? spec.rows.filter((r) => spec.cols.some((c) => crCell(spec.ds, r, c).toLowerCase().includes(q.toLowerCase()))) : spec.rows;
   const csv = () => downloadText(toCSV(rows, spec.cols.map((c) => ({ label: CR_COL_LABEL[c] || c, get: (r) => crCell(spec.ds, r, c, true) }))), (title || "claims").replace(/[\\/:*?"<>|]+/g, " ") + ".csv");
   return <div className="card crx-drawer">
-    <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}><div className="row" style={{ gap: 10 }}><b>Claims behind this view</b><span className="badge gray">{crF.int(rows.length)} rows · {crF.money(crSum(rows, (r) => r.amount), 0)}</span></div>
+    <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}><div className="row" style={{ gap: 10 }}><b>Claims behind this view</b><span className="badge gray">{crF.int(rows.length)} rows · {crF.money(crShownTotal(rows), 0)}</span></div>
       <div className="row" style={{ gap: 8 }}><input className="input sm" style={{ width: 240 }} placeholder="Search claim, payer, status…" value={q} onChange={(e) => setQ(e.target.value)} /><button className="btn sm" onClick={csv} disabled={!rows.length}>⬇ CSV</button></div></div>
     {spec.rows.length ? <div className="table-wrap mt8" style={{ maxHeight: 320 }}><table className="t"><thead><tr>{spec.cols.map((c) => <th key={c} className={["amount", "charge", "paid"].includes(c) ? "num" : ""}>{CR_COL_LABEL[c] || c}</th>)}</tr></thead>
       <tbody>{rows.slice(0, 80).map((r, i) => <tr key={i} className={r.id ? "click" : ""} onClick={() => r.id && onOpen(r.id)}>{spec.cols.map((c) => <td key={c} className={["amount", "charge", "paid"].includes(c) ? "num" : c === "invoice" ? "mono" : ""}>{crCell(spec.ds, r, c)}</td>)}</tr>)}</tbody></table></div>
