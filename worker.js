@@ -2430,7 +2430,9 @@ function shiftWindow(shift, now, dayStart) {
   if (start > now) start -= 86400000;
   return { start, end: start + len, len };
 }
-/* ---- audit trail: who changed access, RACI, recipients, client settings, roles ---- */
+/* ---- audit trail: who changed access, RACI, recipients, client settings, roles ----
+   Also who got a sign-in code or set a password for someone else, email and Emp ID changes, accounts added and deleted, the extra
+   sign-in emails and roster projects matched to clients. Never a code, a password or a token: only who, whom and when. */
 async function audit(env, user, action, clientId, detail) {
   try { await run(env, "INSERT INTO audit_log (id, at, user_id, user_name, action, client_id, detail) VALUES (?,?,?,?,?,?,?)", uuid(), Date.now(), (user && user.id) || null, (user && user.name) || "", str(action, 60), clientId || null, str(detail, 400)); } catch (e) {}
 }
@@ -3814,6 +3816,7 @@ const OPS = {
       // Switched off here as in a roster sync: their claims go back to the pool and their open hand-offs to the backup.
       if (!active && ex.active) await unassignOpen(env, ex.id);
       if (projects || reportsTo !== undefined || role !== ex.role || active !== ex.active) { await recomputeScopes(env); await syncTeams(env); }
+      if (newEmail !== ex.email) await audit(env, user, "user.email", null, `${name}: ${ex.email_missing || !ex.email ? "no email" : ex.email} → ${newEmail}`);
       if (role !== ex.role || active !== ex.active || projects || empChanged) await audit(env, user, "user.save", null, name + (role !== ex.role ? " · role " + ex.role + " → " + role : "") + (active !== ex.active ? (active ? " · reactivated" : " · deactivated") : "")
         + (empChanged ? " · Emp ID " + (ex.emp_id || "none") + " → " + (empId || "none") : "") + (projects ? " · projects " + projects.map((x) => x.name).join(", ") : ""));
       return { user: publicUser(await one(env, "SELECT * FROM users WHERE id = ?", ex.id)) };
@@ -3831,6 +3834,7 @@ const OPS = {
     if (projects) await run(env, "UPDATE users SET projects_json = ? WHERE id = ?", JSON.stringify(projects), id);
     if (reportsTo) { const r = await one(env, "SELECT name FROM users WHERE id = ?", reportsTo); await run(env, "UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?", reportsTo, r.name, id); }
     if (projects || reportsTo) { await recomputeScopes(env); await syncTeams(env); }
+    await audit(env, user, "user.save", null, `${name} · account added by hand (${role === "supervisor" ? "team lead" : "biller"}, ${email})` + (projects && projects.length ? " · projects " + projects.map((x) => x.name).join(", ") : ""));
     return { user: publicUser(await one(env, "SELECT * FROM users WHERE id = ?", id)) };
   },
   /* A team lead can fetch a sign-in code for someone whose email has not arrived (or when email is not set up). */
@@ -3842,11 +3846,13 @@ const OPS = {
     if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
     if (!ex.active) throw bad("This account is switched off.");
     const code = await issueOtp(env, ex.email, "login", {}, { byTeamLead: true });
+    // whoever holds the code can sign in as this person: who asked for it is kept (never the code itself)
+    await audit(env, user, "user.code", null, `${ex.name}: sign-in code given`);
     return { email: ex.email, code, expires_in_min: OTP_TTL_MS / 60000 };
   },
   "users.resetPassword": async ({ env, user, payload }) => {
     if (!isHash(payload.passHash)) throw bad("Set a temporary password.");
-    const ex = await one(env, "SELECT id, locked_at FROM users WHERE id = ?", payload.id);
+    const ex = await one(env, "SELECT id, name, locked_at FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (!(await inSpan(env, user, ex.id))) throw notYours();
     if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
@@ -3857,6 +3863,7 @@ const OPS = {
       env.DB.prepare("UPDATE users SET pass_salt = ?, pass_hash = ?, must_change = 1, failed_logins = 0, locked_at = NULL WHERE id = ?").bind(salt, hash, ex.id),
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(ex.id),
     ]);
+    await audit(env, user, "user.reset", null, `${ex.name}: temporary password set, signed out everywhere`);
     return { ok: true };
   },
 
@@ -3871,6 +3878,7 @@ const OPS = {
       if (!n.n) throw bad("Keep at least one active team lead.");
     }
     await removeUser(env, ex.id);
+    await audit(env, user, "user.delete", null, `${ex.name} · account deleted (${ex.role === "user" ? "biller" : "team lead"}${ex.emp_id ? ", Emp ID " + ex.emp_id : ""})`);
     return { ok: true, name: ex.name };
   },
 
@@ -7799,9 +7807,13 @@ const OPS = {
     return { meta, extra_emails: extra, projects, admins: adminEmails(env),
       shastra: { connected: !!env.SHASTRA_FEED_KEY, last: await getSetting(env, "shastra_sync", null), log: (await getSetting(env, "shastra_log", [])) || [] } };
   },
-  "roster.saveEmails": async ({ env, payload }) => {
+  "roster.saveEmails": async ({ env, user, payload }) => {
     const list = [...new Set((Array.isArray(payload.emails) ? payload.emails : String(payload.emails || "").split(/[\s,;]+/)).map(mailClean).filter(mailOk))].slice(0, 200);
+    const old = ((await getSetting(env, "extra_emails", [])) || []).map(mailClean);
     await setSetting(env, "extra_emails", list);
+    // these addresses may sign in without a Purview email: who let them in, or took them off, is kept
+    const added = list.filter((x) => !old.includes(x)), removed = old.filter((x) => !list.includes(x));
+    if (added.length || removed.length) await audit(env, user, "roster.emails", null, [added.length ? "added " + added.join(", ") : "", removed.length ? "removed " + removed.join(", ") : ""].filter(Boolean).join("; "));
     return { extra_emails: list };
   },
 

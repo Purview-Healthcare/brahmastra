@@ -405,6 +405,64 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
   ok("D-04: an address from before, that Shastra does not send, counts as typed after the next sync", (await typed("Noor Nomail")) === 1 && refused(await T(() => NO("reports.drishtiSession", {})), /added in Brahmastra/));
 }
 
+/* ================= D-05: access changes leave an audit row, never with a code or a password in it ================= */
+{
+  const w = await makeWorld();
+  const { A, T, id } = w;
+  const TI = await w.c("Tina Lead"), LA = await w.c("Lara Lead"), NN = await w.c("Nil Nomail"), VE = await w.c("Vera Vice"), MO = await w.c("Mona Manager");
+  const count = async () => (await w.row("SELECT COUNT(*) AS n FROM audit_log")).n;
+  const last = async (action) => (await w.audits(action)).slice(-1)[0];
+
+  S("D-05: sign-in codes and password resets for someone else");
+  let n = await count();
+  const code = await TI("users.loginCode", { id: id["Arun Agent"] });
+  let a = await last("user.code");
+  ok("D-05: a sign-in code fetched for a biller is in the audit trail: who, for whom", (await count()) === n + 1 && a && a.user_name === "Tina Lead" && /^Arun Agent: sign-in code given$/.test(a.detail), a);
+  const ph = await w.sha("a-temporary-password-for-the-test");
+  n = await count();
+  await TI("users.resetPassword", { id: id["Arun Agent"], passHash: ph });
+  a = await last("user.reset");
+  ok("D-05: a temporary password set for a biller is in the audit trail", (await count()) === n + 1 && a && a.user_name === "Tina Lead" && /^Arun Agent: temporary password set/.test(a.detail), a);
+  n = await count();
+  const r0 = await T(() => LA("users.loginCode", { id: id["Arun Agent"] })), r1 = await T(() => LA("users.resetPassword", { id: id["Arun Agent"], passHash: ph }));
+  ok("D-05: a refused code or reset writes nothing", !r0.ok && !r1.ok && (await count()) === n);
+
+  S("D-05: email changes, accounts added and deleted, extra sign-in emails");
+  n = await count();
+  await A("users.save", { id: id["Cyra Agent"], first_name: "Cyra", last_name: "Agent", role: "user", email: "cyra.new" + D });
+  a = await last("user.email");
+  ok("D-05: an email changed by the admin is in the audit trail, old and new", a && a.detail === `Cyra Agent: cyra${D} → cyra.new${D}` && (await count()) === n + 1, a);
+  await NN("users.save", { id: id["Nil Nomail"], first_name: "Nil", last_name: "Nomail", role: "supervisor", email: "nil.typed" + D });
+  a = await last("user.email");
+  ok("D-05: so is an email a person adds where the roster had none", a && a.user_name === "Nil Nomail" && a.detail === `Nil Nomail: no email → nil.typed${D}`, a);
+  n = await count();
+  const made = await A("users.save", { first_name: "Hana", last_name: "Handmade", email: "hana" + D, designation: "Biller", role: "user", projects: [{ name: SUN }] });
+  a = await last("user.save");
+  ok("D-05: an account the admin adds by hand is in the audit trail", (await count()) === n + 1 && a && /^Hana Handmade · account added by hand \(biller, hana@/.test(a.detail), a);
+  n = await count();
+  await A("users.delete", { id: made.user.id });
+  a = await last("user.delete");
+  ok("D-05: a deleted account is in the audit trail", (await count()) === n + 1 && a && /^Hana Handmade · account deleted \(biller\)$/.test(a.detail), a);
+  n = await count();
+  await A("roster.saveEmails", { emails: ["someone@example.org", "other@example.org"] });
+  a = await last("roster.emails");
+  ok("D-05: the extra sign-in emails: what was added is in the audit trail", (await count()) === n + 1 && a && a.detail === "added someone@example.org, other@example.org", a);
+  await A("roster.saveEmails", { emails: ["other@example.org", "third@example.org"] });
+  a = await last("roster.emails");
+  ok("D-05: and what was added and removed on a change", a && a.detail === "added third@example.org; removed someone@example.org", a);
+  n = await count();
+  await A("roster.saveEmails", { emails: ["other@example.org", "third@example.org"] });
+  ok("D-05: saving the same list again adds no row", (await count()) === n);
+
+  S("D-05: nothing secret in the audit trail, and it stays with the admin and the VP");
+  const all = (await w.rows("SELECT action, detail, user_name FROM audit_log")).map((x) => JSON.stringify(x)).join("\n");
+  const tok = (await w.row("SELECT token FROM sessions WHERE user_id = ? ORDER BY created_at DESC", id["Tina Lead"])).token;
+  ok("D-05: no audit row carries the sign-in code, the password sent, or a session token", /^\d{6}$/.test(code.code) && !all.includes(code.code) && !all.includes(ph) && !all.includes(tok) && !/pass_hash|passHash/.test(all));
+  const rows = (await A("audit.list", { action: "user" })).rows.map((x) => x.action);
+  ok("D-05: the admin's Audit trail lists them under Team members", ["user.code", "user.reset", "user.email", "user.delete", "user.save"].every((k) => rows.includes(k)), rows);
+  ok("D-05: the VP reads the audit trail; a team lead and a manager do not", (await T(() => VE("audit.list", {}))).ok && !(await T(() => TI("audit.list", {}))).ok && !(await T(() => MO("audit.list", {}))).ok);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

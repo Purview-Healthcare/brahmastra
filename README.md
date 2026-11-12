@@ -334,7 +334,9 @@ bar to narrow the charts), then:
   sync.
 - **Audit trail** (admins and the VP): who shared a client or took it back, changed the RACI, who gets feedback, a
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
-  with when and what.
+  with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
+  address or an Emp ID, added or deleted an account, changed the extra sign-in emails, or matched a roster project
+  to a client. A code or a password is never written there: only who did it, for whom and when.
 
 #### SLA
 
