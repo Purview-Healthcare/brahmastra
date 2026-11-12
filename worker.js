@@ -5408,15 +5408,17 @@ const OPS = {
     return { team, auto_allocate: !!auto };
   },
   "clients.save": async ({ env, user, payload }) => {
-    const name = str(payload.name, 160).trim();
+    // A change leaves alone what it does not send: no code, Active or follow-up days in it keeps the client's own.
+    const ex = payload.id ? await one(env, "SELECT * FROM clients WHERE id = ?", payload.id) : null;
+    if (payload.id && !ex) throw bad("Unknown client.");
+    const sent = (k) => !ex || payload[k] !== undefined;
+    const name = sent("name") ? str(payload.name, 160).trim() : ex.name;
     if (!name) throw bad("Give the client a name.");
-    const code = str(payload.code, 20).trim().toUpperCase();
-    const fu = Math.max(1, Math.min(365, Math.round(num(payload.follow_up_days, 30))));
-    const active = payload.active === false ? 0 : 1;
+    const code = sent("code") ? str(payload.code, 20).trim().toUpperCase() : ex.code || "";
+    const fu = sent("follow_up_days") ? Math.max(1, Math.min(365, Math.round(num(payload.follow_up_days, 30)))) : ex.follow_up_days;
+    const active = sent("active") ? (payload.active === false ? 0 : 1) : ex.active ? 1 : 0;
     const link = workbookLinkOf(payload.workbook_link);
-    if (payload.id) {
-      const ex = await one(env, "SELECT * FROM clients WHERE id = ?", payload.id);
-      if (!ex) throw bad("Unknown client.");
+    if (ex) {
       editableOr(user, ex.id);
       if (plainName(ex.name) !== plainName(name) && (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
       const changes = [];
@@ -5492,9 +5494,11 @@ const OPS = {
     return { ok: true, name: ex.name, claims: n ? n.n : 0 };
   },
   "locations.save": async ({ env, user, payload }) => {
-    const name = str(payload.name, 160).trim();
+    // A change leaves alone what it does not send: no Active in it keeps the location on or off as it is.
+    const was = payload.id ? await one(env, "SELECT name, active FROM locations WHERE id = ?", str(payload.id, 60)) : null;
+    const name = was && payload.name === undefined ? was.name : str(payload.name, 160).trim();
     if (!name) throw bad("Give the location a name.");
-    const active = payload.active === false ? 0 : 1;
+    const active = was && payload.active === undefined ? (was.active ? 1 : 0) : payload.active === false ? 0 : 1;
     const link = workbookLinkOf(payload.workbook_link);
     if (payload.id) {
       const ex = await one(env, "SELECT id, client_id FROM locations WHERE id = ?", payload.id);

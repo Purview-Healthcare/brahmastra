@@ -217,6 +217,33 @@ const profileOf = async (w, tat, over = {}) => {
   ok("E-05: an old same-name pair is not locked: it saves, and can be renamed apart", r.ok && r4.ok, [r.e, r4.e]);
 }
 
+{
+  S("M-13: a client or location save keeps what it does not send");
+  const w = await world();
+  const { A, T, sun } = w;
+  const get = (id) => w.row("SELECT name, code, active, follow_up_days FROM clients WHERE id = ?", id);
+  await A("clients.save", { id: sun.id, name: sun.name, code: "SEC", follow_up_days: 21, active: false });
+  let r = await T(() => A("clients.save", { id: sun.id, name: sun.name }));
+  let c = await get(sun.id);
+  ok("M-13: a save with only the name keeps the code, Active (off) and the follow-up days", r.ok && c.code === "SEC" && c.active === 0 && c.follow_up_days === 21, { e: r.e, c });
+  r = await T(() => A("clients.save", { id: sun.id, follow_up_days: 9 }));
+  c = await get(sun.id);
+  ok("M-13: a save with only the follow-up days keeps the name", r.ok && c.name === sun.name && c.follow_up_days === 9 && c.code === "SEC", { e: r.e, c });
+  r = await T(() => A("clients.save", { id: sun.id, name: sun.name, code: "", follow_up_days: 30, active: true }));
+  c = await get(sun.id);
+  ok("M-13: what is sent still changes: an empty code clears it, Active on switches it on", r.ok && c.code === "" && c.active === 1 && c.follow_up_days === 30, { e: r.e, c });
+  r = await T(() => A("clients.save", { id: sun.id, name: "  " }));
+  ok("M-13: an empty name is still refused", !r.ok && r.e === "Give the client a name.", r);
+  const loc = await w.row("SELECT id, name FROM locations WHERE client_id = ? ORDER BY name LIMIT 1", sun.id);
+  await A("locations.save", { id: loc.id, name: loc.name, active: false });
+  r = await T(() => A("locations.save", { id: loc.id, name: loc.name }));
+  const l1 = await w.row("SELECT name, active FROM locations WHERE id = ?", loc.id);
+  ok("M-13: a location save without Active keeps it switched off", r.ok && l1.active === 0, { e: r.e, l1 });
+  r = await T(() => A("locations.save", { id: loc.id, active: true }));
+  const l2 = await w.row("SELECT name, active FROM locations WHERE id = ?", loc.id);
+  ok("M-13: a location save without a name keeps its name", r.ok && l2.name === loc.name && l2.active === 1, { e: r.e, l2 });
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
