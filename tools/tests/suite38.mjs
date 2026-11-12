@@ -385,7 +385,9 @@ const postingWorld = async ({ backup = true } = {}) => {
   S("E-14: Search finds the claims on a Payment posting or Submission person's desk");
   const { w, claim } = await postingWorld();
   const PA = await w.firstIn("Pavan Poster"), BE = await w.firstIn("Bela Agent"), SA = await w.firstIn("Sahil Submitter"), CY = await w.firstIn("Cyra Agent");
-  const patient = (await w.row("SELECT patient FROM claims WHERE id = ?", claim.id)).patient;
+  // a made-up patient name of its own, so the search has one claim to find
+  await w.sql("UPDATE claims SET patient = 'Quill, Zora' WHERE id = ?", claim.id);
+  const patient = "Quill, Zora";
   const found = async (who, q) => (await who("search.global", { q })).claims.some((x) => x.id === claim.id);
   ok("E-14: the posting person finds the claim on their desk by its number", await found(PA, claim.claim_no));
   ok("E-14: and by the patient's name", await found(PA, patient));
@@ -443,6 +445,32 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-19: the responding person can still be changed to someone active", m.ok && (await w.row("SELECT owner_name FROM escalations WHERE id = ?", e.id)).owner_name === "Lara Lead", m.e);
   const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
   ok("E-19: the form keeps that person in the responding-person list, marked no longer active", /owner_name: r\.owner_name/.test(src) && /form\.owner_name \+ " \(no longer active\)"/.test(src));
+}
+
+{
+  S("E-13: an Assistant Vice President keeps that title and is not RACI's Vice President");
+  const avp = (o) => P({ position: "Assistant Vice President", department: "All", function: "Management", reports_to: "Vera Vice", ...o });
+  const f = [avp({ emp_id: "D1", name: "Avi Avp", email: "avi@purview-healthcare.com" }), ...baseFeed(),
+    avp({ emp_id: "D2", name: "Asha Asstvp", position: "Asst. Vice President", email: "asha@purview-healthcare.com" }), avp({ emp_id: "D3", name: "Ajay Avp", position: "AVP", email: "ajay@purview-healthcare.com" })];
+  let w = await world({ feed: f });
+  const TI = await w.firstIn("Tina Lead");
+  const who = async (n) => w.row("SELECT designation, access_all FROM users WHERE name = ?", n);
+  const avs = [await who("Avi Avp"), await who("Asha Asstvp"), await who("Ajay Avp")], vera = await who("Vera Vice");
+  ok("E-13: Assistant Vice President and Asst. Vice President keep the title Assistant Vice President", avs.slice(0, 2).every((u) => u && u.designation === "Assistant Vice President"), avs);
+  ok("E-13: their access is as before (every project), and the Vice President is still the Vice President", avs.slice(0, 2).every((u) => u && u.access_all === 1) && vera.designation === "Vice President" && vera.access_all === 1, { avs, vera });
+  ok("E-13: nobody gains access: the bare code AVP still gets none, as before", !avs[2], avs[2]);
+  const L = await TI("raci.list", { today: w.today() });
+  const row = L.rows.find((x) => x.client_id === w.sun.id);
+  ok("E-13: RACI's VP is the Vice President, first in Informed", L.vp && L.vp.name === "Vera Vice" && row.i[0] && row.i[0].name === "Vera Vice", { vp: L.vp, i: row.i });
+  const s = await TI("raci.save", { client_id: w.sun.id, r: row.r, a: row.a, c: row.c, i: [(await w.U("Avi Avp")).id] });
+  ok("E-13: saving RACI keeps the Vice President first; the AVP can be the second Informed", s.row.i.map((x) => x.name).join(", ") === "Vera Vice, Avi Avp", s.row.i);
+  const roleLabel = vm.runInContext("roleLabel", w.rig.app);
+  ok("E-13: the page calls the AVP by their title, the VP Vice President", roleLabel({ access_all: true, designation: "Assistant Vice President", role: "supervisor" }) === "Assistant Vice President" && roleLabel({ access_all: true, designation: "Vice President", role: "supervisor" }) === "Vice President");
+  // with no Vice President at all, an AVP does not take that place
+  w = await world({ feed: [avp({ emp_id: "D1", name: "Avi Avp", reports_to: "", email: "avi@purview-healthcare.com" }), ...baseFeed().filter((x) => x.emp_id !== "V1").map((x) => (x.reports_to === "Vera Vice" ? { ...x, reports_to: "Avi Avp" } : x))] });
+  const T2 = await w.firstIn("Tina Lead");
+  const L2 = await T2("raci.list", { today: w.today() });
+  ok("E-13: with no Vice President, RACI has no VP (the AVP is not put in that place)", L2.vp === null && !L2.rows.find((x) => x.client_id === w.sun.id).i.length, { vp: L2.vp });
 }
 
 const fails = results.filter((x) => !x.pass);

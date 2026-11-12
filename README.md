@@ -130,7 +130,8 @@ not in Brahmastra.
 - Agents become billers; SMEs, Team Leads and Sr Team Leads become team leads
   for their own projects; Assistant Managers, Managers and Sr Managers become
   team leads for their projects and every project of the people below them;
-  the Vice President sees every project. CEO, Director, HR, IT, Administration,
+  the Vice President sees every project (an Assistant Vice President too, under that
+  title; RACI's fixed Informed place is the Vice President's). CEO, Director, HR, IT, Administration,
   QA, MIS and Tech Support get no access, and nor does anyone only on Eligibility
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).

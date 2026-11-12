@@ -1246,7 +1246,7 @@ function SettingsView({ me, setMe, ctx }) {
           <div className="card set-sec" id="set-access">
             <h2>What you can see</h2><div className="sub">Client access follows the Purview Shastra hierarchy; this is how it lands for you.</div>
             {me.is_admin ? <div className="small mt8">You are an <b>admin</b>, so you see every client and every screen. Everyone from the roster sees only their own span.</div>
-              : me.access_all ? <div className="small mt8"><b>Vice President:</b> you see every client.</div>
+              : me.access_all ? <div className="small mt8"><b>{me.designation || "Vice President"}:</b> you see every client.</div>
               : (me.source !== "roster" && !(me.projects || []).length) ? <div className="small mt8">This account was <b>added by hand with no projects</b>, so it sees every client. Give it projects in Team to narrow it, or sign in with your roster account.</div>
               : <>
                 <div className="small mt8"><b>Your projects{(me.scope_projects || []).length > (me.projects || []).length ? " and your span's" : ""}:</b> {((me.scope_projects || []).length ? me.scope_projects : (me.projects || []).map((p) => p.name || p)).filter(Boolean).join("; ") || "none yet"}</div>
@@ -1370,7 +1370,8 @@ const navFor = (me, ho, fb, at, tk) => {
 };
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
 const navItems = (nav) => nav.flatMap((x) => (Array.isArray(x) ? [x] : x.items));
-const roleLabel = (me) => (me.is_admin ? "Admin" : me.access_all ? "Vice President" : me.roster_kind === "manager" ? (me.designation || "Manager") : me.role === "supervisor" ? (/^(sme|subject matter)/i.test(me.designation || "") ? "SME" : "Team lead") : "Biller");
+// every project: the Vice President, or an Assistant Vice President under their own title
+const roleLabel = (me) => (me.is_admin ? "Admin" : me.access_all ? (me.designation || "Vice President") : me.roster_kind === "manager" ? (me.designation || "Manager") : me.role === "supervisor" ? (/^(sme|subject matter)/i.test(me.designation || "") ? "SME" : "Team lead") : "Biller");
 /* ---------- Ctrl+K: jump to a page, a client, a person or a claim from anywhere ---------- */
 const CMDK_ORDER = ["Page", "Client", "Person", "Claim"];
 function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {

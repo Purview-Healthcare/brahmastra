@@ -3074,6 +3074,8 @@ function teamSuggestions(rows) {
 }
 /* Managers and above (assistant managers, managers, the VP, admins) can narrow the Dashboard to one team lead. */
 const isManagerUp = (u) => !!u && (u.is_admin || u.access_all || u.roster_kind === "manager" || (u.role === "supervisor" && !u.scope));
+// The Vice President (RACI's fixed first Informed person): every project and that title, not an Assistant Vice President.
+const isVicePresident = (u) => !!u && !!u.access_all && u.designation === "Vice President";
 /* The clients one team lead covers (their own span), for a manager who picked that team lead; null means no narrowing. */
 async function leadClientIds(env, user, leadId) {
   if (!leadId) return null;
@@ -3147,12 +3149,16 @@ async function visibleUsers(env, user) {
 
 /* ---- Purview Shastra roster ----
    Who gets in: Agents (billers), SMEs, Team Leads and Sr Team Leads (team leads for their own projects), Assistant Managers,
-   Managers and Sr Managers (team leads for their projects and their people's projects) and the Vice President (every project).
+   Managers and Sr Managers (team leads for their projects and their people's projects) and the Vice President (every project;
+   an Assistant Vice President too, under that title).
    No access: CEO, Director, HR, IT, Administration, Quality Analysts, MIS, Tech Support, and anyone without a project. */
 const ROSTER_KIND = { "agent": "agent", "subject matter expert": "lead", "sme": "lead", "team lead": "lead", "tl": "lead", "senior team lead": "lead", "sr team lead": "lead", "sr tl": "lead",
-  "assistant manager": "manager", "manager": "manager", "senior manager": "manager", "sr manager": "manager", "vice president": "all", "vp": "all" };
+  "assistant manager": "manager", "manager": "manager", "senior manager": "manager", "sr manager": "manager", "vice president": "all", "vp": "all",
+  // Shastra's Assistant Vice President (a step below the VP): every project as before, under their own title; not the Vice President
+  "assistant vice president": "all" };
 const ROSTER_DESIGNATION = { "agent": "Biller", "subject matter expert": "SME", "sme": "SME", "team lead": "TL", "tl": "TL", "senior team lead": "Sr TL", "sr team lead": "Sr TL", "sr tl": "Sr TL",
-  "assistant manager": "Assistant Manager", "manager": "Manager", "senior manager": "Sr Manager", "sr manager": "Sr Manager", "vice president": "Vice President", "vp": "Vice President" };
+  "assistant manager": "Assistant Manager", "manager": "Manager", "senior manager": "Sr Manager", "sr manager": "Sr Manager", "vice president": "Vice President", "vp": "Vice President",
+  "assistant vice president": "Assistant Vice President" };
 const ROSTER_GONE = /^(resigned|exited|left|terminated|absconded|inactive|relieved)$/i;
 function rosterDate(v) {
   const t = String(v || "").trim(); if (!t) return "";
@@ -3182,11 +3188,14 @@ const NOT_IN_BRAHMASTRA = /^(eligibility verification|ev|pcc|credentialing|repor
 const rowDepts = (row) => [row.department, ...String(row.departments_also || "").split(/[;,]/)].map((d) => String(d || "").trim()).filter(Boolean);
 const rowWorkDepts = (row) => rowDepts(row).filter((d) => /^(ar|posting|submission)$/i.test(d));
 /* Position text as typed in Shastra: case, dots, dashes and extra spaces do not matter, and a "Sr." / "Senior" /
-   "Assistant" / "Deputy" / "Associate" in front of a known role counts as that role ("Sr. Team Lead" is a team lead). */
+   "Assistant" / "Deputy" / "Associate" in front of a known role counts as that role ("Sr. Team Lead" is a team lead),
+   except that an Assistant Vice President is not the Vice President. */
 function rosterPos(position) {
   const p = String(position || "").toLowerCase().replace(/[^a-z]+/g, " ").replace(/\s+/g, " ").trim();
   if (ROSTER_KIND[p]) return p;
   const base = p.replace(/^((sr|senior|jr|junior|asst|assistant|associate|deputy|principal|acting)\s+)+/, "");
+  // "Asst. Vice President", "Associate Vice President", "Deputy Vice President": the AVP, not the Vice President
+  if (base === "vice president" && /^(asst|assistant|associate|deputy)\s/.test(p)) return "assistant vice president";
   if (ROSTER_KIND[base]) return base;
   if (/^(sr|senior)\s/.test(p) && ROSTER_KIND["senior " + base]) return "senior " + base;
   return p;
@@ -5341,7 +5350,7 @@ const OPS = {
     const suMiss = new Map(hoMiss.filter((r) => r.grp === "submission").map((r) => [r.client_id, r.n]));
     const saved = new Map((await all(env, "SELECT * FROM raci")).map((r) => [r.client_id, r]));
     const users = await all(env, "SELECT id, name, role, roster_kind, designation, department, projects_json, scope_projects_json, access_all FROM users WHERE active = 1");
-    const vpRow = users.find((u) => u.access_all) || null;
+    const vpRow = users.find(isVicePresident) || null;
     const person = (u) => ({ id: u.id, name: u.name });
     const tlRe = /\b(sr\.? )?tl\b|team lead/i;
     const rows = clients.map((c) => {
@@ -5387,11 +5396,11 @@ const OPS = {
     editableOr(user, clientId);
     if (isSME(user)) throw denied("The RACI is edited by team leads and up; you can read it.");
     if (!(await one(env, "SELECT id FROM clients WHERE id = ?", clientId))) throw bad("Unknown client.");
-    const users = new Map((await all(env, "SELECT id, name, access_all FROM users WHERE active = 1")).map((u) => [u.id, u]));
+    const users = new Map((await all(env, "SELECT id, name, designation, access_all FROM users WHERE active = 1")).map((u) => [u.id, u]));
     const clean = (v, cap) => [...new Set((Array.isArray(v) ? v : []).map((x) => str(x && x.id != null ? x.id : x, 60)).filter((id) => users.has(id)))].slice(0, cap).map((id) => ({ id, name: users.get(id).name }));
     const r = clean(payload.r, 10), a = clean(payload.a, 5), cn = clean(payload.c, 5);
     // Informed holds at most two people, and the VP is always the first.
-    const vp = [...users.values()].find((u) => u.access_all) || null;
+    const vp = [...users.values()].find(isVicePresident) || null;
     let i = clean(payload.i, 3);
     if (vp) i = [{ id: vp.id, name: vp.name }, ...i.filter((x) => x.id !== vp.id)];
     i = i.slice(0, 2);
