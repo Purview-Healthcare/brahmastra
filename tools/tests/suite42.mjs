@@ -18,20 +18,20 @@ const SRC = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
 const HTML = fs.readFileSync(REPO + "/index.html", "utf8");
 // one component's code in app.jsx: from "function Name(" to the next top-level function
 const fnSrc = (name) => { const i = SRC.indexOf("\nfunction " + name + "("); if (i < 0) return ""; const j = SRC.indexOf("\nfunction ", i + 10); return SRC.slice(i, j < 0 ? undefined : j); };
-// The theme colours as index.html defines them, and the contrast of text on a background (WCAG: 4.5 to 1 for text)
-const CSS = HTML.slice(HTML.indexOf("<style>"), HTML.indexOf("</style>"));
-const tokensOf = (sel) => { const out = {}; let i = 0; while ((i = CSS.indexOf(sel + "{", i)) >= 0) { const body = CSS.slice(i + sel.length + 1, CSS.indexOf("}", i)); for (const m of body.matchAll(/(--[\w-]+):([^;]+)/g)) out[m[1]] = m[2].trim(); i += sel.length; } return out; };
-const LIGHT = tokensOf(":root"), THEME = { light: LIGHT, navy: { ...LIGHT, ...tokensOf(':root[data-theme="navy"]') }, gold: { ...LIGHT, ...tokensOf(':root[data-theme="gold"]') } };
+// The page's CSS as rules ({ media, sel, body }, media "" outside any @media), the theme colours as index.html defines
+// them, and the contrast of text on a background (WCAG: 4.5 to 1 for text)
+const CSS = HTML.slice(HTML.indexOf("<style>") + 7, HTML.indexOf("</style>")).replace(/\/\*[\s\S]*?\*\//g, "");
+const RULES = []; { let media = "", m; const re = /(@media[^{]*)\{|([^{}]+)\{([^{}]*)\}|\}/g; while ((m = re.exec(CSS))) { if (m[1]) media = m[1].slice(6).trim(); else if (m[2] !== undefined) RULES.push({ media, sel: m[2].trim(), body: m[3] }); else media = ""; } }
+const decls = (body) => { const out = {}; for (const d of body.split(";")) { const k = d.indexOf(":"); if (k > 0) out[d.slice(0, k).trim()] = d.slice(k + 1).trim(); } return out; };
+// the declarations of every rule whose selector list holds `sel`, in that @media (none: outside any), merged in order
+const rule = (sel, media = "") => Object.assign({}, ...RULES.filter((r) => r.media === media && r.sel.split(",").map((x) => x.trim()).includes(sel)).map((r) => decls(r.body)));
+const LIGHT = rule(":root"), THEME = { light: LIGHT, navy: { ...LIGHT, ...rule(':root[data-theme="navy"]') }, gold: { ...LIGHT, ...rule(':root[data-theme="gold"]') } };
 const rgba = (c) => { c = String(c).trim(); let m = c.match(/^#([0-9a-f]{6})$/i); if (m) return [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)).concat(1); m = c.match(/^rgba?\(([^)]+)\)$/); if (m) { const a = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return [a[0], a[1], a[2], a.length > 3 ? a[3] : 1]; } return null; };
 const over = (top, bot, alpha = 1) => { const a = top[3] * alpha; return [0, 1, 2].map((k) => top[k] * a + bot[k] * (1 - a)).concat(1); };
 const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
 const ratio = (a, b) => { const x = lum(a), y = lum(b); return Math.round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) * 100) / 100; };
-// a colour value in a theme: a literal, or var(--token) looked up in that theme
-const col = (theme, v) => { const m = String(v).trim().match(/^var\((--[\w-]+)\)$/); return rgba(m ? THEME[theme][m[1]] : v); };
-// the declarations of the rules whose selector is exactly `sel` (merged, in order); `media` picks rules inside that @media block only
-const decls = (body) => { const out = {}; for (const d of body.split(";")) { const k = d.indexOf(":"); if (k > 0) out[d.slice(0, k).trim()] = d.slice(k + 1).trim(); } return out; };
-const mediaBody = (media) => { const i = CSS.indexOf("@media" + media + "{"); if (i < 0) return ""; let depth = 0, j = i; for (; j < CSS.length; j++) { if (CSS[j] === "{") depth++; else if (CSS[j] === "}" && --depth === 0) break; } return CSS.slice(CSS.indexOf("{", i) + 1, j); };
-const rule = (sel, media) => { const src = media ? mediaBody(media) : CSS.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, ""); const out = {}; for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) if (m[1].trim() === sel) Object.assign(out, decls(m[2])); return out; };
+// a colour in a theme (tokens: the theme's values; var(--x) followed until it is a colour)
+const col = (theme, v, toks = THEME[theme]) => { let x = String(v).trim(); for (let k = 0; k < 6; k++) { const m = x.match(/^var\((--[\w-]+)\)$/); if (!m) break; x = String(toks[m[1]]).trim(); } return rgba(x); };
 
 S("Pop-ups: Escape, the shade, typed text and Tab (H-01, H-02, H-13, H-14, H-15)");
 const layered = ["Modal", "ClaimDrawer", "CommandPalette", "DiscardAsk", "AlertLayer", "SidePanel"];
@@ -119,6 +119,41 @@ for (const th of ["light", "navy", "gold"]) {
   const k = ratio(fg, bg);
   ok(`H-03: ${th}: the Feedback tab text is at least 4.5 to 1 (now ${k} to 1; it was about 2 to 1 in white)`, k >= 4.5, { th, k });
 }
+
+S("Navy and Gold: the Monday digest and Inventory status in the theme's own colours (H-04); the digest PDF always light (H-10)");
+const DARK = ["navy", "gold"];
+for (const th of DARK) {
+  const card = col(th, "var(--card)");
+  for (const [k, w] of [["r", "red"], ["a", "amber"], ["g", "green"]]) {
+    const v = ratio(col(th, rule(`.dd-kpis .${k} b`).color), card);
+    ok(`H-04: ${th}: the digest's ${w} figure is at least 4.5 to 1 on the card (${v})`, v >= 4.5, { th, k, v });
+  }
+  for (const b of ["", ".ok", ".warn", ".miss"]) {
+    const R = { ...rule(".dd-dial"), ...(b ? rule(".dd-dial" + b) : {}) }, bg = over(col(th, R.background), card), fg = over(col(th, R.color), bg), v = ratio(fg, bg);
+    ok(`H-04: ${th}: the score circle${b ? " " + b.slice(1) : ""} takes the theme's tint (not a light disc), its text at least 4.5 to 1 (${v})`, lum(bg) < 0.2 && v >= 4.5, { th, b, v, bg });
+  }
+  for (const b of [".g", ".r", ".a"]) {
+    const R = rule(".dd-esc" + b), bg = over(col(th, R.background), card), v = ratio(over(col(th, R.color), bg), bg);
+    ok(`H-04: ${th}: the escalation / TAT strip ${b.slice(1)} takes the theme's tint, its text at least 4.5 to 1 (${v})`, lum(bg) < 0.2 && v >= 4.5, { th, b, v });
+  }
+  for (const [k, mix] of [["red", 0.05], ["amber", 0.06], ["green", 0.06], ["blue", 0]]) {
+    const sc = { red: "var(--sc-r)", amber: "var(--sc-a)", green: "var(--sc-g)", blue: "var(--card)" }[k];
+    const bg = over(col(th, sc), card, mix), v = ratio(col(th, rule(`.inv-it.${k} .inv-num b`).color), bg);
+    ok(`H-04: ${th}: Inventory status, the ${k} do-first figure is at least 4.5 to 1 (${v})`, v >= 4.5, { th, k, v });
+  }
+}
+ok("H-04: Light keeps its own digest and Inventory status colours", ["#BA2340", "#935300", "#127A4D"].every((c, i) => String(col("light", rule(`.dd-kpis .${"rag"[i]} b`).color)) === String(rgba(c)))
+  && String(col("light", rule(".dd-dial.ok").background)) === String(rgba("#E3F5EC")) && String(col("light", rule(".dd-esc.r").background)) === String(rgba("#FDE7EB"))
+  && String(col("light", rule(".inv-it.blue .inv-num b").color)) === String(rgba("#2563EB")) && String(col("light", rule(".inv-it.red .inv-num b").color)) === String(col("light", "var(--sc-r)")));
+const PR = rule("body.dd-printing", "print");
+const needP = ["--paper", "--card", "--card2", "--ink", "--body", "--slate", "--faint", "--line", "--soft", "--tealink", "--chipbg", "--red-ink", "--amber-ink", "--green-ink", "--red-soft", "--amber-soft", "--green-soft",
+  "--dd-r", "--dd-a", "--dd-g", "--dd-dial", "--dd-dial-ink", "--dd-ok", "--dd-warn", "--dd-miss", "--dd-esc-ink"];
+ok("H-10: the digest PDF takes the Light theme's colours whatever the theme on screen", needP.every((k) => PR[k]), needP.filter((k) => !PR[k]));
+const drift = Object.keys(PR).filter((k) => k.startsWith("--") && PR[k] !== LIGHT[k]);
+ok("H-10: each colour the digest PDF takes is exactly Light's (kept in step with :root)", !drift.length, drift.map((k) => k + " " + PR[k] + " vs " + LIGHT[k]));
+const pv = (v) => col("light", v, { ...LIGHT, ...PR });
+ok("H-10: printed: a light page and white cards with dark text (at least 4.5 to 1)", lum(pv("var(--paper)")) > 0.8 && lum(pv("var(--card)")) > 0.95 && ratio(pv("var(--ink)"), pv("var(--card)")) >= 4.5 && ratio(pv("var(--dd-r)"), pv("var(--card)")) >= 4.5);
+ok("H-10: the PDF button marks the page for that print (body.dd-printing)", /classList\.add\("dd-printing"\)/.test(fnSrc("DigestDashboard")));
 
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);

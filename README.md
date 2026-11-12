@@ -650,7 +650,8 @@ escalations, Billable / Assign FTE, over 90), what needs attention and a button,
 The button opens the **digest dashboard** (`#/digest?span=...&week=...`, also from SLA › Monday digest › Open the
 dashboard): landscape, one card per client with its SLA score and band, **Billable FTE** and **Assign FTE**, AR, over 90,
 collected, each area's score, the escalation line and what pulls it down, and what needs attention. Pick another span or
-one of the 8 weeks before, and download it as a one-page landscape PDF. Supervisors see only the spans they are on.
+one of the 8 weeks before, and download it as a one-page landscape PDF (always printed in the Light colours, whatever
+the theme). Supervisors see only the spans they are on.
 
 ### Resources from Shastra WFM (SLA scorecard and Monday digest)
 
