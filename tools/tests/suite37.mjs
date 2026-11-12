@@ -657,6 +657,18 @@ await part("C-18: the red past-TAT bar names the person's own tab", async () => 
   ok("C-18: a Submission person's desk is Submission", rig.app.deskOf({ department: "Submission", departments_also: "" }, { depts: ["submission"] }) === "submission");
 });
 
+await part("A-10: the posting form never shows -$0.00", async () => {
+  // the page's own Payment posting amounts block, drawn with a createElement that keeps the tree (as the page would show it)
+  const R = rig.app.React, real = R.createElement;
+  const text = (n) => (n == null || n === false ? "" : typeof n === "string" || typeof n === "number" ? String(n) : Array.isArray(n) ? n.map(text).join("") : n.children ? text(n.children) : "");
+  const afterOf = (balance, paid, adjustment) => { R.createElement = (type, props, ...children) => ({ type, props, children });
+    try { const t = text(rig.app.PostingAmounts({ h: { balance, billed: balance }, p: { allowed: String(Math.round((+paid + +adjustment) * 100) / 100), paid, adjustment, adj_reason: "", writeoff: "", deductible: "", coinsurance: "", copay: "" }, setP() {} }));
+      return (t.match(/Balance after posting\s*([^\s✓]*)/) || [])[1]; } finally { R.createElement = real; } };
+  const zeros = [[250.45, "200.15", "50.30"], [0.3, "0.10", "0.20"], [0.7, "0.40", "0.30"]].map(([b, p, a]) => afterOf(b, p, a));
+  ok("A-10: a claim paid off exactly shows Balance after posting $0.00 (not -$0.00)", zeros.every((x) => x === "$0.00"), zeros);
+  ok("A-10: a real balance left, or a real overpayment, still shows as it is", afterOf(250.45, "200.15", "40.30") === "$10.00" && afterOf(100, "90", "20") === "-$10.00", [afterOf(250.45, "200.15", "40.30"), afterOf(100, "90", "20")]);
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

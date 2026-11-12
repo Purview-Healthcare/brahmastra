@@ -146,7 +146,9 @@ function suggestFor({ subStatus, claim }) {
 /* ---------- formatting ---------- */
 /* Attachment types that may open in a browser tab. Never SVG or HTML: those can carry a script that runs as the app. */
 const SAFE_VIEW = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain)$/i;
-const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+// A value that rounds to zero at the decimals shown gets no minus sign: cents worked out in floating point (250.45 - 200.15 - 50.30)
+// can be a hair below zero, and "-$0.00" would read as money owed.
+const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 && Math.round(Math.abs(Number(n)) * 10 ** dec) > 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtInt = (n) => Number(n || 0).toLocaleString();
 const fmtPct = (n, dec = 0) => (n == null || isNaN(n)) ? "–" : Number(n).toFixed(dec) + "%";
 const pad2 = (n) => String(n).padStart(2, "0");
