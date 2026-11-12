@@ -583,6 +583,28 @@ await part("C-13: the claim history says who edited an entry, and shows each edi
   ok("C-13: the notes list on the claim page names the editor too", g.notes.some((n) => n.id === nid && n.edited_by_name === "Tina Lead"), g.notes.map((n) => [n.kind, n.edited_by_name]));
 });
 
+await part("C-14: the Rejections file's TAT column is named for what it answers (the client's own TAT)", async () => {
+  await sql("UPDATE clients SET submission_tat_hours = 8 WHERE id = ?", sun.id);
+  rig.liveEnv.DEMO = false;
+  try {
+    setNow(IST(2026, 11, 10, 9, 0));
+    const [a, b] = await give("Arun Agent", 2);
+    const no = async (id) => (await claim(id)).claim_no;
+    await save(AR, a, SAAG.rej); await save(AR, b, SAAG.rej); await sleep(300);
+    OD.writes.length = 0;
+    setNow(IST(2026, 11, 10, 11, 0));   // 2 working hours: within the client's 8
+    await call(RX, "handoffs.close", { id: (await openH(a, "rejection")).id, outcome: "complete", proof: { date: nowIso(), ref: "B-2", code: "Taxonomy missing" }, note: "Fixed the taxonomy" }); await sleep(300);
+    setNow(IST(2026, 11, 10, 19, 0));   // 10 working hours: past the client's 8, though within 24
+    await call(RX, "handoffs.close", { id: (await openH(b, "rejection")).id, outcome: "complete", proof: { date: nowIso(), ref: "B-3", code: "Taxonomy missing" }, note: "Fixed the taxonomy" }); await sleep(400);
+    const file = [...OD.items.values()].find((x) => x.kind === "file" && /^Rejections Production - Sunrise Eye Care - Nov 2026\.xlsx$/.test(x.name));
+    const tab = file && OD.books.get(file.id).sheets.find((x) => x.name === "Rejections"), head = tab ? tab.rows[0] : [], k = head.findIndex((h) => /TAT/.test(String(h)));
+    const rowOf = async (id) => (tab ? tab.rows : []).find((r) => r.includes(await0[id])) || [];
+    const await0 = { [a]: await no(a), [b]: await no(b) };
+    ok("C-14: the column is 'Within TAT', with no '24h' in it", head[k] === "Within TAT" && !head.some((h) => /24h/.test(String(h))), head.slice(-3));
+    ok("C-14: ...and it answers by the client's TAT of 8 working hours: Yes after 2 hours, No after 10", (await rowOf(a))[k] === "Yes" && (await rowOf(b))[k] === "No", [(await rowOf(a))[k], (await rowOf(b))[k]]);
+  } finally { rig.liveEnv.DEMO = true; await sql("UPDATE clients SET submission_tat_hours = 24 WHERE id = ?", sun.id); }
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

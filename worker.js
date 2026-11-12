@@ -426,7 +426,7 @@ const CLIENT_ROOT = "Brahmastra Clients";
 const SCOPE_FOLDER = { ar: "AR", posting: "Payment posting", submission: "Submission", rejection: "Rejections" };
 const DEPT_SCOPE = { posting: "posting", submission: "submission", subcheck: "submission", rejection: "rejection" };
 const DESK_HEADER = ["Sr. No", "Date", "Department", "Done by", "Client", "Location", "Claim #", "Account #", "Patient", "Payer", "DOS", "Balance", "Action", "Proof date",
-  "Check / reference", "Amount", "Reason / code", "Comment", "Sent by (AR)", "Sent at", "Within 24h TAT"];
+  "Check / reference", "Amount", "Reason / code", "Comment", "Sent by (AR)", "Sent at", "Within TAT"];   // the client's own TAT (the hand-off's due time), not always 24 hours
 /* Submission: the team's Production Format Conso layout, one row per Submission action on a claim. Most columns come from the claim's
    inventory row (the client's own columns too: NAEC Order No, the VEC columns), the old status / comment / bucket the inventory file had,
    the hand-off and the person; Type, Inventory Status, Comment, Bucket and Claim Type are what the person enters (editable for now).
