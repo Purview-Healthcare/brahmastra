@@ -262,6 +262,26 @@ S("G-10: the scorecard's messages name what is on the screen");
   ok("G-10: no scored period, or not connected: the Reports → button, which is on the scorecard", /Upload the period's reports with <b>Reports →<\/b> and it shows here\./.test(src) && /open Drishti's own pages with <b>Reports →<\/b>/.test(src) && />Reports →<\/button>/.test(src));
 }
 
+S("G-12: the SLA tab's AR Inventory feed finds the client by the scorecard's rule: the whole name, never part of it");
+{ const list = [{ id: "c-sun", name: "Sunrise Eye Care", active: 1, roster_names: ["SEC Project"] }, { id: "c-lake", name: "Lakeview Dental Group", active: 1, roster_names: [] },
+    { id: "c-old", name: "Riverside Clinic", active: 0, roster_names: [] }];
+  const m = (n) => (app.matchClient(list, n) || {}).id || null;
+  ok("G-12: Drishti's 'Sunrise Eye Care Pediatrics' (another practice) is not Sunrise Eye Care", m("Sunrise Eye Care Pediatrics") === null);
+  ok("G-12: nor is a part of the name ('Sunrise', 'Eye Care')", m("Sunrise") === null && m("Eye Care") === null);
+  ok("G-12: case, spaces and punctuation do not matter ('SUNRISE  eye-care')", m("SUNRISE  eye-care") === "c-sun" && m("lakeview dental group") === "c-lake");
+  ok("G-12: a roster (Shastra project) name is not a client name, as on the scorecard; an inactive client is not matched", m("SEC Project") === null && m("Riverside Clinic") === null);
+  const two = [{ id: "a", name: "Sunrise Eye-Care", active: 1 }, { id: "b", name: "Sunrise Eye Care", active: 1 }];
+  ok("G-12: two clients with the same letters: the one spelt exactly the same wins", (app.matchClient(two, "Sunrise Eye Care") || {}).id === "b" && (app.matchClient(two, "Sunrise Eye-Care") || {}).id === "a");
+  // the same answers as the scorecard (drMatch) for the same Drishti names
+  for (const [dname, expect] of [["Sunrise Eye Care Pediatrics", "unmatched"], ["SUNRISE  eye-care", "ok"]]) {
+    DR_CLIENTS = [drClient("d-x", dname, [month("p-oct", "October 2026", "2026-10-01", "2026-10-31", { arAging: cell(0.1) })])]; await fresh();
+    const sc = await at(NOW, () => A("sla.scorecard", { client_id: sun.id, kind: "month", ...TODAY }));
+    const page = app.matchClient(clients.map((c) => ({ ...c, active: c.active == null ? 1 : c.active })), dname);
+    ok(`G-12: '${dname}': the scorecard says ${expect}, the feed ${expect === "ok" ? "finds Sunrise Eye Care" : "finds nobody (the page asks which client it is)"}`, sc.state === expect && (expect === "ok" ? page && page.id === sun.id : !page), [sc.state, page && page.name]);
+  }
+  await fresh();
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -8527,13 +8527,15 @@ function drishtiProps(el, test) {
   } catch (e) {}
   return null;
 }
-/* A Brahmastra client whose name matches another app's client name (case, spaces and punctuation ignored). */
+/* The Brahmastra client a Drishti client's name stands for, by the scorecard's own rule (drMatch in worker.js): the whole name,
+   ignoring case, spaces and punctuation, never part of a name (Drishti's "Sunrise Eye Care Pediatrics" is not "Sunrise Eye Care");
+   when two match, the one spelt exactly the same, else the first. */
 function matchClient(clients, name) {
-  const k = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, ""), want = k(name);
+  const k = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, ""), want = k(name);
   if (!want) return null;
-  const act = (clients || []).filter((c) => c.active);
-  return act.find((c) => k(c.name) === want) || act.find((c) => (c.roster_names || []).some((r) => k(r) === want))
-    || act.find((c) => want.length >= 5 && (k(c.name).includes(want) || want.includes(k(c.name)))) || null;
+  const same = (clients || []).filter((c) => c.active && k(c.name) === want);
+  const exact = same.filter((c) => String(c.name).trim().toLowerCase() === String(name || "").trim().toLowerCase());
+  return (exact.length === 1 ? exact[0] : same[0]) || null;
 }
 /* The client to start on: the only active one someone has, else none. */
 const onlyClient = (ctx) => { const a = (ctx.clients || []).filter((c) => c.active); return a.length === 1 ? a[0].id : ""; };
