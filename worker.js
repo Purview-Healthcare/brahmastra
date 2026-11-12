@@ -1530,8 +1530,8 @@ const drFmtVal = (v, fmt) => {
   if (!drIsNum(v)) return v == null || v === "" ? "" : String(v);
   if (fmt === "percent") { const p = Math.round(v * 1000) / 10; return (Number.isInteger(p) ? String(p) : p.toFixed(1)) + "%"; }
   if (fmt === "days") { const x = Math.round(v); return x + (x === 1 ? " day" : " days"); }
-  if (fmt === "count") return Math.round(v).toLocaleString();
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (fmt === "count") return Math.round(v).toLocaleString("en-US");
+  return v.toLocaleString("en-US", { maximumFractionDigits: 2 });
 };
 function drStatusFor(actual, rule) {
   if (!drIsNum(actual) || !rule) return "info";
@@ -1564,7 +1564,7 @@ function drScore(client, period, prev) {
     const pc = ach / rec, st = pc >= 0.9 ? "ok" : pc >= 0.7 ? "warn" : "miss";
     sla[st]++; into[st]++; if (s) s[st]++;
     const it = { scope: sc.short, scope_key: sc.key, key: "task:" + row.name, name: row.name, kind: "SLA", value: Math.round(pc * 1000) / 1000, shown: Math.round(pc * 100) + "%", target: "≥ 90%", status: st, great: pc >= 0.98,
-      reason: row.comment || "", source: "Typed · received " + rec.toLocaleString() + ", achieved " + ach.toLocaleString() + (row.target ? ", target " + row.target : ""), formula: "Achieved ÷ Received × 100", std: "90% and above green · 70 to 89% amber · under 70% red" };
+      reason: row.comment || "", source: "Typed · received " + rec.toLocaleString("en-US") + ", achieved " + ach.toLocaleString("en-US") + (row.target ? ", target " + row.target : ""), formula: "Achieved ÷ Received × 100", std: "90% and above green · 70 to 89% amber · under 70% red" };
     items.push(it); if (s) s.items.push(it); return it;
   };
   for (const sc of active) {

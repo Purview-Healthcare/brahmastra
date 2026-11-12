@@ -146,14 +146,17 @@ function suggestFor({ subStatus, claim }) {
 /* ---------- formatting ---------- */
 /* Attachment types that may open in a browser tab. Never SVG or HTML: those can carry a script that runs as the app. */
 const SAFE_VIEW = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain)$/i;
-const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
-const fmtInt = (n) => Number(n || 0).toLocaleString();
+/* Money, numbers, dates and times are written one way, US style ($146,376 · Nov 11, 2026 · Wed, Nov 11 · 9:30 AM), whatever
+   the browser's language: the same as the stamps and the client-facing reports. */
+const LOC = "en-US";
+const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(LOC, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+const fmtInt = (n) => Number(n || 0).toLocaleString(LOC);
 const fmtPct = (n, dec = 0) => (n == null || isNaN(n)) ? "–" : Number(n).toFixed(dec) + "%";
 const pad2 = (n) => String(n).padStart(2, "0");
 const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const todayISO = () => isoOf(new Date());
-function fmtDate(iso) { if (!iso) return "–"; const [y, m, d] = String(iso).split("-").map(Number); if (!y || !m || !d) return String(iso); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
-function fmtWhen(ms) { if (!ms) return "–"; const d = new Date(Number(ms)); return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
+function fmtDate(iso) { if (!iso) return "–"; const [y, m, d] = String(iso).split("-").map(Number); if (!y || !m || !d) return String(iso); return new Date(y, m - 1, d).toLocaleDateString(LOC, { month: "short", day: "numeric", year: "numeric" }); }
+function fmtWhen(ms) { if (!ms) return "–"; const d = new Date(Number(ms)); return d.toLocaleDateString(LOC, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" }); }
 function dayBounds(iso) { const [y, m, d] = iso.split("-").map(Number); return [new Date(y, m - 1, d, 0, 0, 0, 0).getTime(), new Date(y, m - 1, d, 23, 59, 59, 999).getTime()]; }
 function addDaysISO(iso, n) { const [y, m, d] = iso.split("-").map(Number); return isoOf(new Date(y, m - 1, d + n)); }
 /* A follow-up on a Saturday, Sunday or Shastra holiday moves to the next working day, as the server does when it saves.
@@ -1564,7 +1567,7 @@ function Bell({ notify, allowed, onGo }) {
       <button type="button" className={"btn sm icon-btn" + (open ? " on" : "")} aria-label={"Notifications" + (unseen.length ? ", " + unseen.length + " new" : "")} title="What needs you" onClick={toggle}>
         <BellIcon />{unseen.length > 0 && <span className={"bell-n" + (unseen.some((x) => x.tone === "red") ? " red" : "")}>{unseen.length}</span>}</button>
       {open && <div className="menu bell-menu">
-        <div className="row between" style={{ padding: "6px 10px 8px" }}><b className="small">What needs you</b><span className="tiny muted">{notify && notify.at ? "as of " + new Date(notify.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}</span></div>
+        <div className="row between" style={{ padding: "6px 10px 8px" }}><b className="small">What needs you</b><span className="tiny muted">{notify && notify.at ? "as of " + new Date(notify.at).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" }) : ""}</span></div>
         {groups.length > 1 && <div className="bell-chips">
           <button type="button" className={cat === "all" ? "on" : ""} onClick={() => setCat("all")}>All <i>{items.length}</i></button>
           {groups.map((g) => <button type="button" key={g.k} className={cat === g.k ? "on" : ""} onClick={() => setCat(g.k)}>{g.label} <i className={g.k === "tat" ? "r" : g.xs.some((x) => x.tone === "red") ? "r" : g.xs.some((x) => x.tone === "amber") ? "a" : ""}>{count(g)}</i></button>)}
@@ -1625,7 +1628,7 @@ function AskComputer() {
   if (perm !== "default") return null;
   return <button type="button" className="btn sm link" title="Your browser asks once" onClick={async () => { try { setPerm(await Notification.requestPermission()); } catch (e) {} }}>Also show these on this computer</button>;
 }
-const clockNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+const clockNow = () => new Date().toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit", hour12: false });
 function MissingAlertPopup({ alerts, onChanged }) {
   const [hidden, setHidden] = useState({});
   const [busy, setBusy] = useState(false);
@@ -3599,7 +3602,7 @@ function PriorityLogModal({ onClose, onOpen }) {
   const sort = useTableSort("at", "desc");
   const rows = sort.sortRows(q.data ? q.data.rows : []);
   const cats = q.data ? q.data.categories : [];
-  const exportCSV = () => downloadText(toCSV(rows, [{ key: "at", label: "When", get: (r) => new Date(r.at).toLocaleString() }, { key: "user_name", label: "Changed by" }, { key: "client_name", label: "Client" }, { key: "claim_no", label: "Claim #" }, { key: "patient", label: "Patient" }, { key: "payer", label: "Payer" }, { key: "balance", label: "Balance" }, { key: "age_days", label: "Age" }, { key: "text", label: "New priority" }, { key: "category", label: "Why" }, { key: "comment", label: "Comment" }, { key: "from", label: "Score before" }, { key: "to", label: "Score after" }]), `brahmastra-priority-changes-${todayISO()}.csv`);
+  const exportCSV = () => downloadText(toCSV(rows, [{ key: "at", label: "When", get: (r) => new Date(r.at).toLocaleString(LOC) }, { key: "user_name", label: "Changed by" }, { key: "client_name", label: "Client" }, { key: "claim_no", label: "Claim #" }, { key: "patient", label: "Patient" }, { key: "payer", label: "Payer" }, { key: "balance", label: "Balance" }, { key: "age_days", label: "Age" }, { key: "text", label: "New priority" }, { key: "category", label: "Why" }, { key: "comment", label: "Comment" }, { key: "from", label: "Score before" }, { key: "to", label: "Score after" }]), `brahmastra-priority-changes-${todayISO()}.csv`);
   return (
     <Modal title="Priority changes" sub="Every claim a team lead moved up or down, and why. The most common reasons are what the automatic allocation should start doing by itself." onClose={onClose}
       footer={<><button className="btn" onClick={exportCSV} disabled={!rows.length}>Download CSV</button><button className="btn primary" onClick={onClose}>Close</button></>}>
@@ -3844,7 +3847,7 @@ function TaskFilesPicker({ files, setFiles }) {
       catch (e) { toast(e.message, "err"); }
     }
   };
-  const shotName = () => "Screenshot " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }).replace(/[^0-9]/g, "") + ".png";
+  const shotName = () => "Screenshot " + new Date().toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).replace(/[^0-9]/g, "") + ".png";
   useEffect(() => {
     const h = (e) => { const all = [...((e.clipboardData && e.clipboardData.items) || [])], items = all.filter((i) => i.kind === "file"); if (!items.length) return;
       // copied cells or text (Excel and Word put a picture on the clipboard too) paste as text into a text box
@@ -4408,7 +4411,7 @@ function DigestDashboard({ params, go }) {
   if (q.error) return <ErrorBox error={q.error} />;
   if (!d) return <Spinner label="Building the digest…" />;
   if (d.empty) return <div className="card"><h2>Monday digest</h2><Empty>No digests yet: add clients and their managers first, then each manager's clients get a Monday digest.</Empty></div>;
-  const R = d.rollup, money = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString());
+  const R = d.rollup, money = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString(LOC));
   const f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
   const dd = (iso) => fmtDate(iso).replace(/, \d{4}$/, "");
   const bandWord = { ok: "Green", warn: "Amber", miss: "Red" };
@@ -4783,9 +4786,9 @@ function NoteForm({ c, files, onChanged }) {
 const HIST_FILTERS = [["all", "Everything"], ["work", "Work"], ["note", "Notes"], ["handoff", "Posting & submission"], ["file", "Files"], ["assign", "Assignments"], ["upload", "Uploads"]];
 const HIST_GROUP = { work: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff", handoff_client_sent: "handoff", handoff_pending: "handoff", handoff_inprocess: "handoff", handoff_other: "handoff", review_to_biller: "note", review_to_dept: "note" };
 const CHANGE_LABEL = { state: "State", bucket: "Bucket", follow_up: "Follow-up", status: "SAAG status" };
-const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" });
 const dayKey = (ms) => { const d = new Date(Number(ms)); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
-const dayLabel = (k) => { const today = todayISO(); const d = new Date(k + "T00:00:00"); const txt = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }); return k === today ? "Today · " + txt : k === addDaysISO(today, -1) ? "Yesterday · " + txt : txt; };
+const dayLabel = (k) => { const today = todayISO(); const d = new Date(k + "T00:00:00"); const txt = d.toLocaleDateString(LOC, { weekday: "short", month: "short", day: "numeric", year: "numeric" }); return k === today ? "Today · " + txt : k === addDaysISO(today, -1) ? "Yesterday · " + txt : txt; };
 const chgVal = (k, v) => (!v ? "–" : k === "follow_up" ? fmtDate(v) : k === "state" ? (STATE_META[v] ? STATE_META[v][1] : v) : v);
 function Changes({ changes }) {
   const ks = Object.keys(changes || {});
@@ -6408,7 +6411,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 <td className="sh-cell">{shCell(r)}</td>
                 <td><span className={"badge " + TT_STATUS[r.status][0]}>{TT_STATUS[r.status][1]}{r.status === "idle" && r.idle_min != null ? " · " + r.idle_min + " min" : ""}</span></td>
                 <td style={{ minWidth: 190 }}>{r.current ? <><button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.current.id)}>{r.current.claim_no || "claim"}</button>{r.current.minutes != null ? <span className="small muted"> · {r.current.minutes} min</span> : null}<div className="tiny muted">{[r.current.client, r.current.payer, r.current.balance != null ? fmtMoney(r.current.balance) : ""].filter(Boolean).join(" · ")}</div></>
-                  : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span> : <span className="tiny muted">–</span>}</td>
+                  : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" })}</span> : <span className="tiny muted">–</span>}</td>
                 <td style={{ minWidth: 180 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
                   <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div></>}</td>
                 <td className="num">{r.on_desk}</td>
@@ -6721,7 +6724,7 @@ function TrendChart({ trend }) {
   const W = 620, H = 190, L = 44, B = 160, top = 34, max = Math.max(...trend.map((t) => t.ar), 1), pmax = Math.max(30, ...trend.map((t) => t.pct));
   const bw = Math.min(58, (W - L - 20) / trend.length - 14), x = (i) => L + 12 + i * ((W - L - 20) / trend.length);
   const y = (v) => B - (v / max) * (B - top), yp = (p) => B - (p / pmax) * (B - top);
-  const mName = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(undefined, { month: "short" });
+  const mName = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(LOC, { month: "short" });
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: "block" }} role="img" aria-label="AR and over-90 trend">
       <line x1={L} y1={B} x2={W - 8} y2={B} stroke="var(--line)" />
@@ -6791,7 +6794,7 @@ function ClientView({ ctx, me, go, params }) {
   if (!active.length) return <div className="card"><Empty>No clients in your span yet.</Empty></div>;
   const delta = (cur, prev, goodDown) => { if (prev == null || !prev) return null; const ch = Math.round((cur - prev) / Math.abs(prev) * 100); if (!ch) return <span className="small muted">no change</span>; const good = goodDown ? ch < 0 : ch > 0; return <span className={"c3-d " + (good ? "up" : "dn")}>{ch > 0 ? "▲" : "▼"} {Math.abs(ch)}%</span>; };
   const hp = d ? { good: ["green", "On track"], watch: ["amber", "Needs attention"], risk: ["red", "At risk"] }[d.health] : null;
-  const monthLabel = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const monthLabel = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(LOC, { month: "long", year: "numeric" });
   const thisMonth = todayISO().slice(0, 7), prevMonth = (() => { const [y, m] = thisMonth.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; })();
   return (
     <div className="stack c360" style={{ gap: 16 }}>
@@ -6893,13 +6896,13 @@ function SaagView() {
 
 /* ---------- reports ---------- */
 const REPORT_COLS = [
-  { key: "created_at", label: "Date / time", get: (r) => new Date(r.created_at).toLocaleString() }, { key: "user_name", label: "Biller" }, { key: "client_name", label: "Client" }, { key: "location_name", label: "Location" },
+  { key: "created_at", label: "Date / time", get: (r) => new Date(r.created_at).toLocaleString(LOC) }, { key: "user_name", label: "Biller" }, { key: "client_name", label: "Client" }, { key: "location_name", label: "Location" },
   { key: "claim_no", label: "Claim #" }, { key: "account_no", label: "Account #" }, { key: "patient", label: "Patient" }, { key: "payer", label: "Payer" }, { key: "provider", label: "Provider" }, { key: "dos", label: "DOS" }, { key: "cpt", label: "CPT" }, { key: "balance", label: "Balance" }, { key: "age_days", label: "Age" }, { key: "bucket", label: "Aging bucket" }, { key: "tier", label: "Tier" },
   { key: "file_status", label: "File status" }, { key: "file_sub_status", label: "File sub status" }, { key: "kind", label: "Entry" },
   { key: "status", label: "SAAG status", get: (r) => r.status || r.status_code }, { key: "sub_status", label: "SAAG sub-status" }, { key: "action", label: "SAAG action", get: (r) => r.action || r.action_code }, { key: "work_bucket", label: "Bucket" }, { key: "effective", label: "Effective matrix" },
   { key: "f_dos", label: "Note DOS", get: (r) => r.f.dos }, { key: "f_clm", label: "Note CLM#", get: (r) => r.f.clm }, { key: "f_denial", label: "Denial", get: (r) => r.f.denial }, { key: "f_source", label: "Source", get: (r) => r.f.source }, { key: "f_ref", label: "REF", get: (r) => r.f.ref },
   { key: "f_pre", label: "Pre call check", get: (r) => [...(r.f.precheck || []), r.f.precheck_text].filter(Boolean).join("; ") }, { key: "f_findings", label: "RCA / findings", get: (r) => r.f.findings },
-  { key: "follow_up_on", label: "Follow-up" }, { key: "comment", label: "Note (one cell)" }, { key: "edited_at", label: "Edited", get: (r) => (r.edited_at ? new Date(r.edited_at).toLocaleString() : "") }, { key: "state", label: "Claim state now" },
+  { key: "follow_up_on", label: "Follow-up" }, { key: "comment", label: "Note (one cell)" }, { key: "edited_at", label: "Edited", get: (r) => (r.edited_at ? new Date(r.edited_at).toLocaleString(LOC) : "") }, { key: "state", label: "Claim state now" },
 ];
 const reportRow = (r) => { let f = {}; try { f = JSON.parse(r.fields_json || "{}"); } catch (e) {} return { ...r, f: f || {} }; };
 /* ---------- My day & reports ----------
@@ -7067,7 +7070,7 @@ function EmbedPanel({ frame, frameRef, title, onLoad, more = [], pick = null, se
     </div>
   );
 }
-const timeNow = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const timeNow = () => new Date().toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" });
 function QualityPage({ ctx, me, onHow, lockScope }) {
   const frameRef = useRef(null);
   const today = todayISO();
@@ -8373,7 +8376,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
           </div>
           <div className="card crx-stage" ref={stageRef} onMouseMove={onTip} onMouseLeave={() => { if (tipRef.current) tipRef.current.style.display = "none"; }}>
             <div className="crx-wrap" style={{ width: CR_W * scale, height: CR_H * scale }} onClick={onSlideClick}><div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: CR_W, height: CR_H }}>{slideFor(page, sel, viewMode)}</div></div>
-            <div className="crx-note"><span>{viewMode === "edit" ? "✎ Click the title, an insight, the RCA or a list line to change it; ✕ drops it. Saved for " + rep.client + " · " + rep.periodLabel + ", shared with your team." : "This is the page as the client sees it."}{saved ? " Saved " + new Date(saved.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "." : ""}</span>
+            <div className="crx-note"><span>{viewMode === "edit" ? "✎ Click the title, an insight, the RCA or a list line to change it; ✕ drops it. Saved for " + rep.client + " · " + rep.periodLabel + ", shared with your team." : "This is the page as the client sees it."}{saved ? " Saved " + new Date(saved.at).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" }) + "." : ""}</span>
               <span>{pIdx >= 0 ? `Page ${pIdx + 1} of ${included.length}` : "Left out of the PDF"}</span></div>
           </div>
         </div>
@@ -8564,8 +8567,8 @@ function TeamDesk({ ctx, from, to, rangeLabel, fixedUser }) {
     return [...m.values()].sort((a, b) => b.waiting - a.waiting || a.name.localeCompare(b.name));
   }, [all]);
   const csv = () => downloadText(toCSV(rows.map((r) => ({ Biller: r.who, Client: r.client_name + (r.location_name ? " · " + r.location_name : ""), "Claim #": r.claim_no, Patient: r.patient, Payer: r.payer, Balance: r.balance, Priority: r.priority,
-    Allocated: r.assigned_at ? new Date(r.assigned_at).toLocaleString() : "", "Work done": r.st.label, Entries: r.entries || 0, "SAAG status": r.status || "", Action: r.action || "", Bucket: r.work_bucket || "", Note: r.comment || "",
-    "Worked by": r.by_name || "", "Worked at": r.last_at ? new Date(r.last_at).toLocaleString() : "", "Next follow-up": r.next_follow_up || r.follow_up_on || "" })),
+    Allocated: r.assigned_at ? new Date(r.assigned_at).toLocaleString(LOC) : "", "Work done": r.st.label, Entries: r.entries || 0, "SAAG status": r.status || "", Action: r.action || "", Bucket: r.work_bucket || "", Note: r.comment || "",
+    "Worked by": r.by_name || "", "Worked at": r.last_at ? new Date(r.last_at).toLocaleString(LOC) : "", "Next follow-up": r.next_follow_up || r.follow_up_on || "" })),
     ["Biller", "Client", "Claim #", "Patient", "Payer", "Balance", "Priority", "Allocated", "Work done", "Entries", "SAAG status", "Action", "Bucket", "Note", "Worked by", "Worked at", "Next follow-up"].map((h) => ({ label: h, key: h }))), `team-allocations-${from}-to-${to}.csv`);
   return (
     <div className="stack">

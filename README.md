@@ -820,6 +820,8 @@ Everyone opens **Settings** from their name (top right): the theme (Light, Navy 
 Shastra, or Match my computer), the text size, their password, signing out on every other device, their roster
 profile (Emp ID, designation, department, who they report to, projects, shift, daily target) and the connected apps.
 The theme is saved to the account (`users.prefs_json`), so it follows the person to any computer.
+Money, numbers and dates are always written US style ($146,376 · Nov 11, 2026 · Wed, Nov 11 · 9:30 AM), whatever
+language the browser or the computer is set to.
 
 ## Each client's folders in OneDrive (Brahmastra Clients)
 

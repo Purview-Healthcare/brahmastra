@@ -179,6 +179,29 @@ ok("H-09: Clients & locations: the AR billers and the people a client is shared 
 ok("H-09: Roster › Projects and clients (and the same table when a team lead matches projects): fixed columns, 45% for the project, so a long client name in the dropdown cannot widen it",
   /<table className="t" style=\{\{ tableLayout: "fixed" \}\}><thead><tr><th style=\{\{ width: "45%" \}\}>Roster project<\/th><th>Client<\/th>/.test(fnSrc("RosterView")) && /tableLayout: "fixed"/.test(fnSrc("ProjectMapModal")));
 
+S("Money and dates written one way, US style, whatever the browser's language (H-08)");
+// the page's own code with the browser set to another language: a call that names no language gets that one
+ev(`var __loc = null; var __tl = { n: Number.prototype.toLocaleString, d: Date.prototype.toLocaleDateString, t: Date.prototype.toLocaleTimeString, s: Date.prototype.toLocaleString };
+  const __pick = (l) => (l === undefined || (Array.isArray(l) && !l.length) ? __loc : l);
+  Number.prototype.toLocaleString = function (l, o) { return __tl.n.call(this, __pick(l), o); };
+  Date.prototype.toLocaleDateString = function (l, o) { return __tl.d.call(this, __pick(l), o); };
+  Date.prototype.toLocaleTimeString = function (l, o) { return __tl.t.call(this, __pick(l), o); };
+  Date.prototype.toLocaleString = function (l, o) { return __tl.s.call(this, __pick(l), o); };`);
+const at = Date.UTC(2026, 10, 11, 3, 30);   // a made-up moment, Wed 11 Nov 2026
+for (const loc of ["en-IN", "en-GB"]) {
+  ev(`__loc = ${JSON.stringify(loc)}`);
+  ok(`H-08: ${loc} browser: the simulation works (the browser's own style is not US)`, ev(`(146376).toLocaleString()`) !== "146,376" || ev(`new Date(2026, 10, 11).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })`) !== "Nov 11, 2026");
+  ok(`H-08: ${loc} browser: money is $146,376 (not $1,46,376)`, ev(`fmtMoney(146376)`) === "$146,376" && ev(`fmtMoney(-2500.5, 2)`) === "-$2,500.50", ev(`fmtMoney(146376)`));
+  ok(`H-08: ${loc} browser: counts are 146,376`, ev(`fmtInt(146376)`) === "146,376", ev(`fmtInt(146376)`));
+  ok(`H-08: ${loc} browser: a date is Nov 11, 2026 (not 11 Nov 2026)`, ev(`fmtDate("2026-11-11")`) === "Nov 11, 2026", ev(`fmtDate("2026-11-11")`));
+  ok(`H-08: ${loc} browser: a day in the claim history is Wed, Nov 11, 2026`, /Wed, Nov 11, 2026$/.test(ev(`dayLabel("2026-11-11")`)), ev(`dayLabel("2026-11-11")`));
+  ok(`H-08: ${loc} browser: a time is written AM / PM, US style`, /^Nov 11, \d{1,2}:\d{2} (AM|PM)$/.test(ev(`fmtWhen(${at})`)) && /^\d{2}:\d{2} (AM|PM)$/.test(ev(`fmtTime(${at})`)), [ev(`fmtWhen(${at})`), ev(`fmtTime(${at})`)]);
+}
+ev(`Number.prototype.toLocaleString = __tl.n; Date.prototype.toLocaleDateString = __tl.d; Date.prototype.toLocaleTimeString = __tl.t; Date.prototype.toLocaleString = __tl.s;`);
+const loose = (src) => (src.match(/toLocale(?:Date|Time)?String\((?:undefined|\[\])?[,)]/g) || []).length;
+ok("H-08: no money, number, date or time on the page follows the browser's language (every call names en-US)", loose(SRC) === 0 && /const LOC = "en-US";/.test(SRC), loose(SRC));
+ok("H-08: nor the server's own figures (the demo builds them in the browser): Drishti KPI values and typed counts", loose(fs.readFileSync(REPO + "/worker.js", "utf8")) === 0);
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
