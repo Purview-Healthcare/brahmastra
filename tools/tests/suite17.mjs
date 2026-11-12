@@ -167,7 +167,7 @@ const DS = app.crDatasets(raw);
 const R = { range: { start: new Date(2026, 9, 1), end: new Date(2026, 9, 31), kind: "month" }, compare: true, client: "Sunrise Eye Care", periodName: "October", cardMeasure: {} };
 const ctxOf = (pid, sel) => app.crCtx(DS, R, pid, sel || {});
 const inv = app.crBuildInventory(ctxOf("inventory"));
-ok("inventory: reduction 30% (1,000 to 700), 3 claims fewer", inv.kpis[1].value === "30.0%" && /\$300 off the open AR · 3 claims/.test(inv.kpis[1].sub) && inv.headline === "AR came down 30% in October", { k: inv.kpis[1], h: inv.headline });
+ok("inventory: reduction 30% (1,000 to 700), 3 fewer claims", inv.kpis[1].value === "30.0%" && /\$300 off the open AR · 3 fewer claims$/.test(inv.kpis[1].sub) && inv.headline === "AR came down 30% in October", { k: inv.kpis[1], h: inv.headline });
 ok("inventory: the 31-60 bucket cleared the most, 0-30 grew", inv.insights.some((x) => /largest reduction came from the 31 to 60 days bucket: \$600/.test(x)) && inv.insights.some((x) => /0 to 30 days bucket grew by \$300/.test(x)), inv.insights);
 ok("inventory: unworked claims count as Not worked yet in the status mix", DS.inventory.labels.purviewStatus["not worked yet"] === "Not worked yet");
 const inv2 = app.crBuildInventory2(ctxOf("inventory2"));
@@ -186,7 +186,7 @@ ok("top denials: under 3 reasons to reach 80% shows the top 3", tops.label === "
 const pay = app.crBuildPayment(ctxOf("payment"));
 ok("payment posting: $200 posted on 2 lines, 1 EFT, up from $150", pay.kpis[0].value === "$200" && pay.kpis[1].value === "2" && pay.kpis[2].value === "1" && pay.headline === "Collections rose 33% to $200", { k: pay.kpis.map((k) => k.value), h: pay.headline });
 const sub = app.crBuildSubmission(ctxOf("submission"));
-ok("submission: 2 submitted, 1 not submitted with its reason", sub.kpis[0].value === "2" && sub.insights.some((x) => /1 claims .* still not submitted; the main blocker is "Authorization missing/.test(x)), { k: sub.kpis[0], i: sub.insights });
+ok("submission: 2 submitted, 1 not submitted with its reason", sub.kpis[0].value === "2" && sub.insights.some((x) => /^1 claim .* is still not submitted; the main blocker is "Authorization missing/.test(x)), { k: sub.kpis[0], i: sub.insights });
 const rej = app.crBuildRejection(ctxOf("rejection"));
 ok("rejections: 2 rejected against 2 submitted (100.0%)", rej.kpis[0].value === "2" && rej.kpis[1].value === "100.0%", rej.kpis.map((k) => k.value));
 const ca = app.crBuildCA(ctxOf("ca"));
