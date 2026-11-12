@@ -146,7 +146,9 @@ function suggestFor({ subStatus, claim }) {
 /* ---------- formatting ---------- */
 /* Attachment types that may open in a browser tab. Never SVG or HTML: those can carry a script that runs as the app. */
 const SAFE_VIEW = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain)$/i;
-const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+// A value that rounds to zero at the decimals shown gets no minus sign: cents worked out in floating point (250.45 - 200.15 - 50.30)
+// can be a hair below zero, and "-$0.00" would read as money owed.
+const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 && Math.round(Math.abs(Number(n)) * 10 ** dec) > 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtInt = (n) => Number(n || 0).toLocaleString();
 const fmtPct = (n, dec = 0) => (n == null || isNaN(n)) ? "–" : Number(n).toFixed(dec) + "%";
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -1693,7 +1695,7 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
           ⏰ {plural(notify.past_tat, "task is", "tasks are")} past {notify.past_tat === 1 ? "its" : "their"} TAT on your clients: {parts.map(([k, l], i) => <span key={k}>{i ? ", " : ""}<u role="button" tabIndex={0} style={{ cursor: "pointer" }} onClick={() => goPart(k)} onKeyDown={(e) => { if (e.key === "Enter") goPart(k); }}>{by[k] + " " + l}</u></span>)}. They are at the top of each list; every supervisor, SME and above on these clients is reminded until {notify.past_tat === 1 ? "it is" : "they are"} closed.</div>;
       })()}
       {handoffs && handoffs.overdue > 0 && view !== "handoffs" && !(me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention") && (
-        <div className="tat-bar" onClick={() => setView("handoffs")}>⚠ {handoffs.overdue} posting / submission hand-off{handoffs.overdue > 1 ? "s are" : " is"} past the TAT. Open Posting &amp; submission to complete {handoffs.overdue > 1 ? "them" : "it"} or ask for assistance.</div>
+        <div className="tat-bar" onClick={() => setView("handoffs")}>⚠ {handoffs.overdue} posting / submission hand-off{handoffs.overdue > 1 ? "s are" : " is"} past the TAT. Open {(DESK[deskOf(me, handoffs)] || { tab: "Posting & submission" }).tab} to complete {handoffs.overdue > 1 ? "them" : "it"} or ask for assistance.</div>
       )}
       {handoffs && !handoffs.overdue && handoffs.due_soon > 0 && view !== "handoffs" && !(me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention") && (
         <div className="tat-bar soon" onClick={() => setView("handoffs")}>⏱ {handoffs.due_soon} posting / submission hand-off{handoffs.due_soon > 1 ? "s have" : " has"} under 4 hours left on the TAT. Open {(DESK[deskOf(me, handoffs)] || { tab: "Posting & submission" }).tab} to finish {handoffs.due_soon > 1 ? "them" : "it"} on time.</div>
@@ -3396,7 +3398,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   const bulk = async (label, fn) => {
     if (!sel.size) return;
     setBusy(true);
-    try { const r = await fn([...sel]); toast(`${label}: ${fmtInt(r.changed || r.applied || 0)} claims.`); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
+    try { const r = await fn([...sel]); toast(`${label}: ${fmtInt(r.changed || r.applied || 0)} claims.` + (r.at_desk ? ` ${plural(r.at_desk, "claim is", "claims are")} with a desk and stayed as ${r.at_desk === 1 ? "it is" : "they are"}.` : "")); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const sortBy = (k) => { if (f.sort === k) set("dir", f.dir === "asc" ? "desc" : "asc"); else setF((x) => ({ ...x, sort: k, dir: k === "patient" || k === "payer" ? "asc" : "desc", page: 1 })); };
@@ -4418,7 +4420,7 @@ function FromDesksView({ ctx, me, refreshAttention, clientId, pick, tat, onHold,
               <td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td>
               <td className="small" style={{ maxWidth: 320 }}><b>{r.reason || "–"}</b>{r.note ? <div className="tiny muted" title={r.note}>“{r.note.length > 140 ? r.note.slice(0, 140) + "…" : r.note}”</div> : null}</td>
               <td className="small">{r.biller_name || <span className="muted">not on a desk</span>}</td>
-              <td className="r" style={{ whiteSpace: "nowrap" }}>{r.reviewed && <span className="badge green" title={"Reviewed by " + r.reviewed_by_name}>Reviewed</span>} <button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.dept_label + " sent it back: " + (r.reason || "need assistance from AR"), review_context: r.note })}>Review</button></td>
+              <td className="r" style={{ whiteSpace: "nowrap" }}>{r.reviewed && <span className="badge green" title={"Reviewed by " + r.reviewed_by_name + ". It stays here until a biller saves an entry on the claim."}>Reviewed</span>} <button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button>{!r.reviewed && <> <button className="btn sm primary" onClick={() => setReview({ ...r, review_why: r.dept_label + " sent it back: " + (r.reason || "need assistance from AR"), review_context: r.note })}>Review</button></>}</td>
             </tr>))}
             {q.data && !rows.length && <tr><td colSpan={8}><Empty>{attnEmpty(pick, "sent back", "Nothing sent back by Posting, Submission or Rejections is waiting on AR.")}</Empty></td></tr>}</tbody></table></div>
       </div>
@@ -4709,7 +4711,7 @@ function NoteForm({ c, files, onChanged }) {
 }
 /* The history tab on the right edge and the timeline panel it opens: newest first, grouped by day, each entry with its time. */
 const HIST_FILTERS = [["all", "Everything"], ["work", "Work"], ["note", "Notes"], ["handoff", "Posting & submission"], ["file", "Files"], ["assign", "Assignments"], ["upload", "Uploads"]];
-const HIST_GROUP = { work: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff", handoff_client_sent: "handoff", handoff_pending: "handoff", handoff_inprocess: "handoff", handoff_other: "handoff", review_to_biller: "note", review_to_dept: "note" };
+const HIST_GROUP = { work: "work", edited: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff", handoff_client_sent: "handoff", handoff_pending: "handoff", handoff_inprocess: "handoff", handoff_other: "handoff", review_to_biller: "note", review_to_dept: "note" };
 const CHANGE_LABEL = { state: "State", bucket: "Bucket", follow_up: "Follow-up", status: "SAAG status" };
 const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 const dayKey = (ms) => { const d = new Date(Number(ms)); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -4736,8 +4738,9 @@ function HistEvent({ it, onEdit, onFile }) {
         <div className="row mt8" style={{ gap: 4, flexWrap: "wrap" }}><span className="badge ink">{it.saag.status}</span>{it.saag.sub_status && <span className="badge gray">{it.saag.sub_status}</span>}<span className="badge">{it.saag.action}</span>{it.saag.bucket && <span className={"badge " + (it.saag.bucket === "Closed" ? "green" : "teal")}>{it.saag.bucket}</span>}{it.follow_up_on && <span className="badge amber">follow-up {fmtDate(it.follow_up_on)}</span>}</div>
         {it.fields && it.fields.findings != null ? <NoteFieldList f={it.fields} /> : <div className="x">{it.comment}</div>}
         <Changes changes={it.changes} />
-        {it.edited_at ? <div className="m">edited {fmtWhen(it.edited_at)}</div> : null}
+        {it.edited_at ? <div className="m">last edited {it.edited_by ? "by " + it.edited_by + " · " : ""}{fmtWhen(it.edited_at)}</div> : null}
         {it.editable && onEdit && <button className="btn sm link" style={{ padding: 0, marginTop: 4 }} onClick={() => onEdit(it)}>Edit this entry</button>}</>; break;
+    case "edited": dot = D("#FDF2D9", "✏️"); title = "Entry edited" + who; body = it.data && it.data.entry_at ? <div className="m">the entry {it.data.entry_by ? "by " + it.data.entry_by + " " : ""}of {fmtWhen(it.data.entry_at)}</div> : null; break;
     case "note": dot = D("#E4EEFA", "📝"); title = "Note" + who; body = it.fields ? <NoteFieldList f={it.fields} /> : <div className="x">{it.text}</div>; break;
     case "answer": dot = D("#FDEAEA", "⚑"); title = "Escalation answered" + who; body = <div className="x">{it.text}</div>; break;
     case "escalated": dot = D("#FDEAEA", "⚑"); title = "Escalated to the team lead"; break;
@@ -4762,10 +4765,10 @@ function HistEvent({ it, onEdit, onFile }) {
     case "handoff_none": dot = D("#EEF1F0", "ⓘ"); title = (it.text || "Hand-off") + ": " + ({ client: "done by the client", biller: "done by the biller", unset: "nobody set for this client" }[it.data && it.data.mode] || "not sent"); break;
     case "handoff_assigned": dot = D("#EEE7FB", "👤"); title = (DEPT_NAME[it.data && it.data.dept] || "Hand-off") + " assigned to " + (it.text || "someone") + who; break;
     case "handoff_done": { const pr = (it.data && it.data.proof) || {}; const posting = it.data && it.data.dept === "posting";
-      dot = D("#E3FBEF", "✓"); title = (posting ? "Payment posted" : it.data && it.data.dept === "subcheck" ? "Submission accepted by the payer" : it.data && it.data.dept === "rejection" ? "Corrected and resubmitted (Rejections)" : "Submitted") + who; body = <><div className="x">{pr.ref ? <>{posting ? "Check / EFT " : "Batch / claim ID "}<b>{pr.ref}</b></> : null}{pr.code ? (pr.ref ? " · " : "") + "Rejection: " + pr.code : ""}{pr.date ? (pr.ref || pr.code ? " · " : "") + (it.data && it.data.dept === "subcheck" ? "accepted " : "") + fmtDate(pr.date) : ""}{pr.amount != null ? " · " + fmtMoney(pr.amount, 2) : ""}{pr.mode ? " · " + pr.mode : ""}{it.data.note ? "\n" + it.data.note : ""}</div>{pr.files && pr.files.length ? <div className="m">📎 proof: {pr.files.join(", ")}</div> : null}<div className="m">{it.data.within_tat ? "within TAT" : "after the TAT"}</div></>; break; }
+      dot = D("#E3FBEF", "✓"); title = (posting ? "Payment posted" : it.data && it.data.dept === "subcheck" ? "Submission accepted by the payer" : it.data && it.data.dept === "rejection" ? "Corrected and resubmitted (Rejections)" : "Submitted") + who; body = <><div className="x">{pr.ref ? <>{posting ? "Check / EFT " : "Batch / claim ID "}<b>{pr.ref}</b></> : null}{pr.code ? (pr.ref ? " · " : "") + "Rejection: " + pr.code : ""}{pr.date ? (pr.ref || pr.code ? " · " : "") + (it.data && it.data.dept === "subcheck" ? "accepted " : "") + fmtDate(pr.date) : ""}{pr.amount != null ? " · " + fmtMoney(pr.amount, 2) : ""}{pr.mode ? " · " + pr.mode : ""}{it.data.note ? "\n" + it.data.note : ""}</div>{pr.files && pr.files.length ? <div className="m">📎 proof: {pr.files.join(", ")}</div> : null}<div className="m">{it.data.within_tat ? "within TAT" : "after the TAT"}{it.data.listed ? " · on the biller's list now (given by the team lead's review)" : ""}</div></>; break; }
     case "handoff_check": dot = D("#E0F7F4", "⏱"); title = "Recheck set for " + (it.text || "someone") + who; body = it.data && it.data.available_at ? <div className="m">check from {fmtWhen(it.data.available_at)} · due {fmtWhen(it.data.due_at)}</div> : null; break;
     case "handoff_rejected": dot = D("#FDEAEA", "✗"); title = "Submission rejected" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.resent ? "sent to " + (it.data.to === "Rejections" ? "the Rejections person (first priority)" : "the Submission team") + " to correct and resubmit" : "back on the biller's list"}</div></>; break;
-    case "handoff_back": dot = D("#FFF3D6", "↩"); title = (it.text || "The department") + " needs assistance from AR" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">on the biller's list today{it.data && it.data.within_tat === false ? " · after the TAT" : ""}{it.data && it.data.returns ? " · returned " + it.data.returns + "×" : ""}{it.data && it.data.bounced ? " · escalated to the team lead" : ""}</div></>; break;
+    case "handoff_back": dot = D("#FFF3D6", "↩"); title = (it.text || "The department") + " needs assistance from AR" + who; body = <><div className="x"><b>{it.data && it.data.reason}</b>{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">{it.data && it.data.kept ? "the claim was already " + (it.data.kept === "excluded" ? "excluded" : "closed") + ": it stays as it is" : "on the biller's list today"}{it.data && it.data.within_tat === false ? " · after the TAT" : ""}{it.data && it.data.returns ? " · returned " + it.data.returns + "×" : ""}{it.data && it.data.bounced ? " · escalated to the team lead" : ""}</div></>; break;
     case "handoff_client_sent": dot = D("#E4EEFA", "✉"); title = "Sent to the client for " + (it.text || "the department") + who; body = <><div className="x"><b>{it.data && it.data.how}</b>{it.data && it.data.reason ? " · " + it.data.reason : ""}{it.data && it.data.note ? ": " + it.data.note : ""}</div><div className="m">chased in 3 working days if the client has not answered</div></>; break;
     case "handoff_pending": dot = D("#EEF1F4", "…"); title = (it.text || "The department") + " · pending" + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
     case "handoff_inprocess": dot = D("#E6F0FB", "…"); title = (it.text || "The department") + " · in process" + who; body = it.data && it.data.note ? <div className="x">{it.data.note}</div> : null; break;
@@ -4790,7 +4793,7 @@ function ClaimHistory({ claimId, claim, me, version }) {
   const items = (q.data ? q.data.items : []).filter((it) => filter === "all" || HIST_GROUP[it.kind] === filter);
   const days = []; items.forEach((it) => { const k = dayKey(it.at); if (!days.length || days[days.length - 1].k !== k) days.push({ k, items: [] }); days[days.length - 1].items.push(it); });
   const openFile = async (f) => { try { const r = await rpc("attachments.get", { id: f.id }); const url = URL.createObjectURL(base64Blob(r.data, r.type)); const a = document.createElement("a"); a.href = url; a.download = r.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); } catch (e) { toast(e.message, "err"); } };
-  const saveEdit = async (data) => { await rpc("notes.update", { id: edit.id, ...data }); toast("Entry updated."); setEdit(null); setTick((t) => t + 1); };
+  const saveEdit = async (data) => { const r = await rpc("notes.update", { id: edit.id, ...data }); toast("Entry updated." + handoffToast(r && r.handoff)); setEdit(null); setTick((t) => t + 1); };
   const n = q.data ? q.data.items.length : 0;
   return (
     <>
@@ -4902,7 +4905,7 @@ function HandoffCard({ handoffs, role, onChanged, compact }) {
 function HandoffCardOne({ h, role, onChanged, compact }) {
   const [act, setAct] = useState(null);
   const open = ["pending", "assigned", "client"].includes(h.status);
-  const canClose = open && (role === "lead" || role === "member");
+  const canClose = open && (role === "lead" || role === "member") && !recheckLater(h);
   return (
     <div className="card tight" style={{ borderLeft: "4px solid " + (h.status === "complete" ? "#12B886" : h.status === "assistance" || h.overdue ? "#A32D2D" : "#7C5CD6") }}>
       <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -4964,6 +4967,8 @@ const PROOF_WHY = {
 /* The 24-hour clock on a hand-off: time left, past the TAT, paused while waiting on the client, or (the follow-up check)
    when the recheck opens, the client's recheck time after submitting (48 working hours unless set lower). */
 const durText = (ms) => { const a = Math.abs(ms); return a >= 86400000 ? Math.floor(a / 86400000) + "d " + Math.floor((a % 86400000) / 3600000) + "h" : Math.floor(a / 3600000) + "h " + Math.floor((a % 3600000) / 60000) + "m"; };
+/* A recheck after a submission that has not opened yet (the client's recheck time): nothing can be marked on it before then. */
+const recheckLater = (h) => h.dept === "subcheck" && !!h.available_at && Date.now() < h.available_at;
 function TatTag({ h }) {
   const now = Date.now();
   if (h.dept === "subcheck" && h.available_at && now < h.available_at) return <div><span className="badge gray">Recheck from {fmtWhen(h.available_at)}</span><div className="tiny muted">the client's recheck time after submitting (48 working hours unless set lower)</div></div>;
@@ -5079,9 +5084,11 @@ function HandoffCloseModal({ act, onClose, onDone }) {
     try {
       const names = [];
       if (outcome === "complete") for (const f of files) { await rpc("attachments.add", { claim_id: h.claim_id, name: f.name, type: f.type, data: await fileToBase64(f) }); names.push(f.name); }
-      await rpc("handoffs.close", { id: h.id, outcome, proof: { ...p, files: names }, reason, note });
-      toast(done[outcome] + (names.length ? " Proof attached to the claim." : "")); onDone();
-    } catch (e) { setErr(e.message); }
+      // seen: where the hand-off stood on this screen, so a choice made after someone else moved it is refused (409) and the list reloads
+      const r = await rpc("handoffs.close", { id: h.id, outcome, proof: { ...p, files: names }, reason, note, seen: h.status });
+      // listed: a team lead's review gave the claim to a biller while it was here, so it is on their list now (no 15-day wait)
+      toast((r && r.listed ? "Completed: submitted, on the biller's list now (the team lead's review gave it to them); recheck in " + (h.recheck_hours || 48) + " working hours." : done[outcome]) + (names.length ? " Proof attached to the claim." : "")); onDone();
+    } catch (e) { if (e.status === 409) { toast(e.message, "err"); onDone(); } else setErr(e.message); }
     setBusy(false);
   };
   if (outcome === "back" || outcome === "client" || outcome === "resume" || outcome === "pending" || outcome === "inprocess" || outcome === "other") {
@@ -5160,6 +5167,12 @@ function HoldCell({ hold, late, canHold, onHold, onChanged }) {
   return <>{hold && !hold.active && <div className="tiny red-ink" style={{ marginTop: 3, maxWidth: 240 }}>Expected {fmtMDY(hold.until)} ({String(hold.reason || "").toLowerCase()}): the date has passed</div>}
     {late && canHold && <div><button type="button" className="btn link tiny" style={{ padding: 0, marginTop: 3 }} onClick={onHold} title="Why it cannot be closed yet, and by when: no reminders for it until then">Can't close yet</button></div>}</>;
 }
+/* The desk list's own order (the TAT column, earliest first): open rejections first (the server's order, and what the Open card
+   says: "N rejections first"), then the earliest due (past TAT on top), the ones on hold after the rest; closed ones by when done. */
+function handoffDueKey(h) {
+  if (!["pending", "assigned", "client"].includes(h.status)) return h.done_at;
+  return h.hold && h.hold.active ? 9e15 + h.due_at : h.dept === "rejection" && h.status !== "client" ? h.due_at - 9e15 : h.due_at;
+}
 function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const desk = deskOf(me, handoffs);
   const hd = (handoffs && handoffs.depts) || [];
@@ -5187,12 +5200,12 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const rows = pick === "late" ? all0.filter((h) => h.overdue) : pick === "held" ? all0.filter((h) => h.hold && h.hold.active) : all0;
   const st = (q.data && q.data.stats) || {};
   const sort = useTableSort("due_at", "asc");
-  // past TAT first (the earliest due), the ones on hold after the rest
-  const shown = sort.sortRows(rows, { due_at: (h) => (["pending", "assigned", "client"].includes(h.status) ? (h.hold && h.hold.active ? 9e15 + h.due_at : h.due_at) : h.done_at) });
+  const shown = sort.sortRows(rows, { due_at: handoffDueKey });
   const pickCard = (k) => { setView("open"); setPick(pick === k ? "" : k); };
   const changed = () => { q.reload(); refreshHandoffs && refreshHandoffs(); };
   const assign = async (h, uid) => { if (!uid) return; setBusy(true); try { await rpc("handoffs.assign", { id: h.id, user_id: uid }); toast("Assigned."); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
-  const team = (d) => ctx.users.filter((u) => u.active && (d === "posting" ? /posting/i : /submission/i).test(u.department || ""));
+  // who a hand-off can be given to: the people of its desk who can work its client (the server's list, the same rule it checks), and me
+  const team = (h) => ((q.data && q.data.assignees) || {})[h.client_id + "|" + (h.dept === "posting" ? "posting" : "submission")] || [];
   const met = st.done_n ? Math.round((st.met || 0) / st.done_n * 100) : null;
   return (
     <div className="stack">
@@ -5240,11 +5253,11 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
               <td className="mono small">{h.claim_no || "–"}</td><td>{h.patient}</td><td className="small">{h.client_name}{h.location_name ? " · " + h.location_name : ""}</td><td className="small">{h.payer}</td><td className="num">{fmtMoney(h.balance)}</td>
               <td className="small">{h.created_by_name}<div className="tiny muted">{h.saag_action}</div></td>
               <td className="small">{isOpen && h.can_assign ? <Combo sm width={170} value={h.assigned_to || ""} onChange={(v) => assign(h, v)} placeholder="Assign to team…" disabled={busy}
-                  options={[...team(h.dept), ...ctx.users.filter((u) => u.id === me.id)].filter((u, i, a) => a.findIndex((x) => x.id === u.id) === i).map((u) => ({ id: u.id, label: u.id === me.id ? u.name + " (me)" : u.name }))} />
+                  options={[...team(h), ...ctx.users.filter((u) => u.id === me.id), ...(h.assigned_to && h.assigned_name ? [{ id: h.assigned_to, name: h.assigned_name }] : [])].filter((u, i, a) => a.findIndex((x) => x.id === u.id) === i).map((u) => ({ id: u.id, label: u.id === me.id ? u.name + " (me)" : u.name }))} />
                 : h.assigned_name || (isOpen ? <span className="muted">with {h.lead_name}</span> : h.done_by_name)}
                 {!isOpen && h.status === "complete" && <div className="tiny muted">{h.proof.ref}{h.proof.date ? " · " + fmtDate(h.proof.date) : ""}{h.proof.files && h.proof.files.length ? " · 📎 proof" : ""}</div>}
                 {!isOpen && (h.status === "assistance" || h.status === "rejected") && <div className="tiny" style={{ color: "var(--red-ink)" }}>{h.reason}</div>}</td>
-              <td className="r"><HandoffActions h={h} canClose={isOpen && h.can_close} onOpen={() => setOpen(h.claim_id)} onAct={(outcome) => setAct({ h, outcome })} /></td>
+              <td className="r"><HandoffActions h={h} canClose={isOpen && h.can_close && !recheckLater(h)} onOpen={() => setOpen(h.claim_id)} onAct={(outcome) => setAct({ h, outcome })} /></td>
             </tr>); })}
             {q.data && !rows.length && <tr><td colSpan={10}><Empty>{view === "open" ? "Nothing waiting. Claims arrive here when a biller saves a posting or submission action on a client that has a person set for it (Clients & locations)." : "Nothing here."}</Empty></td></tr>}</tbody></table></div>
       </div>
@@ -5264,6 +5277,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   const c = q.data && q.data.claim;
   // view only: a claim Posting closed, opened by someone it is not with (anyone may read it; nothing to work here)
   const ro = !!(c && c.view_only);
+  // a desk still has the claim (Payment posting, Submission or Rejections): a team lead closes or excludes it once the desk is done
+  const atDesk = ((q.data && q.data.handoffs) || []).find((h) => h.dept !== "subcheck" && ["pending", "assigned", "client"].includes(h.status));
   const changed = () => { q.reload(); setVer((v) => v + 1); onChanged && onChanged(); };
   const act = async (label, fn) => { setBusy(true); try { await fn(); toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const sup = me.role === "supervisor";
@@ -5288,9 +5303,10 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
                 <Combo sm width={220} value={user} onChange={setUser} placeholder="Assign to…" options={ctx.users.filter((u) => u.active && (u.role === "user" || u.id === me.id)).map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
                 <button className="btn sm primary" disabled={!user || busy} onClick={() => act("Assigned.", () => rpc("alloc.reassign", { ids: [id], user_id: user }))}>Assign</button>
                 {(c.state === "assigned" || c.state === "in_progress") && <button className="btn sm" disabled={busy} onClick={() => act("Unassigned.", () => rpc("alloc.unassign", { ids: [id] }))}>Unassign</button>}
-                {(c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
-                {c.state !== "closed" && <button className="btn sm danger" disabled={busy} onClick={() => act("Closed.", () => rpc("claims.setState", { ids: [id], state: "closed" }))}>Close</button>}
-                {c.state !== "excluded" && c.state !== "closed" && <button className="btn sm" disabled={busy} onClick={() => act("Excluded.", () => rpc("claims.setState", { ids: [id], state: "excluded" }))}>Exclude</button>}
+                {!atDesk && (c.state === "closed" || c.state === "excluded" || c.state === "completed") && <button className="btn sm" disabled={busy} onClick={() => act("Reopened.", () => rpc("claims.setState", { ids: [id], state: "open" }))}>Reopen</button>}
+                {!atDesk && c.state !== "closed" && <button className="btn sm danger" disabled={busy} onClick={() => act("Closed.", () => rpc("claims.setState", { ids: [id], state: "closed" }))}>Close</button>}
+                {!atDesk && c.state !== "excluded" && c.state !== "closed" && <button className="btn sm" disabled={busy} onClick={() => act("Excluded.", () => rpc("claims.setState", { ids: [id], state: "excluded" }))}>Exclude</button>}
+                {atDesk && <span className="tiny muted">With {DEPT_NAME[atDesk.dept]} now: it can be closed or excluded once the desk finishes it or sends it back to AR.</span>}
               </div>
             )}
             {!ro && <Suggestions claim={c} subStatus={c.last_sub_status} />}
@@ -5662,7 +5678,7 @@ function Attachments({ claimId, files, onChanged, plain }) {
 }
 function NotesList({ notes, me, claim, onChanged }) {
   const [editing, setEditing] = useState(null);
-  const saveEdit = async (n, data) => { await rpc("notes.update", { id: n.id, ...data }); toast("Note updated."); setEditing(null); if (onChanged) onChanged(); };
+  const saveEdit = async (n, data) => { const r = await rpc("notes.update", { id: n.id, ...data }); toast("Note updated." + handoffToast(r && r.handoff)); setEditing(null); if (onChanged) onChanged(); };
   return (
     <div className="card tight">
       <div className="b small mb">History ({notes.length})</div>
@@ -5672,7 +5688,7 @@ function NotesList({ notes, me, claim, onChanged }) {
         return (
           <div key={n.id} className={"note " + n.kind}>
             <div className="row between">
-              <span className="small"><b>{n.user_name}</b> <span className="muted">· {fmtWhen(n.created_at)}</span>{n.edited_at ? <span className="tiny muted"> · edited {fmtWhen(n.edited_at)}</span> : null}</span>
+              <span className="small"><b>{n.user_name}</b> <span className="muted">· {fmtWhen(n.created_at)}</span>{n.edited_at ? <span className="tiny muted"> · edited {n.edited_by_name ? "by " + n.edited_by_name + " " : ""}{fmtWhen(n.edited_at)}</span> : null}</span>
               <span className="row" style={{ gap: 6 }}>
                 <span className="tiny muted">{n.kind === "work" ? "worked" : n.kind === "skip" ? "skipped" : "note"}</span>
                 {n.kind === "work" && (n.editable && claim ? <button className="btn sm link" onClick={() => setEditing(editing === n.id ? null : n.id)}>{editing === n.id ? "Cancel" : "Edit"}</button> : <span className="tiny muted" title={claim && claim.locked ? "Posting closed this claim: its notes can no longer be edited" : "Only the person who wrote it or a team lead can edit it"}>{claim && claim.locked ? "locked" : "read-only"}</span>)}
@@ -8877,7 +8893,7 @@ function MyRechecks({ ctx, me }) {
               : r.overdue ? <span className="badge red">{r.left_wh != null ? Math.round(-r.left_wh) + " working h" : left(r.left_ms)} past TAT</span> : <span className={"badge " + (r.due_soon ? "amber" : "teal")}>{r.left_wh != null ? (r.left_wh < 1 ? Math.max(1, Math.round(r.left_wh * 60)) + " min" : Math.round(r.left_wh) + " working h") : left(r.left_ms)} left</span>}<div className="tiny muted">due {fmtWhen(r.due_at)}</div></td>
             <td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}<div className="tiny muted">{r.account_no}</div></td><td className="small">{r.client_name}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td>
             <td className="small"><span className={"badge " + (r.from_dept === "rejection" ? "red" : "blue")}>{r.from_label}</span><div className="tiny muted">{r.created_by_name} · {fmtWhen(r.created_at)}</div>{r.check_name && r.assigned_to !== me.id ? <div className="tiny muted">recheck with {r.check_name} too</div> : null}</td>
-            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button> <button className="btn sm primary" onClick={() => setAct({ h: r, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h: r, outcome: "rejected" })}>✗ Rejected again</button></td>
+            <td className="r" style={{ whiteSpace: "nowrap" }}><button className="btn sm" onClick={() => setOpen(r.claim_id)}>Open claim</button>{r.open && <> <button className="btn sm primary" onClick={() => setAct({ h: r, outcome: "complete" })}>✓ Accepted</button> <button className="btn sm danger" onClick={() => setAct({ h: r, outcome: "rejected" })}>✗ Rejected again</button></>}</td>
           </tr>))}</tbody></table></div>
       {act && <HandoffCloseModal act={act} onClose={() => setAct(null)} onDone={() => { setAct(null); q.reload(); }} />}
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => { setOpen(null); q.reload(); }} onChanged={() => q.reload()} />}

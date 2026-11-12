@@ -366,6 +366,13 @@ async function graphCall(tok, method, path, body) {
   return r.json();
 }
 const colLetter = (n) => { let s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+/* Every write of cell values into an Excel workbook through Microsoft Graph goes through writeRange. Graph reads a value the
+   way Excel reads typing, so text that starts with = + - @ (or a tab or a carriage return) would become a formula: a comment
+   "-ve balance" shows #NAME?, a typed =HYPERLINK(...) becomes a live link in the team's file. Such text gets a leading
+   apostrophe, which Excel keeps as a hidden text marker (the cell shows the text as typed). Numbers stay numbers, negative
+   amounts too, and so does text that is only a number. The same rule as csvSafe in app.jsx for the CSV downloads. */
+const xlText = (v) => (typeof v === "string" && /^[=+\-@\t\r]/.test(v) && !/^-?\d+(\.\d+)?$/.test(v) ? "'" + v : v);
+const writeRange = (tok, path, values, numberFormat) => graphCall(tok, "PATCH", path, { values: values.map((row) => row.map(xlText)), ...(numberFormat ? { numberFormat } : {}) });
 async function appendRowTo(tok, loc, values, header = WORKBOOK_HEADER) {
   const base = `/drives/${encodeURIComponent(loc.driveId)}/items/${encodeURIComponent(loc.itemId)}/workbook`;
   const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
@@ -380,9 +387,9 @@ async function appendRowTo(tok, loc, values, header = WORKBOOK_HEADER) {
   rows = rows.map((r, i) => r.map((v) => (v === SR_NO ? srOf(startRow + i) : v)));
   const last = colLetter(header.length);
   // DOS and Date Worked are Excel dates shown as mm/dd/yyyy and the amounts as money (as the desks' files do), so the file reads
-  // the same whatever OneDrive's language; the header row stays as it is
+  // the same whatever OneDrive's language; the header row stays as it is. Text goes in as text, never as a formula (writeRange).
   const fmt = header === WORKBOOK_HEADER ? AR_FMT : null;
-  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, { values: rows, ...(fmt ? { numberFormat: rows.map((r, i) => (empty && i === 0 ? header.map(() => "General") : fmt)) } : {}) });
+  await writeRange(tok, ws + `/range(address='A${startRow}:${last}${startRow + rows.length - 1}')`, rows, fmt ? rows.map((r, i) => (empty && i === 0 ? header.map(() => "General") : fmt)) : null);
   return loc.name;
 }
 /* ---- the team's report files in OneDrive ----
@@ -422,7 +429,7 @@ const CLIENT_ROOT = "Brahmastra Clients";
 const SCOPE_FOLDER = { ar: "AR", posting: "Payment posting", submission: "Submission", rejection: "Rejections" };
 const DEPT_SCOPE = { posting: "posting", submission: "submission", subcheck: "submission", rejection: "rejection" };
 const DESK_HEADER = ["Sr. No", "Date", "Department", "Done by", "Client", "Location", "Claim #", "Account #", "Patient", "Payer", "DOS", "Balance", "Action", "Proof date",
-  "Check / reference", "Amount", "Reason / code", "Comment", "Sent by (AR)", "Sent at", "Within 24h TAT"];
+  "Check / reference", "Amount", "Reason / code", "Comment", "Sent by (AR)", "Sent at", "Within TAT"];   // the client's own TAT (the hand-off's due time), not always 24 hours
 /* Submission: the team's Production Format Conso layout, one row per Submission action on a claim. Most columns come from the claim's
    inventory row (the client's own columns too: NAEC Order No, the VEC columns), the old status / comment / bucket the inventory file had,
    the hand-off and the person; Type, Inventory Status, Comment, Bucket and Claim Type are what the person enters (editable for now).
@@ -517,13 +524,13 @@ async function appendDeskRow(tok, loc, values, header, sheetName, formats) {
   if (!rowIs(used && used.values && used.values[0], header) && (blank(used) || used.rowCount <= 1)) {
     // this desk's header on row 1 (over the template's AR header, cleared to its last column), then the row under it
     const width = Math.max(header.length, WORKBOOK_HEADER.length);
-    await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(width)}1')`, { values: [[...header, ...Array(width - header.length).fill("")]] });
+    await writeRange(tok, ws + `/range(address='A1:${colLetter(width)}1')`, [[...header, ...Array(width - header.length).fill("")]]);
     try { await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(header.length)}1')/format/font`, { bold: true, color: "#FFFFFF" });
       await graphCall(tok, "PATCH", ws + `/range(address='A1:${colLetter(header.length)}1')/format/fill`, { color: "#111B4D" }); } catch (e) {}
     startRow = 2;
   } else startRow = (parseInt(String(used.address).replace(/^.*![A-Z]+\d+:?[A-Z]*/, "").replace(/\D/g, ""), 10) || used.rowCount) + 1;
   const row = values.map((v) => (v === SR_NO ? startRow - 1 : v));
-  await graphCall(tok, "PATCH", ws + `/range(address='A${startRow}:${colLetter(row.length)}${startRow}')`, { values: [row], ...(formats ? { numberFormat: [formats] } : {}) });
+  await writeRange(tok, ws + `/range(address='A${startRow}:${colLetter(row.length)}${startRow}')`, [row], formats ? [formats] : null);
   return loc.name;
 }
 async function odChild(tok, driveId, parentId, name) {
@@ -738,7 +745,7 @@ async function escalationSlaFiles(env, tok, clientId, months) {
       const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(ESC_HEADER.length);
       // an escalation moved to another month leaves this file: clear the old rows before writing the month afresh
       await graphCall(tok, "POST", ws + `/range(address='A2:${last}5000')/clear`, { applyTo: "Contents" });
-      await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [ESC_HEADER, ...rows], numberFormat: escFormats(rows.length) });
+      await writeRange(tok, ws + `/range(address='A1:${last}${rows.length + 1}')`, [ESC_HEADER, ...rows], escFormats(rows.length));
       saved.push(path.join(" › "));
     }
   }
@@ -788,7 +795,7 @@ async function tatSlaFiles(env, tok, clientId, ym) {
     const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
     const ws = base + "/worksheets/" + encodeURIComponent(sheet.id), last = colLetter(TAT_HEADER.length);
     await graphCall(tok, "POST", ws + `/range(address='A2:${last}20000')/clear`, { applyTo: "Contents" });
-    await graphCall(tok, "PATCH", ws + `/range(address='A1:${last}${rows.length + 1}')`, { values: [TAT_HEADER, ...rows], numberFormat: [TAT_HEADER.map(() => "@"), ...rows.map(() => TAT_HEADER.map((h, i) => (i >= 6 ? "General" : "@")))] });
+    await writeRange(tok, ws + `/range(address='A1:${last}${rows.length + 1}')`, [TAT_HEADER, ...rows], [TAT_HEADER.map(() => "@"), ...rows.map(() => TAT_HEADER.map((h, i) => (i >= 6 ? "General" : "@")))]);
     saved.push(path.join(" › "));
   }
   return saved;
@@ -843,7 +850,7 @@ async function syncEscalations(env, clientId, months) {
     const sheets = await graphCall(tok, "GET", base + "/worksheets?$top=1&$select=id,name");
     const sheet = sheets.value && sheets.value[0]; if (!sheet) throw new ApiError(400, "The workbook has no worksheet.");
     const all2 = [ESC_HEADER, ...rows];
-    await graphCall(tok, "PATCH", base + "/worksheets/" + encodeURIComponent(sheet.id) + `/range(address='A1:${colLetter(ESC_HEADER.length)}${all2.length}')`, { values: all2, numberFormat: escFormats(rows.length) });
+    await writeRange(tok, base + "/worksheets/" + encodeURIComponent(sheet.id) + `/range(address='A1:${colLetter(ESC_HEADER.length)}${all2.length}')`, all2, escFormats(rows.length));
     await recordWorkbookStatus(env, clientId + ":esc", { ok: true, at: now, file: loc.path, link: loc.link || "", rows: rows.length });
   } catch (e) {
     const msg = String(e && e.message || e).slice(0, 300);
@@ -1091,13 +1098,14 @@ function sumTat(boards) {
    fell due in it. Payment posting; Submission: every time a claim is sent to it (a first submission or a resubmission, each
    counts) and Rejections (they resubmit to the Submission TAT), but not the recheck after submitting (the biller checking
    the payer has the claim); Needs attention (48 working hours).
-   Closed after the due time, or still open past it, is missed; still open and not yet due is left out. */
+   Closed after the due time, or still open past it, is missed; still open and not yet due is counted as open (left out of the %). */
 async function tatStats(env, clientIds, from, to, now = Date.now()) {
   const ids = [...new Set(clientIds || [])].filter(Boolean);
   const blank = () => ({ due: 0, met: 0, missed: 0, open: 0, pct: null, who: {} });
   const out = new Map(ids.map((id) => [id, { posting: blank(), submission: blank(), attention: blank(), missed_list: [] }]));
   if (!ids.length) return out;
-  const IN = `(${ids.map(() => "?").join(",")})`, lim = Math.min(to, now);
+  // every task due in the window, also the ones not due yet (a month still running): tally() counts those as open
+  const IN = `(${ids.map(() => "?").join(",")})`;
   const tally = (s, due, closed, who, row) => {
     if (closed == null && due >= now) { s.open++; return; }
     s.due++;
@@ -1106,13 +1114,13 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
   };
   for (const h of await all(env, `SELECT h.client_id, h.dept, h.status, h.due_at, h.created_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no, COALESCE(NULLIF(h.done_by_name, ''), u.name) AS who
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
-      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, lim)) {
+      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, to)) {
     const o = out.get(h.client_id); if (!o) continue;
     const k = h.dept === "posting" ? "posting" : "submission", open = HO_OPEN.includes(h.status);
     tally(o[k], h.due_at, open ? null : h.closed_at, h.who || "", () => o.missed_list.push({ dept: k, claim_no: h.claim_no || "", sent: h.created_at, due: h.due_at, closed: open ? null : h.closed_at, who: h.who || "" }));
   }
   // Needs attention: flagged by billers (closed when answered or reviewed), sent back (when reviewed or worked again), client requests (when sent)
-  const attn = async (sql, args) => { for (const r of await all(env, sql, ...args)) { const o = out.get(r.client_id); if (!o || !r.start) continue; const due = addWorkingHours(r.start, ATTN_TAT_HOURS); if (due < from || due > lim) continue; tally(o.attention, due, r.closed_at || null, ""); } };
+  const attn = async (sql, args) => { for (const r of await all(env, sql, ...args)) { const o = out.get(r.client_id); if (!o || !r.start) continue; const due = addWorkingHours(r.start, ATTN_TAT_HOURS); if (due < from || due > to) continue; tally(o.attention, due, r.closed_at || null, ""); } };
   const back = now - 120 * 86400000;
   await attn(`SELECT client_id, escalated_at AS start, CASE WHEN escalated = 1 THEN NULL ELSE COALESCE(escalation_answered_at, reviewed_at, updated_at) END AS closed_at FROM claims c
     WHERE client_id IN ${IN} AND escalated_at > ? AND (escalated = 1 OR escalation_answered_at >= escalated_at OR reviewed_at >= escalated_at) AND NOT ${BOUNCE_FLAG_SQL("c")}`, [...ids, back]);
@@ -1289,7 +1297,8 @@ function tatMailFor(u, kind, clients, board, now, appUrl = "", tasks = []) {
     const t = board.get(c.id); if (!t) continue;
     const late = t.late.filter((x) => x.group === kind);
     if (!late.length) continue;
-    if (kind === "desks") for (const [k, label] of TAT_DEPTS) { const xs = late.filter((x) => x.dept === k); if (xs.length) groups.push({ c, label, tat: tatHours(c, k), xs }); }
+    // the TAT each task was given (its due time came from it), not the client's TAT now: one number when the tasks agree, else each row's own
+    if (kind === "desks") for (const [k, label] of TAT_DEPTS) { const xs = late.filter((x) => x.dept === k); if (xs.length) { const ts = [...new Set(xs.map((x) => x.tat))]; groups.push({ c, label, tat: ts.length === 1 ? ts[0] : null, xs }); } }
     else for (const [p, label] of ATTN_PARTS) { const xs = late.filter((x) => x.part === p); if (xs.length) groups.push({ c, label: "Needs attention · " + label, tat: ATTN_TAT_HOURS, xs }); }
   }
   const tks = kind === "ar" ? (tasks || []) : [];
@@ -1306,15 +1315,15 @@ function tatMailFor(u, kind, clients, board, now, appUrl = "", tasks = []) {
   const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;color:#0f1b24;max-width:640px;margin:0 auto;border:1px solid #dfe4ea;border-radius:10px;overflow:hidden;background:#ffffff">
 <div style="background:#0b2740;color:#fff;padding:16px 22px"><div style="font-size:18px;font-weight:700">${n} ${n === 1 ? "task is" : "tasks are"} past ${n === 1 ? "its" : "their"} TAT</div>
 <div style="color:#bcd0e2;font-size:13px;margin-top:3px">${htmlEsc(TAT_MAIL[kind].title)} · every supervisor, SME and above on these clients gets this until they are closed.</div></div>
-<div style="padding:16px 22px">` + groups.map((g) => `<div style="font-weight:700;font-size:13px;margin-top:10px">${htmlEsc(g.c.name)} · ${htmlEsc(g.label)} · TAT ${g.tat} working hours</div>
+<div style="padding:16px 22px">` + groups.map((g) => `<div style="font-weight:700;font-size:13px;margin-top:10px">${htmlEsc(g.c.name)} · ${htmlEsc(g.label)} · ${g.tat != null ? "TAT " + g.tat + " working hour" + (g.tat === 1 ? "" : "s") : "each claim's own TAT"}</div>
 <table style="width:100%;border-collapse:collapse;margin:6px 0 10px"><tr><th style="${th}">Claim #</th><th style="${th}">${kind === "desks" ? "Sent" : "What"}</th><th style="${th}">Waiting</th>${kind === "desks" ? `<th style="${th}">With</th>` : ""}</tr>` +
-    g.xs.map((x) => `<tr><td style="${td};white-space:nowrap">${htmlEsc(x.claim_no || "–")}</td><td style="${td}">${htmlEsc(who(x))}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${x.waited_h} h</b> (${x.over_h} h over)</td>${kind === "desks" ? `<td style="${td}">${htmlEsc(x.with || "–")}</td>` : ""}</tr>`).join("") + "</table>").join("") +
+    g.xs.map((x) => `<tr><td style="${td};white-space:nowrap">${htmlEsc(x.claim_no || "–")}</td><td style="${td}">${htmlEsc(who(x))}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${x.waited_h} h</b> (${x.over_h} h over${g.tat == null ? ", TAT " + x.tat + " h" : ""})</td>${kind === "desks" ? `<td style="${td}">${htmlEsc(x.with || "–")}</td>` : ""}</tr>`).join("") + "</table>").join("") +
     (tks.length ? `<div style="font-weight:700;font-size:13px;margin-top:10px">Team tasks you gave · past the TAT</div>
 <table style="width:100%;border-collapse:collapse;margin:6px 0 10px"><tr><th style="${th}">Client · scope</th><th style="${th}">Done</th><th style="${th}">Due</th><th style="${th}">With</th></tr>` +
       tks.map((x) => `<tr><td style="${td}">${htmlEsc(x.client_name)} · ${htmlEsc(x.scope)}</td><td style="${td};white-space:nowrap">${x.done} of ${x.count}</td><td style="${td};color:#ba2340;white-space:nowrap"><b>${htmlEsc(fmtAt(x.due_at))}</b> (${x.over_h} h over)</td><td style="${td}">${htmlEsc(x.with)}</td></tr>`).join("") + `</table>` : "") +
     (link ? `<p style="margin:16px 0 4px"><a href="${htmlEsc(link)}" style="display:inline-block;background:#17b39a;color:#ffffff;border-radius:7px;padding:9px 16px;font-weight:700;text-decoration:none">Open Brahmastra</a></p>` : "") +
     `<p style="font-size:12px;color:#627079;margin-top:14px">Working hours: Monday to Friday, Shastra holidays left out. Claim numbers only: no patient details and no note text. You get this because you are a supervisor, SME or above on these clients.</p></div></div>`;
-  const text = `${n} ${n === 1 ? "task is" : "tasks are"} past TAT (${TAT_MAIL[kind].title}).\n\n` + groups.map((g) => `${g.c.name} · ${g.label} · TAT ${g.tat} working hours\n` + g.xs.map((x) => `  ${x.claim_no || "–"} · ${who(x)} · waiting ${x.waited_h} h (${x.over_h} h over)${x.with ? " · with " + x.with : ""}`).join("\n")).join("\n\n")
+  const text = `${n} ${n === 1 ? "task is" : "tasks are"} past TAT (${TAT_MAIL[kind].title}).\n\n` + groups.map((g) => `${g.c.name} · ${g.label} · ${g.tat != null ? "TAT " + g.tat + " working hour" + (g.tat === 1 ? "" : "s") : "each claim's own TAT"}\n` + g.xs.map((x) => `  ${x.claim_no || "–"} · ${who(x)} · waiting ${x.waited_h} h (${x.over_h} h over${g.tat == null ? ", TAT " + x.tat + " h" : ""})${x.with ? " · with " + x.with : ""}`).join("\n")).join("\n\n")
     + (tks.length ? (groups.length ? "\n\n" : "") + "Team tasks you gave · past the TAT\n" + tks.map((x) => `  ${x.client_name} · ${x.scope} · ${x.done} of ${x.count} done · due ${fmtAt(x.due_at)} (${x.over_h} h over) · with ${x.with}`).join("\n") : "")
     + (link ? "\n\nOpen Brahmastra: " + link : "") + "\n\nWorking hours: Monday to Friday.";
   return { subject, html, text, n };
@@ -2856,10 +2865,11 @@ async function nameSignInOk(env, u) { if (u.email_missing) return; const block =
 
 const andList = (xs) => (xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
 const namesOf = async (env, ids) => { const u = [...new Set(ids.filter(Boolean))]; return new Map(u.length ? (await all(env, `SELECT id, name FROM users WHERE id IN (${u.map(() => "?").join(",")})`, ...u)).map((r) => [r.id, r.name]) : []); };
-/* Open hand-offs follow a new posting / submission / rejections person or follow-up checker. */
+/* Open hand-offs follow a new posting / submission / rejections person or follow-up checker: the ones waiting on the client too
+   (they are still open: the new person sees them under Waiting on client and resumes them when the client answers). */
 async function followHandoffs(env, clientId, dept, lead, backup) {
-  if (dept === "subcheck") { if (lead) await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned')", lead, lead, clientId); return; }
-  if (lead && dept !== "ar") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned')", lead, backup || null, clientId, dept);
+  if (dept === "subcheck") { if (lead) await run(env, "UPDATE handoffs SET lead_id = ?, assigned_to = ? WHERE client_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned','client')", lead, lead, clientId); return; }
+  if (lead && dept !== "ar") await run(env, "UPDATE handoffs SET lead_id = ?, backup_id = ? WHERE client_id = ? AND dept = ? AND status IN ('pending','assigned','client')", lead, backup || null, clientId, dept);
 }
 /* A client profile from the setup form: scope of work, a daily target and a responsible person for each, who
    rechecks submissions. Everything is required; the message lists what is missing. */
@@ -2994,6 +3004,21 @@ async function billerFor(env, userId, clientId) {
   const sc = await scopeOf(env, u);
   return sc == null || sc.includes(clientId) ? u : null;
 }
+/* Who a hand-off may be given to (the same idea as billerFor, for the desks): the active people of its desk (Payment posting for a
+   posting hand-off; Submission for a submission, a rejection or a recheck) who can work the claim's client: it is in their
+   projects, they are set on it, or it is shared with them to edit (a view-only share is not enough). deskTeam reads everyone on
+   a desk once; onDeskFor answers for one hand-off. The Posting & submission tab offers exactly this list. */
+async function deskTeam(env) {
+  const out = [];
+  for (const row of await all(env, "SELECT * FROM users WHERE active = 1 ORDER BY name")) {
+    const u = publicUser(row), desk = userDesk(u);
+    if (!desk || u.is_admin) continue;
+    const scope = await scopeOf(env, u);
+    out.push({ id: u.id, name: u.name, desk, scope, view: u.scope_view_only || new Set() });
+  }
+  return out;
+}
+const onDeskFor = (m, dept, clientId) => (m.desk === "both" || m.desk === (dept === "posting" ? "posting" : "submission")) && (m.scope == null || (m.scope.includes(clientId) && !m.view.has(clientId)));
 const projKey = (n) => String(n || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const inScope = (user, clientId) => !user.scope || user.scope.includes(clientId);
 const canEditClient = (user, clientId) => inScope(user, clientId) && !(user.scope_view_only && user.scope_view_only.has(clientId));
@@ -3267,6 +3292,42 @@ async function deskPeople(env, cl, dept) {
   const lead = act.has(L) ? L : act.has(B) ? B : null;
   if (!lead) return null;
   return { lead, backup: B && B !== lead && act.has(B) ? B : null };
+}
+/* The desk an entry's SAAG action sends a claim to: Need to Post / Posting Correction to Payment posting, a resubmission or a
+   paper claim to Submission (a rejected claim to the client's Rejections person first, when one is set), with the client's
+   profile and the person set there (null when nobody active is set). dept is "" for an action that goes to no desk. */
+async function entryDesk(env, clientId, saag) {
+  let dept = handoffDeptOf(saag.action);
+  if (!dept) return { dept: "", cl: null, people: null };
+  const cl = await one(env, "SELECT * FROM clients WHERE id = ?", clientId);
+  if (dept === "submission" && /reject/i.test(saag.status) && (await deskPeople(env, cl, "rejection"))) dept = "rejection";
+  return { dept, cl, people: cl && cl[dept + "_mode"] === "person" ? await deskPeople(env, cl, dept) : null };
+}
+/* Send claims to the desk their entry names (a saved entry, or an entry edited into such an action): a hand-off to the person
+   set on the client, and the claim is In process for AR (off the biller's list, no follow-up) until the desk is done; or a line
+   in the history that nobody does it for this client. A claim already open with that desk keeps the hand-off it has.
+   billerId: the AR biller of the claim (whose entry sent it). */
+async function sendToDesk(env, user, clientId, saag, targets, now, billerId) {
+  const { dept, cl, people } = await entryDesk(env, clientId, saag);
+  if (!dept) return null;
+  const mode = cl ? cl[dept + "_mode"] : "";
+  const lead = people ? people.lead : null;
+  const hs = [];
+  for (const t of targets) {
+    if (mode === "person" && lead) {
+      const open = await one(env, "SELECT id FROM handoffs WHERE claim_id = ? AND dept = ? AND status IN ('pending','assigned','client')", t.id, dept);
+      if (open) continue;
+      const due = addWorkingHours(now, tatHours(cl, dept));
+      hs.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, biller_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?)`)
+        .bind(uuid(), t.id, clientId, dept, now, user.id, user.name, saag.action, due, lead, people.backup, billerId || user.id));
+      // In process for AR while the department works it: off the biller's list, no follow-up, until it is done or sent back.
+      hs.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '' WHERE id = ?").bind("with_" + dept, IN_PROCESS, "With " + DEPT_LABEL[dept], t.id));
+      hs.push(claimEvent(env, t.id, user, "handoff_sent", DEPT_LABEL[dept], { dept, due_at: due }));
+    } else hs.push(claimEvent(env, t.id, user, "handoff_none", DEPT_LABEL[dept], { dept, mode: mode === "person" ? "unset" : mode || "unset" }));
+  }
+  if (hs.length) await batchAll(env, hs, 40);
+  const leadName = lead ? (await one(env, "SELECT name FROM users WHERE id = ?", lead) || {}).name : "";
+  return { dept, label: DEPT_LABEL[dept], mode: mode === "person" && !lead ? "unset" : mode || "unset", to: leadName || "" };
 }
 /* Open hand-offs of someone who is switched off: they go to the backup, or to whoever the client's profile now names. */
 async function rerouteHandoffs(env, userId) {
@@ -4595,7 +4656,9 @@ const OPS = {
         const t = tb.get(c.id); if (!t) continue;
         for (const [k, label] of TAT_DEPTS) {
           const b = t.desks[k], what = (n) => `${n} ${label} ${n === 1 ? "claim" : "claims"}`;
-          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${tatHours(c, k)} h)`, view: "handoffs", params: { client_id: c.id, dept: k } }); pastTat += b.late; }
+          // the oldest one's own TAT (the one its due time came from), not the client's TAT now
+          const oldest = t.late.filter((x) => x.group === "desks" && x.dept === k).reduce((m, x) => (!m || x.waited_h > m.waited_h ? x : m), null);
+          if (b.late) { items.push({ key: `tat:${c.id}:${k}`, cat: "tat", tone: "red", n: b.late, text: `${what(b.late)} past the TAT · ${c.name}`, sub: `Oldest waiting ${b.oldest_late_h} working hours (TAT ${oldest ? oldest.tat : tatHours(c, k)} h)`, view: "handoffs", params: { client_id: c.id, dept: k } }); pastTat += b.late; }
           if (b.soon) items.push({ key: `soon:${c.id}:${k}`, cat: "desks", tone: "amber", n: b.soon, text: `${what(b.soon)} due in the next ${DUE_SOON_HOURS} hours · ${c.name}`, sub: "Still within TAT", view: "handoffs", params: { client_id: c.id } });
         }
         const a = t.attn;
@@ -4878,7 +4941,9 @@ const OPS = {
       WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL AND ${INV_NO_OPEN_HO} GROUP BY 1, 2`, ...ids, today);
     // closed this month: by when it was closed (a note added later does not count it again)
     const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND COALESCE(closed_at, updated_at) >= ? GROUP BY 1`, ...ids, monthStart);
-    const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.status IN ('pending','assigned') AND h.due_at < ? AND NOT ${heldSql("h")} GROUP BY 1, 2`, ...ids, now, today);
+    // the desk tasks the scorecard's TAT counts (Payment posting, Submission, Rejections), past the client's TAT and not on hold;
+    // waiting on the client too (the clock keeps running). The recheck after submitting is not one: it has its own reminders.
+    const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.dept IN ('posting','submission','rejection') AND h.status IN ('pending','assigned','client') AND h.due_at < ? AND NOT ${heldSql("h")} GROUP BY 1, 2`, ...ids, now, today);
     const escOpen = await all(env, `SELECT client_id, SUM(CASE WHEN kind = 'internal' THEN 0 ELSE 1 END) AS n, SUM(CASE WHEN kind = 'internal' THEN 1 ELSE 0 END) AS ni FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, ...ids);
     // working days left in the month, today included (Monday to Friday)
     let wdLeft = 0; { const [y, m] = today.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -4938,7 +5003,9 @@ const OPS = {
           text: "Nobody works a claim that is not on a list. Hand them out so the team's pace covers them.", act: [{ label: "Allocate", to: "allocate", params }] }); }
       const deskLateN = Object.values(x.desk_late).reduce((t, n) => t + n, 0);
       if (deskLateN) { const by = Object.entries(x.desk_late).map(([k, n]) => n + " at " + (deptName[k] || k)).join(", ");
-        out.push({ tone: "amber", short: pl(deskLateN, "desk task") + " past the TAT", num: String(deskLateN), sub: "desk tasks past the TAT", title: "At Posting or Submission past the client's TAT.", text: by + ". These count against the Posting TAT and Submission TAT on the scorecard.", act: [{ label: "Open the desks", to: "handoffs", params: cid ? { client_id: cid } : {} }] }); }
+        // only the TATs these tasks count against: Payment posting's own, and Submission's (Rejections resubmit to it)
+        const against = [x.desk_late.posting ? "the Posting TAT" : "", x.desk_late.submission || x.desk_late.rejection ? "the Submission TAT" : ""].filter(Boolean).join(" and ");
+        out.push({ tone: "amber", short: pl(deskLateN, "desk task") + " past the TAT", num: String(deskLateN), sub: "desk tasks past the TAT", title: "At Posting, Submission or Rejections past the client's TAT.", text: by + ". " + (deskLateN === 1 ? "It counts" : "These count") + " against " + against + " on the scorecard.", act: [{ label: "Open the desks", to: "handoffs", params: cid ? { client_id: cid } : {} }] }); }
       if (x.esc_open) out.push({ tone: "red", short: "Close " + pl(x.esc_open, "open escalation"), num: String(x.esc_open), sub: "open escalations", title: "Escalations are open. The SLA threshold is 0.", text: "Close them, or give the reason and expected date on the tracker.", act: [{ label: "Open the Escalation tracker", to: "escalations", params: cid ? { client_id: cid } : {} }] });
       // what is fine, so the list is not all alarms
       if (arTot && pct <= T) out.push({ tone: "green", num: pct + "%", sub: `over 90 days · target ≤ ${T}%`, title: "Over-90 AR is within target.", text: x.ages[2].bal ? `Keep it there: ${money(x.ages[2].bal)} is 61 to 90 days old and turns 90+ within the month if not worked.` : "Keep the follow-ups on time to hold it there.", act: [] });
@@ -5975,6 +6042,8 @@ const OPS = {
       all(env, "SELECT * FROM claim_events WHERE claim_id = ? ORDER BY at DESC LIMIT 500", c.id),
     ]);
     const out = [];
+    // who last edited each entry (a team lead may edit a biller's entry), and the entries by id for the edit lines below
+    const edNames = await namesOf(env, notes.map((n) => n.edited_by)), noteById = new Map(notes.map((n) => [n.id, n]));
     const workEv = events.filter((e) => e.kind === "worked");
     // A desk step (pending, in process, other, back, client, resume, rejected, sent to the client) saves a note and an event: show it once.
     const deskEv = events.filter((e) => /^handoff_(pending|inprocess|other|back|client|resume|rejected|client_sent)$/.test(e.kind));
@@ -5985,13 +6054,16 @@ const OPS = {
         const ev = workEv.find((e) => e.user_id === n.user_id && Math.abs(e.at - n.created_at) < 5000);
         const d = ev ? jsonObj(ev.data_json) : {};
         out.push({ at: n.created_at, kind: "work", id: n.id, editable: !postedClosed(c) && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
-          follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at });
+          follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at, edited_by: (n.edited_by && edNames.get(n.edited_by)) || "" });
       } else if (n.kind === "skip") out.push({ at: n.created_at, kind: "skip", who: n.user_name, text: n.comment });
       else if (/^Escalation answered:/.test(n.comment || "")) out.push({ at: n.created_at, kind: "answer", who: n.user_name, text: n.comment.replace(/^Escalation answered:\s*/, "") });
       else out.push({ at: n.created_at, kind: "note", who: n.user_name, fields: f && f.findings != null ? f : null, text: n.comment });
     }
     for (const a of files) out.push({ at: a.created_at, kind: "file", who: a.user_name, file: { id: a.id, name: a.name, size: a.size, type: a.type } });
-    for (const e of events) if (e.kind !== "worked" && e.kind !== "edited") { const d = jsonObj(e.data_json); out.push({ at: e.at, kind: e.kind, who: e.user_name, text: e.text, changes: d.changes || {}, data: d }); }
+    for (const e of events) if (e.kind !== "worked") { const d = jsonObj(e.data_json);
+      // each edit of an entry is a line of its own: who edited it, when, and which entry (the entry itself shows its latest text)
+      if (e.kind === "edited") { const n = noteById.get(d.note_id); out.push({ at: e.at, kind: "edited", who: e.user_name, text: "", changes: {}, data: { note_id: d.note_id, entry_at: n ? n.created_at : null, entry_by: n ? n.user_name : "" } }); continue; }
+      out.push({ at: e.at, kind: e.kind, who: e.user_name, text: e.text, changes: d.changes || {}, data: d }); }
     // Claims from before the event log: the first upload and the current assignment still show.
     const batch = c.first_batch_id ? await one(env, "SELECT b.file_name, b.kind, u.name AS by_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by WHERE b.id = ?", c.first_batch_id) : null;
     out.push({ at: c.created_at, kind: "loaded", who: batch ? batch.by_name || "" : "", text: batch ? batch.file_name : "", data: { kind: c.inventory_kind, file_status: [c.file_status, c.file_sub_status].filter(Boolean).join(" · ") } });
@@ -6044,14 +6116,25 @@ const OPS = {
     const reason = str(payload.reason, 200) || (state === "open" ? "Reopened by supervisor" : (state === "closed" ? "Closed by supervisor" : "Excluded by supervisor"));
     const now = Date.now();
     let changed = 0;
-    for (const part of chunks(ids, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
+    // A claim a desk still has (Payment posting, Submission or Rejections; waiting on the client too) keeps its state until the
+    // desk finishes it or sends it back to AR: the desk never works a claim AR closed, and its next step never opens one again.
+    // (The recheck after a submission is not a desk holding the claim: such a claim can be closed.)
+    const atDesk = new Map();
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT h.claim_id, h.dept FROM handoffs h JOIN claims c ON c.id = h.claim_id
+        WHERE h.claim_id IN (${part.map(() => "?").join(",")}) AND h.dept <> 'subcheck' AND h.status IN ('pending','assigned','client')${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user))) atDesk.set(r.claim_id, r.dept);
+    const todo = ids.filter((id) => !atDesk.has(id));
+    if (atDesk.size && !todo.length) { const verb = state === "closed" ? "closed" : state === "excluded" ? "excluded" : "reopened", d = DEPT_LABEL[[...atDesk.values()][0]];
+      throw bad(atDesk.size === 1 ? `This claim is with ${d} now. It can be ${verb} once ${d} finishes it or sends it back to AR.`
+        : `These ${atDesk.size} claims are with Payment Posting, Submission or Rejections now. They can be ${verb} once the desk finishes them or sends them back to AR.`); }
+    for (const part of chunks(todo, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
-    for (const chunk of chunks(ids, 60)) {
+    for (const chunk of chunks(todo, 60)) {
       const r = await run(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
         skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
       changed += changesOf(r);
     }
-    return { changed };
+    // at_desk: how many of the claims picked were left as they are because a desk has them
+    return { changed, at_desk: atDesk.size };
   },
 
   /* ---- allocation ---- */
@@ -6203,11 +6286,7 @@ const OPS = {
     if (!closed && wanted && wanted > addDays(today, 365)) throw bad("Pick a follow-up date within a year from today.");
     // An action that sends the claim to Posting / Submission / Rejections (a person is set on the client) takes it off the
     // biller's list with no follow-up until the desk is done: the note and the answer carry no follow-up date then.
-    let toDesk = false;
-    { let d = handoffDeptOf(saag.action);
-      if (d && !closed) { const cl0 = await one(env, "SELECT * FROM clients WHERE id = ?", c.client_id);
-        if (d === "submission" && /reject/i.test(saag.status) && (await deskPeople(env, cl0, "rejection"))) d = "rejection";
-        const pp = cl0 && cl0[d + "_mode"] === "person" ? await deskPeople(env, cl0, d) : null; toDesk = !!(pp && pp.lead); } }
+    const toDesk = !closed && !!((await entryDesk(env, c.client_id, saag)).people || {}).lead;
     const followUp = closed || toDesk ? "" : workingDayOnOrAfter((wanted && wanted >= today ? wanted : "") || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
     const comment = composeNote(fields, saag, followUp);
     const escalate = payload.escalate ? 1 : 0;
@@ -6244,34 +6323,9 @@ const OPS = {
     const lock = await run(env, "UPDATE claims SET updated_at = MAX(?, COALESCE(updated_at, 0) + 1) WHERE id = ? AND state = ? AND updated_at IS ?", now, c.id, c.state, c.updated_at);
     if (!changesOf(lock)) throw bad("This claim was just saved (in another tab, or by someone else). Open it again to see the latest.");
     await batchAll(env, stmts);
-    // Payment posting / submission: send the claim to the department set on the client profile.
-    let dept = handoffDeptOf(saag.action);
-    let handoff = null;
-    if (dept) {
-      const cl = await one(env, "SELECT * FROM clients WHERE id = ?", c.client_id);
-      // A rejected claim goes to the client's Rejections person first, when one is set.
-      if (dept === "submission" && /reject/i.test(saag.status) && (await deskPeople(env, cl, "rejection"))) dept = "rejection";
-      const mode = cl ? cl[dept + "_mode"] : "";
-      // The lead set on the client, or the backup when the lead is no longer active (never a deactivated person).
-      const people = await deskPeople(env, cl, dept);
-      const lead = people ? people.lead : null;
-      const hs = [];
-      for (const t of targets) {
-        if (mode === "person" && lead) {
-          const open = await one(env, "SELECT id FROM handoffs WHERE claim_id = ? AND dept = ? AND status IN ('pending','assigned','client')", t.id, dept);
-          if (open) continue;
-          const due = addWorkingHours(now, tatHours(cl, dept));
-          hs.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, biller_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?)`)
-            .bind(uuid(), t.id, c.client_id, dept, now, user.id, user.name, saag.action, due, lead, people.backup, user.id));
-          // In process for AR while the department works it: off the biller's list, no follow-up, until it is done or sent back.
-          hs.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '' WHERE id = ?").bind("with_" + dept, IN_PROCESS, "With " + DEPT_LABEL[dept], t.id));
-          hs.push(claimEvent(env, t.id, user, "handoff_sent", DEPT_LABEL[dept], { dept, due_at: due }));
-        } else hs.push(claimEvent(env, t.id, user, "handoff_none", DEPT_LABEL[dept], { dept, mode: mode === "person" ? "unset" : mode || "unset" }));
-      }
-      if (hs.length) await batchAll(env, hs, 40);
-      const leadName = lead ? (await one(env, "SELECT name FROM users WHERE id = ?", lead) || {}).name : "";
-      handoff = { dept, label: DEPT_LABEL[dept], mode: mode === "person" && !lead ? "unset" : mode || "unset", to: leadName || "" };
-    }
+    // Payment posting / submission: send the claim to the department set on the client profile (the lead set on the client, or
+    // the backup when the lead is no longer active; a rejected claim to the client's Rejections person first, when one is set).
+    const handoff = await sendToDesk(env, user, c.client_id, saag, targets, now, user.id);
     // Copy the entry into the client's / location's OneDrive workbook in the background (when a link is set and Microsoft 365 is configured).
     if (!env.DEMO && env.MS_CLIENT_SECRET) { for (const t of targets) { const p = syncEntryToWorkbook(env, t.id, user, { ended_at: now, fields: t.id === c.id ? fields : { ...fields, call_start: "", call_end: "" } }); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; } }
     return { completed: targets.length, closed, follow_up_on: followUp, state: newState, comment, handoff };
@@ -6331,24 +6385,41 @@ const OPS = {
     const today = isoDate(payload.today) || isoToday();
     const closed = isClosedWork(saag);
     const wantedFu = isoDate(payload.follow_up_on);
-    const followUp = closed ? "" : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
+    // The claim follows its latest entry (unless it is on a biller's list or with a desk now).
+    const latest = await one(env, "SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id);
+    const sets = !!latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned" && c.state !== IN_PROCESS;
+    // An entry edited into an action that goes to a desk (Need to Post / Posting Correction, a resubmission, a paper claim) sends
+    // the claim there exactly as saving it that way the first time does: the hand-off to the client's person, In process for AR,
+    // no follow-up date while the desk has it (and the entry's own follow-up when nobody is set for that desk).
+    // A claim the team lead closed or excluded (or an upload closed) keeps its state, its reason and its follow-up through an edit:
+    // only a claim this entry closed itself (reason "Closed: ...") opens again when the edit makes the entry a follow-up.
+    const held = (c.state === "closed" && !/^Closed: /.test(c.state_reason || "")) || c.state === "excluded";
+    const sends = sets && !held && !!handoffDeptOf(saag.action) && handoffDeptOf(saag.action) !== handoffDeptOf(n.action || n.action_code);
+    const toDesk = sends && !closed && !!((await entryDesk(env, c.client_id, saag)).people || {}).lead;
+    const autoFu = () => addDays(today, followUpDays(saag.effective, c.client_follow_up_days));
+    const followUp = closed || toDesk ? "" : sends ? workingDayOnOrAfter((wantedFu && wantedFu >= today ? wantedFu : "") || autoFu())
+      : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || autoFu());
     const comment = composeNote(fields, saag, followUp);
     const now = Date.now();
     const stmts = [env.DB.prepare(`UPDATE notes SET status_code = ?, action_code = ?, comment = ?, follow_up_on = ?, status = ?, sub_status = ?, action = ?, bucket = ?, effective = ?, note_action = ?, fields_json = ?, call_min = ?, edited_at = ?, edited_by = ? WHERE id = ?`)
       .bind(saag.status, saag.action, comment, followUp, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, "", JSON.stringify(fields), callMinOf(fields), now, user.id, n.id)];
-    const latest = await one(env, "SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id);
-    if (latest && latest.id === n.id && c.state !== "in_progress" && c.state !== "assigned" && c.state !== IN_PROCESS) {
-      const newState = closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
+    if (sets) {
+      const newState = held ? c.state : closed ? "closed" : (c.state === "closed" ? "completed" : c.state);
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?, last_note = ?, follow_up_on = ?, updated_at = ? WHERE id = ?`)
-        .bind(newState, closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", comment.slice(0, 600), followUp, now, c.id));
+        .bind(newState, held ? c.state_reason : closed ? "Closed: " + saag.effective : "", saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", comment.slice(0, 600), held ? c.follow_up_on : followUp, now, c.id));
     }
     stmts.push(claimEvent(env, c.id, user, "edited", "", { note_id: n.id }));
     const lim = saveLimitsStmt(env, user, c.client_id, c.payer, fields, "note");
     if (lim) stmts.push(lim);
     const dd = denialDateStmt(env, c.id, fields);
     if (dd) stmts.push(dd);
+    // Two edits at once that both send the claim to a desk (a double click, two tabs): the first one wins, as with a saved entry.
+    if (sends && !changesOf(await run(env, "UPDATE claims SET updated_at = MAX(?, COALESCE(updated_at, 0) + 1) WHERE id = ? AND state = ? AND updated_at IS ?", now, c.id, c.state, c.updated_at)))
+      throw bad("This claim was just saved (in another tab, or by someone else). Open it again to see the latest.");
     await env.DB.batch(stmts);
-    return { ok: true, comment, closed };
+    // the AR biller of the hand-off is the person whose entry it is (a team lead may be the one editing it)
+    const handoff = sends ? await sendToDesk(env, user, c.client_id, saag, [c], now, n.user_id) : null;
+    return { ok: true, comment, closed, handoff };
   },
   "history.mine": async ({ env, user, payload }) => {
     const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
@@ -6396,7 +6467,7 @@ const OPS = {
 
   /* ---- attachments: files kept with a claim, next to its notes (EOBs, denial letters, portal screenshots) ---- */
   "attachments.add": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
+    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
     if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const name = str(payload.name, 200).replace(/[\\/\u0000-\u001f]/g, "_").trim();
@@ -6417,7 +6488,7 @@ const OPS = {
       env.DB.prepare("INSERT INTO attachments (id, claim_id, user_id, user_name, name, type, size, parts, created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(id, c.id, user.id, user.name, name, type, size, parts.length, now),
       env.DB.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, c.id),
     ]);
-    return { attachment: { id, claim_id: c.id, user_id: user.id, user_name: user.name, name, type, size, created_at: now, deletable: true } };
+    return { attachment: { id, claim_id: c.id, user_id: user.id, user_name: user.name, name, type, size, created_at: now, deletable: !postedClosed(c) } };
   },
   "attachments.get": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
@@ -6431,8 +6502,10 @@ const OPS = {
   "attachments.delete": async ({ env, user, payload }) => {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
-    const ac = await one(env, "SELECT client_id FROM claims WHERE id = ?", a.claim_id);
+    const ac = await one(env, "SELECT client_id, state, handoff_status FROM claims WHERE id = ?", a.claim_id);
     if (!(ac && leadFor(user, ac.client_id)) && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
+    // a claim Posting closed is read only: the EOB and the proof its posting rests on stay with it (files can still be added)
+    if (postedClosed(ac)) throw bad("Posting closed this claim (the payment is posted): its files can no longer be removed.");
     await env.DB.batch([
       env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id),
       env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(a.id),
@@ -6796,7 +6869,14 @@ const OPS = {
         SUM(CASE WHEN h.status = 'client' AND h.chase_at <= ${now} THEN 1 ELSE 0 END) AS chase_n,
         SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS done_n, SUM(CASE WHEN h.status IN ('complete','assistance','rejected','back') AND h.done_at > ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at > ? THEN 1 ELSE 0 END) AS assist_n FROM handoffs h WHERE ${base}`, now, month, month, month, ...bargs);
-    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {}, hold_reasons: TAT_HOLD_REASONS };
+    // Who each hand-off can be given to, by client and desk ("<client id>|posting" or "|submission"): the rule handoffs.assign checks
+    const assignees = {};
+    if (out.some((r) => r.can_assign && (r.status === "pending" || r.status === "assigned"))) {
+      const team = await deskTeam(env);
+      for (const r of out) { const k = r.client_id + "|" + (r.dept === "posting" ? "posting" : "submission");
+        if (r.can_assign && !assignees[k]) assignees[k] = team.filter((m) => onDeskFor(m, r.dept, r.client_id)).map((m) => ({ id: m.id, name: m.name })); }
+    }
+    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {}, hold_reasons: TAT_HOLD_REASONS, assignees };
   },
   /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
   /* The Payment posting / Submission dashboard: what came in, what was done and how fast, by client, person and day. */
@@ -6813,33 +6893,41 @@ const OPS = {
     }
     if (payload.client_id) { w.push("h.client_id = ?"); a.push(str(payload.client_id, 60)); }
     const W = w.join(" AND ");
-    const done = "h.status IN ('complete','assistance','rejected','back')";
-    const tot = await one(env, `SELECT SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
-        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
+    // What the desk received and finished is its own work: Payment posting, Submission and Rejections tasks. The recheck after a
+    // submission is the same claim again (did the payer accept it?), not a second claim received and submitted, as in the month's
+    // Submission TAT %. It still counts under Open now, Needs you now and the rejections by code.
+    const work = "h.dept <> 'subcheck'";
+    // Open now and past the TAT, by one rule in the card, By client, By person and Needs you now (the desk list's rule): still with
+    // the desk, waiting on the client included (the clock keeps running); past the TAT only when not on hold (Can't close yet).
+    const openNow = "h.status IN ('pending','assigned','client')";
+    const held = `EXISTS (SELECT 1 FROM tat_holds th WHERE th.kind = 'handoff' AND th.ref_id = h.id AND th.cleared_at IS NULL AND th.until >= '${istISO(now)}')`;
+    const done = `${work} AND h.status IN ('complete','assistance','rejected','back')`;
+    const tot = await one(env, `SELECT SUM(CASE WHEN ${work} AND h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
+        SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
-        SUM(CASE WHEN h.status = 'assistance' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
-        AVG(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
-        SUM(CASE WHEN h.status IN ('pending','assigned','client') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned','client') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now,
+        SUM(CASE WHEN h.status IN ('assistance','back') AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS assist, SUM(CASE WHEN h.status = 'rejected' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS rejected,
+        AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours,
+        SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN ${openNow} AND h.due_at < ? AND NOT ${held} THEN 1 ELSE 0 END) AS overdue_now,
         SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN c.balance ELSE 0 END) AS amount,
         SUM(CASE WHEN h.status = 'client' THEN 1 ELSE 0 END) AS client_now, SUM(CASE WHEN h.status = 'back' AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS back
       FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE ${W}`, from, to, from, to, from, to, from, to, from, to, from, to, now, from, to, from, to, ...a);
-    const byClient = await all(env, `SELECT cl.name AS client_name, SUM(CASE WHEN h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
-        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
+    const byClient = await all(env, `SELECT cl.name AS client_name, SUM(CASE WHEN ${work} AND h.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS received,
+        SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
-        SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN h.status IN ('pending','assigned') AND h.due_at < ? THEN 1 ELSE 0 END) AS overdue_now
+        SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN ${openNow} AND h.due_at < ? AND NOT ${held} THEN 1 ELSE 0 END) AS overdue_now
       FROM handoffs h LEFT JOIN clients cl ON cl.id = h.client_id WHERE ${W} GROUP BY h.client_id ORDER BY overdue_now DESC, open_now DESC, cl.name`, from, to, from, to, from, to, now, ...a);
     const byPerson = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done,
-        SUM(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN h.status IN ('pending','assigned') THEN 1 ELSE 0 END) AS open_now,
-        AVG(CASE WHEN h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
-      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
+        SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now,
+        AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
+      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
     // time to complete in working hours, as the TAT counts (a task sent Friday 18:00 and done Monday 10:00 took 16, not 64)
     const comp = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, CASE WHEN h.dept = 'subcheck' AND h.available_at IS NOT NULL THEN h.available_at ELSE h.created_at END AS st, h.done_at
-      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? LIMIT 20000`, ...a, from, to);
+      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? LIMIT 20000`, ...a, from, to);
     const whAvg = (xs) => (xs.length ? Math.round(xs.reduce((t, x) => t + workingHoursBetween(x.st, x.done_at), 0) / xs.length * 10) / 10 : null);
     if (tot) tot.avg_hours = whAvg(comp);
     for (const p of byPerson) p.avg_hours = whAvg(comp.filter((x) => x.name === p.name));
-    const ev = await all(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?) LIMIT 20000`, ...a, from, to, from, to);
+    const ev = await all(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND ${work} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?) LIMIT 20000`, ...a, from, to, from, to);
     const day = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10);
     const days = {};
     for (const e of ev) {
@@ -6848,11 +6936,12 @@ const OPS = {
     }
     // For the department's team lead: what needs them now (past or near the TAT, chase the client, claims returned 3+ times).
     const soonCut = addWorkingHours(now, DUE_SOON_HOURS);
-    const attention = (await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.due_at, h.chase_at, h.available_at, c.claim_no, c.patient, cl.name AS client_name,
+    const attention = (await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.due_at, h.chase_at, h.available_at, c.claim_no, c.patient, cl.name AS client_name, ${held} AS held,
         COALESCE(a.name, l.name) AS who, (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN users a ON a.id = h.assigned_to LEFT JOIN users l ON l.id = h.lead_id
       WHERE ${W} AND h.status IN ('pending','assigned','client') AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?) ORDER BY h.due_at LIMIT 300`, ...a, now))
-      .map((x) => ({ ...x, why: x.due_at < now ? "past" : x.status === "client" && x.chase_at && x.chase_at <= now ? "chase" : x.returns >= BOUNCE_LIMIT ? "bounced" : x.due_at <= soonCut ? "soon" : "" }))
+      // one on hold is not past (or near) the TAT until its expected date; it is still listed when the client must be chased or it keeps coming back
+      .map((x) => ({ ...x, held: !!x.held, why: x.due_at < now && !x.held ? "past" : x.status === "client" && x.chase_at && x.chase_at <= now ? "chase" : x.returns >= BOUNCE_LIMIT ? "bounced" : x.due_at <= soonCut && !x.held ? "soon" : "" }))
       .filter((x) => x.why).slice(0, 60);
     // Why claims came back to AR, by reason and by the biller who sent them.
     const backReasons = await all(env, `SELECT h.reason, COUNT(*) AS n FROM handoffs h WHERE ${W} AND h.status IN ('back','assistance') AND h.done_at BETWEEN ? AND ? GROUP BY h.reason ORDER BY n DESC`, ...a, from, to);
@@ -6899,6 +6988,10 @@ const OPS = {
     if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id)) throw denied("Only the department lead or backup assigns these.");
     const to = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", payload.user_id);
     if (!to) throw bad("Pick an active team member.");
+    // Being given a hand-off opens its claim to that person and lets them close it: only someone of this desk who can work the
+    // claim's client (the list the tab offers), the hand-off's own lead or backup, or the person assigning it (to themselves).
+    if (!(to.id === user.id || to.id === h.lead_id || to.id === h.backup_id || (await deskTeam(env)).some((m) => m.id === to.id && onDeskFor(m, h.dept, h.client_id))))
+      throw bad(`${to.name} cannot be given this hand-off: pick someone on ${DESK_NAME[h.dept === "posting" ? "posting" : "submission"]} who works this client.`);
     const now = Date.now();
     await env.DB.batch([
       env.DB.prepare("UPDATE handoffs SET status = 'assigned', assigned_to = ?, assigned_at = ? WHERE id = ?").bind(to.id, now, h.id),
@@ -6921,19 +7014,35 @@ const OPS = {
       const ok = recheck && (isRecheckBiller(user, h, c) || (cl0 && [cl0.submission_lead, cl0.submission_backup, cl0.rejection_lead, cl0.rejection_backup].includes(user.id)) || leadFor(user, h.client_id));
       if (!ok) throw denied("This hand-off is not yours.");
     }
+    // The page says where the hand-off stood when the person chose (seen). If someone else has since moved it between the desk and
+    // waiting on the client, the choice was made on an old screen: it is refused, so the first of two different choices wins.
+    const seen = str(payload.seen, 20), side = (st) => (st === "client" ? "client" : "desk");
+    if (["pending", "assigned", "client"].includes(seen) && side(seen) !== side(h.status))
+      throw new ApiError(409, "This hand-off has changed since you opened it: " + (h.status === "client" ? "it is waiting on the client now" : "the client has answered and it is back on the desk") + ". See where it stands, then choose again.");
+    // The recheck after a submission opens after the client's recheck time (48 working hours unless set lower): the point is to
+    // check once the payer has had that time, so nothing is marked on it before then.
+    if (h.dept === "subcheck" && h.available_at && Date.now() < h.available_at) {
+      const o = istDate(h.available_at), p2 = (x) => String(x).padStart(2, "0");
+      throw bad(`This recheck opens ${MONTHS_LONG[o.getUTCMonth()]} ${o.getUTCDate()}, ${p2(o.getUTCHours())}:${p2(o.getUTCMinutes())} IST, when the payer has had time to show the claim. Mark it then.`);
+    }
     const pfx = HO_PREFIX[h.dept] || h.dept;
     // The four choices: completed, pending (still working, with a comment), need assistance from AR, need assistance from client.
     // ("assistance" is the older name for assistance from AR.)
     const outcome = payload.outcome === "assistance" ? "back" : payload.outcome;
+    // A claim already closed (Posting posted it, AR or the team lead closed it) or excluded stays as it is: a desk step on it
+    // afterwards (a recheck, a Rejections task) is kept on the hand-off and in the history, and never opens the claim again or
+    // lifts the read-only lock of a claim Posting closed.
+    const KEEP = " AND state NOT IN ('closed','excluded')", kept = c.state === "closed" || c.state === "excluded";
     // Back to AR: on the biller's desk today (or the pool when nobody has it).
-    const backToAr = (status, extra = "") => env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','closed','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,
-        state_reason = '', follow_up_on = ?, skipped_at = NULL, first_up = 1${extra}, updated_at = ? WHERE id = ?`);
+    const backToAr = (status, extra = "") => env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,
+        state_reason = '', follow_up_on = ?, skipped_at = NULL, first_up = 1${extra}, updated_at = ? WHERE id = ?${KEEP}`);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const note = str(payload.note, 2000).trim();
     const stmts = [];
-    // The status change runs first and only while the hand-off is still open, so two closes at once cannot both go through.
-    const HO_OPEN = "('pending','assigned','client')";
-    let guard = null;
+    // The status change runs first, and only while the hand-off still stands as this request found it (on the desk, or waiting
+    // on the client), so two choices at once cannot both go through: the first one wins, whatever the two choices are.
+    const STILL = h.status === "client" ? "status = 'client'" : "status IN ('pending','assigned')";
+    let guard = null, listed = false;
     if (outcome === "complete") {
       const p = payload.proof || {};
       // amounts: optional, a number when given (Paid is the "amount posted" the reports add up)
@@ -6965,7 +7074,7 @@ const OPS = {
       if (h.dept === "rejection") { proof.code = str(p.code, 80).trim(); if (!REJECT_CODES.includes(proof.code)) throw bad("Pick what was wrong with the claim (the rejection code)."); }
       if (h.dept === "subcheck" && !proof.date) throw bad("Enter the date the payer accepted it.");
       if (h.dept !== "subcheck" && (!proof.date || !proof.ref)) throw bad(h.dept === "posting" ? "Enter the posted date and the check / EFT number." : "Enter the submitted date and the batch or claim ID.");
-      guard = env.DB.prepare(`UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, JSON.stringify(proof), note, h.id);
+      guard = env.DB.prepare(`UPDATE handoffs SET status = 'complete', done_at = ?, done_by = ?, done_by_name = ?, proof_json = ?, note = ? WHERE id = ? AND ${STILL}`).bind(now, user.id, user.name, JSON.stringify(proof), note, h.id);
       if (h.dept === "posting") {
         // Payment posted: the work is done, so the claim closes for AR (posting QA audits it later).
         stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'posted', last_effective = CASE WHEN state IN ('in_process','closed') THEN 'Posting Closed' ELSE last_effective END, last_bucket = CASE WHEN state IN ('in_process','closed') THEN 'Closed' ELSE last_bucket END, state = CASE WHEN state = 'in_process' THEN 'closed' ELSE state END, state_reason = CASE WHEN state = 'in_process' THEN 'Payment posted' ELSE state_reason END, updated_at = ? WHERE id = ?").bind(now, c.id));
@@ -6973,7 +7082,12 @@ const OPS = {
         // Submitted: back to the biller with a 15-day follow-up, and always a check after 48 working hours (accepted, or rejected?):
         // the follow-up person set on the client, the biller when the client says so, otherwise whoever submitted it.
         const fu = workingDayOnOrAfter(addDays(today, 15));
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN 'completed' ELSE state END, state_reason = '', updated_at = ? WHERE id = ?`).bind(fu, now, c.id));
+        // A team lead's review gave the claim to a biller while this desk had it ("comes to your list when they finish"):
+        // it goes on that biller's list now instead of waiting for the 15-day follow-up.
+        listed = c.state === IN_PROCESS && !!c.assigned_to && !!(await one(env, "SELECT 1 AS x FROM claim_events WHERE claim_id = ? AND kind = 'review_to_biller' AND at >= ? LIMIT 1", c.id, h.created_at));
+        // a claim Posting closed meanwhile (a rejected recheck sent it here) keeps its Posting Closed status and read-only lock
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN ? ELSE state END, state_reason = '', first_up = CASE WHEN ? = 1 THEN 1 ELSE first_up END, updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`)
+          .bind(listed ? today : fu, listed ? "assigned" : "completed", listed ? 1 : 0, now, c.id));
         const cl = await one(env, "SELECT submission_check_mode, submission_check_person, submission_tat_hours, subcheck_hours FROM clients WHERE id = ?", h.client_id);
         // "The biller" is the AR biller of the claim (biller_id): on a Rejections hand-off created_by is whoever rejected the last recheck.
         const checker = cl && cl.submission_check_mode === "person" && cl.submission_check_person ? await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", cl.submission_check_person) : null;
@@ -6989,13 +7103,13 @@ const OPS = {
         // Submission follow-up: accepted by the payer, the final check is done.
         stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = 'submission_accepted', updated_at = ? WHERE id = ?").bind(now, c.id));
       }
-      stmts.push(claimEvent(env, c.id, user, "handoff_done", DEPT_LABEL[h.dept], { dept: h.dept, proof, note, within_tat: now <= h.due_at }));
+      stmts.push(claimEvent(env, c.id, user, "handoff_done", DEPT_LABEL[h.dept], { dept: h.dept, proof, note, within_tat: now <= h.due_at, ...(listed ? { listed: true } : {}) }));
     } else if (outcome === "rejected" && h.dept === "subcheck") {
       // Rejected: straight back to the Submission team to resubmit, with the reason.
       const reason = str(payload.reason, 80).trim();
       if (!reason) throw bad("Pick the rejection reason.");
       if (!commentOk(note)) throw bad("Write what was rejected and why, a few words at least.");
-      guard = env.DB.prepare(`UPDATE handoffs SET status = 'rejected', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, reason, note, h.id);
+      guard = env.DB.prepare(`UPDATE handoffs SET status = 'rejected', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND ${STILL}`).bind(now, user.id, user.name, reason, note, h.id);
       const cl = await one(env, "SELECT submission_mode, submission_lead, submission_backup, rejection_mode, rejection_lead, rejection_backup, submission_tat_hours FROM clients WHERE id = ?", h.client_id);
       // The Rejections person first (their top priority), otherwise the Submission team.
       const rej = await deskPeople(env, cl, "rejection"), sub = await deskPeople(env, cl, "submission");
@@ -7018,20 +7132,21 @@ const OPS = {
       if (!reason) throw bad("Pick what is needed from AR.");
       if (!commentOk(note)) throw bad("Write what AR should do, a few words at least.");
       const returns = await returnsOf(env, c.id) + 1;
-      const bounced = returns >= BOUNCE_LIMIT;
+      // (a claim that stays closed is not escalated either: nothing comes back to AR)
+      const bounced = returns >= BOUNCE_LIMIT && !kept;
       const text = `${DEPT_LABEL[h.dept]} needs assistance from AR (${reason}): ${note}` + (bounced ? ` [returned ${returns} times: for both team leads to review]` : "");
-      guard = env.DB.prepare(`UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND status IN ${HO_OPEN}`).bind(now, user.id, user.name, reason, note, h.id);
+      guard = env.DB.prepare(`UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND ${STILL}`).bind(now, user.id, user.name, reason, note, h.id);
       // The third return goes to the AR team lead's Needs attention as well (the department lead sees it on their dashboard).
       stmts.push(bounced
         // "Sent by" for the team lead's review is the AR biller of the claim, not the department person who returned it.
         ? backToAr(pfx + "_back", ", last_note = ?, escalated = 1, escalated_at = ?, escalated_by = ?").bind(pfx + "_back", today, text.slice(0, 600), now, h.biller_id || c.assigned_to || c.last_worked_by || h.created_by || null, now, c.id)
         : backToAr(pfx + "_back", ", last_note = ?").bind(pfx + "_back", today, text.slice(0, 600), now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
-      stmts.push(claimEvent(env, c.id, user, "handoff_back", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at, returns, bounced }));
+      stmts.push(claimEvent(env, c.id, user, "handoff_back", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at, returns, bounced, ...(kept ? { kept: c.state } : {}) }));
     } else if (outcome === "pending") {
       // Pending: still with the department, a comment on where it stands; the 24-hour TAT keeps running.
       if (!commentOk(note)) throw bad("Write where it stands, a few words at least.");
-      stmts.push(env.DB.prepare("UPDATE handoffs SET note = ?, pending_at = ?, pending_by_name = ?, desk_state = 'pending' WHERE id = ?").bind(note, now, user.name, h.id));
+      guard = env.DB.prepare(`UPDATE handoffs SET note = ?, pending_at = ?, pending_by_name = ?, desk_state = 'pending' WHERE id = ? AND ${STILL}`).bind(note, now, user.name, h.id);
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]} · pending: ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_pending", DEPT_LABEL[h.dept], { dept: h.dept, note }));
     } else if (outcome === "inprocess" || outcome === "other") {
@@ -7040,7 +7155,7 @@ const OPS = {
       if (outcome === "other" && reason.length < 3) throw bad("Write the reason for Other.");
       if (outcome === "other" && !commentOk(note)) throw bad("Write a comment on where it stands, a few words at least.");
       const label = outcome === "other" ? "Other: " + reason : "In process";
-      stmts.push(env.DB.prepare("UPDATE handoffs SET note = ?, reason = ?, pending_at = ?, pending_by_name = ?, desk_state = ? WHERE id = ?").bind(note, reason || h.reason || "", now, user.name, outcome === "other" ? "other" : "in_process", h.id));
+      guard = env.DB.prepare(`UPDATE handoffs SET note = ?, reason = ?, pending_at = ?, pending_by_name = ?, desk_state = ? WHERE id = ? AND ${STILL}`).bind(note, reason || h.reason || "", now, user.name, outcome === "other" ? "other" : "in_process", h.id);
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]} · ${label}${note ? ": " + note : ""}`, now));
       stmts.push(claimEvent(env, c.id, user, outcome === "other" ? "handoff_other" : "handoff_inprocess", DEPT_LABEL[h.dept], { dept: h.dept, reason, note }));
     } else if (outcome === "client") {
@@ -7051,10 +7166,12 @@ const OPS = {
       if (!commentOk(note)) throw bad("Write what was asked of the client, a few words at least.");
       const text = `${DEPT_LABEL[h.dept]} needs client assistance (${reason}): ${note}`;
       // It goes to the AR team lead's Client requests to send; the claim comes back as "Chase the client" 3 working days after the
-      // team lead sends it (attention.clientSent starts that clock: a request nobody sent is not chased).
+      // team lead sends it (attention.clientSent starts that clock: a request nobody sent is not chased). Asking again on the same
+      // hand-off starts a new round: the earlier round's sent and answered times are cleared, so the new request is never counted
+      // as sent or answered (met on the month's TAT) by the old ones.
       guard = env.DB.prepare(`UPDATE handoffs SET status = 'client', reason = ?, note = ?, paused_at = ?, client_req_by_name = ?, chase_at = NULL,
-          client_sent_at = NULL, client_sent_by = NULL, client_sent_by_name = '', client_sent_how = '', client_sent_note = '' WHERE id = ? AND status IN ('pending','assigned')`).bind(reason, note, now, user.name, h.id);
-      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, last_bucket = 'Client', updated_at = ? WHERE id = ?").bind(pfx + "_client", "Waiting on client (" + DEPT_LABEL[h.dept] + ")", now, c.id));
+          client_sent_at = NULL, client_sent_by = NULL, client_sent_by_name = '', client_sent_how = '', client_sent_note = '', client_answered_at = NULL WHERE id = ? AND status IN ('pending','assigned')`).bind(reason, note, now, user.name, h.id);
+      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, last_bucket = 'Client', updated_at = ? WHERE id = ?" + KEEP).bind(pfx + "_client", "Waiting on client (" + DEPT_LABEL[h.dept] + ")", now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_client", DEPT_LABEL[h.dept], { dept: h.dept, reason, note }));
     } else if (outcome === "resume") {
@@ -7062,7 +7179,7 @@ const OPS = {
       if (h.status !== "client") throw bad("Only a claim waiting on the client can be resumed.");
       const due = h.due_at;
       guard = env.DB.prepare("UPDATE handoffs SET status = CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'pending' END, chase_at = NULL, client_answered_at = ?, note = ? WHERE id = ? AND status = 'client'").bind(now, note || h.note || "", h.id);
-      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, updated_at = ? WHERE id = ?").bind("with_" + (h.dept === "subcheck" ? "submission" : h.dept), "With " + DEPT_LABEL[h.dept], now, c.id));
+      stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, updated_at = ? WHERE id = ?" + KEEP).bind("with_" + (h.dept === "subcheck" ? "submission" : h.dept), "With " + DEPT_LABEL[h.dept], now, c.id));
       if (note) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `${DEPT_LABEL[h.dept]}: client answered. ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_resume", DEPT_LABEL[h.dept], { dept: h.dept, note, due_at: due }));
     } else throw bad("Pick what happened: completed, in process, pending, need assistance from AR, need assistance from client or other.");
@@ -7071,21 +7188,27 @@ const OPS = {
     const sentBy = h.biller_id || h.created_by;
     const billerId = sentBy && sentBy !== user.id ? sentBy : null;
     const tellBiller = { complete: h.dept === "posting" ? "posted" : h.dept === "subcheck" ? "confirmed the payer accepted" : "submitted", back: "sent back to you", client: "is waiting on the client for" }[outcome];
-    if (billerId && tellBiller && h.dept !== "subcheck") {
+    // a claim that stays closed is not sent back to anyone's list, so nobody is told it is
+    if (billerId && tellBiller && h.dept !== "subcheck" && !(outcome === "back" && kept)) {
       const cno = c.claim_no || c.account_no || "a claim";
-      const text = outcome === "complete" ? `${user.name} ${tellBiller} claim ${cno} (${DEPT_LABEL[h.dept]} complete)`
+      const text = outcome === "complete" ? `${user.name} ${tellBiller} claim ${cno} (${DEPT_LABEL[h.dept]} complete)` + (listed ? ". It is first on your list now." : "")
         : outcome === "back" ? `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${cno} back to you (${str(payload.reason, 80).trim()})`
         : `${DEPT_LABEL[h.dept]}: claim ${cno} is waiting on the client (${str(payload.reason, 80).trim()})`;
-      stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), billerId, now, text.slice(0, 300), outcome === "back" ? "queue" : "history", h.client_id));
+      stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), billerId, now, text.slice(0, 300), outcome === "back" || listed ? "queue" : "history", h.client_id));
     }
     // Sent back to AR: the biller whose list it is on hears too (when that is someone else), and it is first on their list.
-    if (outcome === "back" && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
+    if (outcome === "back" && !kept && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), c.assigned_to, now,
         `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${c.claim_no || c.account_no || ""} back to AR (${str(payload.reason, 80).trim()}). It is first on your list.`.slice(0, 300), "queue", h.client_id));
-    if (guard && !changesOf(await guard.run())) throw bad(outcome === "resume" ? "Only a claim waiting on the client can be resumed." : outcome === "client" ? "It is already waiting on the client, or the hand-off is closed." : "This hand-off is already closed.");
+    if (guard && !changesOf(await guard.run())) {
+      const cur = await one(env, "SELECT status FROM handoffs WHERE id = ?", h.id);
+      throw bad(outcome === "resume" ? "Only a claim waiting on the client can be resumed." : outcome === "client" ? "It is already waiting on the client, or the hand-off is closed."
+        : cur && ["pending", "assigned", "client"].includes(cur.status) ? "Someone else changed this hand-off at the same moment. Open it again to see where it stands." : "This hand-off is already closed.");
+    }
     await env.DB.batch(stmts);
     if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id, outcome); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
-    return { ok: true };
+    // listed: the claim went on a biller's list now (a team lead's review gave it to them while the desk had it)
+    return { ok: true, ...(listed ? { listed: true } : {}) };
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
@@ -7708,7 +7831,8 @@ const OPS = {
     const from = c.escalated ? await one(env, "SELECT name FROM users WHERE id = ?", c.escalated_by) : null;
     const sentBack = c.escalated ? null : await one(env, "SELECT dept, done_by_name, done_at, reason FROM handoffs WHERE claim_id = ? AND status IN ('back','assistance') ORDER BY done_at DESC LIMIT 1", c.id);
     // Only what is in Needs attention: an escalation, or a claim a department sent back that nobody has reviewed since.
-    if (!c.escalated && !(sentBack && !(c.reviewed_at && c.reviewed_at > sentBack.done_at))) throw bad("This claim is not waiting for a review: it was not escalated or sent back by a department.");
+    if (!c.escalated && sentBack && c.reviewed_at && c.reviewed_at > sentBack.done_at) throw bad(`This claim was already reviewed${c.reviewed_by_name ? " by " + c.reviewed_by_name : ""} after it was sent back. It stays under Sent back until a biller saves an entry on it.`);
+    if (!c.escalated && !sentBack) throw bad("This claim is not waiting for a review: it was not escalated or sent back by a department.");
     const origin = c.escalated ? { by: from ? from.name : "", at: c.escalated_at, how: "escalated" } : sentBack ? { by: sentBack.done_by_name, at: sentBack.done_at, how: "sent back by " + DEPT_LABEL[sentBack.dept], reason: sentBack.reason } : {};
     const stmts = [env.DB.prepare("UPDATE claims SET escalated = 0, escalation_answered_at = ?, escalation_answered_by = ?, reviewed_at = ?, reviewed_by_name = ?, updated_at = ? WHERE id = ?").bind(now, user.id, now, user.name, now, c.id)];
     let to = "", waits = "", reopened = false;
@@ -7757,7 +7881,12 @@ const OPS = {
       const atDesk = c.state === IN_PROCESS ? await one(env, "SELECT dept FROM handoffs WHERE claim_id = ? AND dept <> 'subcheck' AND status IN ('pending','assigned','client') ORDER BY created_at DESC LIMIT 1", c.id) : null;
       if (atDesk) {
         stmts.push(env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = CASE WHEN assigned_to = ? THEN assigned_at ELSE ? END, skipped_at = NULL WHERE id = ?").bind(b.id, b.id, now, c.id));
-        stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), b.id, now, `${user.name} reviewed claim ${cno} and gave it to you. It is with ${DEPT_LABEL[atDesk.dept]} now and comes to your list when they finish. Next action: ${next}`.slice(0, 300), "queue", c.client_id));
+        // the open hand-offs follow this biller: the desk's notices and the recheck after a submission go to them, and when
+        // Submission or Rejections finish the claim goes on their list (handoffs.close looks for this review)
+        stmts.push(env.DB.prepare("UPDATE handoffs SET biller_id = ? WHERE claim_id = ? AND status IN ('pending','assigned','client')").bind(b.id, c.id));
+        const then = atDesk.dept === "posting" ? "It is with Payment Posting now, which closes it once the payment is posted (if they send it back, it is first on your list)."
+          : `It is with ${DEPT_LABEL[atDesk.dept]} now and comes to your list when they finish.`;
+        stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), b.id, now, `${user.name} reviewed claim ${cno} and gave it to you. ${then} Next action: ${next}`.slice(0, 300), "queue", c.client_id));
       } else {
         // A closed claim the team lead sends to a biller is opened again: it is first on their list, as the notice says.
         stmts.push(env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = CASE WHEN assigned_to = ? THEN assigned_at ELSE ? END,
@@ -7958,12 +8087,13 @@ async function claimBundle(env, user, c, opts = {}) {
   let raw = {}; try { raw = JSON.parse(c.raw_json || "{}"); } catch {}
   const { raw_json, lines_json, ...rest } = c;
   const now = Date.now();
-  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), editable: !locked && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
+  const edNames = await namesOf(env, notes.map((n) => n.edited_by));
+  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), edited_by_name: (n.edited_by && edNames.get(n.edited_by)) || "", editable: !locked && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
   const handoffs = await all(env, `SELECT h.*, l.name AS lead_name, b.name AS backup_name, a.name AS assigned_name FROM handoffs h LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
       LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
   const role = await handoffRole(env, user, c.id);
   const limits = payerKey(c.payer) ? await one(env, "SELECT tfl_days, afl_days, note, updated_at, updated_by_name FROM payer_limits WHERE client_id = ? AND payer_key = ?", c.client_id, payerKey(c.payer)) : null;
-  const attachments = files.map((a) => ({ ...a, deletable: leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS) }));
+  const attachments = files.map((a) => ({ ...a, deletable: !locked && (leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS)) }));
   // whether this client has an active Posting / Submission / Rejections person (the same rule as queue.complete): a claim sent
   // there leaves AR with no follow-up date until the desk is done
   const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")}, subcheck_hours FROM clients WHERE id = ?`, c.client_id);

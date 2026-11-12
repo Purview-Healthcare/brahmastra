@@ -493,6 +493,9 @@ locations): Need to Post / Posting Correction to Payment Posting; resubmissions 
 paper claims to Submission; a **Claim Rejected** entry, or a rejected recheck, to the
 client's **Rejections** person first (top of their list), else Submission. While it is
 there the claim is **In process** for AR (own dashboard card, off the biller's list).
+A team lead can close, exclude or reopen it once the desk finishes it or sends it back
+to AR, not while the desk still has it; and a claim that is closed or excluded is never
+opened again by a later desk step (a recheck marked Need assistance, for example).
 
 **Purview's workflow in the SAAG entry.** These actions set the effective status and the bucket
 themselves (the bucket is locked on the work form, with a "Workflow:" hint):
@@ -537,6 +540,10 @@ sends it back to the biller with a 15-day follow-up and always opens a **recheck
 whoever submitted:
 **Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
 
+**Assigning within the desk.** The lead or backup of a hand-off can give it to a person of the same desk (Payment
+posting; Submission for submissions, rejections and rechecks) who works that client. The list offers only those
+people, and the server refuses anyone else, since the person given a hand-off can open its claim and close it.
+
 **Filters.** Every lead and team member on Payment posting and Submission can narrow the list to one **client**
 and to the dates the claims were **sent to the desk** (All time, Today, This week, This month, Custom). The sent
 date is the day the AR biller saved the entry that sent the claim, so the same filter answers "what AR sent on
@@ -554,14 +561,17 @@ assistance from client, and Other (with a reason and a comment). In process, Pen
 on the desk; the TAT keeps running.
 
 **Recheck by the biller.** After Submission or Rejections resubmits a claim, the biller who worked it sees it on My
-day under **Resubmitted · recheck** with the time left on the TAT, and can mark it **Accepted** or **Rejected again**,
+day under **Resubmitted · recheck** with the time left on the TAT, and can mark it **Accepted** or **Rejected again**
+once it opens (the client's recheck time after submitting; until then the row says when),
 as can the recheck person, the Submission and Rejections people and the client's AR team leads. Rejected again goes
 straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT.
 
 **Supervisor review in Needs attention.** Each escalation (and each claim a department sent back) has **Review**:
 four notes (why it came, what was reviewed, the findings, the next action) go on the claim's timeline only (who escalated it and when, who reviewed it, where it went; the claim's notes and work stay as they were), and the claim
 goes to the biller who sent it, another biller (first on their list, with a notice), or back to the department that
-sent it (with the client's TAT).
+sent it (with the client's TAT). A claim still with a desk stays there: when Submission or Rejections finish it, it
+goes on that biller's list, first (Payment posting closes it instead), and the desk's notices and the recheck go to
+that biller.
 
 **Sent back to AR.** Need assistance from AR goes straight to the biller, first on their list with a notice, and also lands in the client's AR team leads' (and managers') **Needs attention →
 Sent back by Posting / Submission**: when, who sent it, the department, the reason and comment, the biller, and how many
@@ -675,7 +685,9 @@ their Open list as **Chase the client**.
 bar on every screen. A claim returned to AR 3 times is escalated to the AR team lead and listed for the
 department lead. Department dashboards show **Needs you now**, **why claims needed AR's help** (by reason and
 biller) and, for Submission, **rejections by code** (by code, client and biller). Rejected rechecks and
-resubmitted rejections carry a rejection code.
+resubmitted rejections carry a rejection code. Received, Submitted, Within TAT and the average count the desk's own
+tasks; the recheck after a submission is the same claim again, so it is not a second claim received and submitted
+(it still shows under Open now and Needs you now).
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once). Active AR agents on a project become
   that client's billers.
@@ -864,6 +876,11 @@ gets a link anyone at Purview can open, and supervisors see every path, this mon
 written on the client card (billers do not). If OneDrive refuses a write, the client's AR person and team leads
 get a bell notice and an email (once a day), and the card says why; the entry itself is always saved in Brahmastra.
 Older workbook links on clients and locations are no longer used.
+
+Typed text stays text in every Excel file Brahmastra writes (the Production files, the Escalation tracker and its
+SLA copy, the TAT report): a cell that starts with = + - or @ gets a leading apostrophe, which Excel hides, so a
+comment like "-ve balance" is not read as a formula. Numbers, negative amounts too, stay numbers. The CSV downloads
+follow the same rule.
 
 It needs the **Files.ReadWrite.All application permission** on the Microsoft 365 app (already used for the
 sign-in emails). Optional Worker variables: `REPORTS_OWNER` (default `Purviewautomate@purview-healthcare.com`) and
@@ -1073,6 +1090,10 @@ allocation pool when the date arrives.
 
 Entries can be **edited at any time** by their author or a team lead (no time
 limit); another biller cannot edit them, and each edit shows in the claim history.
+Editing a claim's latest entry into Need to Post, a resubmission or a paper claim
+sends the claim to that desk, exactly as saving it that way does. An edit never
+undoes a team lead's Close or Exclude: only a claim its own entry closed opens
+again when that entry is edited into a follow-up.
 
 ### SAAG reference and updates
 

@@ -86,6 +86,8 @@ ok("Arun sees both rechecks, from Submission, with the TAT", rc3 && rc4 && rc3.f
 ok("Bela (another biller) does not", !(await BE("handoffs.myRechecks", {})).rows.some((x) => x.claim_id === c3.id));
 r = await T(() => BE("handoffs.close", { id: rc3.id, outcome: "complete", proof: { date: "2026-11-05" } }));
 ok("and cannot mark it", !r.ok && r.status === 403, r);
+// the rechecks can be marked once they have opened (48 working hours after submitting): move their opening into the past
+await sql("UPDATE handoffs SET available_at = ? WHERE id IN (?, ?)", Date.now() - 60000, rc3.id, rc4.id);
 r = await T(() => AR("handoffs.close", { id: rc4.id, outcome: "complete", proof: { date: "2026-11-05", ref: "" } }));
 ok("Arun marks one accepted", r.ok && (await row("SELECT handoff_status FROM claims WHERE id = ?", c4.id)).handoff_status === "submission_accepted", r);
 r = await T(() => AR("handoffs.close", { id: rc3.id, outcome: "rejected", reason: "CPT or modifier invalid", note: "Payer rejected the modifier again" }));
