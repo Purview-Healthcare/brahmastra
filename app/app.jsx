@@ -7799,10 +7799,15 @@ function crDonut(o) {
   return s + `</div></div>`;
 }
 function crItemTable(o) {
-  const { items, measureLabel = "Claims", fmtV = crF.num, secondary = null, dimLabel = "Category", dim } = o, total = crSum(items, (x) => x.value);
+  const { items, measureLabel = "Claims", fmtV = crF.num, secondary = null, dimLabel = "Category", dim } = o;
+  // a table is the exact view of its chart: money with its cents, and the Total row the sum of the rows as shown (whole dollars rounded
+  // row by row did not add up to a total rounded on its own)
+  const col = (f) => (f === crF.money || f === crF.moneyK ? { f: (v) => crF.money(v, 2), r: (v) => Math.round((Number(v) || 0) * 100) / 100 } : { f, r: (v) => v });
+  const c1 = col(fmtV), c2 = secondary ? col(secondary.fmt) : null;
+  const total = crSum(items, (x) => c1.r(x.value)), total2 = secondary ? crSum(items, (x) => c2.r(x[secondary.key])) : 0;
   let s = `<div class="crc-tbl"><table><thead><tr><th>${crEsc(dimLabel)}</th><th class="n">${crEsc(measureLabel)}</th>${secondary ? `<th class="n">${crEsc(secondary.label)}</th>` : ""}<th class="n">Share</th></tr></thead><tbody>`;
-  for (const x of items) s += `<tr ${x.isOther ? "" : crAct(dim, x.key)} class="${x.dim ? "dimrow" : ""}"><td>${crEsc(x.label)}</td><td class="n">${crEsc(fmtV(x.value))}</td>${secondary ? `<td class="n">${crEsc(secondary.fmt(x[secondary.key]))}</td>` : ""}<td class="n">${crEsc(crF.pct(total ? x.value / total : 0, 1))}</td></tr>`;
-  return s + `<tr class="total"><td>Total</td><td class="n">${crEsc(fmtV(total))}</td>${secondary ? `<td class="n">${crEsc(secondary.fmt(crSum(items, (x) => x[secondary.key])))}</td>` : ""}<td class="n">100%</td></tr></tbody></table></div>`;
+  for (const x of items) s += `<tr ${x.isOther ? "" : crAct(dim, x.key)} class="${x.dim ? "dimrow" : ""}"><td>${crEsc(x.label)}</td><td class="n">${crEsc(c1.f(x.value))}</td>${secondary ? `<td class="n">${crEsc(c2.f(x[secondary.key]))}</td>` : ""}<td class="n">${crEsc(crF.pct(total ? x.value / total : 0, 1))}</td></tr>`;
+  return s + `<tr class="total"><td>Total</td><td class="n">${crEsc(c1.f(total))}</td>${secondary ? `<td class="n">${crEsc(c2.f(total2))}</td>` : ""}<td class="n">100%</td></tr></tbody></table></div>`;
 }
 /* the six-month trend on the executive summary: AR at each month end (line) and what was collected (columns) */
 function crTrend6(trend, width, height) {

@@ -218,7 +218,8 @@ the Pareto rule (the reasons that make 80% are highlighted, the long tail folds 
 
 **Interactive, like Power BI.** Hover any bar for its figures; click a bar, a slice or a row to filter the page
 (Shift+click adds to the filter), or use the filter buttons; **Same filters on every page** keeps them when you
-change page. Each chart switches between claims (#) and dollars ($) and can show its table. **Claims behind this
+change page. Each chart switches between claims (#) and dollars ($) and can show its table (amounts with their
+cents, so its Total is the sum of the rows shown). **Claims behind this
 view**, under the page, lists them with search and CSV; click one to open the claim.
 
 **Editing (team leads and up).** Click any title or insight line to change it, remove a line or add your own; fill
