@@ -7090,9 +7090,11 @@ const OPS = {
       if (!commentOk(note)) throw bad("Write what was asked of the client, a few words at least.");
       const text = `${DEPT_LABEL[h.dept]} needs client assistance (${reason}): ${note}`;
       // It goes to the AR team lead's Client requests to send; the claim comes back as "Chase the client" 3 working days after the
-      // team lead sends it (attention.clientSent starts that clock: a request nobody sent is not chased).
+      // team lead sends it (attention.clientSent starts that clock: a request nobody sent is not chased). Asking again on the same
+      // hand-off starts a new round: the earlier round's sent and answered times are cleared, so the new request is never counted
+      // as sent or answered (met on the month's TAT) by the old ones.
       guard = env.DB.prepare(`UPDATE handoffs SET status = 'client', reason = ?, note = ?, paused_at = ?, client_req_by_name = ?, chase_at = NULL,
-          client_sent_at = NULL, client_sent_by = NULL, client_sent_by_name = '', client_sent_how = '', client_sent_note = '' WHERE id = ? AND status IN ('pending','assigned')`).bind(reason, note, now, user.name, h.id);
+          client_sent_at = NULL, client_sent_by = NULL, client_sent_by_name = '', client_sent_how = '', client_sent_note = '', client_answered_at = NULL WHERE id = ? AND status IN ('pending','assigned')`).bind(reason, note, now, user.name, h.id);
       stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state_reason = ?, last_bucket = 'Client', updated_at = ? WHERE id = ?" + KEEP).bind(pfx + "_client", "Waiting on client (" + DEPT_LABEL[h.dept] + ")", now, c.id));
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_client", DEPT_LABEL[h.dept], { dept: h.dept, reason, note }));

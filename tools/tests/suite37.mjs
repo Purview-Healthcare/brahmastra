@@ -742,6 +742,27 @@ await part("B-10: the month's TAT counts tasks not yet due as open", async () =>
   ok("B-10: a window that has ended reads as before (only the task due in it)", pastWeek.due === 1 && pastWeek.met === 1 && pastWeek.open === 0, pastWeek);
 });
 
+await part("B-15: asking the client a second time is never counted as met by the first round's answer", async () => {
+  setNow(IST(2026, 12, 14, 9, 0));
+  const [a] = await give("Cyra Agent", 1, lake);
+  await call(CY, "attachments.add", { claim_id: a, name: "eob.pdf", type: "application/pdf", data: PDF }); await save(CY, a, SAAG.post);
+  const h = await openH(a, "posting");
+  setNow(IST(2026, 12, 14, 10, 0)); await call(LX, "handoffs.close", { id: h.id, outcome: "client", reason: "Need EOB / ERA from the client", note: "Need the EOB copy from the client please" });
+  setNow(IST(2026, 12, 14, 11, 0)); await call(LL0(), "attention.clientSent", { id: h.id, how: "Email" });
+  setNow(IST(2026, 12, 15, 10, 0)); await call(LX, "handoffs.close", { id: h.id, outcome: "resume", note: "The client sent the EOB" });
+  const over = await call(LL0(), "client.overview", { client_id: lake.id }).catch(() => null);
+  setNow(IST(2026, 12, 16, 10, 0)); await call(LX, "handoffs.close", { id: h.id, outcome: "client", reason: "Other", note: "Need the second page of the EOB" });
+  const rec = await row1("SELECT client_sent_at, client_answered_at, paused_at FROM handoffs WHERE id = ?", h.id);
+  ok("B-15: the second request starts a new round: not sent, not answered", rec.client_sent_at == null && rec.client_answered_at == null && Math.abs(rec.paused_at - IST(2026, 12, 16, 10, 0)) < 1000, rec);
+  setNow(IST(2026, 12, 22, 12, 0));   // 4 working days later, never sent
+  const late = (await call(LL0(), "tat.list", {})).late.filter((x) => x.part === "requests" && x.ref_id === h.id);
+  const att = (await call(LL0(), "sla.extras", { client_id: lake.id, from: "2026-12-14", to: "2026-12-31", today: nowIso() })).tat.attention;
+  ok("B-15: Past TAT lists it past 48 working hours, and the month's Needs attention TAT counts it missed, not met", late.length === 1 && att.missed >= 1 && att.met === 0, [late.length, att]);
+  const over2 = await call(LL0(), "client.overview", { client_id: lake.id }).catch(() => null);
+  ok("B-15: the client's average reply time is not thrown off by the second request (no negative time from an old answer to a new ask)", over2 && over2.waiting && (!over2.waiting.reply || over2.waiting.reply.days >= 0), over2 && over2.waiting && over2.waiting.reply);
+  void over;
+});
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
