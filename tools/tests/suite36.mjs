@@ -152,6 +152,13 @@ S("B-11: Live status counts the whole working day, as Team status and My day");
   ok("B-11: at 10:00 the next morning a new working day has begun: 0 worked, nothing expected before her 18:30 shift, not behind", n2.worked === 0 && n2.expected === 0 && !n2.behind, pick(n2, ks));
 }
 
+S("B-12: Live status on a weekday Shastra holiday says it is a holiday, with its name");
+{
+  const hol = await live(TL, D(9), IST(2026, 11, 9, 11)), sat = await live(TL, D(7), IST(2026, 11, 7, 11)), tue = await live(TL, D(10), IST(2026, 11, 10, 11));
+  ok("B-12: Mon Nov 9 (Diwali in Shastra): a holiday named Diwali, no target, nobody expected in", !!hol.holiday && hol.holiday.name === "Diwali" && hol.weekend === true && hol.totals.capacity === 0, { holiday: hol.holiday, weekend: hol.weekend, capacity: hol.totals.capacity });
+  ok("B-12: a Saturday is still the weekend (no holiday), and a working day is neither", sat.weekend === true && !sat.holiday && tue.weekend === false && !tue.holiday, [sat.weekend, sat.holiday, tue.weekend, tue.holiday]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

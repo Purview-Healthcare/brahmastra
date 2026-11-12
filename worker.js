@@ -4077,6 +4077,12 @@ const OPS = {
     const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
     const live = await shastraLive(env);
     const weekdayToday = isWorkDay(today);   // Monday to Friday, not a Shastra holiday
+    // a Shastra holiday on a weekday: nobody is expected in, and the page says which holiday (the weekend says weekend)
+    let holiday = null;
+    if (!weekdayToday && ![0, 6].includes(new Date(today + "T12:00:00Z").getUTCDay())) {
+      const hol = await getSetting(env, "holidays", null), h = hol && Array.isArray(hol.rows) ? hol.rows.find((x) => x && x.date === today) : null;
+      holiday = { name: h && h.name ? str(h.name, 80) : "" };
+    }
     const rows = people.map((u) => {
       // worked and closed today: the person's whole working day (from midnight IST; a night shift's is the day it began, until
       // it is over), as Team status and My day count it; the pace is that day's shift from the roster
@@ -4119,7 +4125,7 @@ const OPS = {
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
     const present = rows.filter((r) => r.status !== "out");
     const add = (k) => rows.reduce((t, r) => t + r[k], 0);
-    return { rows, weekend: !weekdayToday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
+    return { rows, weekend: !weekdayToday, holiday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
       capacity: weekdayToday ? present.reduce((t, r) => t + r.capacity, 0) : 0, in_weekend: weekdayToday ? null : present.filter((r) => !r.off_day).length, carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
       behind: rows.filter((r) => r.behind).length, working: rows.filter((r) => r.status === "working").length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
   },

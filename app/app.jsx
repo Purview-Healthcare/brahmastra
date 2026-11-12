@@ -1833,10 +1833,10 @@ function LiveStatusView({ ctx, me, go, params }) {
       </div>
       <NeedsStrip go={go} />
       {live.data && live.data.rows.length > 0 && <div className="grid dash-k6">
-        <Kpi tone="accent" label="In today" value={(live.data.weekend ? t.in_weekend : t.people - t.out) + " of " + t.people} sub={live.data.weekend ? "weekend, nobody is expected in" : t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
+        <Kpi tone="accent" label="In today" value={(live.data.weekend ? t.in_weekend : t.people - t.out) + " of " + t.people} sub={live.data.holiday ? "holiday" + (live.data.holiday.name ? " (" + live.data.holiday.name + ")" : "") + ", nobody is expected in" : live.data.weekend ? "weekend, nobody is expected in" : t.out ? plural(t.out, "person", "people") + " out" : "everyone in"} />
         <Kpi label="Working now" value={<span className="teal-ink">{fmtInt(t.working)}</span>} sub="a claim open or entries in the last 30 minutes" />
         <Kpi label="Idle now" value={<span className={t.idle ? "red-ink" : ""}>{t.idle}</span>} sub="no entry for 30 minutes" />
-        <Kpi label="Worked today" value={fmtInt(t.worked)} sub={live.data.weekend ? "no target at the weekend" : "of " + fmtInt(t.capacity) + " target"} />
+        <Kpi label="Worked today" value={fmtInt(t.worked)} sub={live.data.holiday ? "no target on a holiday" : live.data.weekend ? "no target at the weekend" : "of " + fmtInt(t.capacity) + " target"} />
         <Kpi label="Closed today" value={<span className="teal-ink">{fmtInt(t.closed)}</span>} sub="worked to closed" tone="good" />
         <Kpi label="Left over" value={<span className={t.carried ? "amber-ink" : ""}>{fmtInt(t.carried)}</span>} sub={t.carried ? <><span className="red-ink b">{fmtInt(t.left_high)} high priority</span> · {fmtInt(t.carried - t.left_high)} other</> : "allocated before this shift, all worked"} />
       </div>}
