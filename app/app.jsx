@@ -3315,23 +3315,28 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
     setBusy(true); setStep(4); setProgress(0);
     try {
       const groups = [];
+      // the client's locations as they are now (one may have been switched off since this page loaded)
+      const locsNow = ((await rpc("clients.list")).clients.find((x) => x.id === client.id) || client).locations || [];
       if (locMode === "file" && mapping.location) {
         // a location is the same whatever its case or extra spaces (as the server tells them apart)
         const m = by(built.claims, (c) => (c.location || "").replace(/\s+/g, " ").trim());
         for (const [name, list] of m) {
-          let loc = null;
+          let loc = null, note = "";
           if (name) {
-            loc = client.locations.find((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase() === name.toLowerCase());
-            if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name }); loc = r.location; }
+            loc = locsNow.find((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase() === name.toLowerCase());
+            // a name the client does not have yet becomes a new location
+            if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name }); loc = r.location; note = "a new location"; }
           }
-          groups.push({ loc, claims: list });
+          groups.push({ loc, claims: list, note });
         }
-      } else groups.push({ loc: client.locations.find((l) => l.id === locId) || null, claims: built.claims });
+      } else groups.push({ loc: locsNow.find((l) => l.id === locId) || null, claims: built.claims, note: "" });
+      // claims never go into a location that is switched off: it is switched on again (as a name it did not know is added), and the result says so
+      for (const g of groups) if (g.loc && !g.loc.active) { const r = await rpc("locations.save", { id: g.loc.id, name: g.loc.name, active: true }); g.loc = { ...g.loc, ...r.location }; g.note = "it was switched off: switched on again"; }
       const results = [];
       let done = 0;
       for (const g of groups) {
         const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, source: file.source || "file", web_url: file.webUrl || "", claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / groups.length) });
-        const row = { ...r, location: g.loc ? g.loc.name : "(no location)", total: g.claims.length, assigned: null };
+        const row = { ...r, location: g.loc ? g.loc.name : "(no location)", note: g.note || "", total: g.claims.length, assigned: null };
         const team = g.loc && g.loc.team && g.loc.team.length ? g.loc.team : (client.team || []);
         const wants = g.loc ? g.loc.auto_allocate !== false : client.auto_allocate !== false;
         if (autoAlloc && wants && team.length) {
@@ -3403,7 +3408,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
             </Field>
           </div>
           {client && client.locations.length > 0 && (
-            <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created)</label>
+            <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created, and a switched-off location named in it is switched on again)</label>
           )}
           {client && locMode !== "file" && (
             <div className="card tight row between">
@@ -3435,7 +3440,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           {progress != null && progress < 1 && <div><div className="bar"><i style={{ width: Math.round(progress * 100) + "%" }} /></div><div className="small muted mt8"><span className="spin" /> Loading claims… {Math.round(progress * 100)}%</div></div>}
           {result && (
             <>
-              <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
+              <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
               {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
             </>

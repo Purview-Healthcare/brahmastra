@@ -526,6 +526,20 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-16: the page opens the setup for Create, and SMEs are not offered it", /canCreate=\{!isSmeUI\(me\)\} onCreate=/.test(src) && /if \(make && onCreate\) onCreate\(make\)/.test(src) && !/create: true/.test(src) && /initialName=\{newFor\}/.test(src));
 }
 
+{
+  // The upload wizard is page code (React) this rig does not render; the page itself is checked in a browser by
+  // fix-E/repro-N-17.js. Here: the server answer the page relies on, and the page's rule.
+  S("N-17: an upload never puts claims into a switched-off location");
+  const w = await world();
+  const west = await w.row("SELECT id, name FROM locations WHERE client_id = ? AND name = 'Westside'", w.sun.id);
+  await w.A("locations.save", { id: west.id, name: west.name, active: false });
+  const on = await w.T(() => w.A("locations.save", { id: west.id, name: west.name, active: true }));
+  ok("N-17: switching a location back on answers with the location, on", on.ok && on.r.location.active === true && (await w.row("SELECT active FROM locations WHERE id = ?", west.id)).active === 1, on.e);
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("N-17: the upload reads the client's locations as they are now, not as the page loaded them", /const locsNow = \(\(await rpc\("clients\.list"\)\)\.clients\.find\(\(x\) => x\.id === client\.id\)/.test(src) && /loc = locsNow\.find\(/.test(src) && /groups\.push\(\{ loc: locsNow\.find\(\(l\) => l\.id === locId\)/.test(src));
+  ok("N-17: a switched-off location that would receive claims is switched on again, and the result says so", /for \(const g of groups\) if \(g\.loc && !g\.loc\.active\) \{ const r = await rpc\("locations\.save", \{ id: g\.loc\.id, name: g\.loc\.name, active: true \}\)/.test(src) && /\$\{r\.note \? " \(" \+ r\.note \+ "\)" : ""\}/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
