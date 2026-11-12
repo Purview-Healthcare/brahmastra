@@ -281,7 +281,7 @@ roster, grouped by team lead (no Emp ID):
 - **Status** and date of joining from Purview Shastra: Production, Training, OJT, Serving notice, Sabbatical.
 - **Ramp-up**: Training and OJT are due in production 6 weeks from their start (the start date kept on Team status,
   otherwise the date of joining), or on the date the lead agreed. People past it show in a red banner.
-- **Attainment**: entries against the target (the daily target for each working day in the dates; a half day counts
+- **Attainment**: entries against the target (the daily target for each working day in the dates from the date of joining; a half day counts
   half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a Saturday
   worked, and Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
   way does not count against anyone; with only today picked, it is today's. Production people under 90% are
