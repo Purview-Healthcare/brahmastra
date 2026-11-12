@@ -101,9 +101,11 @@ Commit and push; GitHub Pages (or Cloudflare Pages) serves it. The site needs
 
 ### 3. First sign-in
 
-Sign in with the bootstrap team lead, open **Team** and create the billers
-(each gets a temporary password shown once; they choose their own on first
-sign-in), then **Clients** and **Inventory**.
+Sign in as the admin (**Access Admin**, a code to the admin mailbox) or with the
+bootstrap team lead, connect Purview Shastra (**Straight from Purview Shastra**
+below) so everyone comes in from the roster, then add **Clients** and upload
+**Inventory**. Nobody is added by hand on the Team screen: people find their name
+on the sign-in screen and choose their own password the first time.
 
 ## How it works
 
@@ -120,14 +122,17 @@ sign-in), then **Clients** and **Inventory**.
 
 The roster comes only from Purview Shastra (below); there is no file upload. People are
 matched by Emp ID (then email, then name) and their department, projects, manager, status
-and date of joining are kept. People are changed in Shastra, not in Brahmastra: a team lead
-can correct a team member's details on Team until the next roster load, but only the admin
-can make someone a team lead or change an SME's designation.
+and date of joining are kept. A name alone is used only for an account with no Emp ID and
+no other email, and only when no one else in Shastra has that name, so a new joiner never
+takes over the account of a namesake or of someone who left. People are changed in Shastra,
+not in Brahmastra: a team lead can correct a team member's details on Team until the next
+roster load, but only the admin can make someone a team lead or change an SME's designation.
 
 - Agents become billers; SMEs, Team Leads and Sr Team Leads become team leads
   for their own projects; Assistant Managers, Managers and Sr Managers become
   team leads for their projects and every project of the people below them;
-  the Vice President sees every project. CEO, Director, HR, IT, Administration,
+  the Vice President sees every project (an Assistant Vice President too, under that
+  title; RACI's fixed Informed place is the Vice President's). CEO, Director, HR, IT, Administration,
   QA, MIS and Tech Support get no access, and nor does anyone only on Eligibility
   Verification, PCC, Credentialing or Reporting (not worked in Brahmastra; they are
   switched off).
@@ -136,8 +141,9 @@ can make someone a team lead or change an SME's designation.
   in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
   Inventory & allocation, Escalation tracker) and **Manage** (Team, Note templates, Clients &
   locations, SAAG reference, TFL / AFL, Roster for admins, Audit trail for admins and the VP). Client 360 is not on
-  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count shows on the
-  Live status tab, and the attention and hand-off counts on the group button while it is closed.
+  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count (claims flagged
+  by billers waiting for an answer, the first line of its **Needs you**) shows on the Live status tab, and the attention
+  and hand-off counts on the group button while it is closed.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
@@ -146,7 +152,8 @@ can make someone a team lead or change an SME's designation.
   or Client 360 report, and no excluding or reprioritising claims; Search, Claims
   and the claim profile give them the claims sent to their own desk (and every
   claim of a client they are set responsible for), the Past TAT list and its
-  reminder emails their own desk's tasks only.
+  reminder emails their own desk's tasks only. Someone Shastra moves off AR gives
+  their AR claims back to the pool, as when someone leaves.
 
 #### Client 360
 
@@ -418,7 +425,8 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
 - **Search** (top right, or **Ctrl+K** / **Cmd+K** anywhere): type part of a page name, a client (opens its
   Client 360), a biller (opens their coaching card), or a claim number, account number or patient name. Arrow keys
   and Enter, Esc to close. Team leads find claims on the clients they lead; billers find only claims on their list
-  or that they worked.
+  or that they worked, and Payment posting and Submission people also the claims on their desk and of the clients
+  they are responsible for.
 - **The bell** lists what needs you now, each line opening the page that deals with it. Team leads: escalations
   (red after 24 hours), client requests to send, missed tasks, claims on the desks of people out today, month-end
   steps past due, hand-offs on their desk. Billers: their list for today, escalations their team lead answered
@@ -727,12 +735,13 @@ resubmitted rejections carry a rejection code. Received, Submitted, Within TAT a
 tasks; the recheck after a submission is the same claim again, so it is not a second claim received and submitted
 (it still shows under Open now and Needs you now).
 - Each roster project is matched to a client (same name or code automatically;
-  otherwise a team lead is asked once). Active AR agents on a project become
-  that client's billers. A team lead matches their project only to a client of
-  their own span: one they are responsible for on its profile, one they added,
-  or one another of their projects is already matched to (or a new client).
-  Matching it to any other client is the admin's call (Roster). Every match is
-  in the audit trail.
+  otherwise a team lead is asked once; a project that is a new client opens the
+  Add client setup with its name, so it gets its whole profile). Active AR agents
+  on a project become that client's billers. A team lead matches their project
+  only to a client of their own span: one they are responsible for on its
+  profile, one they added, or one another of their projects is already matched
+  to (or a new client). Matching it to any other client is the admin's call
+  (Roster). Every match is in the audit trail.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
   when it has one), each up to their daily target, minus anyone marked **Out today** on Live status. Automatic
   allocation after an upload and the Allocate screen both use that; there is no daily ticking.
@@ -768,21 +777,22 @@ in parts and joined. Until the function is added, Team status shows – for on f
 
 ### Accounts and sign-in
 
-- **Billers** are created by a team lead on the Team screen (first name, last
-  name, work email, designation, role) and sign in with a **one-time code
-  emailed to them every time** (Sign in with a code → Send me a code → enter
-  the six digits). A team lead can optionally give them a temporary password
-  too, or issue a sign-in code from the Team list when an email is slow.
-- **Deleting accounts**: a team lead deletes a team member from the Team list
-  (Delete). Anyone can delete their own account from the account menu (Delete
-  my account, confirmed by typing the email). Claims on that person's desk go
-  back to the pool; their notes stay in the claim history. The last active team
-  lead cannot be deleted.
-- **Team leads** create their own account from the sign-in screen (Create a
-  team lead account: first name, last name, work email, designation from the
-  list SME / TL / Sr TL / Assistant Manager / Manager / Sr Manager, and a
-  password). A code sent to the email confirms it. They can then sign in with
-  the password or with a code.
+- **People come from Purview Shastra** (the roster, above): there is no sign-up,
+  and team leads do not add or remove people. Only the admin can add someone by
+  hand on the Team screen.
+- **Signing in**: people find their name on the sign-in screen. The first time, a
+  one-time code goes to their official email (or their team lead gives them one
+  from the Team list when there is no usable email) and they choose a password;
+  after that they sign in with their name and password. **Email code** (a code to
+  their email each time) and **Email & password** work too.
+- A team lead can give someone on their team a sign-in code when an email is
+  slow, or reset their password, from the Team list (**Sign-in code**, **Reset
+  password**).
+- **Deleting accounts**: only the admin deletes an account, from the Team list
+  (**Delete**); nobody deletes their own account. Claims on that person's desk go
+  back to the pool and their open hand-offs go to the backup, as when someone is
+  switched off; their notes stay in the claim history. The last active team
+  lead cannot be deleted. People who leave are switched off by the roster sync.
 - Anyone signed in with a code can set or change a password from the menu
   without typing the old one.
 

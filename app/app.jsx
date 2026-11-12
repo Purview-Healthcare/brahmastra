@@ -1408,7 +1408,7 @@ function SettingsView({ me, setMe, ctx }) {
           <div className="card set-sec" id="set-access">
             <h2>What you can see</h2><div className="sub">Client access follows the Purview Shastra hierarchy; this is how it lands for you.</div>
             {me.is_admin ? <div className="small mt8">You are an <b>admin</b>, so you see every client and every screen. Everyone from the roster sees only their own span.</div>
-              : me.access_all ? <div className="small mt8"><b>Vice President:</b> you see every client.</div>
+              : me.access_all ? <div className="small mt8"><b>{me.designation || "Vice President"}:</b> you see every client.</div>
               : (me.source !== "roster" && !(me.projects || []).length) ? <div className="small mt8">This account was <b>added by hand with no projects</b>, so it sees every client. Give it projects in Team to narrow it, or sign in with your roster account.</div>
               : <>
                 <div className="small mt8"><b>Your projects{(me.scope_projects || []).length > (me.projects || []).length ? " and your span's" : ""}:</b> {((me.scope_projects || []).length ? me.scope_projects : (me.projects || []).map((p) => p.name || p)).filter(Boolean).join("; ") || "none yet"}</div>
@@ -1532,7 +1532,8 @@ const navFor = (me, ho, fb, at, tk) => {
 };
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
 const navItems = (nav) => nav.flatMap((x) => (Array.isArray(x) ? [x] : x.items));
-const roleLabel = (me) => (me.is_admin ? "Admin" : me.access_all ? "Vice President" : me.roster_kind === "manager" ? (me.designation || "Manager") : me.role === "supervisor" ? (/^(sme|subject matter)/i.test(me.designation || "") ? "SME" : "Team lead") : "Biller");
+// every project: the Vice President, or an Assistant Vice President under their own title
+const roleLabel = (me) => (me.is_admin ? "Admin" : me.access_all ? (me.designation || "Vice President") : me.roster_kind === "manager" ? (me.designation || "Manager") : me.role === "supervisor" ? (/^(sme|subject matter)/i.test(me.designation || "") ? "SME" : "Team lead") : "Biller");
 /* ---------- Ctrl+K: jump to a page, a client, a person or a claim from anywhere ---------- */
 const CMDK_ORDER = ["Page", "Client", "Person", "Claim"];
 function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {
@@ -1804,7 +1805,10 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   useEffect(() => { document.title = pageLabel + " · Brahmastra"; }, [pageLabel]);
   const allowedViews = [...navItems(nav).map(([k]) => k), "mytasks", ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   useEffect(() => { if (!menu && !openG) return; const h = () => { setMenu(false); setOpenG(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu, openG]);
-  const navBadge = (k) => (k === "attention" || k === "live") && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue || attention.tasks_late ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+  // Live status carries the escalation count (claims flagged by billers waiting for an answer, the first line of its Needs you);
+  // Needs attention, and the Work group while it is closed, carry the whole attention count
+  const navBadge = (k) => k === "attention" && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue || attention.tasks_late ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
+    : k === "live" && attention && attention.escalations > 0 ? <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }} title="Claims flagged by billers waiting for your answer">{attention.escalations}</span>
     : k === "teamtasks" && attention && attention.tasks > 0 ? <span className={"badge " + (attention.tasks_late || attention.tasks_help ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.tasks}</span>
     : k === "mytasks" && tasks && tasks.open > 0 ? <span className={"badge " + (tasks.late ? "red" : tasks.unseen ? "teal" : "amber")} style={{ marginLeft: 6 }} title={tasks.late ? tasks.late + " past the TAT" : tasks.unseen ? tasks.unseen + " new" : "to do"}>{tasks.open}</span>
     : k === "handoffs" && handoffs && handoffs.n > 0 ? <span className={"badge " + (handoffs.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{handoffs.n}</span>
@@ -2407,9 +2411,9 @@ function profileMissing(f, locCount) {
 // Payment posting and Submission have a TAT (Rejections resubmit to the Submission TAT); only AR has a daily target.
 const tatScopes = (scope) => ["posting", "submission"].filter((k) => scope.includes(k) || (k === "submission" && scope.includes("rejection")));
 const Step = ({ n, title, sub, children }) => <div className="group"><div className="gt row" style={{ gap: 8 }}><span className="stepn">{n}</span>{title}</div>{sub && <div className="tiny muted" style={{ margin: "-4px 0 8px" }}>{sub}</div>}{children}</div>;
-function ClientProfileForm({ ctx, client, onClose, onSaved }) {
+function ClientProfileForm({ ctx, client, onClose, onSaved, initialName }) {
   const isNew = !client;
-  const [f, setF] = useState(() => ({ name: client ? client.name : "", code: client ? client.code || "" : "", follow_up_days: client ? client.follow_up_days : 30, active: client ? client.active : true,
+  const [f, setF] = useState(() => ({ name: client ? client.name : initialName || "", code: client ? client.code || "" : "", follow_up_days: client ? client.follow_up_days : 30, active: client ? client.active : true,
     workbook_link: client ? client.workbook_link || "" : "", prodMode: client && client.workbook_link ? "link" : "auto", locations: [], locDraft: "", ...profileFrom(client) }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -2422,14 +2426,15 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
     .map((u) => ({ id: u.id, label: u.name, sub: [u.designation || (u.role === "supervisor" ? "Supervisor" : "Biller"), u.department].filter(Boolean).join(" · ") }));
   const locCount = isNew ? f.locations.length : (client.locations || []).filter((l) => l.active).length;
   const missing = profileMissing(f, locCount);
-  const addLoc = () => { const n = f.locDraft.trim(); if (n && !f.locations.some((l) => l.toLowerCase() === n.toLowerCase())) set({ locations: [...f.locations, n], locDraft: "" }); };
+  const addLoc = () => { const n = f.locDraft.trim(), k = (s) => s.replace(/\s+/g, " ").toLowerCase(); if (n && !f.locations.some((l) => k(l) === k(n))) set({ locations: [...f.locations, n], locDraft: "" }); };
   const save = async () => {
     setBusy(true); setErr(null);
     try {
-      await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active,
+      // seen: the client as this form opened it; if someone saved it since, the server refuses instead of undoing their change
+      const r = await rpc("clients.save", { id: client ? client.id : undefined, name: f.name.trim(), code: f.code, follow_up_days: f.follow_up_days, active: f.active, seen: client ? client.stamp : undefined,
         locations: isNew ? f.locations : undefined, profile: { scope: f.scope, targets: f.targets, tat: f.tat, resp: f.resp } });
       toast(isNew ? f.name.trim() + " created. Everyone set as responsible sees it now." : "Client profile saved.");
-      onSaved();
+      onSaved(r && r.client);
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -2588,6 +2593,9 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
     try { await rpc("locations.save", { client_id: c.id, name }); setLocName({ ...locName, [c.id]: "" }); toast("Location added."); reload(); } catch (e) { toast(e.message, "err"); }
   };
   const toggleLoc = async (l) => { try { await rpc("locations.save", { id: l.id, name: l.name, active: !l.active }); reload(); } catch (e) { toast(e.message, "err"); } };
+  // Switching a location off is asked first, and the last active one says what that means; switching one back on is one click.
+  const [locOff, setLocOff] = useState(null);
+  const clickLoc = (c, l) => (l.active ? setLocOff({ l, client: c.name, last: c.locations.filter((x) => x.active).length === 1 }) : toggleLoc(l));
   const makeFolders = async (c) => { setBusy(true); try { const r = await rpc("clients.setupFolders", c ? { client_id: c.id } : {}); toast(r.failed.length ? `Folders made for ${r.done}; not for ${r.failed.length}: ${r.failed[0].error}` : c ? "Folders made in OneDrive for " + c.name + "." : `Folders made in OneDrive for ${plural(r.done, "client")}.`, r.failed.length ? "err" : "ok"); reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const wbStatus = (id) => (ctx.settings && ctx.settings["workbook_status:" + id]) || null;
   /* No workbook link: Brahmastra keeps the month's Production file in the Purviewautomate OneDrive by itself. */
@@ -2650,7 +2658,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
           <AccessRow c={c} ctx={ctx} me={me} onSaved={reload} dir={dir} />
           <div className="row mt" style={{ alignItems: "flex-start" }}>
             <div className="pill-list" style={{ flex: 1 }}>
-              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={c.can_edit === false ? undefined : l.active ? "Click to deactivate" : "Click to reactivate"} onClick={c.can_edit === false ? undefined : () => toggleLoc(l)}>{l.name}{!l.active ? " (off)" : ""}</span></span>)}
+              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={c.can_edit === false ? undefined : l.active ? "Click to deactivate" : "Click to reactivate"} onClick={c.can_edit === false ? undefined : () => clickLoc(c, l)}>{l.name}{!l.active ? " (off)" : ""}</span></span>)}
               {!c.locations.length && <span className="muted small">No locations yet.</span>}
             </div>
             {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>
@@ -2661,7 +2669,10 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
         </div>
       ))}
       {hist && <ClientHistory c={hist} onClose={() => setHist(null)} />}
-      {prof && <ClientProfileForm ctx={ctx} client={prof.client} onClose={() => setProf(null)} onSaved={() => { setProf(null); reload(); }} />}
+      {locOff && <Confirm title={"Switch off " + locOff.l.name + "?"} confirmLabel="Switch off" danger onNo={() => setLocOff(null)} onYes={() => { const l = locOff.l; setLocOff(null); toggleLoc(l); }}
+        text={locOff.last ? `${locOff.l.name} is the only active location of ${locOff.client}. With no active location the client's profile is incomplete and nothing reaches anyone (uploads and allocation need a location) until one is switched on again.`
+          : `${locOff.l.name} is taken off uploads and allocation until it is switched on again. Its claims stay as they are.`} />}
+      {prof && <ClientProfileForm ctx={ctx} client={prof.client} onClose={() => { setProf(null); reload(); }} onSaved={() => { setProf(null); reload(); }} />}
       {edit && (
         <Modal title={edit.id ? "Edit client" : "New client"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || !edit.name.trim()}>{busy ? "Saving…" : "Save"}</button></>}>
           <div className="stack">
@@ -2900,7 +2911,7 @@ async function autoAllocate({ ctx, client, loc }) {
 
 /* ---------- the day's team for a project: who receives claims today, and how many ---------- */
 const STATUS_TONE = { working: "green", ojt: "blue", training: "blue", sabbatical: "amber", "serving notice": "red" };
-function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
+function ProjectMapModal({ names, clients, onDone, onClose, canCreate, onCreate }) {
   const guess = (n) => { const k = String(n).toLowerCase().replace(/[^a-z0-9]/g, ""); const hit = clients.filter((c) => { const a = c.name.toLowerCase().replace(/[^a-z0-9]/g, ""), b = String(c.code || "").toLowerCase().replace(/[^a-z0-9]/g, ""); return a.includes(k) || k.includes(a) || (b && (b === k || a.startsWith(k))); }); return hit.length === 1 ? hit[0].id : ""; };
   const [pick, setPick] = useState(() => Object.fromEntries(names.map((n) => [n, guess(n)])));
   const [busy, setBusy] = useState(false);
@@ -2908,9 +2919,11 @@ function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
     setBusy(true);
     try {
       let n = 0;
-      for (const name of names) { const v = pick[name]; if (!v) continue; await rpc("projects.map", v === "__new" ? { name, create: true } : { name, client_id: v }); n++; }
-      toast(n ? `${n} project${n > 1 ? "s" : ""} matched.` : "Nothing matched yet.");
-      onDone && onDone();
+      for (const name of names) { const v = pick[name]; if (!v || v === "__new") continue; await rpc("projects.map", { name, client_id: v }); n++; }
+      // a new client is made with its whole profile, like Add client: the setup opens with the project's name
+      const make = names.find((name) => pick[name] === "__new");
+      if (n || !make) toast(n ? `${n} project${n > 1 ? "s" : ""} matched.` : "Nothing matched yet.");
+      if (make && onCreate) onCreate(make); else onDone && onDone();
     } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
@@ -2965,11 +2978,14 @@ function RosterView({ ctx, reload, me }) {
   const [emails, setEmails] = useState(null);
   useEffect(() => { if (meta.data && emails == null) setEmails(meta.data.extra_emails.join("\n")); }, [meta.data]);
   const saveEmails = async () => { setBusy("Saving…"); try { const r = await rpc("roster.saveEmails", { emails }); setEmails(r.extra_emails.join("\n")); toast("Saved: " + r.extra_emails.length + " extra email(s) can sign in."); meta.reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
-  const remap = async (name, v) => { setBusy("Saving…"); try { await rpc("projects.map", v === "__new" ? { name, create: true } : { name, client_id: v }); toast(name + " matched."); meta.reload(); await reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
+  const [newFor, setNewFor] = useState(null);
+  const remap = async (name, v) => { if (v === "__new") { setNewFor(name); return; } setBusy("Saving…"); try { await rpc("projects.map", { name, client_id: v }); toast(name + " matched."); meta.reload(); await reload(); } catch (e) { toast(e.message, "err"); } setBusy(null); };
   const projOptions = ctx.clients;
   const last = meta.data && meta.data.shastra && meta.data.shastra.last;
   return (
     <div className="stack">
+      {newFor && <ClientProfileForm ctx={ctx} client={null} initialName={newFor} onClose={() => setNewFor(null)}
+        onSaved={async (cl) => { const name = newFor; setNewFor(null); if (cl) await rpc("projects.map", { name, client_id: cl.id }).catch(() => {}); meta.reload(); await reload(); }} />}
       <div><h1>Roster</h1><div className="sub">Everyone in Brahmastra comes from Purview Shastra: who reports to whom, departments, projects, status and date of joining. It updates by itself every hour; change people in Shastra, not here.</div></div>
       <ShastraSync data={meta.data && meta.data.shastra} onDone={(r) => { if (r) { setPreview(r); setTab("people"); } meta.reload(); reload(); }} />
       <div className="tiny muted" style={{ margin: "-4px 4px 0" }}>Access: Agents work claims; SMEs, Team Leads and Sr Team Leads lead their own projects; Assistant Managers, Managers and Sr Managers also see their people's projects; the Vice President sees every project. CEO, Director, HR, IT, Administration, QA, MIS and Tech Support get no access. Only AR agents receive AR claims. Nothing changes until you press Apply.</div>
@@ -3300,11 +3316,12 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
     try {
       const groups = [];
       if (locMode === "file" && mapping.location) {
-        const m = by(built.claims, (c) => (c.location || "").trim());
+        // a location is the same whatever its case or extra spaces (as the server tells them apart)
+        const m = by(built.claims, (c) => (c.location || "").replace(/\s+/g, " ").trim());
         for (const [name, list] of m) {
           let loc = null;
           if (name) {
-            loc = client.locations.find((l) => l.name.toLowerCase() === name.toLowerCase());
+            loc = client.locations.find((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase() === name.toLowerCase());
             if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name }); loc = r.location; }
           }
           groups.push({ loc, claims: list });
@@ -4317,7 +4334,7 @@ function EscalationTrackerView({ ctx, me, params }) {
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
-  const edit = (r) => setForm({ id: r.id, kind: r.kind || "external", client_id: r.client_id, client_name: r.client_name, sr: r.sr, day: r.day, dept: r.dept, raised_who: r.raised_who, reported_to: r.reported_to, owner_id: r.owner_id || "",
+  const edit = (r) => setForm({ id: r.id, kind: r.kind || "external", client_id: r.client_id, client_name: r.client_name, sr: r.sr, day: r.day, dept: r.dept, raised_who: r.raised_who, reported_to: r.reported_to, owner_id: r.owner_id || "", owner_name: r.owner_name || "",
     email_subject: r.email_subject, description: r.description, is_error: r.is_error, error_by_id: r.error_by_id || "", error_dow: r.error_dow || "", comment: r.comment, status: r.status === "resolved" ? "resolved" : "open", rca: r.rca, corrective: r.corrective, preventive: r.preventive, close_on: r.close_on || "",
     location_id: r.location_id || (r.location_name === "All locations" ? "all" : ""), channels: r.channels ? r.channels.split(/,\s*/) : [], review_on: r.review_on || "", rework: r.rework || "" });
   const csv = () => downloadText(toCSV(rows, [["SR No", (r) => "SR" + r.sr], ["Department", (r) => r.dept], ["Client Name", (r) => r.client_name], ["Received (mm/dd/yy)", (r) => fmtMDY(r.day)],
@@ -4330,7 +4347,9 @@ function EscalationTrackerView({ ctx, me, params }) {
     ["Review Result", (r) => r.review_result || ""], ["Rework Completed (Yes/No)", (r) => r.rework || ""],
     ["Logged on (IST)", (r) => (r.created_at ? fmtWhen(r.created_at) : "")], ["Last updated by", (r) => r.updated_by_name || r.created_by_name || ""], ["Last updated on (IST)", (r) => fmtWhen(r.updated_at || r.created_at)]]
     .map(([label, get]) => ({ label, get }))), "Escalation tracker " + todayISO() + ".csv");
-  const people = (d.people || []).map((u) => ({ id: u.id, label: u.name + (u.tag ? " (" + u.tag + ")" : "") }));
+  // the responding person already on an escalation stays in the list after they have left (the register keeps who it was)
+  const people = [...(d.people || []).map((u) => ({ id: u.id, label: u.name + (u.tag ? " (" + u.tag + ")" : "") })),
+    ...(form && form.owner_id && form.owner_name && !(d.people || []).some((u) => u.id === form.owner_id) ? [{ id: form.owner_id, label: form.owner_name + " (no longer active)" }] : [])];
   // who made the error: anyone at Purview (billers, desks, leads), the team of the escalation's client first
   const team = useMemo(() => {
     const cl = form && ctx.clients.find((c) => c.id === form.client_id), names = new Set(((cl && cl.roster_names) || []).map((n) => String(n).toLowerCase()));
@@ -9376,6 +9395,7 @@ function App() {
   useEffect(() => { if (me && me.prefs && Object.keys(me.prefs).length) storePrefs({ ...readPrefs(), ...me.prefs }); }, [me && me.id, me && JSON.stringify(me.prefs || {})]);
   /* After sign-in, a team lead first matches any roster project that is not yet a client, then (TLs and SMEs) sets who works each project today. */
   const [mapAsk, setMapAsk] = useState(null);
+  const [newFor, setNewFor] = useState(null);   // a roster project to add as a new client (the Add client setup, its name filled in)
   const checkPending = useCallback(async () => {
     if (!me || me.role !== "supervisor") return;
     try {
@@ -9463,7 +9483,9 @@ function App() {
       <Shell me={me} view={view} attention={attention} handoffs={handoffs} fb={fb} notify={notify} tasks={tasks} onRefreshNotify={refreshNotify} onGo={go} onSearch={() => setPal(true)} setView={(v) => go(v)} onSignOut={signOut} onChangePassword={() => setPwOpen(true)} onDeleteAccount={() => setDelOpen(true)}>
         <React.Fragment key={view + JSON.stringify(nav.params || {})}><PageBoundary onHome={() => go(me.role === "supervisor" ? "dashboard" : "queue")}>{body}</PageBoundary></React.Fragment>
       </Shell>
-      {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
+      {mapAsk && <ProjectMapModal names={mapAsk.names} clients={mapAsk.clients} canCreate={!isSmeUI(me)} onCreate={(name) => { setMapAsk(null); setNewFor(name); }} onClose={() => { setMapAsk(null); }} onDone={async () => { setMapAsk(null); await reload(); checkPending(); }} />}
+      {newFor && <ClientProfileForm ctx={ctx} client={null} initialName={newFor} onClose={() => setNewFor(null)}
+        onSaved={async (cl) => { const name = newFor; setNewFor(null); if (cl) await rpc("projects.map", { name, client_id: cl.id }).catch(() => {}); await reload(); checkPending(); }} />}
       {pal && <CommandPalette ctx={ctx} me={me} pages={navItems(navFor(me, handoffs, fb, attention, tasks)).concat([["settings", "Settings"]])} go={go} onClose={() => setPal(false)} openClaim={setPalClaim} openCoach={setPalCoach} />}
       {palClaim && <ClaimDrawer id={palClaim} ctx={ctx} me={me} onClose={() => setPalClaim(null)} onChanged={() => {}} />}
       {palCoach && <CoachDrawer userId={palCoach} onClose={() => setPalCoach(null)} />}

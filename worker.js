@@ -1971,7 +1971,23 @@ async function importRoster(env, user, payload) {
   const byEmp = new Map(); existing.forEach((u) => { if (u.emp_id) put(byEmp, u.emp_id.toUpperCase(), u); });
   const byEmail = new Map(existing.map((u) => [u.email, u]));
   // Exact full name also matches accounts created by hand before the roster, so they keep their password and get their Emp ID.
-  const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") put(byName, u.name.trim().toLowerCase(), u); });
+  // Every account of that name is kept (ones with a password or a sign-in first): a name match takes the first that may be theirs.
+  const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") { const k = u.name.trim().toLowerCase(); byName.set(k, [...(byName.get(k) || []), u]); } });
+  byName.forEach((l) => l.sort((a, b) => !!(b.pass_hash || b.last_login) - !!(a.pass_hash || a.last_login)));
+  // Emp ID first, then email, whatever order Shastra lists the rows in: an account a row has by its Emp ID is that row's, and
+  // no other row takes it by email or name. The no-email placeholder or the name alone joins a row only to an account that no
+  // row has by Emp ID or email and that carries no other Emp ID and no other email; the name only when no one else in Shastra
+  // has it. So a namesake who joins, or a new joiner with a leaver's name, gets an account of their own, and people with no
+  // Emp ID yet keep theirs (it has no Emp ID either).
+  const nameKey = (r) => r.name.trim().toLowerCase();
+  const nameRows = new Map(); rows.forEach((r) => nameRows.set(nameKey(r), (nameRows.get(nameKey(r)) || 0) + 1));
+  const empHit = (row) => (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || null;
+  const mailHit = (row) => (mailOk(row.email) && byEmail.get(row.email)) || null;
+  const byEmpRow = new Set(rows.map(empHit).filter(Boolean).map((u) => u.id));
+  const byKeyRow = new Set([...byEmpRow, ...rows.map(mailHit).filter(Boolean).map((u) => u.id)]);
+  const byPlaceholder = new Set(rows.map((r) => byEmail.get(placeholderEmail(r))).filter(Boolean).map((u) => u.id));
+  const weakOk = (row, u) => !byKeyRow.has(u.id) && !(u.emp_id && u.emp_id.toUpperCase() !== String(row.emp_id || "").toUpperCase())
+    && !(mailOk(row.email) && !/\.(comcom|con)$/.test(row.email) && !u.email_missing && u.email !== row.email);
   const domains = {}; rows.forEach((r) => { if (mailOk(r.email)) { const d = r.email.split("@")[1]; domains[d] = (domains[d] || 0) + 1; } });
   const plan = [], excluded = [], warnings = [], used = new Set(), dropped = new Set();
   // Two Shastra rows with the same email (or, with no email and no Emp ID, the same name) cannot both be applied:
@@ -1981,10 +1997,11 @@ async function importRoster(env, user, payload) {
   const claimed = new Map(), planMail = new Map();
   const skipRow = (row, match, issue) => { if (match) used.add(match.id); warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues: [issue], skipped: true }); };
   for (const row of rows) {
-    const match0 = (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || (mailOk(row.email) && byEmail.get(row.email)) || byName.get(row.name.trim().toLowerCase()) || byEmail.get(placeholderEmail(row)) || null;
+    const e = empHit(row), m = mailHit(row);
+    const named = nameRows.get(nameKey(row)) === 1 ? (byName.get(nameKey(row)) || []).filter((u) => !byPlaceholder.has(u.id)) : [];
     // A name or placeholder match already taken by another row is not this person's account.
-    const strong = match0 && ((row.emp_id && match0.emp_id && match0.emp_id.toUpperCase() === row.emp_id.toUpperCase()) || (mailOk(row.email) && match0.email === row.email));
-    const match = match0 && claimed.has(match0.id) && !strong ? null : match0;
+    const match = e || (m && !byEmpRow.has(m.id) ? m : null)
+      || [...named, byEmail.get(placeholderEmail(row))].find((u) => u && !claimed.has(u.id) && weakOk(row, u)) || null;
     const cls = rosterClassify(row, match && match.source === "roster" && match.active && match.roster_kind && match.roster_kind !== "agent" ? match.roster_kind : "");
     const twins = byMail.get(rowMail(row)) || [];
     if (!cls.reason && twins.length > 1) {
@@ -2068,6 +2085,9 @@ async function importRoster(env, user, payload) {
       n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, id);
     p.id = id;
     if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+    // Moved off AR in Shastra (to Payment posting or Submission): their AR claims go back to the pool, as when someone leaves.
+    // Their desk hand-offs stay with them: the desk is still theirs.
+    else if (n.active && p.match && isAR(p.match) && !isAR(n)) await run(env, "UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', updated_at = ? WHERE assigned_to = ? AND state IN ('assigned','in_progress')", Date.now(), id);
   }
   const off = [...leaving.map((u) => u.id), ...dropped];
   for (const id of off) { await run(env, "UPDATE users SET active = 0 WHERE id = ?", id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
@@ -2095,10 +2115,11 @@ async function syncShastra(env, by) {
     throw new ApiError(502, "Purview Shastra did not send the roster: " + why);
   }
   const rows = Array.isArray(data.rows) ? data.rows : [];
-  // A short or empty answer is a fault on the way, not half the company leaving: nothing is applied.
+  // A short or empty answer is a fault on the way, not half the company leaving: nothing is applied (a small team too).
   const active = await one(env, "SELECT COUNT(*) AS n FROM users WHERE source = 'roster' AND active = 1");
-  if (!rows.length || (active && active.n >= 20 && rows.length < active.n * 0.5)) {
-    const error = `Shastra sent ${rows.length === 1 ? "1 person" : rows.length + " people"} while ${active ? active.n : 0} are active here, so nothing was changed.`;
+  if (!rows.length || (active && rows.length < active.n * 0.5)) {
+    const n = active ? active.n : 0;
+    const error = `Shastra sent ${rows.length} ${rows.length === 1 ? "person" : "people"} while ${n} ${n === 1 ? "is" : "are"} active here, so nothing was changed.`;
     await setSetting(env, "shastra_sync", { at: Date.now(), ok: false, by, error });
     throw new ApiError(502, error);
   }
@@ -2979,13 +3000,18 @@ async function describeProfile(env, c) {
   for (const [s, label] of SERVICES) {
     const [m, l, b] = RESP_COLS[s];
     const who = c[m] === "person" && c[l] ? names.get(c[l]) + (c[b] ? " (backup " + names.get(c[b]) + ")" : "") : c[m] === "client" ? "client does it" : c[m] === "biller" ? "biller does it" : "not set";
-    out.push(`${label}: ${scope.includes(s) ? "in scope" + (targets[s] ? ", target " + targets[s] + " a day" : "") + ", " : scope.length ? "not in scope, " : ""}${who}`);
+    // The TAT sets every hand-off's due time, so a change to it is kept too (Rejections work to the Submission TAT).
+    const tatOf = s === "posting" || s === "submission" ? s : s === "rejection" && !scope.includes("submission") ? "submission" : "";
+    const tat = tatOf && scope.includes(s) ? ", TAT " + tatHours(c, tatOf) + " working hours" : "";
+    out.push(`${label}: ${scope.includes(s) ? "in scope" + (targets[s] ? ", target " + targets[s] + " a day" : "") + ", " : scope.length ? "not in scope, " : ""}${who}${tat}`);
   }
   out.push("Submission follow-up: " + (c.submission_check_mode === "person" ? names.get(c.submission_check_person) || "someone" : c.submission_check_mode === "biller" ? "the biller who sent it" : "not set")
     + (scope.includes("submission") ? ", recheck " + subcheckHours(c) + " working hours after submitting" : ""));
   return out;
 }
 const diffLines = (before, after) => after.map((x, i) => (x !== before[i] ? x + (before[i] ? "  (was: " + before[i].replace(/^[^:]+: /, "") + ")" : "") : null)).filter(Boolean);
+/* Client names, and a client's location names, are one of a kind: told apart without case or extra spaces. */
+const plainName = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
 /* Tell people when they are made responsible for a client (or taken off it): a line in their bell for two
    weeks, and an email when one is set up. */
 const RESP_LABEL = { ar_lead: "AR follow-up person (accountable)", ar_backup: "AR follow-up backup", posting_lead: "Payment posting person", posting_backup: "Payment posting backup",
@@ -3149,6 +3175,8 @@ function teamSuggestions(rows) {
 }
 /* Managers and above (assistant managers, managers, the VP, admins) can narrow the Dashboard to one team lead. */
 const isManagerUp = (u) => !!u && (u.is_admin || u.access_all || u.roster_kind === "manager" || (u.role === "supervisor" && !u.scope));
+// The Vice President (RACI's fixed first Informed person): every project and that title, not an Assistant Vice President.
+const isVicePresident = (u) => !!u && !!u.access_all && u.designation === "Vice President";
 /* The clients one team lead covers (their own span), for a manager who picked that team lead; null means no narrowing. */
 async function leadClientIds(env, user, leadId) {
   if (!leadId) return null;
@@ -3236,12 +3264,16 @@ const inSpan = async (env, user, id) => !user.scope || (await visibleUsers(env, 
 
 /* ---- Purview Shastra roster ----
    Who gets in: Agents (billers), SMEs, Team Leads and Sr Team Leads (team leads for their own projects), Assistant Managers,
-   Managers and Sr Managers (team leads for their projects and their people's projects) and the Vice President (every project).
+   Managers and Sr Managers (team leads for their projects and their people's projects) and the Vice President (every project;
+   an Assistant Vice President too, under that title).
    No access: CEO, Director, HR, IT, Administration, Quality Analysts, MIS, Tech Support, and anyone without a project. */
 const ROSTER_KIND = { "agent": "agent", "subject matter expert": "lead", "sme": "lead", "team lead": "lead", "tl": "lead", "senior team lead": "lead", "sr team lead": "lead", "sr tl": "lead",
-  "assistant manager": "manager", "manager": "manager", "senior manager": "manager", "sr manager": "manager", "vice president": "all", "vp": "all" };
+  "assistant manager": "manager", "manager": "manager", "senior manager": "manager", "sr manager": "manager", "vice president": "all", "vp": "all",
+  // Shastra's Assistant Vice President (a step below the VP): every project as before, under their own title; not the Vice President
+  "assistant vice president": "all" };
 const ROSTER_DESIGNATION = { "agent": "Biller", "subject matter expert": "SME", "sme": "SME", "team lead": "TL", "tl": "TL", "senior team lead": "Sr TL", "sr team lead": "Sr TL", "sr tl": "Sr TL",
-  "assistant manager": "Assistant Manager", "manager": "Manager", "senior manager": "Sr Manager", "sr manager": "Sr Manager", "vice president": "Vice President", "vp": "Vice President" };
+  "assistant manager": "Assistant Manager", "manager": "Manager", "senior manager": "Sr Manager", "sr manager": "Sr Manager", "vice president": "Vice President", "vp": "Vice President",
+  "assistant vice president": "Assistant Vice President" };
 const ROSTER_GONE = /^(resigned|exited|left|terminated|absconded|inactive|relieved)$/i;
 function rosterDate(v) {
   const t = String(v || "").trim(); if (!t) return "";
@@ -3271,11 +3303,14 @@ const NOT_IN_BRAHMASTRA = /^(eligibility verification|ev|pcc|credentialing|repor
 const rowDepts = (row) => [row.department, ...String(row.departments_also || "").split(/[;,]/)].map((d) => String(d || "").trim()).filter(Boolean);
 const rowWorkDepts = (row) => rowDepts(row).filter((d) => /^(ar|posting|submission)$/i.test(d));
 /* Position text as typed in Shastra: case, dots, dashes and extra spaces do not matter, and a "Sr." / "Senior" /
-   "Assistant" / "Deputy" / "Associate" in front of a known role counts as that role ("Sr. Team Lead" is a team lead). */
+   "Assistant" / "Deputy" / "Associate" in front of a known role counts as that role ("Sr. Team Lead" is a team lead),
+   except that an Assistant Vice President is not the Vice President. */
 function rosterPos(position) {
   const p = String(position || "").toLowerCase().replace(/[^a-z]+/g, " ").replace(/\s+/g, " ").trim();
   if (ROSTER_KIND[p]) return p;
   const base = p.replace(/^((sr|senior|jr|junior|asst|assistant|associate|deputy|principal|acting)\s+)+/, "");
+  // "Asst. Vice President", "Associate Vice President", "Deputy Vice President": the AVP, not the Vice President
+  if (base === "vice president" && /^(asst|assistant|associate|deputy)\s/.test(p)) return "assistant vice president";
   if (ROSTER_KIND[base]) return base;
   if (/^(sr|senior)\s/.test(p) && ROSTER_KIND["senior " + base]) return "senior " + base;
   return p;
@@ -3482,7 +3517,12 @@ function profileGaps(c, locCount, activeIds) {
 }
 const RESP_COLS = { ar: ["ar_mode", "ar_lead", "ar_backup"], posting: ["posting_mode", "posting_lead", "posting_backup"], submission: ["submission_mode", "submission_lead", "submission_backup"], subcheck: ["submission_check_mode", "submission_check_person", null],
   rejection: ["rejection_mode", "rejection_lead", "rejection_backup"] };
-const handoffDeptOf = (action) => { for (const [re, d] of HANDOFF_ROUTES) if (re.test(String(action || "").trim())) return d; return ""; };
+/* A short stamp of what the client profile form holds (name, code, follow-up, Active, scope, targets, TATs, the people). The page
+   sends back the stamp it opened the form with; a save made from an older copy (someone saved the client since) is refused,
+   so it never silently undoes their change. */
+const CLIENT_STAMP_COLS = ["name", "code", "follow_up_days", "active", "scope_json", "targets_json", ...Object.values(RESP_COLS).flat().filter(Boolean), "posting_tat_hours", "submission_tat_hours", "subcheck_hours"];
+const clientStamp = (c) => { let h = 2166136261; for (const ch of JSON.stringify(CLIENT_STAMP_COLS.map((k) => (c[k] == null ? null : c[k])))) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0; return h.toString(36); };
+const handoffDeptOf =(action) => { for (const [re, d] of HANDOFF_ROUTES) if (re.test(String(action || "").trim())) return d; return ""; };
 const REJECT_REASONS = REJECT_CODES;
 const ASSIST_REASONS = { subcheck: ["Payer has no record yet", "Cannot reach the payer / portal", "Other"], posting: ["No EOB / ERA", "Amount mismatch", "Patient / account not found", "Payer not set up", "Duplicate payment", "Other"],
   submission: ["Missing claim data", "Clearinghouse rejection", "No payer ID / address", "Authorization missing", "Duplicate claim", "Other"] };
@@ -3656,6 +3696,9 @@ async function backfillKeys(env) {
    under the name they wrote with. */
 async function removeUser(env, id) {
   const now = Date.now();
+  // Their open hand-offs move on first (to the backup, or whoever the client's profile names), as when someone is switched off.
+  await run(env, "UPDATE users SET active = 0 WHERE id = ?", id);
+  await rerouteHandoffs(env, id);
   await env.DB.batch([
     env.DB.prepare("UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = CASE WHEN state IN ('assigned','in_progress') THEN 'open' ELSE state END, updated_at = ? WHERE assigned_to = ?").bind(now, id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id),
@@ -3728,7 +3771,7 @@ const OPS = {
     const email = mailClean(payload.email);
     if (!mailOk(email)) throw bad("Enter your email address.");
     const u = await one(env, "SELECT id, active, role, source, email, email_missing FROM users WHERE email = ?", email);
-    if (!u) throw new ApiError(404, "No Brahmastra account uses that email. Ask your team lead to add you, or create a team lead account.");
+    if (!u) throw new ApiError(404, "No Brahmastra account uses that email. People come from the Purview Shastra roster: ask your team lead.");
     if (!u.active) throw new ApiError(403, "This account is switched off. Ask your team lead.");
     const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     const code = await issueOtp(env, email, "login", {});
@@ -4027,7 +4070,7 @@ const OPS = {
     const ex = await one(env, "SELECT * FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (user.scope && !(await visibleUsers(env, user)).some((u) => u.id === ex.id)) throw denied("That person is not on your projects.");
-    if (ex.id === user.id) throw bad("To delete your own account, use Delete my account in the menu.");
+    if (ex.id === user.id) throw bad("You can't delete your own account.");
     if (ex.role === "supervisor" && ex.active) {
       const n = await one(env, "SELECT COUNT(*) AS n FROM users WHERE role IN ('supervisor','admin') AND active = 1 AND id <> ?", ex.id);
       if (!n.n) throw bad("Keep at least one active team lead.");
@@ -4046,7 +4089,7 @@ const OPS = {
       ...(roster_names_json !== undefined ? { roster_names: jsonList(roster_names_json), caps: jsonObj(caps_json) } : {}) }; };
     const people = await all(env, "SELECT id, name, active FROM users");
     const nm = new Map(people.map((u) => [u.id, u.name])), activeIds = new Set(people.filter((u) => u.active).map((u) => u.id));
-    return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
+    return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), stamp: clientStamp(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
       scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), od: { link: c.od_link || "", inventory: c.od_inventory_link || "", production: c.od_production_link || "", status: jsonObj(c.od_status_json),
         scopes: Object.fromEntries(Object.entries(jsonObj(c.od_prod_json)).map(([k, v]) => [k, { link: v.link || "", path: v.path || "" }])) }, resp_names: Object.fromEntries(RESP_PEOPLE.map(([, l]) => [l, c[l] ? nm.get(c[l]) || "someone" : ""])),
       profile_gaps: profileGaps(c, locs.filter((l) => l.client_id === c.id && l.active).length, activeIds), team_names: Object.fromEntries(parseTeam(c.team_json).map((id) => [id, nm.get(id) || ""])), responsible_me: !!(user.resp_clients && user.resp_clients.has(c.id)),
@@ -4666,6 +4709,8 @@ const OPS = {
     // Changing a template that is already there needs edit access to the client it belongs to now, as deleting it does.
     const ex = payload.id ? await one(env, "SELECT client_id FROM note_templates WHERE id = ?", id) : null;
     if (ex && ex.client_id) editableOr(user, ex.client_id);
+    // A template for every client is used by every team: only someone who may change every client moves it to one client.
+    if (ex && !ex.client_id && cid && editScope(user) != null) throw denied("This template is for every client, so other teams use it too. To have one for your client, add a new template.");
     await run(env, `INSERT INTO note_templates (id, client_id, title, text, by_id, by_name, at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT (id) DO UPDATE SET client_id = excluded.client_id, title = excluded.title, text = excluded.text, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, cid, title, text, user.id, user.name || "", Date.now());
     return { ok: true, id };
@@ -4696,13 +4741,24 @@ const OPS = {
     const q = str(payload.q, 80).trim().replace(/[%_\\]/g, "");
     if (q.length < 2) return { claims: [] };
     const like = "%" + q + "%", sup = user.role === "supervisor";
+    // A biller or desk person finds what they may open: their list, what they worked, the claims on their desk (hand-offs they
+    // lead, back up or were given) and the claims of a client they are responsible for.
+    const rc = sup ? [] : [...(user.resp_clients || [])];
+    const mine = "c.assigned_to = ? OR c.last_worked_by = ? OR c.id IN (SELECT claim_id FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?)" + (rc.length ? ` OR c.client_id IN (${rc.map(() => "?").join(",")})` : "");
     const rows = await all(env, `SELECT c.id, c.client_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.assigned_to, c.last_worked_by, c.handoff_status,
         cl.name AS client_name, u.name AS assigned_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?) AND (${sup ? "1 = 1" + scopeSql(user, "c.client_id") : "c.assigned_to = ? OR c.last_worked_by = ?"} OR ${POSTED_CLOSED_SQL})
+      WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?) AND (${sup ? "1 = 1" + scopeSql(user, "c.client_id") : mine} OR ${POSTED_CLOSED_SQL})
       ORDER BY CASE WHEN c.claim_no = ? OR c.account_no = ? THEN 0 ELSE 1 END, CASE WHEN c.state IN ('open','assigned','in_progress') THEN 0 ELSE 1 END, c.balance DESC LIMIT 40`,
-      like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id]), q, q);
+      like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id, user.id, user.id, user.id, ...rc]), q, q);
+    // A desk person (and a desk team lead) gets only what they may see (D-08); a team lead gets their span; a biller's
+    // rows are already only theirs (the query's own rule, which also finds the claims on their desk: E-14).
     const ok = [];
-    for (const c of rows) if (ok.length < 8 && (deskOf(user) ? postedClosed(c) || (await canSeeClaim(env, user, c)) : leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c))) ok.push(c);
+    for (const c of rows) {
+      if (ok.length >= 8) break;
+      const may = deskOf(user) ? postedClosed(c) || (await canSeeClaim(env, user, c))
+        : sup ? leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c) : true;
+      if (may) ok.push(c);
+    }
     return { claims: ok.map(({ assigned_to, last_worked_by, handoff_status, ...c }) => ({ ...c, posted: handoff_status === "posted" && c.state === "closed" })) };
   },
   /* ---- The bell: what needs this person now, each with the page that deals with it ---- */
@@ -5571,7 +5627,7 @@ const OPS = {
     const suMiss = new Map(hoMiss.filter((r) => r.grp === "submission").map((r) => [r.client_id, r.n]));
     const saved = new Map((await all(env, "SELECT * FROM raci")).map((r) => [r.client_id, r]));
     const users = await all(env, "SELECT id, name, role, roster_kind, designation, department, projects_json, scope_projects_json, access_all FROM users WHERE active = 1");
-    const vpRow = users.find((u) => u.access_all) || null;
+    const vpRow = users.find(isVicePresident) || null;
     const person = (u) => ({ id: u.id, name: u.name });
     const tlRe = /\b(sr\.? )?tl\b|team lead/i;
     const rows = clients.map((c) => {
@@ -5619,11 +5675,11 @@ const OPS = {
     editableOr(user, clientId);
     if (isSME(user)) throw denied("The RACI is edited by team leads and up; you can read it.");
     if (!(await one(env, "SELECT id FROM clients WHERE id = ?", clientId))) throw bad("Unknown client.");
-    const users = new Map((await all(env, "SELECT id, name, access_all FROM users WHERE active = 1")).map((u) => [u.id, u]));
+    const users = new Map((await all(env, "SELECT id, name, designation, access_all FROM users WHERE active = 1")).map((u) => [u.id, u]));
     const clean = (v, cap) => [...new Set((Array.isArray(v) ? v : []).map((x) => str(x && x.id != null ? x.id : x, 60)).filter((id) => users.has(id)))].slice(0, cap).map((id) => ({ id, name: users.get(id).name }));
     const r = clean(payload.r, 10), a = clean(payload.a, 5), cn = clean(payload.c, 5);
     // Informed holds at most two people, and the VP is always the first.
-    const vp = [...users.values()].find((u) => u.access_all) || null;
+    const vp = [...users.values()].find(isVicePresident) || null;
     let i = clean(payload.i, 3);
     if (vp) i = [{ id: vp.id, name: vp.name }, ...i.filter((x) => x.id !== vp.id)];
     i = i.slice(0, 2);
@@ -5654,17 +5710,21 @@ const OPS = {
     return { team, auto_allocate: !!auto };
   },
   "clients.save": async ({ env, user, payload }) => {
-    const name = str(payload.name, 160).trim();
+    // A change leaves alone what it does not send: no code, Active or follow-up days in it keeps the client's own.
+    const ex = payload.id ? await one(env, "SELECT * FROM clients WHERE id = ?", payload.id) : null;
+    if (payload.id && !ex) throw bad("Unknown client.");
+    const sent = (k) => !ex || payload[k] !== undefined;
+    const name = sent("name") ? str(payload.name, 160).trim() : ex.name;
     if (!name) throw bad("Give the client a name.");
-    const code = str(payload.code, 20).trim().toUpperCase();
+    const code = sent("code") ? str(payload.code, 20).trim().toUpperCase() : ex.code || "";
     // The default follow-up: whole days from 1 to 365, refused otherwise; when it is not sent it stays as it is (30 for a new client)
     const fuOr = (keep) => (payload.follow_up_days == null ? keep : wholeIn(payload.follow_up_days, 1, 365, "The default follow-up must be a whole number of days from 1 to 365."));
-    const active = payload.active === false ? 0 : 1;
+    const active = sent("active") ? (payload.active === false ? 0 : 1) : ex.active ? 1 : 0;
     const link = workbookLinkOf(payload.workbook_link);
-    if (payload.id) {
-      const ex = await one(env, "SELECT * FROM clients WHERE id = ?", payload.id);
-      if (!ex) throw bad("Unknown client.");
+    if (ex) {
       editableOr(user, ex.id);
+      if (payload.seen != null && String(payload.seen) !== clientStamp(ex)) throw new ApiError(409, "Someone else changed this client after you opened it, so nothing was saved. Close this, open the client again and make your change.");
+      if (plainName(ex.name) !== plainName(name) && (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
       const fu = fuOr(Number(ex.follow_up_days) || 30);
       const changes = [];
       if (ex.name !== name) changes.push(`name ${ex.name} → ${name}`);
@@ -5692,9 +5752,9 @@ const OPS = {
     if (user.scope && (user.role !== "supervisor" || isSME(user))) throw denied("Adding a client is for team leads and above. Ask your team lead.");
     const fu = fuOr(30);
     // A new client needs its whole profile: scope of work, locations, targets, the people responsible.
-    const locNames = [...new Set((Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter(Boolean))].slice(0, 50);
+    const locNames = (Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter((x, i, a) => x && a.findIndex((y) => plainName(y) === plainName(x)) === i).slice(0, 50);
     const p = await checkProfile(env, payload.profile, { isNew: true, locations: locNames.length });
-    if (await one(env, "SELECT id FROM clients WHERE lower(name) = lower(?)", name)) throw bad("A client with that name already exists.");
+    if ((await all(env, "SELECT name FROM clients")).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
     const id = uuid(), now = Date.now();
     const sets = Object.keys(p.cols);
     await env.DB.batch([
@@ -5728,9 +5788,12 @@ const OPS = {
       env.DB.prepare("DELETE FROM attachments WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
       env.DB.prepare("DELETE FROM claim_events WHERE claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id),
       env.DB.prepare("DELETE FROM handoffs WHERE client_id = ? OR claim_id IN (SELECT id FROM claims WHERE client_id = ?)").bind(ex.id, ex.id),
-      // Everything else kept per client: the escalation tracker, shares, RACI, insurance limits, month-end, snapshots, notices and the rest.
+      // Its team tasks with their people, updates and files (the file data too).
+      env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id IN (SELECT f.id FROM team_task_files f JOIN team_tasks t ON t.id = f.task_id WHERE t.client_id = ?)").bind(ex.id),
+      ...["team_task_files", "team_task_updates", "team_task_people"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE task_id IN (SELECT id FROM team_tasks WHERE client_id = ?)`).bind(ex.id)),
+      // Everything else kept per client: the escalation tracker, shares, RACI, insurance limits, month-end, snapshots, notices, team tasks, holds and the rest.
       ...["escalations", "client_access", "raci", "payer_limits", "client_monthend", "client_snapshots", "inv_snapshots", "user_notices", "availability", "detail_uploads",
-        "ev_rows", "ev_batches", "creport_edits", "client_log", "digest_runs", "digest_log", "note_templates"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE client_id = ?`).bind(ex.id)),
+        "ev_rows", "ev_batches", "creport_edits", "client_log", "digest_runs", "digest_log", "note_templates", "team_tasks", "tat_holds"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE client_id = ?`).bind(ex.id)),
       env.DB.prepare("DELETE FROM claims WHERE client_id = ?").bind(ex.id),
       env.DB.prepare("DELETE FROM batches WHERE client_id = ?").bind(ex.id),
       env.DB.prepare("DELETE FROM allocations WHERE client_id = ?").bind(ex.id),
@@ -5740,15 +5803,18 @@ const OPS = {
     return { ok: true, name: ex.name, claims: n ? n.n : 0 };
   },
   "locations.save": async ({ env, user, payload }) => {
-    const name = str(payload.name, 160).trim();
+    // A change leaves alone what it does not send: no Active in it keeps the location on or off as it is.
+    const was = payload.id ? await one(env, "SELECT name, active FROM locations WHERE id = ?", str(payload.id, 60)) : null;
+    const name = was && payload.name === undefined ? was.name : str(payload.name, 160).trim();
     if (!name) throw bad("Give the location a name.");
-    const active = payload.active === false ? 0 : 1;
+    const active = was && payload.active === undefined ? (was.active ? 1 : 0) : payload.active === false ? 0 : 1;
     const link = workbookLinkOf(payload.workbook_link);
     if (payload.id) {
       const ex = await one(env, "SELECT id, client_id FROM locations WHERE id = ?", payload.id);
       if (!ex) throw bad("Unknown location.");
       editableOr(user, ex.client_id);
       const old = await one(env, "SELECT name, active, workbook_link FROM locations WHERE id = ?", ex.id);
+      if (plainName(old.name) !== plainName(name) && (await all(env, "SELECT name FROM locations WHERE client_id = ? AND id <> ?", ex.client_id, ex.id)).some((l) => plainName(l.name) === plainName(name))) throw bad("That location already exists for this client.");
       await run(env, "UPDATE locations SET name = ?, active = ?, workbook_link = CASE WHEN ? IS NULL THEN workbook_link ELSE ? END WHERE id = ?", name, active, link, link, ex.id);
       const ch = [...(old.name !== name ? [`renamed ${old.name} → ${name}`] : []), ...(!!old.active !== !!active ? [active ? "reactivated" : "deactivated"] : []), ...(link != null && (old.workbook_link || "") !== link ? [link ? "production file link set" : "production file link removed"] : [])];
       if (ch.length) await audit(env, user, "client.location", ex.client_id, `Location ${old.name}: ` + ch.join("; "));
@@ -5757,8 +5823,7 @@ const OPS = {
     const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!client) throw bad("Unknown client.");
     editableOr(user, client.id);
-    const dup = await one(env, "SELECT id FROM locations WHERE client_id = ? AND lower(name) = lower(?)", client.id, name);
-    if (dup) throw bad("That location already exists for this client.");
+    if ((await all(env, "SELECT name FROM locations WHERE client_id = ?", client.id)).some((l) => plainName(l.name) === plainName(name))) throw bad("That location already exists for this client.");
     const id = uuid(), now = Date.now();
     await run(env, "INSERT INTO locations (id, client_id, name, active, created_at) VALUES (?,?,?,?,?)", id, client.id, name, active, now);
     await audit(env, user, "client.location", client.id, "Location added: " + name);
@@ -7681,6 +7746,8 @@ const OPS = {
     if (isError === "Y") {
       const bid = str(payload.error_by_id, 60);
       errBy = bid ? await one(env, "SELECT id, name FROM users WHERE id = ?", bid) : null;
+      // the same: whoever made the error stays named after their account is gone
+      if (!errBy && ex && ex.error_by_id && bid === ex.error_by_id) errBy = { id: ex.error_by_id, name: ex.error_by_name };
       if (!errBy) throw bad("Our error: pick who made the error.");
       dow = isoDate(payload.error_dow);
       if (!dow) throw bad("Our error: pick the DOW, the date the work with the error was done.");
@@ -7699,6 +7766,8 @@ const OPS = {
     }
     let owner = null;
     if (payload.owner_id) owner = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", str(payload.owner_id, 60));
+    // A change that keeps the responding person keeps them after they have left: the register keeps who it was at the time.
+    if (!owner && ex && ex.owner_id && str(payload.owner_id, 60) === ex.owner_id) owner = { id: ex.owner_id, name: ex.owner_name };
     if (!owner) throw bad("Pick the responding person at Purview.");
     // location (one of this client's), the channels it came through, the review date and whether the rework is done
     // an update that does not send the location keeps the one saved
@@ -7988,7 +8057,11 @@ const OPS = {
     stmts.push(env.DB.prepare("UPDATE team_tasks SET title = ?, description = ?, due_at = ?, tat_hours = ?, count_total = ?, updated_at = ? WHERE id = ?").bind(title, description, due.due_at, due.tat_hours, count, now, t.id));
     if (notes.length) stmts.push(env.DB.prepare("INSERT INTO team_task_updates (id, task_id, user_id, user_name, kind, comment, at) VALUES (?,?,?,?,'edit',?,?)").bind(uuid(), t.id, user.id, user.name || "", "Changed: " + notes.join(", ") + ".", now));
     await env.DB.batch(stmts);
-    return { ok: true, count, due_at: due.due_at };
+    // Everyone left on it has completed (the edit took off the only one who had not): it is done, as when the last one completes.
+    const left = await one(env, "SELECT COUNT(*) AS n, SUM(CASE WHEN status <> 'completed' THEN 1 ELSE 0 END) AS todo FROM team_task_people WHERE task_id = ?", t.id);
+    const closed = !!(left && left.n && !left.todo);
+    if (closed) await run(env, "UPDATE team_tasks SET status = 'done', closed_at = ?, closed_by_name = ?, updated_at = ? WHERE id = ? AND status = 'open'", now, "everyone completed their share", now, t.id);
+    return { ok: true, count, due_at: due.due_at, closed };
   },
   "tasks.file": async ({ env, user, payload }) => {
     const f = await one(env, "SELECT * FROM team_task_files WHERE id = ?", str(payload.id, 60));
@@ -8186,10 +8259,17 @@ const OPS = {
     const name = str(payload.name, 80).trim();
     if (!name) throw bad("Which roster project?");
     if (user.scope && !user.scope_projects.some((p) => projKey(p) === projKey(name))) throw outOfScope();
+    // A new client is made through Add client, with its whole profile (team leads and up): the page opens that setup with the
+    // project's name, then matches the project to the client it made. Only the admin can still make one straight from a project
+    // here (not from any page): a name no other client has, kept in the audit trail, its profile showing what is missing.
     let clientId = str(payload.client_id, 60);
     if (payload.create) {
+      if (!user.is_admin) throw bad("Add the new client with its whole profile (Manage › Clients & locations › Add client); a project with the same name is matched to it by itself.");
+      const cname = str(payload.client_name || name, 160).trim() || name;
+      if ((await all(env, "SELECT name FROM clients")).some((x) => plainName(x.name) === plainName(cname))) throw bad("A client with that name already exists.");
       clientId = uuid();
-      await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,1,30,?,?)", clientId, str(payload.client_name || name, 160).trim() || name, "", user.id, Date.now());
+      await run(env, "INSERT INTO clients (id, name, code, active, follow_up_days, created_by, created_at) VALUES (?,?,?,1,30,?,?)", clientId, cname, "", user.id, Date.now());
+      await audit(env, user, "client.save", clientId, "created from the roster project " + name + "; its profile is still to fill in");
     }
     const c = await one(env, "SELECT id, name, roster_names_json, created_by FROM clients WHERE id = ?", clientId);
     if (!c) throw bad("Pick the client this project is.");
@@ -8271,7 +8351,7 @@ const OPS = {
       if (!u) {
         const id = uuid(), salt = randomHex(16);
         const [first, ...rest] = name.split(" ");
-        await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,0,1,35,?)", id, email, name, first, rest.join(" "), "SME", "user", salt, await makeHash(env, salt, passHash), now);
+        await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,0,1,35,?)", id, email, name, first, rest.join(" "), "Biller", "user", salt, await makeHash(env, salt, passHash), now);
         u = { id, email, name };
       }
       users.push(publicUser({ ...u, active: 1, role: "user" }));
