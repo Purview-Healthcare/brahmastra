@@ -3470,6 +3470,11 @@ const PRIO_REASON_SQL = "CASE WHEN priority_set <> '' THEN priority_set_label ||
 function fpKeyOf(patient, dos) { const p = normText(patient), d = isoDate(dos); return p && d ? p + "|" + d : ""; }
 function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, "0"); }
 const generatedClaimNo = (fp) => "BR-" + fnv1a(fp).toUpperCase();
+/* A BR-... number is made up by Brahmastra for a claim that came without one: it is no claim number. Such a claim is found again
+   by patient + DOS (and the payer, when both sides have one), so a later file that carries its real number refreshes it instead
+   of adding a second claim. Two different real claim numbers are always two claims. */
+const isGeneratedNo = (r) => !!r && !!r.fp_key && r.claim_no === generatedClaimNo(r.fp_key);
+const samePayer = (a, b) => { const x = normText(a), y = normText(b); return !x || !y || x === y; };
 /* What one worked-file row said about a claim, kept with that upload. "Worked by" is read from the file's own column when it has one. */
 function fileSnapshot(kind, vals, c, lastWorked, followUp) {
   const raw = c.raw && typeof c.raw === "object" ? c.raw : {};
@@ -5547,26 +5552,30 @@ const OPS = {
     // Keys for recognising a claim already on file: exact key, normalised claim number, patient + DOS.
     rows.forEach((c) => {
       c._fp = fpKeyOf(c.patient, c.dos);
-      if (!str(c.claim_no, 80).trim() && c._fp) c.claim_no = generatedClaimNo(c._fp);
+      c._gen = !str(c.claim_no, 80).trim() && !!c._fp;   // no claim number in the file: Brahmastra makes one up (BR-...)
+      if (c._gen) c.claim_no = generatedClaimNo(c._fp);
       c._alt = altKeyOf(c.claim_no);
+      c._num = c._gen ? "" : c._alt;                      // the claim number's key; none for a made-up number
     });
     const byMatch = new Map(), byAlt = new Map(), byFp = new Map();
-    const SEL = "SELECT id, match_key, alt_key, fp_key, state, touches, assigned_to, worked_before, follow_up_on, inventory_kind FROM claims WHERE client_id = ? AND ";
+    const SEL = "SELECT id, match_key, alt_key, fp_key, claim_no, payer, state, touches, assigned_to, worked_before, follow_up_on, inventory_kind FROM claims WHERE client_id = ? AND ";
     for (const chunk of chunks(rows.map((c) => str(c.match_key, 300)), 80)) (await all(env, SEL + `match_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => byMatch.set(r.match_key, r));
-    for (const chunk of chunks([...new Set(rows.map((c) => c._alt).filter(Boolean))], 80)) (await all(env, SEL + `alt_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!byAlt.has(r.alt_key)) byAlt.set(r.alt_key, r); });
-    for (const chunk of chunks([...new Set(rows.map((c) => c._fp).filter(Boolean))], 80)) (await all(env, SEL + `fp_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!byFp.has(r.fp_key)) byFp.set(r.fp_key, r); });
+    for (const chunk of chunks([...new Set(rows.map((c) => c._num).filter(Boolean))], 80)) (await all(env, SEL + `alt_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!isGeneratedNo(r) && !byAlt.has(r.alt_key)) byAlt.set(r.alt_key, r); });
+    for (const chunk of chunks([...new Set(rows.map((c) => c._fp).filter(Boolean))], 80)) (await all(env, SEL + `fp_key IN (${chunk.map(() => "?").join(",")}) ORDER BY created_at`, client.id, ...chunk)).forEach((r) => { if (!byFp.has(r.fp_key)) byFp.set(r.fp_key, []); byFp.get(r.fp_key).push(r); });
     const stmts = [];
     const taken = new Set(), altSeen = new Set();
     for (const c of rows) {
       const key = str(c.match_key, 300);
       // Two rows of one file whose claim numbers differ only in format ("D-55555" and "d55555") are one claim: the first row counts.
-      if (c._alt && !byMatch.has(key)) { if (altSeen.has(c._alt)) { counts.skipped++; continue; } }
-      if (c._alt) altSeen.add(c._alt);
-      let ex = byMatch.get(key) || (c._alt && byAlt.get(c._alt)) || null;
-      // Patient + DOS only when neither side has a (different) claim number.
-      if (!ex && c._fp) { const f = byFp.get(c._fp); if (f && (!f.alt_key || !c._alt || f.alt_key === c._alt)) ex = f; }
+      if (c._num && !byMatch.has(key)) { if (altSeen.has(c._num)) { counts.skipped++; continue; } }
+      if (c._num) altSeen.add(c._num);
+      let ex = byMatch.get(key) || (c._num && byAlt.get(c._num)) || null;
+      // Patient + DOS (and the payer, when both have one) only when one side has no claim number of its own.
+      if (!ex && c._fp) ex = (byFp.get(c._fp) || []).find((f) => !taken.has(f.id) && (isGeneratedNo(f) || !f.alt_key || !c._num || f.alt_key === c._num) && samePayer(f.payer, c.payer)) || null;
       if (ex && taken.has(ex.id)) ex = null; // two rows of one file cannot both refresh the same claim
       if (ex) taken.add(ex.id);
+      // a made-up number never replaces a claim's real one; a real one replaces a made-up one, with its key
+      const keepNo = !!ex && c._gen && !!ex.claim_no && !isGeneratedNo(ex), gotNo = !!ex && !!c._num && isGeneratedNo(ex) ? 1 : 0;
       const exclude = str(c.exclude_reason, 80);
       const closedInFile = exclude === "closed";
       const vals = {
@@ -5623,12 +5632,12 @@ const OPS = {
           priority_reason = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority_reason ELSE ${PRIO_REASON_SQL} END, state = ?, state_reason = COALESCE(?, state_reason),
           assigned_to = CASE WHEN ? = 1 THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 1 THEN NULL ELSE assigned_at END,
           skipped_at = CASE WHEN ? = 1 THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ?,
-          alt_key = CASE WHEN alt_key = '' THEN ? ELSE alt_key END, fp_key = CASE WHEN fp_key = '' THEN ? ELSE fp_key END WHERE id = ?`).bind(
-          location_id || null, bid, vals.claim_no, vals.claim_no, vals.account_no, vals.account_no, vals.patient, vals.patient, vals.payer, vals.payer,
+          alt_key = CASE WHEN alt_key = '' OR ? = 1 THEN ? ELSE alt_key END, fp_key = CASE WHEN fp_key = '' THEN ? ELSE fp_key END WHERE id = ?`).bind(
+          location_id || null, bid, keepNo ? "" : vals.claim_no, keepNo ? "" : vals.claim_no, vals.account_no, vals.account_no, vals.patient, vals.patient, vals.payer, vals.payer,
           vals.dos, vals.dos, vals.cpt, vals.cpt, vals.provider, vals.provider, vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class,
           vals.file_status, vals.file_sub_status, vals.file_action, vals.file_comments, vals.file_comments, vals.file_bucket,
           kind, kind, lastWorked, lastWorked, lastWorked, followUp, lastWorked, lastWorked, followUp, ...prioArgs(vals.priority), vals.priority, vals.priority_reason, vals.priority_reason, newState, reason,
-          clearAssign, clearAssign, clearAssign, vals.raw_json, now, c._alt, c._fp, ex.id));
+          clearAssign, clearAssign, clearAssign, vals.raw_json, now, gotNo, keepNo ? "" : c._alt, c._fp, ex.id));
     }
     if (stmts.length) await batchAll(env, stmts, 40);
     await run(env, `UPDATE batches SET inserted = inserted + ?, updated = updated + ?, reopened = reopened + ?, closed = closed + ?, excluded = excluded + ?, skipped = skipped + ?,
@@ -5648,34 +5657,47 @@ const OPS = {
       : await all(env, `SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id WHERE 1 = 1${scopeSql(user, "b.client_id")}${tail} ORDER BY b.uploaded_at DESC LIMIT 100`, ...scopeArgs(user), ...range);
     return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} return { ...b, summary: s, summary_json: undefined }; }) };
   },
-  /* Merge claims that are really the same claim (same normalised claim number, or same patient + DOS with no
-     conflicting claim number). The oldest row is kept; notes, work history and the biller move onto it. */
+  /* Merge claims that are really the same claim (same normalised claim number, or same patient + DOS and payer with no
+     conflicting claim number; a made-up BR-... number is no claim number). The oldest row is kept; notes, work history and
+     the biller move onto it, and it takes the real claim number when it only had a made-up one. */
   "inventory.dedupe": async ({ env, payload }) => {
     const client = await one(env, "SELECT id FROM clients WHERE id = ?", payload.client_id);
     if (!client) throw bad("Pick a client.");
     await backfillKeys(env);
-    const rows = await all(env, `SELECT id, claim_no, alt_key, fp_key, created_at, state, assigned_to, assigned_at, touches, worked_before, inventory_kind, last_worked_on, follow_up_on,
+    const rows = await all(env, `SELECT id, claim_no, payer, alt_key, fp_key, created_at, state, assigned_to, assigned_at, touches, worked_before, inventory_kind, last_worked_on, follow_up_on,
         last_status_code, last_action_code, last_sub_status, last_bucket, last_effective, last_note_action, last_note, last_worked_by FROM claims WHERE client_id = ? ORDER BY created_at`, client.id);
+    const numOf = (r) => (isGeneratedNo(r) ? "" : r.alt_key);
+    // the same claim number written differently
     const groups = new Map();
-    for (const r of rows) { const k = r.alt_key ? "a:" + r.alt_key : r.fp_key ? "f:" + r.fp_key : ""; if (!k) continue; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
-    // Rows with a claim number also join a patient+DOS group only when no other member has a different number.
+    for (const r of rows) { const k = numOf(r); if (!k) continue; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+    // the same patient + DOS and payer (a claim with no payer goes with the others when they all have one payer): only when no
+    // two members have different claim numbers
     const fpGroups = new Map();
     for (const r of rows) if (r.fp_key) { if (!fpGroups.has(r.fp_key)) fpGroups.set(r.fp_key, []); fpGroups.get(r.fp_key).push(r); }
+    const byPayer = (list) => {
+      const m = new Map(); for (const r of list) { const k = normText(r.payer); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+      const named = [...m.keys()].filter(Boolean);
+      if (named.length === 1 && m.has("")) { m.get(named[0]).push(...m.get("")); m.delete(""); }
+      return [...m.values()];
+    };
     const merged = []; const seen = new Set();
     const consider = (list) => {
-      const alts = new Set(list.map((r) => r.alt_key).filter(Boolean));
+      const alts = new Set(list.map(numOf).filter(Boolean));
       if (list.length < 2 || alts.size > 1) return;
       const fresh = list.filter((r) => !seen.has(r.id)); if (fresh.length < 2) return;
       fresh.forEach((r) => seen.add(r.id));
       const keep = [...fresh].sort((a, b) => (b.touches - a.touches) || (a.created_at - b.created_at))[0];
       merged.push({ keep, others: fresh.filter((r) => r.id !== keep.id) });
     };
-    groups.forEach(consider); fpGroups.forEach(consider);
+    groups.forEach(consider); fpGroups.forEach((list) => byPayer(list).forEach(consider));
     const total = merged.reduce((n, g) => n + g.others.length, 0);
     if (payload.dry_run) return { groups: merged.length, duplicates: total };
     const stmts = [];
     for (const g of merged) {
       const k = g.keep;
+      // the claim kept had no number of its own: it takes the real one of the copy merged into it
+      const real = numOf(k) ? null : g.others.find((o) => numOf(o));
+      if (real) stmts.push(env.DB.prepare("UPDATE claims SET claim_no = ?, alt_key = ? WHERE id = ?").bind(real.claim_no, real.alt_key, k.id));
       for (const o of g.others) {
         stmts.push(env.DB.prepare("UPDATE notes SET claim_id = ? WHERE claim_id = ?").bind(k.id, o.id));
         stmts.push(env.DB.prepare("UPDATE attachments SET claim_id = ? WHERE claim_id = ?").bind(k.id, o.id));

@@ -973,7 +973,10 @@ the same column, such as 13/06/2026, shows the column is written day first: then
 `Provider`, `Balance Amount($)`, `Status`, `Sub Status`, `Action`,
 `Comments/Notes`, `Date Worked`, and the usual variants); when a claim column
 cannot be found the column check lets you point at the right ones. A claim is recognised across uploads by its claim number, or,
-without one, by patient + date of service + payer + provider. Several service
+without one, by patient + date of service + payer + provider. A claim that came without a claim number gets a
+BR-... number from Brahmastra; when a later file carries its real number it is found by patient + date of service
+(and payer, when both files have one), refreshed, and takes the real number. Two different claim numbers are always
+two claims. Several service
 lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
 locations automatically.

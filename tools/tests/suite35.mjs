@@ -236,6 +236,45 @@ S("A-03: a claim is not a total row because a name starts with Total");
   ok("A-03: real footer rows are still skipped (Grand Total: 3 claims, Sub total, Totals beside a count, Total Aetna, TOTAL:)", b.claims.length === 1 && b.claims[0].claim_no === "9803011" && b.summary.footer + b.summary.blank === 5, [b.claims.map((c) => c.claim_no || c.patient || c.payer), b.summary.footer, b.summary.blank]);
 }
 
+S("A-13: a claim loaded without a claim number, then with its real number");
+{
+  const HH = ["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"];
+  const cl = await mkClient("Made-up Clinic S35 A13");
+  await upload(cl, [HH, ["", "Test Patient One", "Aetna", "09/05/2026", "500.00", "Pending"]], { name: "October file.csv" });
+  const first = (await claimsOf(cl))[0];
+  const r2 = await upload(cl, [HH, ["9813001", "Test Patient One", "Aetna", "09/05/2026", "450.00", "Denied"]], { name: "November file.csv" });
+  let got = await claimsOf(cl);
+  ok("A-13: the later file with the real number refreshes the BR-... claim: one claim, number 9813001, $450", /^BR-[0-9A-F]{8}$/.test(first.claim_no) && got.length === 1 && got[0].id === first.id && got[0].claim_no === "9813001" && got[0].balance === 450 && r2.r.inserted === 0 && r2.r.updated === 1,
+    [first.claim_no, got.map((c) => [c.claim_no, c.balance]), r2.r]);
+  const st = await A("inventory.status", { client_id: cl.id, today: TODAY });
+  ok("A-13: the money is counted once (AR $450) and Merge duplicates has nothing to merge", st.ar === 450 && (await A("inventory.dedupe", { client_id: cl.id, dry_run: true })).duplicates === 0, st.ar);
+  await upload(cl, [HH, ["9813001", "Test Patient One", "Aetna", "09/05/2026", "440.00", "Denied"]], { name: "December file.csv" });
+  await upload(cl, [HH, ["", "Test Patient One", "Aetna", "09/05/2026", "430.00", "Denied"]], { name: "A file without numbers again.csv" });
+  got = await claimsOf(cl);
+  ok("A-13: later files find it again, by number or without one, and a file without numbers keeps the real number", got.length === 1 && got[0].claim_no === "9813001" && got[0].balance === 430, got.map((c) => [c.claim_no, c.balance]));
+  // the other way round: the number first, then a file without numbers
+  const c2 = await mkClient("Made-up Clinic S35 A13 b");
+  await upload(c2, [HH, ["9813101", "Test Patient Two", "Cigna", "09/06/2026", "300.00", "Pending"]]);
+  await upload(c2, [HH, ["", "Test Patient Two", "Cigna", "09/06/2026", "280.00", "Pending"]], { name: "next.csv" });
+  got = await claimsOf(c2);
+  ok("A-13: number first, then a file without numbers: still one claim, with its number", got.length === 1 && got[0].claim_no === "9813101" && got[0].balance === 280, got.map((c) => [c.claim_no, c.balance]));
+  // genuinely different claims stay apart
+  const c3 = await mkClient("Made-up Clinic S35 A13 c");
+  await upload(c3, [HH, ["", "Test Patient Three", "Aetna", "09/07/2026", "100.00", "Pending"], ["", "Test Patient Three", "Cigna", "09/07/2026", "150.00", "Pending"]]);
+  ok("A-13: two rows without a number for one patient and DOS but different payers are two claims", (await claimsOf(c3)).length === 2, (await claimsOf(c3)).map((c) => [c.claim_no, c.payer]));
+  await upload(c3, [HH, ["9813201", "Test Patient Three", "UHC", "09/07/2026", "200.00", "Pending"], ["9813202", "Test Patient Four", "Aetna", "09/08/2026", "50.00", "Pending"], ["9813203", "Test Patient Four", "Aetna", "09/08/2026", "60.00", "Pending"]], { name: "next.csv" });
+  got = await claimsOf(c3);
+  ok("A-13: a real number with another payer does not take over a BR-... claim, and two different real numbers are two claims", got.length === 5 && got.filter((c) => /^BR-/.test(c.claim_no)).length === 2, got.map((c) => [c.claim_no, c.payer]));
+  ok("A-13: Merge duplicates leaves these different claims alone", (await A("inventory.dedupe", { client_id: c3.id, dry_run: true })).duplicates === 0);
+  // copies made before the fix (a BR-... claim and the same claim under its real number) are found and merged, keeping the real number
+  await x("UPDATE claims SET payer = 'Aetna' WHERE client_id = ? AND claim_no = '9813201'", c3.id);
+  const dry = await A("inventory.dedupe", { client_id: c3.id, dry_run: true });
+  await A("inventory.dedupe", { client_id: c3.id });
+  got = await claimsOf(c3);
+  ok("A-13: Merge duplicates finds a BR-... claim and its real-number copy and keeps the real number", dry.duplicates === 1 && got.length === 4 && got.filter((c) => c.payer === "Aetna" && c.patient === "Test Patient Three").map((c) => c.claim_no).join() === "9813201",
+    [dry, got.map((c) => [c.claim_no, c.payer])]);
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
