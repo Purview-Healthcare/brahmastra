@@ -83,6 +83,16 @@ S("B-01: Shastra's attendance words: the half-day and leave spellings, Overtime 
   ok("B-01: Overtime on a working day is a day in, even with an Out today mark here: 5 days, target 175, 40 h", o.days_full === 5 && o.days_out === 0 && o.target_done === 175 && o.floor_needed_done_min === 40 * 60, pick(o, ks));
 }
 
+S("B-13: no target and no floor time before the date of joining");
+{
+  await freshFloor(null);
+  for (const d of [5, 6]) await work("Jo Joiner", IST(2026, 11, d, 10), 35);
+  const r = await status(A, D(2), D(10), D(10), IST(2026, 11, 10, 15)), j = row(r, "Jo Joiner");
+  const ks = ["doj", "days_full", "days_out", "count_done", "target_done", "attain", "perf", "floor_needed_done_min"];
+  ok("B-13: joined Thu Nov 5, 35 a day: 70 of 70 up to yesterday (100%, meeting the mark), 16 h of floor time needed", j.target_done === 70 && j.count_done === 70 && j.attain === 100 && j.perf === "ok" && j.floor_needed_done_min === 16 * 60, pick(j, ks));
+  ok("B-13: the days before joining are not days out, and there is no Do today pointer about her", j.days_out === 0 && j.days_full === 3 && !r.suggestions.today.some((s) => s.who === "Jo Joiner"), { ...pick(j, ks), today: r.suggestions.today.filter((s) => s.who === "Jo Joiner") });
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

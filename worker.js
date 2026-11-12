@@ -4201,16 +4201,19 @@ const OPS = {
       const w = wk.get(u.id) || {}, n = nb.get(u.id) || {}, st = statusOf(u), cap = Math.max(1, u.capacity || 35);
       // each day: a full day, a half day or out. Purview Shastra's attendance decides when it has the day (leave, half
       // day, week off, a Saturday worked); otherwise a weekday is a full day unless marked Out today here (Half day: half).
-      const fd = fl.byUser.get(u.id);
+      // Days before the date of joining have no target and no floor time, and are not days out.
+      const fd = fl.byUser.get(u.id), doj = isoDate(u.doj);
       let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0;
       for (const d of span) {
         const x = fd && fd.get(d), sd0 = x ? shastraDay(x.status) : null, wd = weekday(d);
         // Overtime on a working day is a day in; a weekend or holiday worked as overtime adds no target (its entries still count)
         const sd = sd0 && sd0.overtime && !wd ? null : sd0;
         let share = 0;
-        if (sd) { share = sd.share; if (sd.kind === "in") full++; else if (sd.kind === "half") half++; else if (sd.kind !== "off") { out++; if (sd.kind === "unplanned") unplanned++; } }
-        else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
-          if (!a) full++; else if (share) half++; else { out++; unplanned++; } }
+        if (!(doj && d < doj)) {
+          if (sd) { share = sd.share; if (sd.kind === "in") full++; else if (sd.kind === "half") half++; else if (sd.kind !== "off") { out++; if (sd.kind === "unplanned") unplanned++; } }
+          else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
+            if (!a) full++; else if (share) half++; else { out++; unplanned++; } }
+        }
         shares += share; needAll += share * 480;
         if (d < today) { tDone += share * cap; needDone += share * 480; } else if (d === today) tToday = share * cap;
         if (x) { const tof = x.tof_min || 0, idl = x.guard ? (x.idle_min || 0) + (x.locked_min || 0) : 0;
