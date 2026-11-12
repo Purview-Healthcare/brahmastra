@@ -396,6 +396,15 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("E-14: what Search finds, the person can open", opened.ok, opened.e);
 }
 
+{
+  S("E-15: Load sample data makes three billers with the designation Biller");
+  const w = await world({ feed: [] });
+  const rows = await w.rows("SELECT name, role, designation FROM users WHERE email IN ('aisha@purview-healthcare.com','rohan@purview-healthcare.com','priya@purview-healthcare.com') ORDER BY name");
+  ok("E-15: Aisha, Priya and Rohan are billers named Biller", rows.length === 3 && rows.every((r) => r.role === "user" && r.designation === "Biller"), rows);
+  const isSmeUI = vm.runInContext("isSmeUI", w.rig.app);
+  ok("E-15: the page does not take them for SMEs", rows.every((r) => !isSmeUI(r)));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

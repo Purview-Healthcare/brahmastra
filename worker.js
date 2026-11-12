@@ -7897,7 +7897,7 @@ const OPS = {
       if (!u) {
         const id = uuid(), salt = randomHex(16);
         const [first, ...rest] = name.split(" ");
-        await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,0,1,35,?)", id, email, name, first, rest.join(" "), "SME", "user", salt, await makeHash(env, salt, passHash), now);
+        await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,0,1,35,?)", id, email, name, first, rest.join(" "), "Biller", "user", salt, await makeHash(env, salt, passHash), now);
         u = { id, email, name };
       }
       users.push(publicUser({ ...u, active: 1, role: "user" }));
