@@ -705,7 +705,8 @@ p_from, p_to)` (`dev/shastra-floor-feed.sql`, run once the same way). It uses th
 returns, for each person and day, the attendance status, time on the floor, time logged in, breaks, and the minutes
 Shastra Guard saw no movement or a locked screen while they were punched in; people are matched by Emp ID, then
 email. Brahmastra keeps the days it fetched, settles a day once it was fetched 12 hours after it ended, and asks
-again for newer days after 10 minutes. Until the function is added, Team status shows – for on floor and idle.
+again for newer days after 10 minutes. The function answers at most 93 days a call, so longer dates are asked for
+in parts and joined. Until the function is added, Team status shows – for on floor and idle.
 
 | Name | Type | Value |
 |---|---|---|

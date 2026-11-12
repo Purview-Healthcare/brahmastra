@@ -2104,13 +2104,18 @@ async function shastraFloor(env, from, to, today, off) {
   const stale = [];
   for (let d = from; d <= last; d = addDays(d, 1)) { const at = st.days[d] || 0; if (!(at > dayEnd(d) + 12 * 3600000 || now - at < FLOOR_FRESH_MS)) stale.push(d); }
   if (stale.length && !(st.fail_at && now - st.fail_at < FLOOR_FRESH_MS)) {
-    const a = stale[0], b = stale[stale.length - 1], res = await fetchFloor(env, a, b);
-    if (res.ok) {
-      const us = await all(env, "SELECT id, emp_id, email FROM users");
-      const byEmp = new Map(), byMail = new Map();
-      for (const u of us) { if (u.emp_id) byEmp.set(String(u.emp_id).trim().toUpperCase(), u.id); if (u.email) byMail.set(String(u.email).trim().toLowerCase(), u.id); }
-      const n = (v) => (v == null || v === "" || !isFinite(+v) ? null : Math.max(0, Math.round(+v)));
-      const put = []; let unmatched = 0;
+    // Shastra answers at most 93 days a call (dev/shastra-floor-feed.sql): longer dates are asked in parts and the answers joined
+    const a = stale[0], b = stale[stale.length - 1];
+    let byEmp = null, byMail = null, unmatched = 0, failed = null;
+    const n = (v) => (v == null || v === "" || !isFinite(+v) ? null : Math.max(0, Math.round(+v)));
+    for (let p = a; p <= b; ) {
+      const q = addDays(p, 92) < b ? addDays(p, 92) : b, res = await fetchFloor(env, p, q);
+      if (!res.ok) { failed = res; break; }
+      if (!byEmp) {
+        byEmp = new Map(); byMail = new Map();
+        for (const u of await all(env, "SELECT id, emp_id, email FROM users")) { if (u.emp_id) byEmp.set(String(u.emp_id).trim().toUpperCase(), u.id); if (u.email) byMail.set(String(u.email).trim().toLowerCase(), u.id); }
+      }
+      const put = [];
       for (const x of res.rows) {
         const day = isoDate(x && x.date); if (!day) continue;
         const uid = (x.emp_id && byEmp.get(String(x.emp_id).trim().toUpperCase())) || (x.email && byMail.get(String(x.email).trim().toLowerCase()));
@@ -2119,18 +2124,23 @@ async function shastraFloor(env, from, to, today, off) {
         put.push(env.DB.prepare("INSERT OR REPLACE INTO floor_days (user_id, day, status, tof_min, idle_min, locked_min, logged_min, break_min, open, guard) VALUES (?,?,?,?,?,?,?,?,?,?)")
           .bind(uid, day, str(x.status, 30).toLowerCase(), n(x.tof_min), g ? n(x.idle_min) : null, g ? n(x.locked_min) : null, n(x.logged_min), n(x.break_min), x.open ? 1 : 0, g ? 1 : 0));
       }
-      await batchAll(env, [env.DB.prepare("DELETE FROM floor_days WHERE day BETWEEN ? AND ?").bind(a, b), ...put]);
-      for (let d = a; d <= b; d = addDays(d, 1)) st.days[d] = now;
-      const keep = addDays(today, -120); for (const d of Object.keys(st.days)) if (d < keep) delete st.days[d];
-      Object.assign(st, { ok_at: now, fail_at: 0, state: "ok", error: "", unmatched });
-    } else Object.assign(st, { fail_at: now, state: res.state, error: res.error });
+      await batchAll(env, [env.DB.prepare("DELETE FROM floor_days WHERE day BETWEEN ? AND ?").bind(p, q), ...put]);
+      for (let d = p; d <= q; d = addDays(d, 1)) st.days[d] = now;
+      Object.assign(st, { ok_at: now, state: "ok", unmatched });
+      p = addDays(q, 1);
+    }
+    // when each day was fetched, for the last 120 days (or back to the dates asked for, so a long range is not asked again at once)
+    const keep = addDays(today, -120) < from ? addDays(today, -120) : from; for (const d of Object.keys(st.days)) if (d < keep) delete st.days[d];
+    if (failed) Object.assign(st, { fail_at: now, state: failed.state, error: failed.error });
+    else Object.assign(st, { fail_at: 0, error: "" });
     await setSetting(env, "floor_sync", st);
   }
-  // until the feed has answered once, there is nothing to show; after that, the kept days (with a note if the last ask failed)
+  // until the feed has answered once, there is nothing to show; after that, the kept days (with a note if the last ask failed,
+  // even when its first part was answered)
   const state = st.ok_at ? "ok" : st.state || "pending";
   const byUser = new Map();
   if (state === "ok") for (const x of await all(env, "SELECT * FROM floor_days WHERE day BETWEEN ? AND ?", from, last)) { if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Map()); byUser.get(x.user_id).set(x.day, x); }
-  return { state, error: st.fail_at && st.fail_at > (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser };
+  return { state, error: st.fail_at && st.fail_at >= (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser };
 }
 /* Shastra's attendance status for a day: in (a full day), a half day, unplanned (absent, sick, leave without pay),
    leave (approved, maternity, sabbatical) or off (week off, holiday, comp off: not a working day). Unknown or missing:

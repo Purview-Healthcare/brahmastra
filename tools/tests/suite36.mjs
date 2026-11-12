@@ -183,6 +183,26 @@ S("B-06: the Monday digest's AR a week before is the end of the Sunday before th
   ok("B-06: week of Nov 2 to Nov 8: AR 156,000 against 100,000 at the end of Sunday Nov 1 (up 56,000, Monday's inventory included)", !!dash && dash.week.first === D(2) && dash.ar.now === 156000 && dash.ar.week_ago === 100000, dash);
 }
 
+S("B-02: Team status asks Shastra's floor feed in parts of at most 93 days and joins the answers");
+{
+  // Dina is on the floor 8 h every working day from Jul 1 to Nov 6 (Shastra has every day; Nov 9 is Diwali)
+  const fr = []; for (let t = Date.UTC(2026, 6, 1); t <= Date.UTC(2026, 10, 9); t += 86400000) { const d = new Date(t).toISOString().slice(0, 10), w = new Date(t).getUTCDay(); if (w > 0 && w < 6 && d !== D(9)) fr.push(F("B1", d, "present", 480)); }
+  await freshFloor(fr);
+  const now = IST(2026, 11, 10, 15);
+  await status(A, D(2), D(10), D(10), now);   // This week: the feed answers
+  floorCalls.length = 0;
+  const r = await status(A, "2026-07-01", D(10), D(10), now + 11 * 60000), d = row(r, "Dina Day");
+  const sizes = floorCalls.map(([a, b]) => (Date.parse(b) - Date.parse(a)) / 86400000 + 1);
+  ok("B-02: Jul 1 to Nov 10 (133 days): asked in parts of at most 93 days that follow on from each other",
+    floorCalls.length >= 2 && sizes.every((n) => n <= 93) && floorCalls[0][0] === "2026-07-01" && floorCalls[floorCalls.length - 1][1] === D(10) && floorCalls.every((c, i) => !i || c[0] === nextDay(floorCalls[i - 1][1])), floorCalls);
+  ok("B-02: every finished working day is on the floor: met, no feed error, no 'short' pointer",
+    d.floor === "met" && d.on_floor_done_min === d.floor_needed_done_min && d.floor_needed_done_min > 90 * 480 && r.floor_error === "" && !r.suggestions.today.concat(r.suggestions.week).some((s) => s.who === "Dina Day" && /On the floor/.test(s.seen)),
+    { floor: d.floor, on: d.on_floor_done_min, need: d.floor_needed_done_min, err: r.floor_error });
+  floorCalls.length = 0;
+  await status(A, "2026-07-01", D(10), D(10), now + 16 * 60000);
+  ok("B-02: the same dates again 5 minutes later: Shastra is not asked again", floorCalls.length === 0, floorCalls);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
