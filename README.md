@@ -113,8 +113,8 @@ on the sign-in screen and choose their own password the first time.
 
 - **Team lead**: Live status, Dashboard, Inventory, Allocate, Claims, Team, Clients, SAAG,
   Reports, and a day list of their own.
-- **Biller**: My day (the allocations, one claim at a time) and My work (their
-  history).
+- **Biller**: My day (the allocations, one claim at a time, and **My stack** once a month
+  is locked) and My work (their history).
 - **Admin** (`ADMIN_EMAILS` in `wrangler.toml`, signs in with an email code):
   everything a team lead has, plus the **Roster** screen.
 
@@ -303,9 +303,9 @@ entries before the shift time too, as Team status and My day do (a night shift's
 
 #### Dashboard: Team status, Inventory status, Client 360 report
 
-**Dashboard** has three parts: **Team status**, **Inventory status** (every client's account at a glance, below)
-and **Client 360 report** (pick the client, then its report pack: the *Dashboard › Client 360 report* section
-above). Team status and Inventory status share the filters client, **team lead** (managers and up) and the dates:
+**Dashboard** has four parts: **Team status**, **Inventory status** (every client's account at a glance, below),
+**Client 360 report** (pick the client, then its report pack: the *Dashboard › Client 360 report* section
+above) and **Stack report** (each person's month in points and a Stack from 5 to 0, below). Team status and Inventory status share the filters client, **team lead** (managers and up) and the dates:
 **Today, This week, This month, Custom**. Every page takes today, its weeks and months and the latest date it allows
 from India's clock (IST), whatever the computer's own time zone, and shows times (notes, history, last entry, the
 downloads) in India's time too.
@@ -376,6 +376,79 @@ bar to narrow the charts), then:
   with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
   address or an Emp ID, added or deleted an account, changed the extra sign-in emails, or matched a roster project
   to a client. A code or a password is never written there: only who did it, for whom and when.
+
+#### Dashboard › Stack report
+
+The owner's monthly stack report, worked out by Brahmastra for the whole floor with her rules, exactly as her
+April sheet works them out (they cannot be changed on the page). Each associate gets points on five groups, a total
+of 40, a percentage and a **Stack** from 5 (best) to 0; each team lead gets a stack from their whole team. For team
+leads and above (not SMEs); an associate sees only their own, on My day.
+
+**Associate stack**: every active associate the viewer sees (team leads and above are on the team lead stack),
+grouped by team lead as on Team status, ranked by percentage (a tie: the higher productivity first).
+
+- **Productivity (10)**: Achieved / Expected, the same numbers Team status shows for the month (claims and team task
+  items done, against the daily target on the days in; a half day counts half; no target before the date of
+  joining). 110.51% and above: 10; 99.51%: 8; 95.51%: 6; 90.51%: 4; 84.51%: 2; less: 0. Someone Team status does not
+  count (a desk role) has Achieved and Expected typed by the team lead. AVR Production and Avr Target are the two
+  divided by the days present.
+- **Quality (10)**: the month's quality %, typed by the team lead. 99% and above: 10; 94.51%: 8; 92.51%: 6;
+  89.51%: 4; 84.51%: 2; less: 0.
+- **Attendance (10)**: from Purview Shastra's attendance on the working days (Monday to Friday, Shastra holidays
+  left out, from the date of joining). Approved leave and sick leave are **AL** (Shastra's maternity leave and
+  sabbatical too; an approved half day is 0.5); leave without pay and absent are **LWP** (a half day without pay is
+  0.5); week off, holiday and comp off are neither. LWP of half a day or more scores 0; otherwise by AL + LWP:
+  6 days and above: 2; 5: 4; 4: 6; 3: 8; under 3: 10. Present days are the working days less AL and LWP, and
+  shrinkage is 1 less present / working.
+- **Others (5)**: **Late login** (the days Shastra marks the person late) and **Breaks over** (the days their breaks
+  added up to more than 60 minutes, the owner's daily limit): none: 1; 1 or 2: 0.5; more: 0 each. **Team player**,
+  typed Yes or No by the team lead with an optional reason (it starts as Yes): 1 or 0. **PKT score**, typed by the
+  team lead: 99.51% and above: 2; 94.51%: 1; 89.51%: 0.5; less: 0. An empty PKT counts as 0 and is listed to enter.
+- **Time on system (5)**: the average On floor time a day from Shastra, over the finished days that have some:
+  7 h 59 min and above: 5; 7 h 30 min: 3; less: 0.
+- **Stack**: the total out of 40 as a percentage: 92% and above: 5; 85%: 4; 72%: 3; 70%: 2; 65%: 1; less: 0.
+
+**Team lead stack**: one row per team lead, from the whole team; the percentage is the total out of 50.
+
+- **Productivity** and **Quality (10 each)**: the team's average productivity (99.51%: 10; 94.51%: 8; 89.51%: 6;
+  less: 0) and the average quality of the members who have one (99%: 10; 96.51%: 8; 94.51%: 6; less: 0).
+- **Shrinkage (10)**: the members' average shrinkage: 16% and above: 0; 13.49%: 2; 11.49%: 4; 9.49%: 6; 8%: 8;
+  under 8%: 10.
+- **Attrition (5)**: people of the team who left in the month, by Shastra's exit date or else the day the roster
+  sync switched them off (kept since this report came in): none: 5; 1: 4; 2: 3; more: 0. Someone switched off with
+  neither date who still worked in the month cannot be placed, so the manager types the count.
+- **Adherence (5)**: the members' late logins and breaks over added up: more than 12: 0; 9 to 12: 3; 6 to 8: 4;
+  less: 5.
+- **Team handling** and **Client forefront (5 each)**: five Yes / No ticks each, by the manager, 1 a Yes (not ticked
+  counts as No).
+- **Addition point**: the average of the members' Stacks, added as it is. **Stack**: 96% and above: 5; 91%: 4;
+  86%: 3; 81%: 2; 76%: 1; less: 0.
+
+**Who sees and types what.** A team lead sees their own team (their span, as everywhere: the people under them and
+on their projects), draft and locked, types PKT, Team player and the fallbacks (Achieved and Expected, Quality), and
+sees their own team lead row once the month is locked. Managers and above see the teams of their span on both
+stacks, type the ticks (never their own) and the attrition Brahmastra cannot tell, and lock the month. The admin sees
+everything and alone can unlock. A value Brahmastra works out is never typed over. **Yellow dashed** cells are typed:
+click one to type it; its title says who typed it and when.
+
+**The page**: Month, Team lead and Client; a chip with **Draft** and what is left to enter, or **Locked by** whom and
+when; **How it is worked out** (every band above in plain words); **Download Excel**; **Lock**. Below, the people
+listed, the floor average, how many are at each Stack and what is still to enter. Click a person (or a team lead) for
+how it was worked out: each parameter, what Brahmastra found, the band that applied, the score and where it came
+from (Brahmastra, Shastra, or typed by whom and when), with their last months. A month still under way counts its
+finished days (up to yesterday), as Team status does.
+
+**Lock the month** (managers and above, once the month is over): it lists what is still empty (PKT scores, ticks)
+and asks first. Then each draft team of the manager's span is saved as it is (a snapshot a team), and from then on
+the month shows those numbers and its typed cells are closed. The admin can **unlock** it (written in the audit
+trail, as the lock is); it is then a draft again. On **My day**, an associate's **My stack** shows their last locked
+month (Stack, total, percentage), their earlier locked months as a small trend, and opens how it was worked out.
+
+**Download Excel** (team leads and above, what they see): the owner's layout. **Stack Sheet** has the Team Member
+Stack under her group headers (Month, Productivity 10, Quality 10, Attendance 10, Others 5, TOS 5, Total Score 40,
+Attriation) in her column order, and the **TL STACK** under it; **Associate Stack** and **TL Stack** state the
+bands. Values, not formulas: dates are dates, percentages percentages, and a name or typed text starting with
+= + - @ stays text.
 
 #### SLA
 
