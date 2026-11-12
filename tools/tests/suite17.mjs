@@ -186,7 +186,7 @@ ok("top denials: under 3 reasons to reach 80% shows the top 3", tops.label === "
 const pay = app.crBuildPayment(ctxOf("payment"));
 ok("payment posting: $200 posted on 2 lines, 1 EFT, up from $150", pay.kpis[0].value === "$200" && pay.kpis[1].value === "2" && pay.kpis[2].value === "1" && pay.headline === "Collections rose 33% to $200", { k: pay.kpis.map((k) => k.value), h: pay.headline });
 const sub = app.crBuildSubmission(ctxOf("submission"));
-ok("submission: 2 submitted, 1 not submitted with its reason", sub.kpis[0].value === "2" && sub.insights.some((x) => /^1 claim .* is still not submitted; the main blocker is "Authorization missing/.test(x)), { k: sub.kpis[0], i: sub.insights });
+ok("submission: 2 submitted, 1 not submitted with its reason", sub.kpis[0].value === "2" && sub.insights.some((x) => /\b1 claim\b.* is still not submitted; the main blocker is "Authorization missing/.test(x)), { k: sub.kpis[0], i: sub.insights });
 const rej = app.crBuildRejection(ctxOf("rejection"));
 ok("rejections: 2 rejected against 2 submitted (100.0%)", rej.kpis[0].value === "2" && rej.kpis[1].value === "100.0%", rej.kpis.map((k) => k.value));
 const ca = app.crBuildCA(ctxOf("ca"));

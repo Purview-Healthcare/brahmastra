@@ -146,10 +146,13 @@ function suggestFor({ subStatus, claim }) {
 /* ---------- formatting ---------- */
 /* Attachment types that may open in a browser tab. Never SVG or HTML: those can carry a script that runs as the app. */
 const SAFE_VIEW = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain)$/i;
+/* Money, numbers, dates and times are written one way, US style ($146,376 · Nov 11, 2026 · Wed, Nov 11 · 9:30 AM), whatever
+   the browser's language: the same as the stamps and the client-facing reports. */
+const LOC = "en-US";
 // A value that rounds to zero at the decimals shown gets no minus sign: cents worked out in floating point (250.45 - 200.15 - 50.30)
 // can be a hair below zero, and "-$0.00" would read as money owed.
-const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 && Math.round(Math.abs(Number(n)) * 10 ** dec) > 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
-const fmtInt = (n) => Number(n || 0).toLocaleString();
+const fmtMoney = (n, dec = 0) => (n == null || isNaN(Number(n))) ? "–" : (Number(n) < 0 && Math.round(Math.abs(Number(n)) * 10 ** dec) > 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(LOC, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+const fmtInt = (n) => Number(n || 0).toLocaleString(LOC);
 const fmtPct = (n, dec = 0) => (n == null || isNaN(n)) ? "–" : Number(n).toFixed(dec) + "%";
 const pad2 = (n) => String(n).padStart(2, "0");
 const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -158,8 +161,8 @@ const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getD
 const IST_MS = 330 * 60000;
 const istISOOf = (ms) => new Date(Number(ms) + IST_MS).toISOString().slice(0, 10);
 const todayISO = () => istISOOf(Date.now());
-function fmtDate(iso) { if (!iso) return "–"; const [y, m, d] = String(iso).split("-").map(Number); if (!y || !m || !d) return String(iso); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
-function fmtWhen(ms) { if (!ms) return "–"; const d = new Date(Number(ms)); return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
+function fmtDate(iso) { if (!iso) return "–"; const [y, m, d] = String(iso).split("-").map(Number); if (!y || !m || !d) return String(iso); return new Date(y, m - 1, d).toLocaleDateString(LOC, { month: "short", day: "numeric", year: "numeric" }); }
+function fmtWhen(ms) { if (!ms) return "–"; const d = new Date(Number(ms)); return d.toLocaleDateString(LOC, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" }); }
 function dayBounds(iso) { const start = Date.parse(iso + "T00:00:00Z") - IST_MS; return [start, start + 86400000 - 1]; }
 function addDaysISO(iso, n) { const [y, m, d] = iso.split("-").map(Number); return isoOf(new Date(y, m - 1, d + n)); }
 /* A follow-up on a Saturday, Sunday or Shastra holiday moves to the next working day, as the server does when it saves.
@@ -172,6 +175,9 @@ function randomPassword() { const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQ
 const firstNameOf = (u) => { const n = (u && (u.name || u.email) || "").trim(); const f = n.split(/[\s@._-]+/)[0] || "there"; return f.charAt(0).toUpperCase() + f.slice(1); };
 const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 const plural = (n, w, ws) => `${fmtInt(n)} ${n === 1 ? w : (ws || w + "s")}`;
+/* A box that takes a whole number from lo to hi (Claims per day, the default follow-up): anything else is refused with a
+   plain message, as the server refuses it, never saved as another number. */
+const wholeIn = (v, lo, hi) => { const s = String(v == null ? "" : v).trim(); return /^\d+$/.test(s) && Number(s) >= lo && Number(s) <= hi; };
 const normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f ? f(x) : x) || 0), 0);
 const by = (arr, keyFn) => { const m = new Map(); arr.forEach((x) => { const k = keyFn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }); return m; };
@@ -784,18 +790,106 @@ function Wordmark({ size = 22, tag = "claim allocation & follow-up" }) {
   );
 }
 const Spinner = ({ label }) => <span className="muted small"><span className="spin" /> {label || "Working…"}</span>;
-function Modal({ title, sub, onClose, children, wide, narrow, footer }) {
-  useEffect(() => { const h = (e) => { if (e.key === "Escape" && onClose) onClose(); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, [onClose]);
+/* ---------- pop-ups: one behaviour for all of them ----------
+   Every pop-up (Modal, the claim profile, Ctrl+K, the not-logged-in alert, the side panels) is a layer marked data-layer.
+   Only the top one (the last in the page) answers Escape and Tab, so a box opened on a box closes on its own; Escape in an
+   open dropdown closes only the dropdown (Combo takes it first). Focus starts inside the top pop-up, Tab and Shift+Tab stay
+   inside it, and focus goes back where it was when it closes. When something was typed in it, Escape, a click on the shade
+   or its Close button first asks "Discard what you typed?" (Keep editing / Discard): typed text is never lost silently. */
+const topLayer = () => { const all = document.querySelectorAll("[data-layer]"); return all.length ? all[all.length - 1] : null; };
+const TYPED_SEL = 'textarea, input:not([type]), input[type="text"], input[type="number"], input[type="email"], input[type="date"], input[type="month"], input[type="time"], input[type="tel"], input[type="url"], input[type="password"]';
+const FOCUS_SEL = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+/* Where Tab (back: Shift+Tab) goes in a pop-up whose focusable parts are `list`: null lets the browser move on (it stays
+   inside), "box" when nothing in it takes focus; from the last part it wraps to the first and back. */
+function tabStop(list, active, back) {
+  if (!list.length) return "box";
+  const i = list.indexOf(active);
+  if (i < 0) return back ? list[list.length - 1] : list[0];
+  if (back && i === 0) return list[list.length - 1];
+  if (!back && i === list.length - 1) return list[0];
+  return null;
+}
+/* Typed text that closing would lose: a box still in the pop-up whose text changed since it was first touched. */
+const typedIn = (seen, root) => [...seen].some(([el, was]) => el.isConnected && root.contains(el) && el.value !== was);
+function useLayer(onClose, guard = true) {
+  const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose);
+  closeFn.current = onClose;
+  const [asking, setAsking] = useState(false);
+  const [opener] = useState(() => document.activeElement);
+  const close = () => { const f = closeFn.current; if (!f) return; if (guard && ref.current && typedIn(seen.current, ref.current)) setAsking(true); else f(); };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    const el = ref.current; if (!el) return undefined;
+    // the text of a box as it was before any typing: when it first gets focus, or at the first keystroke
+    const note = (e) => { const t = e.target; if (t && t.matches && t.matches(TYPED_SEL) && !t.closest(".combo-list") && !seen.current.has(t)) seen.current.set(t, t.value); };
+    el.addEventListener("focusin", note); el.addEventListener("beforeinput", note, true);
+    note({ target: document.activeElement });
+    if (topLayer() === el && !el.contains(document.activeElement)) { try { (box.current || el).focus({ preventScroll: true }); } catch (e) {} }
+    const key = (e) => {
+      if (e.defaultPrevented || e.isComposing || topLayer() !== el) return;
+      if (e.key === "Escape") { e.preventDefault(); closeRef.current(); return; }
+      if (e.key !== "Tab") return;
+      const list = [...el.querySelectorAll(FOCUS_SEL)].filter((x) => x.getClientRects().length && getComputedStyle(x).visibility !== "hidden");
+      const to = tabStop(list, document.activeElement, e.shiftKey);
+      if (to) { e.preventDefault(); (to === "box" ? box.current || el : to).focus(); }
+    };
+    window.addEventListener("keydown", key);
+    return () => {
+      el.removeEventListener("focusin", note); el.removeEventListener("beforeinput", note, true); window.removeEventListener("keydown", key);
+      if (opener && opener !== document.body && opener.isConnected && opener.focus) { try { opener.focus({ preventScroll: true }); } catch (e) {} }
+    };
+  }, []);
+  // a press on the shade itself (not inside the box, not on the shade's scroll bar) closes it like Escape
+  const shade = (e) => {
+    const s = e.currentTarget, r = s.getBoundingClientRect();
+    if (e.target !== s || e.clientX >= r.left + s.clientWidth || e.clientY >= r.top + s.clientHeight) return;
+    e.preventDefault(); close();
+  };
+  const ask = asking ? <DiscardAsk onKeep={() => setAsking(false)} onDiscard={() => { setAsking(false); if (closeFn.current) closeFn.current(); }} /> : null;
+  return { ref, box, close, shade, ask };
+}
+function DiscardAsk({ onKeep, onDiscard }) {
+  const L = useLayer(onKeep, false);
   return (
-    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
-      <div className={"modal" + (wide ? " wide" : "") + (narrow ? " narrow" : "")}>
+    <div className="overlay ask-overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className="modal narrow" ref={L.box} tabIndex={-1} role="alertdialog" aria-modal="true" aria-label="Discard what you typed?">
+        <h2>Discard what you typed?</h2>
+        <div className="sub">It has not been saved.</div>
+        <div className="row mt" style={{ justifyContent: "flex-end" }}><button type="button" className="btn" autoFocus onClick={onKeep}>Keep editing</button><button type="button" className="btn danger" onClick={onDiscard}>Discard</button></div>
+      </div>
+    </div>
+  );
+}
+/* A pop-up that only closes from its own buttons (the not-logged-in alert): focus and Tab stay in it. */
+function AlertLayer({ className, label, boxClass, children }) {
+  const L = useLayer(null, false);
+  return <div className={"overlay " + className} data-layer="" ref={L.ref} role="alertdialog" aria-label={label}><div className={boxClass} ref={L.box} tabIndex={-1}>{children}</div></div>;
+}
+/* A panel from the right edge, over a page or a pop-up (Claim history, How it works): a layer of its own, so Escape or a
+   click on its shade closes only the panel. */
+function SidePanel({ className, label, onClose, children }) {
+  const L = useLayer(onClose, false);
+  return (
+    <>
+      <div className="hist-shade" onClick={onClose} />
+      <div className={"hist" + (className ? " " + className : "")} data-layer="" ref={(n) => { L.ref.current = n; L.box.current = n; }} tabIndex={-1} role="dialog" aria-label={label}>{children}</div>
+    </>
+  );
+}
+function Modal({ title, sub, onClose, children, wide, narrow, footer }) {
+  const L = useLayer(onClose);
+  return (
+    <div className="overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className={"modal" + (wide ? " wide" : "") + (narrow ? " narrow" : "")} ref={L.box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
         <div className="row between top mb">
           <div><h2>{title}</h2>{sub && <div className="sub">{sub}</div>}</div>
-          {onClose && <button className="btn sm" onClick={onClose}>Close</button>}
+          {onClose && <button className="btn sm" onClick={L.close}>Close</button>}
         </div>
         {children}
         {footer && <div className="row mt" style={{ justifyContent: "flex-end" }}>{footer}</div>}
       </div>
+      {L.ask}
     </div>
   );
 }
@@ -835,7 +929,7 @@ function Bars({ rows, labelOf, valueOf, fmt = fmtMoney, subOf, onClick, isOn, co
   const max = Math.max(1, ...rows.map((r) => valueOf(r)));
   const total = sum(rows, (r) => valueOf(r)) || 0;
   const totalN = countOf ? sum(rows, (r) => countOf(r) || 0) : 0;
-  const tip = (r) => { const v = valueOf(r); const pct = total ? Math.round(v / total * 100) : 0; const n = countOf ? countOf(r) : null; return `${labelOf(r)}\n${fmt(v)} · ${pct}% of the balance shown${n != null ? `\n${fmtInt(n)} claims · ${totalN ? Math.round(n / totalN * 100) : 0}% of the claims shown` : ""}${onClick ? "\nClick to filter the whole dashboard to this; click again to clear." : ""}`; };
+  const tip = (r) => { const v = valueOf(r); const pct = total ? Math.round(v / total * 100) : 0; const n = countOf ? countOf(r) : null; return `${labelOf(r)}\n${fmt(v)} · ${pct}% of the balance shown${n != null ? `\n${plural(n, "claim")} · ${totalN ? Math.round(n / totalN * 100) : 0}% of the claims shown` : ""}${onClick ? "\nClick to filter the whole dashboard to this; click again to clear." : ""}`; };
   const anyOn = isOn && rows.some((r) => isOn(r));
   return (
     <div className="stack" style={{ gap: 6 }}>
@@ -870,6 +964,16 @@ function useRpc(op, payload, deps = [], enabled = true) {
   }, [...deps, tick, enabled]);
   return { ...state, reload: () => setTick((t) => t + 1) };
 }
+/* Escape while a dropdown's list is open closes only the list: it is taken before anything else hears it (the pop-up
+   around the dropdown stays open, whatever has the focus). */
+function useComboEsc(open, setOpen) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const k = (e) => { if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); e.stopPropagation(); setOpen(false); } };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+  }, [open]);
+}
 /* A dropdown that works like a select with a search box inside: click it, type a few letters and the
    list narrows to them; click an option (or press Enter for the first match) to pick it; ✕ clears. */
 function Combo({ value, options, onChange, placeholder, disabled, sm, width, clearable = true }) {
@@ -879,6 +983,7 @@ function Combo({ value, options, onChange, placeholder, disabled, sm, width, cle
   const qRef = useRef(null);
   useEffect(() => { const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; window.addEventListener("mousedown", h); return () => window.removeEventListener("mousedown", h); }, []);
   useEffect(() => { if (open) { setQ(""); const t = setTimeout(() => qRef.current && qRef.current.focus(), 0); return () => clearTimeout(t); } }, [open]);
+  useComboEsc(open, setOpen);
   const val = String(value == null ? "" : value);
   const sel = options.find((o) => String(o.id) === val);
   const needle = q.trim().toLowerCase();
@@ -916,6 +1021,7 @@ function SuggestCombo({ value, onChange, field, extra, placeholder, sm, width })
   const qRef = useRef(null);
   useEffect(() => { const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; window.addEventListener("mousedown", h); return () => window.removeEventListener("mousedown", h); }, []);
   useEffect(() => { if (open) { setQ(""); const t = setTimeout(() => qRef.current && qRef.current.focus(), 0); return () => clearTimeout(t); } }, [open]);
+  useComboEsc(open, setOpen);
   const extraKey = JSON.stringify(extra || {});
   useEffect(() => {
     if (!open) return;
@@ -1306,7 +1412,7 @@ function SettingsView({ me, setMe, ctx }) {
               : (me.source !== "roster" && !(me.projects || []).length) ? <div className="small mt8">This account was <b>added by hand with no projects</b>, so it sees every client. Give it projects in Team to narrow it, or sign in with your roster account.</div>
               : <>
                 <div className="small mt8"><b>Your projects{(me.scope_projects || []).length > (me.projects || []).length ? " and your span's" : ""}:</b> {((me.scope_projects || []).length ? me.scope_projects : (me.projects || []).map((p) => p.name || p)).filter(Boolean).join("; ") || "none yet"}</div>
-                <div className="small mt8"><b>Clients that open for you ({(ctx.clients || []).length}):</b> {(ctx.clients || []).map((c) => c.name).join(", ") || "none matched yet (ask your team lead to map your project to a client)"}</div>
+                <div className="small mt8"><b>Clients that open for you ({(ctx.clients || []).length}):</b> {(ctx.clients || []).map((c) => c.name).join(", ") || (me.role === "supervisor" ? "none matched yet (match your roster project to its client when Brahmastra asks after you sign in, or ask the admin)" : "none matched yet (ask your team lead to map your project to a client)")}</div>
               </>}
             <div className="tiny muted mt8">Billers and team leads see their own projects' clients, managers everything under them in the hierarchy, the VP and admins everything. A client outside your span can be shared with you from its client card (view only or can edit).</div>
           </div>
@@ -1319,14 +1425,14 @@ function SettingsView({ me, setMe, ctx }) {
             </div>
           </div>
           <div className="card set-sec" id="set-profile">
-            <h2>My profile</h2><div className="sub">From the Purview Shastra roster. If something is wrong, ask your team lead or the admin to correct it on the roster.</div>
+            <h2>My profile</h2><div className="sub">From the Purview Shastra roster. If something is wrong, {me.is_admin ? "correct it in Purview Shastra" : me.role === "supervisor" ? "ask your manager or the admin to correct it on the roster" : "ask your team lead or the admin to correct it on the roster"}.</div>
             <dl className="cv-kv">
               <dt>Name</dt><dd>{me.name}</dd><dt>Email</dt><dd>{me.email}</dd>
               <dt>Emp ID</dt><dd>{me.emp_id || dash}</dd><dt>Designation</dt><dd>{me.designation || me.position || dash}</dd>
               <dt>Department</dt><dd>{me.department || dash}{me.departments_also ? <span className="muted" style={{ fontWeight: 400 }}> · also {me.departments_also}</span> : null}</dd><dt>Brahmastra role</dt><dd>{roleLabel(me)}</dd>
               <dt>Reports to</dt><dd>{me.reports_to_name || dash}</dd><dt>Shift</dt><dd>{me.shift || dash}</dd>
               <dt>{lead ? "Projects I lead" : "My projects"}</dt><dd>{myClients.length ? myClients.join(", ") : dash}</dd><dt>Status</dt><dd>{me.roster_status || "Production"}</dd>
-              {!lead && <><dt>Daily target</dt><dd>{me.capacity ? me.capacity + " claims a day" : dash}</dd></>}
+              {!lead && <><dt>Daily target</dt><dd>{me.capacity ? plural(me.capacity, "claim") + " a day" : dash}</dd></>}
               <dt>Date of joining</dt><dd>{me.doj ? fmtDate(me.doj) : dash}</dd>
               <dt>Member since</dt><dd>{me.created_at ? new Date(me.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : dash}</dd>
             </dl>
@@ -1435,6 +1541,7 @@ function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {
   const [found, setFound] = useState({ rows: [], loading: false });
   const inp = useRef(null);
   const list = useRef(null);
+  const L = useLayer(onClose, false);
   useEffect(() => { if (inp.current) inp.current.focus(); }, []);
   useEffect(() => {
     const t = q.trim();
@@ -1463,8 +1570,8 @@ function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {
   };
   useEffect(() => { const el = list.current && list.current.querySelector(".on"); if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" }); }, [sel]);
   return (
-    <div className="overlay cmdk-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="cmdk" role="dialog" aria-label="Search">
+    <div className="overlay cmdk-overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className="cmdk" role="dialog" aria-modal="true" aria-label="Search" ref={L.box} tabIndex={-1}>
         <div className="cmdk-in"><SearchIcon /><input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey}
           placeholder={me.role === "supervisor" ? "Go to a page, client, biller, or a claim # / account / patient…" : "Go to a page, or find a claim # / account / patient…"} />
           {found.loading ? <span className="spin" /> : <kbd>Esc</kbd>}</div>
@@ -1516,7 +1623,7 @@ function Bell({ notify, allowed, onGo }) {
       <button type="button" className={"btn sm icon-btn" + (open ? " on" : "")} aria-label={"Notifications" + (unseen.length ? ", " + unseen.length + " new" : "")} title="What needs you" onClick={toggle}>
         <BellIcon />{unseen.length > 0 && <span className={"bell-n" + (unseen.some((x) => x.tone === "red") ? " red" : "")}>{unseen.length}</span>}</button>
       {open && <div className="menu bell-menu">
-        <div className="row between" style={{ padding: "6px 10px 8px" }}><b className="small">What needs you</b><span className="tiny muted">{notify && notify.at ? "as of " + new Date(notify.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}</span></div>
+        <div className="row between" style={{ padding: "6px 10px 8px" }}><b className="small">What needs you</b><span className="tiny muted">{notify && notify.at ? "as of " + new Date(notify.at).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" }) : ""}</span></div>
         {groups.length > 1 && <div className="bell-chips">
           <button type="button" className={cat === "all" ? "on" : ""} onClick={() => setCat("all")}>All <i>{items.length}</i></button>
           {groups.map((g) => <button type="button" key={g.k} className={cat === g.k ? "on" : ""} onClick={() => setCat(g.k)}>{g.label} <i className={g.k === "tat" ? "r" : g.xs.some((x) => x.tone === "red") ? "r" : g.xs.some((x) => x.tone === "amber") ? "a" : ""}>{count(g)}</i></button>)}
@@ -1592,7 +1699,7 @@ function AskComputer() {
   if (perm !== "default") return null;
   return <button type="button" className="btn sm link" title="Your browser asks once" onClick={async () => { try { setPerm(await Notification.requestPermission()); } catch (e) {} }}>Also show these on this computer</button>;
 }
-const clockNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });   // IST, as the shift times
+const clockNow = () => new Date().toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });   // IST, as the shift times
 function MissingAlertPopup({ alerts, onChanged }) {
   const [hidden, setHidden] = useState({});
   const [busy, setBusy] = useState(false);
@@ -1607,8 +1714,7 @@ function MissingAlertPopup({ alerts, onChanged }) {
   const dismiss = () => act(() => rpc("team.alertDismiss", { user_id: a.user_id }), () => `Noted: no more alerts about ${first} today.`);
   const where = a.clients.length === 1 ? a.clients[0] : "those clients";
   return (
-    <div className="overlay miss-pop" role="alertdialog" aria-label={a.name + " has not logged in"}>
-      <div className="modal miss-modal">
+    <AlertLayer className="miss-pop" label={a.name + " has not logged in"} boxClass="modal miss-modal">
         <div className="row between top mb"><div><h2>⚠ {a.name} has not logged in</h2><div className="sub">Purview Shastra · checked {clockNow()}{list.length > 1 ? ` · ${Math.min(idx, list.length - 1) + 1} of ${list.length}` : ""}</div></div>
           <button type="button" className="btn icon" title="Remind me in 30 minutes" disabled={busy} onClick={snooze}>✕</button></div>
         <div className="stack" style={{ gap: 10 }}>
@@ -1632,8 +1738,7 @@ function MissingAlertPopup({ alerts, onChanged }) {
           {list.length > 1 && <button type="button" className="btn sm" onClick={() => setIdx((idx + 1) % list.length)}>Next ›</button>}
           <span style={{ flex: 1 }} /><AskComputer />
         </div>
-      </div>
-    </div>
+    </AlertLayer>
   );
 }
 function AllocBanner({ items, onGo, onSeen }) {
@@ -1651,6 +1756,20 @@ function AllocBanner({ items, onGo, onSeen }) {
     </div>
   );
 }
+/* Does the menu fit on one line between the logo and the tools? (widths in px; room: the bar's width inside its padding) */
+const menuFits = (logo, items, navGap, tools, gap, room) => logo + items.reduce((t, x) => t + x, 0) + Math.max(0, items.length - 1) * navGap + tools + 2 * gap <= room + 0.5;
+/* A menu of the top bar (Work, Manage): it opens under its button, and leftwards from the button's right edge when it would
+   run off the right of the screen (the menu on its own row on a tablet ends near the edge). */
+function NavMenu({ children }) {
+  const ref = useRef(null);
+  const [flip, setFlip] = useState(false);
+  React.useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect(), b = el.parentElement.getBoundingClientRect();
+    if (r.right > document.documentElement.clientWidth - 4 && b.right - r.width >= 4) setFlip(true);
+  }, []);
+  return <div ref={ref} className={"menu" + (flip ? " flip" : "")}>{children}</div>;
+}
 function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount, attention, handoffs, fb, notify, tasks, onGo, onSearch, onRefreshNotify, children }) {
   const [menu, setMenu] = useState(false);
   useEffect(() => {
@@ -1665,6 +1784,19 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   useEffect(() => { if (!menu && !openG) return undefined; const k = (e) => { if (e.key === "Escape") { setMenu(false); setOpenG(null); } };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [menu, openG]);
   const [fbOpen, setFbOpen] = useState(false);
+  // The menu takes a row of its own under the logo whenever it does not fit on one line beside the logo and the tools (a
+  // tablet held upright, a half-screen window), instead of being squeezed into a narrow column; on a phone it always has one.
+  const barRef = useRef(null);
+  const [navRow, setNavRow] = useState(false);
+  React.useLayoutEffect(() => {
+    const fit = () => {
+      const el = barRef.current; if (!el) return;
+      const nav = el.querySelector(":scope > .nav"), logo = el.querySelector(":scope > .wordmark"), tools = el.querySelector(":scope > .top-tools"); if (!nav || !logo || !tools) return;
+      const w = (x) => x.getBoundingClientRect().width, cs = getComputedStyle(el), px = (v) => parseFloat(v) || 0;
+      setNavRow(!menuFits(w(logo), [...nav.children].map(w), px(getComputedStyle(nav).columnGap), w(tools), px(cs.columnGap), el.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)));
+    };
+    fit(); window.addEventListener("resize", fit); return () => window.removeEventListener("resize", fit);
+  });
   const nav = navFor(me, handoffs, fb, attention, tasks);
   const pageLabel = (navItems(nav).find(([k]) => k === view) || [view, view === "settings" ? "Settings" : view === "digest" ? "Monday digest" : view === "mytasks" ? "My tasks" : view])[1];
   // Client 360 is off the menu (it opens from Dashboard › Client 360 report): the Dashboard tab stays lit on it
@@ -1681,15 +1813,15 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   return (
     <div>
       {DEMO && <div className="banner">Demo mode: the server runs inside this browser and nothing is shared. Set <span className="mono">API_BASE</span> in index.html to go live.</div>}
-      <div className="topbar"><div className="topbar-in">
+      <div className="topbar"><div className={"topbar-in" + (navRow ? " nav-row" : "")} ref={barRef}>
         <Wordmark size={20} tag={deskOf(me, handoffs) ? DESK[deskOf(me, handoffs)].role + (me.role === "supervisor" ? " lead" : "") : roleLabel(me).toLowerCase()} />
         <div className="nav" style={{ flex: 1 }}>{nav.map((e) => Array.isArray(e)
           ? <button key={e[0]} className={navKey === e[0] ? "active" : ""} onClick={() => { setOpenG(null); setView(e[0]); }}>{e[1]}{navBadge(e[0])}</button>
           : <div key={e.g} className="nav-group" onClick={(ev) => ev.stopPropagation()}>
               <button className={e.items.some(([k]) => k === navKey) ? "active" : ""} onClick={() => setOpenG(openG === e.g ? null : e.g)}>{e.g} ▾{openG !== e.g && (e.items.map(([k]) => navBadge(k)).find(Boolean) || null)}</button>
-              {openG === e.g && <div className="menu">
+              {openG === e.g && <NavMenu>
                 {e.items.map(([k, l]) => <button key={k} className={navKey === k ? "on" : ""} onClick={() => { setOpenG(null); setView(k); }}>{l}{navBadge(k)}</button>)}
-              </div>}
+              </NavMenu>}
             </div>)}</div>
         <div className="top-tools">
         <button type="button" className="btn sm cmdk-btn" onClick={onSearch} title="Search pages, clients, people and claims (Ctrl+K)"><SearchIcon /><span className="cmdk-lbl">Search</span><kbd>Ctrl K</kbd></button>
@@ -1742,14 +1874,14 @@ function OverdueModal({ ctx, clientId, locId, onClose, onChanged }) {
   const toggle = (id) => { const n = new Set(chosen); if (n.has(id)) n.delete(id); else n.add(id); setSel(n); };
   const assign = async () => {
     setBusy(true);
-    try { const r = await rpc("alloc.reassign", { ids: [...chosen], user_id: user }); toast(`${fmtInt(r.changed)} claims assigned.`); onChanged(); onClose(); }
+    try { const r = await rpc("alloc.reassign", { ids: [...chosen], user_id: user }); toast(`${plural(r.changed, "claim")} assigned.`); onChanged(); onClose(); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const billers = ctx.users.filter((u) => u.active);
   return (
     <Modal title="Overdue follow-ups" sub="The follow-up date passed and nobody has made a new entry. Pick who works them; they go to the top of that person's list." onClose={onClose} wide
-      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><div className="row"><Combo sm width={240} value={user} onChange={setUser} placeholder="Assign to…" options={billers.map((u) => ({ id: u.id, label: u.name + (u.role === "supervisor" ? " (TL)" : "") }))} /><button className="btn primary" disabled={busy || !user || !chosen.size} onClick={assign}>{busy ? "Assigning…" : `Assign ${fmtInt(chosen.size)} claims`}</button></div></>}>
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><div className="row"><Combo sm width={240} value={user} onChange={setUser} placeholder="Assign to…" options={billers.map((u) => ({ id: u.id, label: u.name + (u.role === "supervisor" ? " (TL)" : "") }))} /><button className="btn primary" disabled={busy || !user || !chosen.size} onClick={assign}>{busy ? "Assigning…" : `Assign ${plural(chosen.size, "claim")}`}</button></div></>}>
       <ErrorBox error={q.error} />
       {!q.data && !q.error && <Spinner />}
       {q.data && (
@@ -2093,7 +2225,7 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td><span className={"badge " + (TS_STATUS_TONE[r.status] || "gray")}>{r.status}</span></td>
                   <td>{rampCell(r)}</td>
                   <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.count_done + " of " + Math.round(r.target_done) + " to yesterday" : r.count_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.count_today ? " · " + r.count_today + " today" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div>
-                    {(r.attain_basis === "done" ? r.task_items_done : r.task_items_today) > 0 && r.attain != null && <div className="tiny muted">{r.attain_basis === "done" ? r.worked_done + " claims + " + r.task_items_done + " task items" : r.worked_today + " claims + " + r.task_items_today + " task items"}</div>}</td>
+                    {(r.attain_basis === "done" ? r.task_items_done : r.task_items_today) > 0 && r.attain != null && <div className="tiny muted">{r.attain_basis === "done" ? plural(r.worked_done, "claim") + " + " + plural(r.task_items_done, "task item") : plural(r.worked_today, "claim") + " + " + plural(r.task_items_today, "task item")}</div>}</td>
                   <td className="num">{r.task_items ? <><b>{fmtInt(r.task_items)}</b> <span className="tiny muted">items</span><div className="tiny muted">{plural(r.tasks_worked || 0, "task")}{r.tasks_completed ? " · " + r.tasks_completed + " completed" : ""}</div></> : <span className="muted">0</span>}</td>
                   <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
                   <td className="num">{floorCell(r, d.floor_source)}</td><td className="num">{idleCell(r)}</td><td className="num">{breakCell(r)}</td>
@@ -2170,7 +2302,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
       {overdueOpen && <OverdueModal ctx={ctx} clientId={clientId} locId={locId} onClose={() => setOverdueOpen(false)} onChanged={() => stats.reload()} />}
       {d && d.overdue && d.overdue.n > 0 && (
         <div className="row between mt8" style={{ borderLeft: "4px solid var(--red)", background: "var(--red-soft)", borderRadius: 8, padding: "8px 12px" }}>
-          <div className="small"><b style={{ color: "var(--red-ink)" }}>{fmtInt(d.overdue.n)} claims are past their follow-up date with no new entry</b> · {fmtMoney(d.overdue.amt)}. They sit with nobody until a biller gets them again.</div>
+          <div className="small"><b style={{ color: "var(--red-ink)" }}>{plural(d.overdue.n, "claim is", "claims are")} past {d.overdue.n === 1 ? "its" : "their"} follow-up date with no new entry</b> · {fmtMoney(d.overdue.amt)}. {d.overdue.n === 1 ? "It sits with nobody until a biller gets it again." : "They sit with nobody until a biller gets them again."}</div>
           <div className="row"><button className="btn sm" onClick={() => openClaims({ overdue: true })}>See them</button><button className="btn sm primary" onClick={() => setOverdueOpen(true)}>Assign to a biller</button></div>
         </div>
       )}
@@ -2215,7 +2347,7 @@ function ClaimsSection({ ctx, go, clientId, setClientId, locId, setLocId, leadId
           <div className="card"><h3>By client and location</h3><div className="sub mb">Where the inventory stands at each location. Click a row to focus the dashboard on it.</div>
             <div className="table-wrap"><table className="t"><thead><tr><th>Client</th><th>Location</th><th className="r">Unassigned</th><th className="r">On desks</th><th className="r">Worked, awaiting follow-up</th><th className="r">In process</th><th className="r">Overdue</th><th className="r">Closed</th><th className="r">Workable $</th></tr></thead>
               <tbody>{(d.by_location || []).map((r, i) => { const on = clientId === r.client_id && (locId || "") === (r.location_id || ""); return (
-                <tr key={i} className="click" style={on ? { background: "var(--soft)" } : undefined} title={`${r.client_name}${r.location_name ? " · " + r.location_name : ""}\n${fmtInt(r.n)} claims on file · ${fmtMoney(r.amt)} workable\nClick to focus the dashboard here; click again to go back.`} onClick={() => { if (on) { setClientId(""); setLocId(""); } else { setClientId(r.client_id); setLocId(r.location_id || ""); } }}>
+                <tr key={i} className="click" style={on ? { background: "var(--soft)" } : undefined} title={`${r.client_name}${r.location_name ? " · " + r.location_name : ""}\n${plural(r.n, "claim")} on file · ${fmtMoney(r.amt)} workable\nClick to focus the dashboard here; click again to go back.`} onClick={() => { if (on) { setClientId(""); setLocId(""); } else { setClientId(r.client_id); setLocId(r.location_id || ""); } }}>
                   <td><b>{r.client_name}</b></td><td>{r.location_name || <span className="muted">(no location)</span>}</td>
                   <td className="num" title={fmtMoney(r.open_amt)}>{fmtInt(r.open_n)}</td><td className="num" title={fmtMoney(r.desk_amt)}>{fmtInt(r.desk_n)}</td><td className="num" title={fmtMoney(r.worked_amt)}>{fmtInt(r.worked_n)}</td><td className="num" title={fmtMoney(r.process_amt)}>{fmtInt(r.process_n || 0)}</td>
                   <td className="num" style={r.overdue_n ? { color: "var(--red-ink)", fontWeight: 700 } : undefined}>{fmtInt(r.overdue_n)}</td><td className="num" title={fmtMoney(r.closed_amt)}>{fmtInt(r.closed_n)}</td><td className="num">{fmtMoney(r.amt)}</td>
@@ -2260,6 +2392,7 @@ const profileFrom = (c) => {
 function profileMissing(f, locCount) {
   const m = [];
   if (!f.name.trim()) m.push("client name");
+  if (!wholeIn(f.follow_up_days, 1, 365)) m.push("a default follow-up of 1 to 365 days");
   if (!f.scope.length) m.push("scope of work");
   if (!locCount) m.push("a location");
   for (const s of f.scope) {
@@ -2309,7 +2442,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved }) {
           <div className="grid g3">
             <Field label="Client name"><input className="input" value={f.name} onChange={(e) => set({ name: e.target.value })} autoFocus={isNew} placeholder="e.g. Dr. Montella Eye Care" /></Field>
             <Field label="Short code" hint="Shown on badges and reports"><input className="input" value={f.code} maxLength={12} onChange={(e) => set({ code: e.target.value.toUpperCase() })} /></Field>
-            <Field label="Default follow-up (days)"><input className="input" type="number" min={1} max={365} value={f.follow_up_days} onChange={(e) => set({ follow_up_days: e.target.value })} /></Field>
+            <Field label="Default follow-up (days)" hint={wholeIn(f.follow_up_days, 1, 365) ? "1 to 365" : <span className="red-ink">A whole number of days from 1 to 365.</span>}><input className="input" type="number" min={1} max={365} step={1} value={f.follow_up_days} onChange={(e) => set({ follow_up_days: e.target.value })} /></Field>
           </div>
           {!isNew && <label className="check mt8"><input type="checkbox" checked={!!f.active} onChange={(e) => set({ active: e.target.checked })} /> Active (inactive clients are hidden from uploads and allocation)</label>}
         </Step>
@@ -2386,7 +2519,7 @@ function DeskClaimsView({ ctx, me }) {
           <thead><tr><th>Claim #</th><th>Patient</th><th>DOS</th><th>Payer</th><th className="num">Balance</th><th>State</th><th>With</th></tr></thead>
           <tbody>{rows.map((c) => <tr key={c.id} className="click" onClick={() => setOpen(c.id)}><td className="mono">{c.claim_no}</td><td className="phi">{c.patient}</td><td>{fmtDate(c.dos)}</td><td>{c.payer}</td><td className="num">{fmtMoney(c.balance, 2)}</td><td className="small">{c.state}</td><td className="small">{c.assigned_name || "–"}</td></tr>)}</tbody></table></div>
           {!q.data ? <Spinner label="Loading…" /> : !rows.length ? <Empty>No claims match.</Empty> : null}
-          {q.data && q.data.total > rows.length && <div className="row between mt8"><span className="tiny muted">{fmtInt(q.data.total)} claims</span><span><button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button> <button className="btn sm" disabled={page * 50 >= q.data.total} onClick={() => setPage(page + 1)}>Next</button></span></div>}
+          {q.data && q.data.total > rows.length && <div className="row between mt8"><span className="tiny muted">{plural(q.data.total, "claim")}</span><span><button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button> <button className="btn sm" disabled={page * 50 >= q.data.total} onClick={() => setPage(page + 1)}>Next</button></span></div>}
         </div></>}
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
     </div>
@@ -2409,7 +2542,7 @@ function ClientPeople({ c, ctx, ro, onSaved, focus, dir }) {
     .map((u) => ({ id: u.id, label: u.name, sub: [u.designation || (u.role === "user" ? "Biller" : "Supervisor"), u.department].filter(Boolean).join(" · ") }));
   return (
     <div ref={ref} className="small mt8 people-row">
-      <b>AR billers on this client:</b> {team.length ? team.map((id) => <span key={id} className="badge teal" style={{ marginRight: 4 }}>{nameOf(id)}{!ro && <button type="button" className="btn link sm" style={{ padding: "0 0 0 4px" }} title="Take off this client" disabled={busy} onClick={() => save(team.filter((x) => x !== id), nameOf(id) + " taken off " + c.name + ".")}>×</button>}</span>) : <span className="muted">none yet (claims go to these people when they load and in Allocate)</span>}
+      <b>AR billers on this client:</b> {team.length ? team.map((id) => <span key={id} className="badge teal wrap" style={{ marginRight: 4 }}>{nameOf(id)}{!ro && <button type="button" className="btn link sm" style={{ padding: "0 0 0 4px" }} title="Take off this client" disabled={busy} onClick={() => save(team.filter((x) => x !== id), nameOf(id) + " taken off " + c.name + ".")}>×</button>}</span>) : <span className="muted">none yet (claims go to these people when they load and in Allocate)</span>}
       {!ro && !adding && <button className="btn sm" style={{ marginLeft: 6 }} onClick={() => setAdding(true)}>+ Add people</button>}
       {!ro && adding && <span className="row" style={{ display: "inline-flex", gap: 6, marginLeft: 6, verticalAlign: "middle" }}>
         <span style={{ minWidth: 240 }}><Combo sm value={pick} onChange={setPick} placeholder="Pick a biller…" options={opts} /></span>
@@ -2455,14 +2588,14 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
     try { await rpc("locations.save", { client_id: c.id, name }); setLocName({ ...locName, [c.id]: "" }); toast("Location added."); reload(); } catch (e) { toast(e.message, "err"); }
   };
   const toggleLoc = async (l) => { try { await rpc("locations.save", { id: l.id, name: l.name, active: !l.active }); reload(); } catch (e) { toast(e.message, "err"); } };
-  const makeFolders = async (c) => { setBusy(true); try { const r = await rpc("clients.setupFolders", c ? { client_id: c.id } : {}); toast(r.failed.length ? `Folders made for ${r.done}; not for ${r.failed.length}: ${r.failed[0].error}` : c ? "Folders made in OneDrive for " + c.name + "." : `Folders made in OneDrive for ${r.done} clients.`, r.failed.length ? "err" : "ok"); reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const makeFolders = async (c) => { setBusy(true); try { const r = await rpc("clients.setupFolders", c ? { client_id: c.id } : {}); toast(r.failed.length ? `Folders made for ${r.done}; not for ${r.failed.length}: ${r.failed[0].error}` : c ? "Folders made in OneDrive for " + c.name + "." : `Folders made in OneDrive for ${plural(r.done, "client")}.`, r.failed.length ? "err" : "ok"); reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const wbStatus = (id) => (ctx.settings && ctx.settings["workbook_status:" + id]) || null;
   /* No workbook link: Brahmastra keeps the month's Production file in the Purviewautomate OneDrive by itself. */
   const [del, setDel] = useState(null);
   const [delTyped, setDelTyped] = useState("");
   const doDelete = async () => {
     setBusy(true);
-    try { const r = await rpc("clients.delete", { id: del.id, confirm: delTyped.trim() }); toast(`${r.name} deleted with ${fmtInt(r.claims)} claims.`); setDel(null); setDelTyped(""); setEdit(null); reload(); }
+    try { const r = await rpc("clients.delete", { id: del.id, confirm: delTyped.trim() }); toast(`${r.name} deleted with ${plural(r.claims, "claim")}.`); setDel(null); setDelTyped(""); setEdit(null); reload(); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
@@ -2705,7 +2838,7 @@ function OneDrivePicker({ folderLink, onPick, onClose, accept = isSheetFile, wha
         <ErrorBox error={err} />
         {busy && <Spinner label={busy} />}
         {!busy && <div className="table-wrap" style={{ maxHeight: 420 }}><table className="t"><thead><tr><th>Name</th><th>Modified</th><th>By</th><th className="r">Size</th></tr></thead>
-          <tbody>{items.map((it) => <tr key={it.id} className="click" onClick={() => click(it)}><td>{it.folder ? "📁 " : "📄 "}{it.name}{it.folder && it.folder.childCount != null ? <span className="tiny muted"> · {it.folder.childCount} items</span> : null}</td><td className="small">{it.lastModifiedDateTime ? fmtWhen(Date.parse(it.lastModifiedDateTime)) : ""}</td><td className="small">{itemSummary(it).modifiedBy}</td><td className="num">{it.file ? fmtBytes(it.size) : ""}</td></tr>)}
+          <tbody>{items.map((it) => <tr key={it.id} className="click" onClick={() => click(it)}><td>{it.folder ? "📁 " : "📄 "}{it.name}{it.folder && it.folder.childCount != null ? <span className="tiny muted"> · {plural(it.folder.childCount, "item")}</span> : null}</td><td className="small">{it.lastModifiedDateTime ? fmtWhen(Date.parse(it.lastModifiedDateTime)) : ""}</td><td className="small">{itemSummary(it).modifiedBy}</td><td className="num">{it.file ? fmtBytes(it.size) : ""}</td></tr>)}
             {!items.length && <tr><td colSpan={4}><Empty>{"No folders or " + what + " files here."}</Empty></td></tr>}</tbody></table></div>}
         <div className="tiny muted">{what === "spreadsheet" ? "Only folders and Excel/CSV files are listed." : "Only folders and " + what + " files are listed."} Click a file and it is read on the spot; nothing is written back to OneDrive.</div>
       </div>
@@ -2784,8 +2917,8 @@ function ProjectMapModal({ names, clients, onDone, onClose, canCreate }) {
   return (
     <Modal title="Match roster projects to clients" sub="These projects come from the Purview Shastra roster but do not match a client here by name. Pick the client each one is, or create it. People on a project get its claims and access once it is matched." onClose={onClose}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Later</button><button className="btn primary" onClick={save} disabled={busy || !Object.values(pick).some(Boolean)}>{busy ? "Saving…" : "Confirm"}</button></>}>
-      <table className="t"><thead><tr><th>Roster project</th><th>Brahmastra client</th></tr></thead>
-        <tbody>{names.map((n) => <tr key={n}><td><b>{n}</b></td><td><Combo value={pick[n] || ""} onChange={(v) => setPick({ ...pick, [n]: v })} placeholder="Not sure yet"
+      <table className="t" style={{ tableLayout: "fixed" }}><thead><tr><th style={{ width: "45%" }}>Roster project</th><th>Brahmastra client</th></tr></thead>
+        <tbody>{names.map((n) => <tr key={n}><td style={{ overflowWrap: "anywhere" }}><b>{n}</b></td><td><Combo value={pick[n] || ""} onChange={(v) => setPick({ ...pick, [n]: v })} placeholder="Not sure yet"
           options={[{ id: "", label: "Not sure yet" }, ...clients.map((c) => ({ id: c.id, label: c.name + (c.code ? ` (${c.code})` : "") })), ...(canCreate ? [{ id: "__new", label: `+ Create a new client called "${n}"` }] : [])]} />
           {pick[n] && pick[n] !== "__new" && guess(n) === pick[n] && <div className="tiny muted">suggested from the name, please confirm</div>}</td></tr>)}</tbody></table>
     </Modal>
@@ -2813,7 +2946,7 @@ function ShastraSync({ data, onDone }) {
         <div><h3>Purview Shastra</h3>
           <div className="small muted">{!data.connected ? "Not connected yet. Once the SHASTRA_FEED_KEY secret is added, the roster updates by itself every hour."
             : !last ? "Connected. The first update runs within the hour, or click Sync now."
-            : last.ok ? <>Updated by itself every hour · last {fmtWhen(last.at)}{last.by && last.by !== "hourly" ? " (by " + last.by + ")" : ""} · {fmtInt(last.people)} people{last.new + last.updated + last.deactivated ? <> · {last.new} joined, {last.updated} changed, {last.deactivated} left</> : " · no changes"}{last.removed ? <> · {last.removed} old roster {last.removed === 1 ? "entry" : "entries"} removed</> : null}</>
+            : last.ok ? <>Updated by itself every hour · last {fmtWhen(last.at)}{last.by && last.by !== "hourly" ? " (by " + last.by + ")" : ""} · {plural(last.people, "person", "people")}{last.new + last.updated + last.deactivated ? <> · {last.new} joined, {last.updated} changed, {last.deactivated} left</> : " · no changes"}{last.removed ? <> · {last.removed} old roster {last.removed === 1 ? "entry" : "entries"} removed</> : null}</>
             : <span style={{ color: "var(--red-ink)" }}>Last try {fmtWhen(last.at)} did not work: {last.error}</span>}</div></div>
         <div className="row">{log.length > 0 && <button className="btn sm" onClick={() => setOpen(!open)}>{open ? "Hide changes" : "What changed"}</button>}
           <button className="btn primary" disabled={!data.connected || busy} onClick={sync}>{busy ? "Syncing…" : "Sync now"}</button></div>
@@ -2864,8 +2997,8 @@ function RosterView({ ctx, reload, me }) {
         <div className="card stack">
           <h3>Projects and clients</h3>
           <div className="small muted">Each roster project is one Brahmastra client. Change a match here; team leads are asked about any project that is not matched.</div>
-          {meta.data && <table className="t"><thead><tr><th>Roster project</th><th>Client</th></tr></thead>
-            <tbody>{meta.data.projects.map((p) => <tr key={p.name}><td><b>{p.name}</b></td><td><Combo sm clearable={false} value={p.client_id || ""} disabled={!!busy} onChange={(v) => v && remap(p.name, v)} placeholder="Not matched yet"
+          {meta.data && <table className="t" style={{ tableLayout: "fixed" }}><thead><tr><th style={{ width: "45%" }}>Roster project</th><th>Client</th></tr></thead>
+            <tbody>{meta.data.projects.map((p) => <tr key={p.name}><td style={{ overflowWrap: "anywhere" }}><b>{p.name}</b></td><td><Combo sm clearable={false} value={p.client_id || ""} disabled={!!busy} onChange={(v) => v && remap(p.name, v)} placeholder="Not matched yet"
               options={[{ id: "", label: "Not matched yet" }, ...projOptions.map((c) => ({ id: c.id, label: c.name })), { id: "__new", label: `+ Create a client called "${p.name}"` }]} /></td></tr>)}
               {!meta.data.projects.length && <tr><td colSpan={2} className="muted">Click Sync now first.</td></tr>}</tbody></table>}
         </div>
@@ -2905,7 +3038,7 @@ function LocationsView({ ctx, reload, go, embedded }) {
     try {
       const team = get(r).team;
       const res = await autoAllocate({ ctx, client: { ...r.client, team: r.loc ? r.client.team : team }, loc: r.loc ? { ...r.loc, team } : null });
-      toast(res.applied ? `Assigned ${fmtInt(res.applied)} claims: ` + res.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)}`).join(", ") : "Nothing to assign: " + (res.reason || "no open claims") + ".");
+      toast(res.applied ? `Assigned ${plural(res.applied, "claim")}: ` + res.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)}`).join(", ") : "Nothing to assign: " + (res.reason || "no open claims") + ".");
     } catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
@@ -3010,12 +3143,12 @@ function DetailsReport({ ctx, go }) {
     let uploadId = null, tot = { rows: 0, matched: 0, updated: 0, fields: {} };
     try {
       for (let i = 0; i < rows.length; i += 1000) {
-        setBusy(`Filling details… ${fmtInt(Math.min(rows.length, i + 1000))} of ${fmtInt(rows.length)} rows`);
+        setBusy(`Filling details… ${fmtInt(Math.min(rows.length, i + 1000))} of ${plural(rows.length, "row")}`);
         const r = await rpc("inventory.enrich", { client_id: clientId, location_id: locId || undefined, upload_id: uploadId, file_name: file.name, purpose, note, overwrite, rows: rows.slice(i, i + 1000) });
         uploadId = r.upload_id; tot = { rows: tot.rows + r.rows, matched: tot.matched + r.matched, updated: tot.updated + r.updated, fields: r.fields };
       }
       setResult({ ...tot, upload_id: uploadId }); hist.reload();
-      toast(`${fmtInt(tot.updated)} claims filled from ${file.name}.`);
+      toast(`${plural(tot.updated, "claim")} filled from ${file.name}.`);
     } catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
@@ -3041,7 +3174,7 @@ function DetailsReport({ ctx, go }) {
         <div className="row mt8" style={{ gap: 10, flexWrap: "wrap" }}>
           <button className="btn" onClick={() => inputRef.current && inputRef.current.click()}>📄 {file ? "Pick another report" : "Pick the report (Excel or CSV)"}</button>
           <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt" style={{ display: "none" }} onChange={(e) => onFile(e.target.files[0])} />
-          {file && table && <span className="small">{file.name} · {fmtInt(table.rows.length)} rows · {fmtInt(keyed)} with a claim # or account #</span>}
+          {file && table && <span className="small">{file.name} · {plural(table.rows.length, "row")} · {fmtInt(keyed)} with a claim # or account #</span>}
         </div>
         {table && <>
           <div className="b small mt16 mb">Columns in this report</div>
@@ -3059,8 +3192,8 @@ function DetailsReport({ ctx, go }) {
             {!clientId && <span className="small muted">Pick the client.</span>}{clientId && !purpose && <span className="small muted">Pick why you are uploading it.</span>}
           </div>
         </>}
-        {result && <div className="alert info mt16"><b>{fmtInt(result.updated)} claims filled</b> from {fmtInt(result.matched)} of {fmtInt(result.rows)} rows. {Object.entries(result.fields || {}).map(([k, n]) => `${DETAIL_FIELD_LABEL[k] || "other columns"}: ${fmtInt(n)}`).join(" · ")}
-          {result.rows - result.matched > 0 && <> · <b>{fmtInt(result.rows - result.matched)} rows matched no claim</b> <button className="btn sm link" onClick={() => downloadText(toCSV(lastUnmatched, [{ key: "claim_no", label: "Claim #" }, { key: "account_no", label: "Account #" }, { key: "patient", label: "Patient" }]), "unmatched-rows.csv")}>Download them</button></>}
+        {result && <div className="alert info mt16"><b>{plural(result.updated, "claim")} filled</b> from {fmtInt(result.matched)} of {plural(result.rows, "row")}. {Object.entries(result.fields || {}).map(([k, n]) => `${DETAIL_FIELD_LABEL[k] || "other columns"}: ${fmtInt(n)}`).join(" · ")}
+          {result.rows - result.matched > 0 && <> · <b>{plural(result.rows - result.matched, "row")} matched no claim</b> <button className="btn sm link" onClick={() => downloadText(toCSV(lastUnmatched, [{ key: "claim_no", label: "Claim #" }, { key: "account_no", label: "Account #" }, { key: "patient", label: "Patient" }]), "unmatched-rows.csv")}>Download them</button></>}
           {" "}<button className="btn sm link" onClick={() => go("claims", { clientId })}>See the claims</button></div>}
       </div>
       <div className="card tight">
@@ -3240,8 +3373,8 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       {step === 2 && table && (
         <div className="stack">
           <div className="row between">
-            <div className="small"><b>{file.name}</b> · {fmtInt(table.rows.length)} rows{built ? <> · <b>{fmtInt(built.summary.included)} claims</b> found</> : null}</div>
-            {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({fmtInt(s.rows.length)} rows)</option>)}</select></Field>}
+            <div className="small"><b>{file.name}</b> · {plural(table.rows.length, "row")}{built ? <> · <b>{plural(built.summary.included, "claim")}</b> found</> : null}</div>
+            {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({plural(s.rows.length, "row")})</option>)}</select></Field>}
           </div>
           <div className="grid g3">
             <ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={(v) => { setLocId(v); if (v) setLocMode("pick"); }} />
@@ -3277,7 +3410,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           )}
           {!mapping.balance && <div className="alert warn">No Balance column: every claim will be treated as a small balance and land in the Low tier.</div>}
           {locMode === "file" && !mapping.location && <div className="alert warn">You chose to split by the file's Location column, but none is mapped. Map it, or pick one location.</div>}
-          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!client || !mappingOk || !built || !built.summary.included || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : !client ? "Pick the client to load" : `Load ${built ? fmtInt(built.summary.included) : ""} claims`}</button></div>
+          <div className="row between"><button className="btn" onClick={backToStart}>Back</button><button className="btn primary" disabled={!client || !mappingOk || !built || !built.summary.included || (locMode === "file" && !mapping.location) || busy} onClick={() => load()}>{busy ? "Loading…" : !client ? "Pick the client to load" : `Load ${built ? plural(built.summary.included, "claim") : "claims"}`}</button></div>
         </div>
       )}
       {step === 4 && (
@@ -3286,7 +3419,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           {result && (
             <>
               <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
-              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {fmtInt(r.assigned.applied)} claims allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
+              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
             </>
           )}
@@ -3302,7 +3435,7 @@ function ReviewStep({ built, kind, onBack, onLoad, busy }) {
   return (
     <div className="stack">
       <div className="grid g4">
-        <Kpi label="Claims to load" value={fmtInt(s.included)} sub={`${fmtInt(s.rowsRead)} rows read · ${fmtInt(s.linesRolled)} service lines rolled up`} tone="accent" />
+        <Kpi label="Claims to load" value={fmtInt(s.included)} sub={`${plural(s.rowsRead, "row")} read · ${plural(s.linesRolled, "service line")} rolled up`} tone="accent" />
         <Kpi label="Workable balance" value={fmtMoney(s.amount)} sub={`average ${fmtMoney(s.cut.avg)} · High tier above ${fmtMoney(s.cut.high)}`} />
         <Kpi label="Excluded" value={fmtInt(exclRows.reduce((n, [, v]) => n + v.n, 0))} sub={exclRows.map(([k, v]) => `${k}: ${v.n}`).join(" · ") || "nothing excluded"} />
         <Kpi label={kind === "worked" ? "With a date worked" : "Patients with 3+ claims"} value={kind === "worked" ? fmtInt(built.claims.filter((c) => c.last_worked_on).length) : fmtInt(s.patientsWith3Plus)} sub={kind === "worked" ? "follow-up dates set from it" : "batching opportunity"} />
@@ -3316,7 +3449,7 @@ function ReviewStep({ built, kind, onBack, onLoad, busy }) {
       <div><div className="b small mb">Preview: top of the work order (highest priority first)</div>
         <div className="table-wrap" style={{ maxHeight: 360 }}><table className="t"><thead><tr><th>Claim #</th><th>Patient</th><th>Payer</th><th>DOS</th><th className="r">Age</th><th className="r">Balance</th><th>Tier</th><th>Status</th><th>Why this order</th></tr></thead>
           <tbody>{preview.map((c, i) => <tr key={i}><td className="mono small">{c.claim_no || "–"}</td><td>{c.patient}</td><td>{c.payer}</td><td className="small">{fmtDate(c.dos)}</td><td className="num">{c.age_days ?? "–"}</td><td className="num">{fmtMoney(c.balance)}</td><td><TierBadge tier={c.tier} /></td><td><ClassBadge cls={c.status_class} /></td><td className="small muted">{c.priority_reason}</td></tr>)}</tbody></table></div></div>
-      <div className="row between"><button className="btn" onClick={onBack} disabled={busy}>Back</button><button className="btn primary" onClick={onLoad} disabled={busy || !s.included}>{busy ? "Loading…" : `Load ${fmtInt(s.included)} claims`}</button></div>
+      <div className="row between"><button className="btn" onClick={onBack} disabled={busy}>Back</button><button className="btn primary" onClick={onLoad} disabled={busy || !s.included}>{busy ? "Loading…" : `Load ${plural(s.included, "claim")}`}</button></div>
     </div>
   );
 }
@@ -3335,7 +3468,7 @@ function BatchesTable({ ctx, onRefresh }) {
     <div className="card stack">
       <div className="row between"><h2>Upload history</h2><div className="row"><div style={{ minWidth: 240 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} allowAll /></div><button className="btn sm" disabled={!clientId || busy} title="Find claims loaded twice (same claim number written differently, or same patient, date of service and payer) and merge them" onClick={checkDup}>Merge duplicate claims</button></div></div>
       {dup && (
-        <Confirm title={dup.duplicates ? `Merge ${fmtInt(dup.duplicates)} duplicate claims?` : "No duplicates found"} text={dup.duplicates ? `${fmtInt(dup.duplicates)} claims are copies of ${fmtInt(dup.groups)} claims already on file (same claim number written differently, or same patient, date of service and payer). Each copy's notes, work history and biller move onto the original, and the copy is removed.` : "Every claim of this client is unique."} confirmLabel={dup.duplicates ? "Merge" : "OK"} onYes={dup.duplicates ? doDedupe : () => setDup(null)} onNo={() => setDup(null)} busy={busy} />
+        <Confirm title={dup.duplicates ? `Merge ${plural(dup.duplicates, "duplicate claim")}?` : "No duplicates found"} text={dup.duplicates ? `${plural(dup.duplicates, "claim is a copy", "claims are copies")} of ${plural(dup.groups, "claim")} already on file (same claim number written differently, or same patient, date of service and payer). Each copy's notes, work history and biller move onto the original, and the copy is removed.` : "Every claim of this client is unique."} confirmLabel={dup.duplicates ? "Merge" : "OK"} onYes={dup.duplicates ? doDedupe : () => setDup(null)} onNo={() => setDup(null)} busy={busy} />
       )}
       <ErrorBox error={q.error} />
       <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client · location</th><th>Kind</th><th>File</th><th>By</th><th className="r">Rows</th><th className="r">New</th><th className="r">Refreshed</th><th className="r">Reopened</th><th className="r">Closed</th><th className="r">Excluded</th><th></th></tr></thead>
@@ -3418,7 +3551,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   const bulk = async (label, fn) => {
     if (!sel.size) return;
     setBusy(true);
-    try { const r = await fn([...sel]); toast(`${label}: ${fmtInt(r.changed || r.applied || 0)} claims.` + (r.at_desk ? ` ${plural(r.at_desk, "claim is", "claims are")} with a desk and stayed as ${r.at_desk === 1 ? "it is" : "they are"}.` : "")); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
+    try { const r = await fn([...sel]); toast(`${label}: ${plural(r.changed || r.applied || 0, "claim")}.` + (r.at_desk ? ` ${plural(r.at_desk, "claim is", "claims are")} with a desk and stayed as ${r.at_desk === 1 ? "it is" : "they are"}.` : "")); setSel(new Set()); q.reload(); } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
   const sortBy = (k) => { if (f.sort === k) set("dir", f.dir === "asc" ? "desc" : "asc"); else setF((x) => ({ ...x, sort: k, dir: k === "patient" || k === "payer" ? "asc" : "desc", page: 1 })); };
@@ -3472,7 +3605,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
           {f.stage ? <label className="check small"><input type="checkbox" checked onChange={() => set("stage", "")} /> {(INV_STAGES.find(([k]) => k === f.stage) || [])[1]}</label> : null}
           <label className="check small"><input type="checkbox" checked={f.escalated} onChange={(e) => set("escalated", e.target.checked)} /> Escalated</label>
           <span style={{ flex: 1 }} />
-          {q.data && <span className="small muted">{fmtInt(q.data.total)} claims · {fmtMoney(q.data.amount)}</span>}
+          {q.data && <span className="small muted">{plural(q.data.total, "claim")} · {fmtMoney(q.data.amount)}</span>}
         </div>
       </div>
       {sel.size > 0 && (
@@ -3528,7 +3661,7 @@ function PriorityModal({ ids, rows, onClose, onDone }) {
   };
   const LEVELS = [["top", "⇈ Top: work first", "goes to the top of the biller's list and of the next allocation"], ["high", "↑ Raise", "ahead of similar claims"], ["low", "↓ Lower", "behind other claims until you change it back"], ["", "⟲ Automatic", "back to the score from age, value and status"]];
   return (
-    <Modal title={"Change priority · " + (one ? (one.claim_no || one.patient || "claim") : ids.length + " claims")} sub={one ? [one.patient, one.payer, "score now " + one.priority + (one.priority_set_label ? " (" + one.priority_set_label + ")" : "")].filter(Boolean).join(" · ") : "The reason is saved on each claim."} onClose={onClose} narrow
+    <Modal title={"Change priority · " + (one ? (one.claim_no || one.patient || "claim") : plural(ids.length, "claim"))} sub={one ? [one.patient, one.payer, "score now " + one.priority + (one.priority_set_label ? " (" + one.priority_set_label + ")" : "")].filter(Boolean).join(" · ") : "The reason is saved on each claim."} onClose={onClose} narrow
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={go} disabled={busy || !ok}>{busy ? "Saving…" : "Save priority"}</button></>}>
       <div className="stack">
         <div className="field"><span>New priority</span>
@@ -3549,7 +3682,7 @@ function PriorityLogModal({ onClose, onOpen }) {
   const sort = useTableSort("at", "desc");
   const rows = sort.sortRows(q.data ? q.data.rows : []);
   const cats = q.data ? q.data.categories : [];
-  const exportCSV = () => downloadText(toCSV(rows, [{ key: "at", label: "When", get: (r) => new Date(r.at).toLocaleString() }, { key: "user_name", label: "Changed by" }, { key: "client_name", label: "Client" }, { key: "claim_no", label: "Claim #" }, { key: "patient", label: "Patient" }, { key: "payer", label: "Payer" }, { key: "balance", label: "Balance" }, { key: "age_days", label: "Age" }, { key: "text", label: "New priority" }, { key: "category", label: "Why" }, { key: "comment", label: "Comment" }, { key: "from", label: "Score before" }, { key: "to", label: "Score after" }]), `brahmastra-priority-changes-${todayISO()}.csv`);
+  const exportCSV = () => downloadText(toCSV(rows, [{ key: "at", label: "When", get: (r) => new Date(r.at).toLocaleString(LOC) }, { key: "user_name", label: "Changed by" }, { key: "client_name", label: "Client" }, { key: "claim_no", label: "Claim #" }, { key: "patient", label: "Patient" }, { key: "payer", label: "Payer" }, { key: "balance", label: "Balance" }, { key: "age_days", label: "Age" }, { key: "text", label: "New priority" }, { key: "category", label: "Why" }, { key: "comment", label: "Comment" }, { key: "from", label: "Score before" }, { key: "to", label: "Score after" }]), `brahmastra-priority-changes-${todayISO()}.csv`);
   return (
     <Modal title="Priority changes" sub="Every claim a team lead moved up or down, and why. The most common reasons are what the automatic allocation should start doing by itself." onClose={onClose}
       footer={<><button className="btn" onClick={exportCSV} disabled={!rows.length}>Download CSV</button><button className="btn primary" onClick={onClose}>Close</button></>}>
@@ -3794,7 +3927,7 @@ function TaskFilesPicker({ files, setFiles }) {
       catch (e) { toast(e.message, "err"); }
     }
   };
-  const shotName = () => "Screenshot " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }).replace(/[^0-9]/g, "") + ".png";
+  const shotName = () => "Screenshot " + new Date().toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).replace(/[^0-9]/g, "") + ".png";
   useEffect(() => {
     const h = (e) => { const all = [...((e.clipboardData && e.clipboardData.items) || [])], items = all.filter((i) => i.kind === "file"); if (!items.length) return;
       // copied cells or text (Excel and Word put a picture on the clipboard too) paste as text into a text box
@@ -3878,7 +4011,7 @@ function TaskFormModal({ ctx, clientId, task, onClose, onDone }) {
       footer={<div className="row between" style={{ width: "100%", gap: 8, alignItems: "center" }}><span className="small muted">{missing.length ? "Still needed: " + missing.join(", ") + "." : ""}</span>
         <div className="row" style={{ gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || missing.length > 0}>{busy ? "Saving…" : edit ? "Save changes" : "Assign task" + (people.length > 1 ? " to " + people.length + " people" : "")}</button></div></div>}>
       <div className="stack" style={{ gap: 12 }}>
-        {edit ? <div className="small muted">{task.client_name || "Internal"} · <ScopeBadge s={task.scope} />{task.source ? " · received from " + task.source.toLowerCase() : ""} · {fmtInt(task.count)} items</div> : <>
+        {edit ? <div className="small muted">{task.client_name || "Internal"} · <ScopeBadge s={task.scope} />{task.source ? " · received from " + task.source.toLowerCase() : ""} · {plural(task.count, "item")}</div> : <>
           <div className="grid g2">
             <Field label="Client" hint="Optional: leave it on No client for an internal task"><Combo value={f.client_id} options={clientOpts} placeholder="No client (internal task)" onChange={(v) => set("client_id", v || "")} /></Field>
             <FieldGroup label="Received from" hint="Optional"><div className="seg2">{["Client", "Manager", "Internal"].map((s) => <button key={s} type="button" className={f.source === s ? "on" : ""} onClick={() => set("source", f.source === s ? "" : s)}>{s}</button>)}</div></FieldGroup>
@@ -3990,7 +4123,7 @@ function TeamTasksView({ ctx, me, clientId, params, refreshAttention, refreshTas
   return (
     <>
       <div className="grid g4">
-        <Kpi label="Open" value={fmtInt(st.open || 0)} sub={fmtInt(st.items_left || 0) + " items left · " + plural(st.people || 0, "person", "people")} tone="accent" onClick={() => { setView("open"); setPick(""); }} on={view === "open" && !pick} />
+        <Kpi label="Open" value={fmtInt(st.open || 0)} sub={plural(st.items_left || 0, "item") + " left · " + plural(st.people || 0, "person", "people")} tone="accent" onClick={() => { setView("open"); setPick(""); }} on={view === "open" && !pick} />
         <Kpi label={"Due in the next " + ((d && d.due_soon_hours) || 4) + " hours"} value={fmtInt(st.due_soon || 0)} tone={st.due_soon ? "warn" : ""} sub={st.due_soon ? "still within the TAT" : "none"} />
         <Kpi label="Past TAT" value={fmtInt(st.late || 0)} tone={st.late ? "bad" : ""} sub={st.late ? "at the top: chase these first" : "none"} onClick={() => { setView("open"); setPick(pick === "late" ? "" : "late"); }} on={pick === "late"} title="Show only the tasks past their TAT" />
         <Kpi label="Done · 7 days" value={fmtInt(st.done_7 || 0)} tone="good" sub={st.done_7 ? st.done_7_in_tat + " of " + st.done_7 + " within TAT" : "none yet"} onClick={() => { setView("done"); setPick(""); }} on={view === "done"} />
@@ -4100,7 +4233,7 @@ function MyTasksView({ ctx, me, params, refreshTasks }) {
     <div className="stack">
       <div><h1>My tasks</h1><div className="sub">Tasks your team lead gave you, with the TAT in working hours (Monday to Friday). Update the count as you go and mark Completed when all are done; your team lead gets a notice each time.</div></div>
       <div className="grid g4">
-        <Kpi label="To do" value={fmtInt(st.todo || 0)} sub={fmtInt(st.items_left || 0) + " items left"} tone="accent" onClick={() => setTab("todo")} on={tab === "todo"} />
+        <Kpi label="To do" value={fmtInt(st.todo || 0)} sub={plural(st.items_left || 0, "item") + " left"} tone="accent" onClick={() => setTab("todo")} on={tab === "todo"} />
         <Kpi label="Due today" value={fmtInt(st.due_today || 0)} tone={st.due_today ? "warn" : ""} sub={st.due_today ? "finish these today" : "none"} />
         <Kpi label="Past TAT" value={fmtInt(st.late || 0)} tone={st.late ? "bad" : ""} sub={st.late ? "update these first" : "none"} />
         <Kpi label="Done · 7 days" value={fmtInt(st.done_7 || 0)} tone="good" sub={st.done_7 ? st.done_7_in_tat + " of " + st.done_7 + " within TAT" : "none yet"} onClick={() => setTab("done")} on={tab === "done"} />
@@ -4358,7 +4491,7 @@ function DigestDashboard({ params, go }) {
   if (q.error) return <ErrorBox error={q.error} />;
   if (!d) return <Spinner label="Building the digest…" />;
   if (d.empty) return <div className="card"><h2>Monday digest</h2><Empty>No digests yet: add clients and their managers first, then each manager's clients get a Monday digest.</Empty></div>;
-  const R = d.rollup, money = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString());
+  const R = d.rollup, money = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString(LOC));
   const f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
   const dd = (iso) => fmtDate(iso).replace(/, \d{4}$/, "");
   const bandWord = { ok: "Green", warn: "Amber", miss: "Red" };
@@ -4382,7 +4515,7 @@ function DigestDashboard({ params, go }) {
         <div className={R.esc && R.esc.n ? "r" : "g"}><b>{R.esc ? R.esc.n + " · " + (R.esc.internal || 0) : "–"}</b><span>external · internal escalations{R.esc ? " · " + R.esc.month : ""} · target 0</span></div>
         <div><b>{money(R.ar)}</b><span>AR{R.ar_ago != null ? (R.ar_ago <= 0 ? " · down " : " · up ") + money(Math.abs(R.ar_ago)) : ""}</span></div>
         <div className={R.pct > R.target ? "r" : ""}><b>{R.pct}%</b><span>over 90 · target {R.target}%</span></div>
-        <div><b>{money(R.coll)}</b><span>collected · {fmtInt(R.work)} entries</span></div>
+        <div><b>{money(R.coll)}</b><span>collected · {plural(R.work, "entry", "entries")}</span></div>
       </div>
       {R.tat && Object.values(R.tat).some(Boolean) && <div className="dd-tat-all">TAT last week (working hours, Monday to Friday): {[["posting", "Payment posting"], ["submission", "Submission"], ["attention", "Needs attention"]].filter(([k]) => R.tat[k]).map(([k, l]) =>
         <span key={k}>{l} <b className={R.tat[k].pct >= 100 ? "teal-ink" : R.tat[k].pct >= 90 ? "amber-ink" : "red-ink"}>{R.tat[k].pct}%</b> <span className="muted">({R.tat[k].met} of {R.tat[k].due})</span></span>)}</div>}
@@ -4398,7 +4531,7 @@ function DigestDashboard({ params, go }) {
             <div className="dd-mini">
               <div><b>{money(c.ar.now)}</b><span>AR{c.ar.week_ago != null ? (c.ar.now <= c.ar.week_ago ? " · down " : " · up ") + money(Math.abs(c.ar.now - c.ar.week_ago)) : ""}</span></div>
               <div><b className={c.ar.over90_pct > c.ar.target ? "red-ink" : ""}>{c.ar.over90_pct}%</b><span>over 90</span></div>
-              <div><b>{money(c.collected.amount)}</b><span>collected · {fmtInt(c.worked.n)} entries</span></div>
+              <div><b>{money(c.collected.amount)}</b><span>collected · {plural(c.worked.n, "entry", "entries")}</span></div>
             </div>
             {c.card && c.card.scopes.length > 0 && <div className="dd-scopes">{c.card.scopes.map((x) => <span key={x.name}>{drDot(x.band)}{x.name} {x.pct == null ? "–" : x.pct + "%"}</span>)}</div>}
             {c.tat && <div className={"dd-esc " + (c.tat.worst ? (c.tat.worst.missed > 2 ? "r" : "a") : "g")}>TAT last week: {c.tat.parts.map((x, i) => <span key={x.k}>{i ? " · " : ""}{x.label} <b>{x.pct}%</b> ({x.met} of {x.due})</span>)}
@@ -4733,9 +4866,9 @@ function NoteForm({ c, files, onChanged }) {
 const HIST_FILTERS = [["all", "Everything"], ["work", "Work"], ["note", "Notes"], ["handoff", "Posting & submission"], ["file", "Files"], ["assign", "Assignments"], ["upload", "Uploads"]];
 const HIST_GROUP = { work: "work", edited: "work", skip: "work", returned: "work", opened: "work", escalated: "work", answer: "note", note: "note", file: "file", assigned: "assign", unassigned: "assign", state: "assign", loaded: "upload", refreshed: "upload", file_work: "work", handoff_check: "handoff", handoff_rejected: "handoff", handoff_sent: "handoff", handoff_assigned: "handoff", handoff_done: "handoff", handoff_assist: "handoff", handoff_none: "handoff", handoff_back: "handoff", handoff_client: "handoff", handoff_resume: "handoff", handoff_client_sent: "handoff", handoff_pending: "handoff", handoff_inprocess: "handoff", handoff_other: "handoff", review_to_biller: "note", review_to_dept: "note" };
 const CHANGE_LABEL = { state: "State", bucket: "Bucket", follow_up: "Follow-up", status: "SAAG status" };
-const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+const fmtTime = (ms) => new Date(Number(ms)).toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" });
 const dayKey = (ms) => istISOOf(ms);   // the IST day, as Today and Yesterday below
-const dayLabel = (k) => { const today = todayISO(); const d = new Date(k + "T00:00:00"); const txt = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }); return k === today ? "Today · " + txt : k === addDaysISO(today, -1) ? "Yesterday · " + txt : txt; };
+const dayLabel = (k) => { const today = todayISO(); const d = new Date(k + "T00:00:00"); const txt = d.toLocaleDateString(LOC, { weekday: "short", month: "short", day: "numeric", year: "numeric" }); return k === today ? "Today · " + txt : k === addDaysISO(today, -1) ? "Yesterday · " + txt : txt; };
 const chgVal = (k, v) => (!v ? "–" : k === "follow_up" ? fmtDate(v) : k === "state" ? (STATE_META[v] ? STATE_META[v][1] : v) : v);
 function Changes({ changes }) {
   const ks = Object.keys(changes || {});
@@ -4818,9 +4951,8 @@ function ClaimHistory({ claimId, claim, me, version }) {
   return (
     <>
       {!open && <button className="hist-tab" title="Everything that happened to this claim, with date and time" onClick={() => { setOpen(true); setTick((t) => t + 1); }}>🕘<span>CLAIM HISTORY</span><i>{n}</i></button>}
-      {open && <div className="hist-shade" onClick={() => setOpen(false)} />}
       {open && (
-        <div className="hist">
+        <SidePanel label="Claim history" onClose={() => setOpen(false)}>
           <div className="hist-top">
             <div className="row between"><div><h2 style={{ margin: 0 }}>Claim history</h2><div className="sub">{[claim.claim_no || "No claim #", claim.patient, claim.payer].filter(Boolean).join(" · ")}</div></div><button className="btn sm" onClick={() => setOpen(false)}>✕</button></div>
             <div className="row mt8" style={{ gap: 5, flexWrap: "wrap" }}>{HIST_FILTERS.map(([k, l]) => <button key={k} className={"chip " + (filter === k ? "on" : "")} style={{ fontSize: 12, padding: "4px 10px" }} onClick={() => setFilter(k)}>{l}</button>)}</div>
@@ -4831,7 +4963,7 @@ function ClaimHistory({ claimId, claim, me, version }) {
             {q.data && !items.length && <div className="muted small mt">Nothing here yet.</div>}
             {days.map((d) => <div key={d.k}><div className="hist-day">{dayLabel(d.k)}</div><div className="hist-tl">{d.items.map((it, i) => <HistEvent key={i} it={it} onFile={openFile} onEdit={(x) => { setEdit(x); setOpen(false); }} />)}</div></div>)}
           </div>
-        </div>
+        </SidePanel>
       )}
       {edit && (
         <Modal title="Edit this entry" sub={"Written " + fmtWhen(edit.at)} onClose={() => setEdit(null)} wide>
@@ -4865,7 +4997,7 @@ function AccessRow({ c, ctx, me, onSaved, dir }) {
   return (
     <div className="small mt8" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
       <b>Shared with:</b>
-      {rows.map((r) => <span key={r.user_id} className="badge gray" title={"Shared by " + (r.granted_by_name || "?") + " · " + fmtWhen(r.at)}>{r.name} · {r.level === "edit" ? "can edit" : "view only"}{canShare && <button type="button" className="btn link sm" style={{ padding: "0 2px" }} disabled={busy} onClick={() => rm(r)}>×</button>}</span>)}
+      {rows.map((r) => <span key={r.user_id} className="badge gray wrap" title={"Shared by " + (r.granted_by_name || "?") + " · " + fmtWhen(r.at)}>{r.name} · {r.level === "edit" ? "can edit" : "view only"}{canShare && <button type="button" className="btn link sm" style={{ padding: "0 2px" }} disabled={busy} onClick={() => rm(r)}>×</button>}</span>)}
       {!rows.length && <span className="muted">nobody outside its own span</span>}
       {canShare && !open && <button className="btn sm" onClick={() => setOpen(true)} title="Give one person view-only or edit access to this client">+ Share this client</button>}
       {canShare && open && <>
@@ -5302,18 +5434,16 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   const changed = () => { q.reload(); setVer((v) => v + 1); onChanged && onChanged(); };
   const act = async (label, fn) => { setBusy(true); try { await fn(); toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const sup = me.role === "supervisor";
-  // Esc closes the drawer when nothing is open on top of it (a box opened from the drawer closes first).
-  const ovRef = useRef(null);
-  useEffect(() => { const k = (e) => { if (e.key !== "Escape" || !ovRef.current) return; const all = document.querySelectorAll(".overlay"); if (all[all.length - 1] === ovRef.current) onClose(); };
-    window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+  // a pop-up like the others: Esc closes it when nothing is open on top of it (a box opened from it closes first)
+  const L = useLayer(onClose);
   return (
-    <div className="overlay" ref={ovRef} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal wide" style={{ maxWidth: 1240, background: "var(--card2)", position: "relative" }}>
+    <div className="overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className="modal wide" ref={L.box} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Claim profile" style={{ maxWidth: 1240, background: "var(--card2)", position: "relative" }}>
         <ErrorBox error={q.error} />
         {!c && !q.error && <Spinner />}
         {c && (
           <div className="stack" style={{ gap: 14, paddingRight: 30 }}>
-            <ClaimHeader c={c}>{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={onClose}>Close</button></ClaimHeader>
+            <ClaimHeader c={c}>{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={L.close}>Close</button></ClaimHeader>
             {c.locked && <div className="alert info"><b>Posting closed this claim: the payment is posted.</b> {ro ? "Anyone can open it to read; it is not on your desk, so there is nothing to work here." : "Anyone can open it to read."} Its notes can no longer be edited (only QA is left).</div>}
             <ClaimInfo c={c} siblings={q.data.siblings} />
             <HandoffCard handoffs={q.data.handoffs} role={q.data.handoff_role} onChanged={changed} />
@@ -5349,6 +5479,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
         )}
       </div>
       {patientOf && <PatientModal id={patientOf} ctx={ctx} me={me} onClose={() => setPatientOf(null)} onOpenClaim={() => {}} />}
+      {L.ask}
     </div>
   );
 }
@@ -5545,7 +5676,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
       <div className="group">
         <div className="gt row" style={{ gap: 8 }}><span className="stepn">1</span>SAAG entry</div>
         {sugRows.length > 0 && !saag.status && <div className="row" style={{ gap: 6, flexWrap: "wrap", margin: "2px 0 8px" }}><span className="tiny muted">Used most {sug.data.scope === "payer" ? "for " + claim.payer : "at this client"}:</span>
-          {sugRows.map((x, i) => <button key={i} type="button" className="chip" title={"Picked " + x.n + " times in the last 90 days"} onClick={() => pickSug(x)}>{x.status} › {x.sub_status} › {x.action} <span className="tiny muted">({x.n})</span></button>)}</div>}
+          {sugRows.map((x, i) => <button key={i} type="button" className="chip" title={"Picked " + plural(x.n, "time") + " in the last 90 days"} onClick={() => pickSug(x)}>{x.status} › {x.sub_status} › {x.action} <span className="tiny muted">({x.n})</span></button>)}</div>}
         <div className="grid g4">
           <Field label="Status">{sel(saag.status, pickStatus, SAAG.statuses, "Pick a status…")}</Field>
           <Field label="Sub-status">{sel(saag.sub_status, pickSub, subs, saag.status ? "Pick a sub-status…" : "Pick a status first", !saag.status)}</Field>
@@ -5807,7 +5938,7 @@ function AllocateView({ ctx, params, go, embedded }) {
     try {
       let total = 0;
       for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: clientId, location_id: locId || undefined, strategy, assignments: part, summary: { perUser: plan.perUser, leftover: plan.leftover, filters } }); total += r.applied; }
-      setApplied(total); toast(`Assigned ${fmtInt(total)} claims.`);
+      setApplied(total); toast(`Assigned ${plural(total, "claim")}.`);
       setPlan(null); stats.reload(); loadPool();
     } catch (e) { toast(e.message, "err"); }
     setApplying(false);
@@ -5839,7 +5970,7 @@ function AllocateView({ ctx, params, go, embedded }) {
                 <div className="pill-list">{payersAll.slice(0, 14).map((p) => { const any = Object.keys(filters.payers).length; const on = any ? !!filters.payers[p.payer] : true; return <button key={p.payer} className={"chip " + (on ? "on" : "")} onClick={() => { const np = { ...filters.payers }; if (!any) { payersAll.forEach((x) => { np[x.payer] = true; }); } np[p.payer] = !on; if (Object.values(np).every((v) => v)) setFilters({ ...filters, payers: {} }); else setFilters({ ...filters, payers: np }); }}>{p.payer} <span className="muted">{fmtInt(p.n)} · {fmtMoney(p.amt)}</span></button>; })}
                   {Object.keys(filters.payers).length > 0 && <button className="btn sm link" onClick={() => setFilters({ ...filters, payers: {} })}>all payers</button>}</div></div>
               <div className="row"><span className="small b">Minimum balance</span><input className="input sm" type="number" style={{ width: 110 }} value={filters.minBalance} onChange={(e) => setFilters({ ...filters, minBalance: e.target.value })} /><span className="small muted">Low-tier claims (under $100) are clean-up work and score half; leave them in or filter them out.</span></div>
-              <div className="alert info"><b>{fmtInt(sel.length)} claims · {fmtMoney(sum(sel, (c) => c.balance))}</b> selected to go out · High {fmtInt(sel.filter((c) => c.tier === "High").length)} · near filing limit (75–90d) {fmtInt(sel.filter((c) => c.age_days >= 75 && c.age_days <= 90).length)} · rejected/denied {fmtInt(sel.filter((c) => c.status_class === "rejected" || c.status_class === "denied").length)} · AR follow-ups after submission {fmtInt(sel.filter(afterSubmission).length)}</div>
+              <div className="alert info"><b>{plural(sel.length, "claim")} · {fmtMoney(sum(sel, (c) => c.balance))}</b> selected to go out · High {fmtInt(sel.filter((c) => c.tier === "High").length)} · near filing limit (75–90d) {fmtInt(sel.filter((c) => c.age_days >= 75 && c.age_days <= 90).length)} · rejected/denied {fmtInt(sel.filter((c) => c.status_class === "rejected" || c.status_class === "denied").length)} · AR follow-ups after submission {fmtInt(sel.filter(afterSubmission).length)}</div>
             </div>
             <div className="card stack">
               <div className="row between"><h3>2 · Who works it</h3>{clientId && go && <button className="btn sm" onClick={() => go("clients", { client_id: clientId, focus: "people" })} title="Opens this client's card, where its people are added or taken off">Change people on the client card</button>}</div>
@@ -5855,13 +5986,13 @@ function AllocateView({ ctx, params, go, embedded }) {
           </div>
           {plan && (
             <div className="card stack">
-              <div className="row between"><h3>4 · Preview</h3><span className="small muted">{fmtInt(plan.assignments.length)} claims go out · {fmtInt(plan.leftover)} stay in the pool ({fmtMoney(plan.leftoverAmt)}) for lack of capacity</span></div>
+              <div className="row between"><h3>4 · Preview</h3><span className="small muted">{plural(plan.assignments.length, "claim goes", "claims go")} out · {fmtInt(plan.leftover)} stay in the pool ({fmtMoney(plan.leftoverAmt)}) for lack of capacity</span></div>
               <div className="table-wrap"><table className="t"><thead><tr><th>Team member</th><th className="r">Claims</th><th className="r">Capacity</th><th className="r">Balance</th><th className="r">High tier</th><th className="r">Near TFL</th><th className="r">Batches</th><th>Top payers</th></tr></thead>
                 <tbody>{plan.perUser.map((u) => <tr key={u.id}><td><b>{u.name}</b></td><td className="num">{fmtInt(u.count)}</td><td className="num">{fmtInt(u.capacity)}</td><td className="num">{fmtMoney(u.amt)}</td><td className="num">{fmtInt(u.high)}</td><td className="num">{fmtInt(u.urgent)}</td><td className="num">{fmtInt(u.batches)}</td><td className="small">{u.topPayers.join(", ")}</td></tr>)}</tbody></table></div>
-              <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPlan(null)}>Discard</button><button className="btn primary" disabled={applying || !plan.assignments.length} onClick={apply}>{applying ? "Assigning…" : `Assign ${fmtInt(plan.assignments.length)} claims`}</button></div>
+              <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPlan(null)}>Discard</button><button className="btn primary" disabled={applying || !plan.assignments.length} onClick={apply}>{applying ? "Assigning…" : `Assign ${plural(plan.assignments.length, "claim")}`}</button></div>
             </div>
           )}
-          {applied != null && typeof applied === "number" && <div className="alert info"><b>{fmtInt(applied)} claims assigned.</b> Team members see them on their My queue screen in priority order. <button className="btn link sm" onClick={() => go("claims", { clientId })}>Browse the claims</button></div>}
+          {applied != null && typeof applied === "number" && <div className="alert info"><b>{plural(applied, "claim")} assigned.</b> Team members see them on their My queue screen in priority order. <button className="btn link sm" onClick={() => go("claims", { clientId })}>Browse the claims</button></div>}
           <div className="card">
             <div className="row between"><h3>Currently on desks for this client</h3><span className="small muted">Claims a person has not finished can be returned to the pool.</span></div>
             <div className="table-wrap"><table className="t"><thead><tr><th>Team member</th><th className="r">Assigned</th><th className="r">In progress</th><th className="r">Worked</th><th className="r">On desk $</th><th></th></tr></thead>
@@ -5998,7 +6129,7 @@ function TeamView({ ctx, reload, me }) {
       </div>
       {delFor && <Confirm title={"Delete " + delFor.name + "?"} text="Their sign-in is removed and they are signed out. Claims on their desk go back to the pool. Notes they wrote stay in the claim history." confirmLabel="Delete" danger busy={busy} onYes={doDelete} onNo={() => setDelFor(null)} />}
       {edit && (
-        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || (!edit.id && !String(edit.last_name || "").trim()) || ((!edit.id || edit.email) && !mailOk(edit.email))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
+        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || (!edit.id && !String(edit.last_name || "").trim()) || ((!edit.id || edit.email) && !mailOk(edit.email)) || !wholeIn(edit.capacity, 1, 500)} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
           <div className="stack">
             <div className="grid g2">
               <Field label="First name"><input className="input" value={edit.first_name} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} autoFocus /></Field>
@@ -6015,7 +6146,7 @@ function TeamView({ ctx, reload, me }) {
             {edit.id && <PersonClientAccess userId={edit.id} ctx={ctx} me={me} />}
             <Field label="Reports to"><Combo value={edit.reports_to || ""} onChange={(v) => setEdit({ ...edit, reports_to: v })} placeholder="Nobody here" options={[{ id: "", label: "Nobody here" }, ...ctx.users.filter((u) => u.id !== edit.id && u.role === "supervisor").map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))]} /></Field>
             {edit.id && <div className="tiny muted">People from the roster: changes here last until the next roster load, which shows any difference before applying.</div>}
-            <Field label="Claims per day" hint="Default capacity for allocation"><input className="input" type="number" min={1} max={500} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></Field>
+            <Field label="Claims per day" hint={wholeIn(edit.capacity, 1, 500) ? "1 to 500 · the default for allocation" : <span className="red-ink">Claims per day must be a whole number from 1 to 500.</span>}><input className="input" type="number" min={1} max={500} step={1} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></Field>
             {edit.id && <label className="check"><input type="checkbox" checked={!!edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active (inactive people cannot sign in or receive claims)</label>}
             {!edit.id && <label className="check"><input type="checkbox" checked={!!edit.tempPw} onChange={(e) => setEdit({ ...edit, tempPw: e.target.checked })} /> Also give them a temporary password (shown once)</label>}
             {!edit.id && <div className="small muted">They sign in with a one-time code sent to this email each time. If their email is slow, you can issue a code from the Team list.</div>}
@@ -6377,7 +6508,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 <td className="sh-cell">{shCell(r)}</td>
                 <td><span className={"badge " + TT_STATUS[r.status][0]}>{TT_STATUS[r.status][1]}{r.status === "idle" && r.idle_min != null ? " · " + r.idle_min + " min" : ""}</span></td>
                 <td style={{ minWidth: 190 }}>{r.current ? <><button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.current.id)}>{r.current.claim_no || "claim"}</button>{r.current.minutes != null ? <span className="small muted"> · {r.current.minutes} min</span> : null}<div className="tiny muted">{[r.current.client, r.current.payer, r.current.balance != null ? fmtMoney(r.current.balance) : ""].filter(Boolean).join(" · ")}</div></>
-                  : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span> : <span className="tiny muted">–</span>}</td>
+                  : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" })}</span> : <span className="tiny muted">–</span>}</td>
                 <td style={{ minWidth: 180 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
                   <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div></>}</td>
                 <td className="num">{r.on_desk}</td>
@@ -6393,7 +6524,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
       </>}
       {outFor && <Modal title={"Out today · " + outFor.r.name} narrow onClose={() => setOutFor(null)} footer={<><button className="btn" onClick={() => setOutFor(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => setOut(outFor.r, true, outFor.reason)}>Mark out</button></>}>
         <div className="stack"><Field label="Reason (optional)"><Combo value={outFor.reason} onChange={(v) => setOutFor({ ...outFor, reason: v })} placeholder="Pick or leave empty…" options={["Leave", "Sick", "Half day", "Training", "Other work"].map((x) => ({ id: x, label: x }))} /></Field>
-          <div className="small muted">Then use Rebalance to hand their {outFor.r.on_desk} claims to the people in today. A half day counts 4 hours of floor time on Team status.</div></div></Modal>}
+          <div className="small muted">Then use Rebalance to hand their {plural(outFor.r.on_desk, "claim")} to the people in today. A half day counts 4 hours of floor time on Team status.</div></div></Modal>}
       {claim && <ClaimDrawer id={claim} ctx={ctx} me={me} onClose={() => setClaim(null)} onChanged={() => q.reload()} />}
     </div>
   );
@@ -6418,10 +6549,10 @@ function CoachDrawer({ userId, onClose }) {
           <Kpi label="Carried over" value={<span className={d.carried ? "amber-ink" : ""}>{d.carried}</span>} sub="allocated over a day ago" />
           <Kpi label="Flagged by billers" value={d.escalations} sub="for the team lead" />
           <Kpi label="Handed back" value={<span className={d.handed_back ? "amber-ink" : ""}>{d.handed_back}</span>} sub={"of " + d.handoffs_sent + " sent to posting / submission"} />
-          <Kpi label="Note length" value={d.note_len} sub={"characters on average" + (d.out_days ? " · " + d.out_days + " days out" : "")} />
+          <Kpi label="Note length" value={d.note_len} sub={"characters on average" + (d.out_days ? " · " + plural(d.out_days, "day") + " out" : "")} />
         </div>
         <div className="card tight"><div className="b small mb">Entries a day, last 30 days</div>
-          {d.days.length ? <div className="coach-days">{slots.map((x) => <div key={x.day} title={fmtDate(x.day) + ": " + x.work + " entries" + (x.skips ? ", " + x.skips + " skipped" : "")}><i style={{ height: (x.work ? Math.max(2, x.work / maxDay * 100) : 0) + "%", background: x.work >= d.person.capacity ? "var(--teal)" : x.work >= d.person.capacity * 0.8 ? "#E8A13C" : "#C94F4F" }} /></div>)}
+          {d.days.length ? <div className="coach-days">{slots.map((x) => <div key={x.day} title={fmtDate(x.day) + ": " + plural(x.work, "entry", "entries") + (x.skips ? ", " + x.skips + " skipped" : "")}><i style={{ height: (x.work ? Math.max(2, x.work / maxDay * 100) : 0) + "%", background: x.work >= d.person.capacity ? "var(--teal)" : x.work >= d.person.capacity * 0.8 ? "#E8A13C" : "#C94F4F" }} /></div>)}
             <span className="coach-target" style={{ bottom: d.person.capacity / maxDay * 100 + "%" }} title={"target " + d.person.capacity} /></div> : <Empty>No entries in the last 30 days.</Empty>}
           {d.statuses.length > 0 && <div className="tiny muted mt8">Most entered: {d.statuses.map((x) => x.status + " (" + x.n + ")").join(" · ")}. QA scores are in Sasha's Third Eye › Internal reports.</div>}</div>
         <div className="card tight"><div className="row between"><div className="b small">1:1 notes</div><span className="tiny muted">seen by team leads and up, never by the biller</span></div>
@@ -6556,7 +6687,7 @@ function InventoryStatusTab(props) {
               <div><b>{pc.days_to_clear == null ? "–" : pc.days_to_clear}</b><small>days to clear</small></div></div>
               <div><div><b>{fmtInt(pc.to_work)}</b> claims still to work</div><div className="small muted">{pc.per_day} a day · {plural(pc.people, "person", "people")} · {plural(d.wd_left, "working day")} left this month</div>
                 {pc.days_to_clear == null ? <span className="badge gray mt8">No work in the last 2 weeks</span> : pc.days_to_clear <= d.wd_left ? <span className="badge green mt8">On track · {plural(d.wd_left - pc.days_to_clear, "day")} spare</span> : <span className="badge red mt8">{plural(pc.days_to_clear - d.wd_left, "day")} short</span>}
-                {!clientId && (() => { const late = d.clients.filter((c) => c.days_to_clear != null && c.days_to_clear > d.wd_left); return late.length ? <div className="small muted mt8">Not on track: {late.slice(0, 3).map((c) => c.client + " (" + c.days_to_clear + " days)").join(", ")}{late.length > 3 ? " +" + (late.length - 3) : ""}</div> : null; })()}</div></div></div>
+                {!clientId && (() => { const late = d.clients.filter((c) => c.days_to_clear != null && c.days_to_clear > d.wd_left); return late.length ? <div className="small muted mt8">Not on track: {late.slice(0, 3).map((c) => c.client + " (" + plural(c.days_to_clear, "day") + ")").join(", ")}{late.length > 3 ? " +" + (late.length - 3) : ""}</div> : null; })()}</div></div></div>
           <div className="card"><span className="inv-lbl">SLA checks · today</span> <span className="small muted">· from the inventory</span>
             {!d.clients.length ? <Empty>No clients yet, so there is nothing to check.</Empty> : <table className="inv-ck"><thead><tr><th>Check</th><th className="r">Now</th><th>Target</th><th></th></tr></thead>
               <tbody>{d.checks.map((c) => <tr key={c.key}><td>{c.name}</td><td className={"r b " + (c.ok ? "teal-ink" : c.warn ? "amber-ink" : "red-ink")}>{c.now}</td><td className="muted">{c.target}</td>
@@ -6641,7 +6772,7 @@ function ClientReportsTab({ ctx, me, go, openScorecard, fixed }) {
               <td className="num">{r.missed || "–"}</td>
               <td className="small">{r.waiting ? <>{fmtMoney(r.waiting.bal)} · {r.waiting.n}<div className="tiny muted">oldest {r.waiting.oldest} d</div></> : "–"}</td>
               <td className="num">{r.tfl_soon_n || r.tfl_past_n ? <span className="red-ink">{fmtMoney(r.tfl_soon)}</span> : "–"}{r.tfl_past_n ? <div className="tiny red-ink">{r.tfl_past_n} past</div> : null}</td>
-              <td className="small">{r.days_to_clear != null ? <><b className={r.days_to_clear > 20 ? "red-ink" : r.days_to_clear > 10 ? "amber-ink" : ""}>{plural(r.days_to_clear, "day")}</b><div className="tiny muted">{fmtInt(r.to_work)} claims · {r.per_day}/day · {r.people} people</div></> : <span className="tiny muted">{r.to_work ? fmtInt(r.to_work) + " claims, no work in 2 weeks" : "nothing to work"}</span>}</td>
+              <td className="small">{r.days_to_clear != null ? <><b className={r.days_to_clear > 20 ? "red-ink" : r.days_to_clear > 10 ? "amber-ink" : ""}>{plural(r.days_to_clear, "day")}</b><div className="tiny muted">{plural(r.to_work, "claim")} · {r.per_day}/day · {plural(r.people, "person", "people")}</div></> : <span className="tiny muted">{r.to_work ? plural(r.to_work, "claim") + ", no work in 2 weeks" : "nothing to work"}</span>}</td>
               <td className="small">{ago(r.last_inventory)}</td>
             </tr>))}</tbody></table></div></div></>}
         <ClaimsSection compact ctx={ctx} go={go} clientId={clientId} setClientId={setClientId} locId="" setLocId={() => {}} leadId={leadId} leadName={leadName} rangeMs={ms} rangeLabel={rangeText(dr)} />
@@ -6693,7 +6824,7 @@ function TrendChart({ trend }) {
   const W = 620, H = 190, L = 44, B = 160, top = 34, max = Math.max(...trend.map((t) => t.ar), 1), pmax = Math.max(30, ...trend.map((t) => t.pct));
   const bw = Math.min(58, (W - L - 20) / trend.length - 14), x = (i) => L + 12 + i * ((W - L - 20) / trend.length);
   const y = (v) => B - (v / max) * (B - top), yp = (p) => B - (p / pmax) * (B - top);
-  const mName = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(undefined, { month: "short" });
+  const mName = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(LOC, { month: "short" });
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: "block" }} role="img" aria-label="AR and over-90 trend">
       <line x1={L} y1={B} x2={W - 8} y2={B} stroke="var(--line)" />
@@ -6763,7 +6894,7 @@ function ClientView({ ctx, me, go, params }) {
   if (!active.length) return <div className="card"><Empty>No clients in your span yet.</Empty></div>;
   const delta = (cur, prev, goodDown) => { if (prev == null || !prev) return null; const ch = Math.round((cur - prev) / Math.abs(prev) * 100); if (!ch) return <span className="small muted">no change</span>; const good = goodDown ? ch < 0 : ch > 0; return <span className={"c3-d " + (good ? "up" : "dn")}>{ch > 0 ? "▲" : "▼"} {Math.abs(ch)}%</span>; };
   const hp = d ? { good: ["green", "On track"], watch: ["amber", "Needs attention"], risk: ["red", "At risk"] }[d.health] : null;
-  const monthLabel = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const monthLabel = (m) => new Date(m + "-15T12:00:00").toLocaleDateString(LOC, { month: "long", year: "numeric" });
   const thisMonth = todayISO().slice(0, 7), prevMonth = (() => { const [y, m] = thisMonth.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; })();
   return (
     <div className="stack c360" style={{ gap: 16 }}>
@@ -6771,7 +6902,7 @@ function ClientView({ ctx, me, go, params }) {
         <div style={{ minWidth: 0 }}>
           <div className="row no-print" style={{ gap: 8, marginBottom: 6 }}><span style={{ minWidth: 260 }}><Combo value={cid} onChange={(v) => { if (v) { setCid(v); setMissing(false); } }} clearable={false} options={active.map((c) => ({ id: c.id, label: c.name + (c.code ? " (" + c.code + ")" : "") }))} /></span></div>
           <h1 style={{ margin: 0 }}>{d ? d.client.name : "Client 360"} {d && d.client.code && <span className="badge ink" style={{ fontSize: 12, verticalAlign: "middle" }}>{d.client.code}</span>}</h1>
-          {d && <div className="sub">{[d.raci && d.raci.a.length ? "Team lead " + d.raci.a.map((p) => p.name).join(", ") : "", d.raci && d.raci.c.length ? "Manager " + d.raci.c.map((p) => p.name).join(", ") : "", d.client.team ? d.client.team + " billers" : "", d.client.locations.join(", ")].filter(Boolean).join(" · ")}</div>}
+          {d && <div className="sub">{[d.raci && d.raci.a.length ? "Team lead " + d.raci.a.map((p) => p.name).join(", ") : "", d.raci && d.raci.c.length ? "Manager " + d.raci.c.map((p) => p.name).join(", ") : "", d.client.team ? plural(d.client.team, "biller") : "", d.client.locations.join(", ")].filter(Boolean).join(" · ")}</div>}
         </div>
         <div className="row no-print" style={{ gap: 8, flexWrap: "wrap" }}><DateRange value={dr} onChange={setDr} label="" /><button className="btn" onClick={() => window.print()} title="Print this page, or save it as a PDF for the client call">⬇ Client call pack (PDF)</button>
           <button className="btn c3-report" onClick={() => go("dashboard", { tab: "report", client_id: cid })} title="The client's report pack, on the Dashboard: its pages, charts and the PDF">Client 360 report ›</button></div>
@@ -6785,15 +6916,15 @@ function ClientView({ ctx, me, go, params }) {
           <Kpi label="Over 90 days" value={<span className={d.ar.over90_pct > d.ar.target ? "red-ink" : "teal-ink"}>{d.ar.over90_pct}%</span>} sub={"target ≤ " + d.ar.target + "% · " + fmtMoney(d.ar.over90)} />
           <Kpi label="SLA score" value={d.sla ? <span className={d.sla.score < 90 ? "amber-ink" : "teal-ink"}>{d.sla.score}%</span> : "–"} sub={d.sla ? <>{monthLabel(d.sla.month)}{d.sla.prev != null ? <> · <span className={"c3-d " + (d.sla.score >= d.sla.prev ? "up" : "dn")}>{d.sla.score >= d.sla.prev ? "▲" : "▼"} {Math.abs(Math.round((d.sla.score - d.sla.prev) * 10) / 10)}</span></> : null}</> : "tick SLA scored below"} />
           <Kpi label={"Collected · " + rangeText(dr)} value={<span className="teal-ink">{fmtMoney(d.collected.amount)}</span>} sub={<>{delta(d.collected.amount, d.collected.prev) || fmtInt(d.collected.n) + " postings"}{d.collected.prev ? " vs the period before" : ""}</>} />
-          <Kpi label="Waiting on client" value={<span className={d.waiting.rows.length ? "amber-ink" : ""}>{fmtMoney(d.waiting.balance)}</span>} sub={d.waiting.rows.length ? d.waiting.rows.length + " requests · oldest " + d.waiting.oldest + " days" : "nothing waiting"} />
-          <Kpi label="Timely filing risk" value={<span className={d.tfl.soon_n || d.tfl.past_n ? "red-ink" : ""}>{fmtMoney(d.tfl.soon_bal)}</span>} sub={d.tfl.soon_n + " claims in 30 days" + (d.tfl.past_n ? " · " + d.tfl.past_n + " past (" + fmtMoney(d.tfl.past_bal) + ")" : "")} />
+          <Kpi label="Waiting on client" value={<span className={d.waiting.rows.length ? "amber-ink" : ""}>{fmtMoney(d.waiting.balance)}</span>} sub={d.waiting.rows.length ? plural(d.waiting.rows.length, "request") + " · oldest " + plural(d.waiting.oldest, "day") : "nothing waiting"} />
+          <Kpi label="Timely filing risk" value={<span className={d.tfl.soon_n || d.tfl.past_n ? "red-ink" : ""}>{fmtMoney(d.tfl.soon_bal)}</span>} sub={plural(d.tfl.soon_n, "claim") + " in 30 days" + (d.tfl.past_n ? " · " + d.tfl.past_n + " past (" + fmtMoney(d.tfl.past_bal) + ")" : "")} />
         </div>
         <div className="c3-g2">
           <div className="card"><div className="row between"><h3 className="c3-h">AR and over-90 · by month</h3><span className="tiny muted">bars: AR balance · line: % over 90 days</span></div>
             {d.trend.length >= 2 ? <><TrendChart trend={d.trend} /><div className="tiny muted">{(() => { const a = d.trend[0], b = d.trend[d.trend.length - 1]; return (b.ar < a.ar ? "AR is falling" : b.ar > a.ar ? "AR is rising" : "AR is flat") + (b.pct > a.pct ? ", and what is left is getting older: the over-90 share went from " + a.pct + "% to " + b.pct + "%." : ", and the over-90 share went from " + a.pct + "% to " + b.pct + "%."); })()}</div></>
               : <Empty>The trend fills in by itself: Brahmastra keeps one reading a day{d.first_snapshot ? " (first on " + fmtDate(d.first_snapshot) + ")" : ""}, and shows one point a month from the second month on.</Empty>}</div>
           <div className="card"><div className="row between"><h3 className="c3-h">Denial and rejection reasons · {rangeText(dr)}</h3><span className="tiny muted">from billers' entries</span></div>
-            {d.reasons_top.length ? <Bars rows={d.reasons_top} labelOf={(r) => r.reason} valueOf={(r) => r.bal} countOf={(r) => r.n} subOf={(r) => fmtInt(r.n) + " claims"} /> : <Empty>No denied or rejected entries in these dates.</Empty>}</div>
+            {d.reasons_top.length ? <Bars rows={d.reasons_top} labelOf={(r) => r.reason} valueOf={(r) => r.bal} countOf={(r) => r.n} subOf={(r) => plural(r.n, "claim")} /> : <Empty>No denied or rejected entries in these dates.</Empty>}</div>
         </div>
         <div className="c3-g2">
           <div className="card"><div className="row between"><h3 className="c3-h">Waiting on the client</h3><span className="tiny muted">chased 3 working days after it is sent to the client</span></div>
@@ -6802,12 +6933,12 @@ function ClientView({ ctx, me, go, params }) {
                 <td className="small">{w.sent ? (w.client_sent_by_name || "") + (w.client_sent_how ? " · " + w.client_sent_how : "") : <span className="badge gray">not sent yet</span>}</td>
                 <td><span className={"badge " + (w.days >= 5 ? "red" : w.days >= 3 ? "amber" : "gray")}>{w.days} day{w.days === 1 ? "" : "s"}{w.chase_at && w.chase_at < Date.now() ? " · chased" : ""}</span></td><td className="mono small">{fmtMoney(w.balance)}</td></tr>)}</tbody></table></div>
               : <Empty>Nothing is waiting on the client.</Empty>}
-            <div className="tiny muted mt8">{d.waiting.reply ? "Average client reply, last 90 days: " + d.waiting.reply.days + " days (" + d.waiting.reply.n + " answered)" : "Reply times show once the client answers a few requests."}{d.waiting.reply_all ? " · all clients: " + d.waiting.reply_all.days + " days" : ""}</div></div>
+            <div className="tiny muted mt8">{d.waiting.reply ? "Average client reply, last 90 days: " + plural(d.waiting.reply.days, "day") + " (" + d.waiting.reply.n + " answered)" : "Reply times show once the client answers a few requests."}{d.waiting.reply_all ? " · all clients: " + d.waiting.reply_all.days + " days" : ""}</div></div>
           <div className="card"><h3 className="c3-h">Team and follow-through · {rangeText(dr)}</h3>
             <div className="c3-line"><span title="Client escalations in the Escalation tracker">Client escalations open</span><span><b>{d.escalations.open}</b> {d.escalations.late ? <span className="badge red">{d.escalations.late} over 24 h</span> : null}</span></div>
             <div className="c3-line"><span>Missed tasks · AR</span><span><b>{d.missed.ar}</b> <span className="tiny muted">allocated, not worked</span></span></div>
             <div className="c3-line"><span>Missed tasks · posting / submission</span><span><b>{d.missed.posting + d.missed.submission}</b> <span className="tiny muted">past the TAT</span></span></div>
-            <div className="c3-line"><span>Entries made</span><span><b>{fmtInt(d.worked.entries)}</b> <span className="tiny muted">by {d.worked.people} people</span></span></div>
+            <div className="c3-line"><span>Entries made</span><span><b>{fmtInt(d.worked.entries)}</b> <span className="tiny muted">by {plural(d.worked.people, "person", "people")}</span></span></div>
             <div className="c3-line"><span>Over 120 days</span><span><b>{fmtMoney(d.ar.over120)}</b></span></div>
             {d.raci && <div className="tiny muted mt8">RACI: R {d.raci.r.slice(0, 2).map((p) => p.name).join(", ")}{d.raci.r.length > 2 ? " +" + (d.raci.r.length - 2) : ""} · A {d.raci.a.map((p) => p.name).join(", ") || "–"} · C {d.raci.c.map((p) => p.name).join(", ") || "–"} · I {d.raci.i.map((p) => p.name).join(", ")} <button className="btn link sm no-print" onClick={() => go("raci")}>edit</button></div>}</div>
         </div>
@@ -6866,13 +6997,13 @@ function SaagView() {
 
 /* ---------- reports ---------- */
 const REPORT_COLS = [
-  { key: "created_at", label: "Date / time", get: (r) => new Date(r.created_at).toLocaleString() }, { key: "user_name", label: "Biller" }, { key: "client_name", label: "Client" }, { key: "location_name", label: "Location" },
+  { key: "created_at", label: "Date / time", get: (r) => new Date(r.created_at).toLocaleString(LOC) }, { key: "user_name", label: "Biller" }, { key: "client_name", label: "Client" }, { key: "location_name", label: "Location" },
   { key: "claim_no", label: "Claim #" }, { key: "account_no", label: "Account #" }, { key: "patient", label: "Patient" }, { key: "payer", label: "Payer" }, { key: "provider", label: "Provider" }, { key: "dos", label: "DOS" }, { key: "cpt", label: "CPT" }, { key: "balance", label: "Balance" }, { key: "age_days", label: "Age" }, { key: "bucket", label: "Aging bucket" }, { key: "tier", label: "Tier" },
   { key: "file_status", label: "File status" }, { key: "file_sub_status", label: "File sub status" }, { key: "kind", label: "Entry" },
   { key: "status", label: "SAAG status", get: (r) => r.status || r.status_code }, { key: "sub_status", label: "SAAG sub-status" }, { key: "action", label: "SAAG action", get: (r) => r.action || r.action_code }, { key: "work_bucket", label: "Bucket" }, { key: "effective", label: "Effective matrix" },
   { key: "f_dos", label: "Note DOS", get: (r) => r.f.dos }, { key: "f_clm", label: "Note CLM#", get: (r) => r.f.clm }, { key: "f_denial", label: "Denial", get: (r) => r.f.denial }, { key: "f_source", label: "Source", get: (r) => r.f.source }, { key: "f_ref", label: "REF", get: (r) => r.f.ref },
   { key: "f_pre", label: "Pre call check", get: (r) => [...(r.f.precheck || []), r.f.precheck_text].filter(Boolean).join("; ") }, { key: "f_findings", label: "RCA / findings", get: (r) => r.f.findings },
-  { key: "follow_up_on", label: "Follow-up" }, { key: "comment", label: "Note (one cell)" }, { key: "edited_at", label: "Edited", get: (r) => (r.edited_at ? new Date(r.edited_at).toLocaleString() : "") }, { key: "state", label: "Claim state now" },
+  { key: "follow_up_on", label: "Follow-up" }, { key: "comment", label: "Note (one cell)" }, { key: "edited_at", label: "Edited", get: (r) => (r.edited_at ? new Date(r.edited_at).toLocaleString(LOC) : "") }, { key: "state", label: "Claim state now" },
 ];
 const reportRow = (r) => { let f = {}; try { f = JSON.parse(r.fields_json || "{}"); } catch (e) {} return { ...r, f: f || {} }; };
 /* ---------- My day & reports ----------
@@ -6976,11 +7107,8 @@ function HubHead({ page, onHow, frame, compact }) {
 }
 function HowDrawer({ page, onClose }) {
   const p = HUB_PAGES[page];
-  useEffect(() => { const esc = (e) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", esc); return () => window.removeEventListener("keydown", esc); }, []);
   return (
-    <>
-      <div className="hist-shade" onClick={onClose} />
-      <div className="hist rh-how">
+    <SidePanel className="rh-how" label={"How " + p.title.toLowerCase() + " works"} onClose={onClose}>
         <div className="hist-top row between"><div><div className="rh-eyebrow"><span className={"rh-tag " + p.group}>{p.group === "int" ? "Internal" : "For clients"}</span>{p.app}</div><h2 style={{ marginTop: 6 }}>How {p.title.toLowerCase()} works</h2></div><button className="btn sm" onClick={onClose}>Close</button></div>
         <div className="hist-body">
           <div className="rh-how-sec"><div className="rh-how-l">What it shows</div><div>{p.what}</div></div>
@@ -6989,8 +7117,7 @@ function HowDrawer({ page, onClose }) {
             {p.steps.map(([t, d], i) => <div key={i} className="rh-how-step"><span className="stepn">{i + 1}</span><div><div className="b">{t}</div><div className="small muted">{d}</div></div></div>)}</div>
           <div className="rh-how-sec"><div className="rh-how-l">Files</div><div>Uploads come only from the Purviewautomate OneDrive. Saved reports go to OneDrive › Brahmastra Reports › team lead › client.</div></div>
         </div>
-      </div>
-    </>
+    </SidePanel>
   );
 }
 /* The app itself. Its address carries embed=1 (no header of its own) and the Brahmastra theme. */
@@ -7044,7 +7171,7 @@ function EmbedPanel({ frame, frameRef, title, onLoad, more = [], pick = null, se
     </div>
   );
 }
-const timeNow = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const timeNow = () => new Date().toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" });
 function QualityPage({ ctx, me, onHow, lockScope }) {
   const frameRef = useRef(null);
   const today = todayISO();
@@ -7096,11 +7223,11 @@ function QualityPage({ ctx, me, onHow, lockScope }) {
       </div>
       <div className="rh-status">
         <span><i className={"rh-dot" + (done && done.n ? "" : done ? " wait" : " off")} />{done && done.n ? <>Production from Brahmastra · {fmtInt(done.n)} {done.n === 1 ? "entry" : "entries"} · {done.at}</> : done ? "No Brahmastra entries for these dates" : busy ? "Loading Brahmastra's production…" : "Production loads by itself"}</span>
-        <label className="check small" style={{ gap: 6 }}><input type="checkbox" checked={f.roster} onChange={(e) => setF({ ...f, roster: e.target.checked })} />{done && done.people ? <>Roster · {fmtInt(done.people)} people</> : "Load the team roster too"}</label>
+        <label className="check small" style={{ gap: 6 }}><input type="checkbox" checked={f.roster} onChange={(e) => setF({ ...f, roster: e.target.checked })} />{done && done.people ? <>Roster · {plural(done.people, "person", "people")}</> : "Load the team roster too"}</label>
         <span><i className="rh-dot off" />QA tracker: pick it in the QA Sheet box below, from {rc.folder("QA tracker")}</span>
       </div>
       {done && <div className="alert info mb rh-note"><b>{done.n ? "Already filled from Brahmastra." : "Nothing from Brahmastra for these dates."}</b> {done.n
-        ? <>The Production Sheet below holds Brahmastra's {fmtInt(done.n)} {done.n === 1 ? "entry" : "entries"} for {TE_SCOPES.find(([k]) => k === scope)[1]}, {client ? client.name : "all your clients"}, {rangeText(f.range)}{done.people ? <>, with the roster ({fmtInt(done.people)} people)</> : null}. To use a different file, choose it in the Production Sheet box below; changing the work, client or dates here loads Brahmastra's again.</>
+        ? <>The Production Sheet below holds Brahmastra's {fmtInt(done.n)} {done.n === 1 ? "entry" : "entries"} for {TE_SCOPES.find(([k]) => k === scope)[1]}, {client ? client.name : "all your clients"}, {rangeText(f.range)}{done.people ? <>, with the roster ({plural(done.people, "person", "people")})</> : null}. To use a different file, choose it in the Production Sheet box below; changing the work, client or dates here loads Brahmastra's again.</>
         : <>Choose a Production Sheet in the box below, or change the dates here.</>}</div>}
       <EmbedPanel frame={frame} frameRef={frameRef} title="Internal reports" onLoad={() => setDone(null)} />
     </div>
@@ -7552,7 +7679,7 @@ function crBuildRejection(c) {
   crAddCard(cards, crCardBar(c, "status", "Rejection reasons", { role: "rejection", cols: 6, emph: true, maxRows: 10, sub: "Top 80% of rejections highlighted" }), 1);
   crAddCard(cards, crCardBar(c, "action", "Action wise breakdown", { role: "rejection", cols: 12, maxRows: 6 }));
   const ins = [], reasons = crAgg(all, "status", ds), acts = crAgg(all, "action", ds);
-  ins.push(`${crPl(all.length, "claim")} ${all.length === 1 ? "was" : "were"} rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${noun} in the period (some were submitted earlier)` : none ? `; ${none}` : ""}.`);
+  ins.push(`${crPl(all.length, "claim was", "claims were")} rejected in ${crRangeLabel(c.range)}${rate != null ? `, a rejection rate of ${crF.pct(rate, 1)}` : more ? `, more than the ${crF.int(base)} ${noun} in the period (some were submitted earlier)` : none ? `; ${none}` : ""}.`);
   if (reasons[0]) ins.push(`The leading rejection reason is ${reasons[0].label} (${crF.pct(reasons[0].share, 0)})${reasons[1] ? `, followed by ${reasons[1].label} (${crF.pct(reasons[1].share, 0)})` : ""}.`);
   if (ds.dateField) { const byDay = new Map(); for (const r of all) { const d = r[ds.dateField]; if (!d) continue; const k = crF.iso(d); let e = byDay.get(k); if (!e) { e = { d, rows: [] }; byDay.set(k, e); } e.rows.push(r); }
     const days = [...byDay.values()].sort((a, b) => b.rows.length - a.rows.length || a.d - b.d).slice(0, 3);
@@ -7600,7 +7727,7 @@ function crBuildAR(c) {
   const paid = all.filter((r) => paidIds.has(r.id || r.invoice || r._i)), den = all.filter((r) => denIds.has(r.id || r.invoice || r._i));
   const pPaidN = prevE ? crIdsOf(prevE.filter(crIsPaid)).size : 0, pDenN = prevE ? crIdsOf(prevE.filter(crIsDenied)).size : 0;
   const kpis = [
-    crKpi("Claims worked", crF.int(all.length), { sub: entries.length !== all.length ? `${crF.int(entries.length)} entries` : "", delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
+    crKpi("Claims worked", crF.int(all.length), { sub: entries.length !== all.length ? crPl(entries.length, "entry", "entries") : "", delta: crDelta(all.length, prev ? prev.length : null), fmt: crF.int, accent: true }),
     crKpi("Amount worked", crF.moneyK(amt), { sub: crMoneySub(amt), delta: crDelta(amt, prev ? crSum(prev, (r) => r.amount) : null), fmt: crF.moneyK }),
     crKpi("Confirmed paid", crF.pct(crPctOf(paid.length, all.length), 0), { sub: crPl(paid.length, "claim"), delta: prev ? crPtDelta(crPctOf(paid.length, all.length), crPctOf(pPaidN, prev.length)) : null }),
     crKpi("Denied", crF.pct(crPctOf(den.length, all.length), 0), { sub: crPl(den.length, "claim"), upGood: false, delta: prev ? crPtDelta(crPctOf(den.length, all.length), crPctOf(pDenN, prev.length)) : null }),
@@ -7613,7 +7740,7 @@ function crBuildAR(c) {
   crAddCard(cards, crCardBar(c, "action", "Action required", { role: "worked", cols: 6, measure: "amount", maxRows: 8, claims: true }), 1);
   crAddCard(cards, crCardBar(c, "payerKey", "Insurance wise breakdown", { role: "worked", cols: 6, measure: "amount", prev: true, maxRows: 8, claims: true }), 1);
   const ins = [], pw = crPrevWord(R);
-  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} ${all.length === 1 ? "was" : "were"} worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crF.int(entries.length)} entries` : ""}.`);
+  ins.push(`${crPl(all.length, "claim")} worth ${crF.money(amt, 0)} ${all.length === 1 ? "was" : "were"} worked in ${crRangeLabel(c.range)}${wd ? ` (${crPerDay(all.length, wd)} per working day)` : ""}${entries.length !== all.length ? `, in ${crPl(entries.length, "entry", "entries")}` : ""}.`);
   const outcomes = crAgg(all, "purviewStatus", ds); if (outcomes.length) ins.push(`Outcomes: ${outcomes.slice(0, 4).map((o) => `${o.label} ${crF.pct(o.share, 0)}`).join(", ")}.`);
   const buckets = crAgg(all, "bucket", ds, { measure: "amount" }), old = buckets.filter((x) => x.lo >= 181 && x.lo < 9999); if (old.length) ins.push(`${crF.pct(crSum(old, (x) => x.share), 0)} of the amount worked sits in claims older than 180 days; timely filing and appeal limits are the main risk there.`);
   // only actions and statuses the entries really have (never "(blank)")
@@ -7675,7 +7802,7 @@ function crBuildRCA(c) {
     return { key: x.key, reason: x.label, count: x.count, amount: x.amount, share: x.share, prevCount: p ? p.count : (prevAgg ? 0 : null), prevAmount: p ? p.amount : (prevAgg ? 0 : null), payers: payers.slice(0, 2).map((y) => `${y.label} ${crF.pct(y.share, 0)}`).join(", "), actions: crAgg(sub, "action", ds).slice(0, 1).map((y) => y.label).join(", ") }; });
   const covered = crSum(tops.rows, (x) => x.share), ins = [];
   ins.push(`This table covers ${tops.basis}${tops.rows.length ? `, ${crF.pct(covered, 0)} of the ${crF.money(crSum(all, (r) => r.amount), 0)} denied in ${crRangeLabel(c.range)}` : ""}. Claim counts, amounts and payer mix come from the data; the Issue / RCA and Mitigation plan are written by our team.`);
-  if (prev) for (const r of rows) { if (r.prevCount == null) continue; const d = crDelta(r.count, r.prevCount); if (!d) continue; if (r.prevCount === 0) ins.push(`${r.reason} is new this period (${crPl(r.count, "claim")}, ${crF.money(r.amount, 0)}).`); else if (Math.abs(d.pct) >= 0.25) ins.push(`${r.reason} ${d.diff > 0 ? "rose" : "fell"} ${crF.pct(Math.abs(d.pct), 0)} against the ${crPrevWord(R)} (${crPl(r.prevCount, "claim")} to ${crPl(r.count, "claim")}).`); }
+  if (prev) for (const r of rows) { if (r.prevCount == null) continue; const d = crDelta(r.count, r.prevCount); if (!d) continue; if (r.prevCount === 0) ins.push(`${r.reason} is new this period (${crPl(r.count, "claim")}, ${crF.money(r.amount, 0)}).`); else if (Math.abs(d.pct) >= 0.25) ins.push(`${r.reason} ${d.diff > 0 ? "rose" : "fell"} ${crF.pct(Math.abs(d.pct), 0)} against the ${crPrevWord(R)} (${crF.int(r.prevCount)} to ${crPl(r.count, "claim")}).`); }
   return { title: "Top denials: RCA & mitigation plan", headline: tops.rows.length ? `${tops.rows.length === 1 ? "One reason makes" : crF.int(tops.rows.length) + " reasons make"} up ${crF.pct(covered, 0)} of denied dollars` : "No denials in this period",
     sub: `${R.client} · ${crRangeLabel(c.range)} · ${tops.rows.length ? tops.name + " by denied dollars" : ""}`, watermark: "RCA", kpis: [], cards: [{ id: "rca.table", title: "", cols: 12, type: "rca", rows, hasPrev: !!prev }], insights: ins, slicers: [] };
 }
@@ -7699,7 +7826,7 @@ function crBuildCA(c) {
   const act = crAgg(all, "action", ds); if (act[0]) ins.push(`Where they stand: ${act.slice(0, 3).map((x) => `${x.label} (${crF.int(x.count)})`).join(", ")}.`);
   if (old.length) ins.push(`${crF.int(old.length)} of these claims are already past 120 days from the date of service; a response this ${R.range.kind === "week" ? "week" : "month"} avoids timely filing and appeal limit losses.`);
   if (prev) { const h = crHeadline(R, "Client assistance items", all.length, prev.length, crF.int, { plural: true }); if (h) ins.push(h); ins.push(...crMovers(R, all, prev, "status", ds, { noun: "status", share: false, newItems: true })); }
-  return { title: "Client assistance", headline: `${crPl(all.length, "claim")} ${all.length === 1 ? "needs" : "need"} the client, ${crF.money(amt, 0)} on hold`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "CLIENT", kpis, cards, insights: ins,
+  return { title: "Client assistance", headline: `${crPl(all.length, "claim needs", "claims need")} the client, ${crF.money(amt, 0)} on hold`, sub: `${R.client} · ${crRangeLabel(c.range)}`, watermark: "CLIENT", kpis, cards, insights: ins,
     slicers: ["payerKey", "status", "action", "bucket", "dept"].filter((f) => all.some((r) => r[f])), claims: crClaims(ds, all, "clientAssistance") };
 }
 /* EV: Third Eye's EV page (verifications, insurance wise, type / status) from the uploaded EV production file */
@@ -8401,7 +8528,7 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
           </div>
           <div className="card crx-stage" ref={stageRef} onMouseMove={onTip} onMouseLeave={() => { if (tipRef.current) tipRef.current.style.display = "none"; }}>
             <div className="crx-wrap" style={{ width: CR_W * scale, height: CR_H * scale }} onClick={onSlideClick}><div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: CR_W, height: CR_H }}>{slideFor(page, sel, viewMode)}</div></div>
-            <div className="crx-note"><span>{viewMode === "edit" ? "✎ Click the title, an insight, the RCA or a list line to change it; ✕ drops it. Saved for " + rep.client + " · " + rep.periodLabel + ", shared with your team." : "This is the page as the client sees it."}{saved ? " Saved " + new Date(saved.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "." : ""}</span>
+            <div className="crx-note"><span>{viewMode === "edit" ? "✎ Click the title, an insight, the RCA or a list line to change it; ✕ drops it. Saved for " + rep.client + " · " + rep.periodLabel + ", shared with your team." : "This is the page as the client sees it."}{saved ? " Saved " + new Date(saved.at).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit" }) + "." : ""}</span>
               <span>{pIdx >= 0 ? `Page ${pIdx + 1} of ${included.length}` : "Left out of the PDF"}</span></div>
           </div>
         </div>
@@ -8553,11 +8680,11 @@ function SlaPage({ ctx, me, onHow, title, sub, more, pick, setPick, children }) 
         <div className="rh-signed">{sso.state === "ok" ? <><i className="rh-dot" />Signed in as {sso.name}</> : sso.state === "loading" ? <><i className="rh-dot wait" />Signing you in…</> : <><i className="rh-dot wait" />Sign in below</>}</div>
       </div>
       <div className="rh-status">
-        {saved ? <span><i className="rh-dot" />{saved.name} · {fmtInt(saved.n)} claims · saved {saved.at} to {saved.folders.join(" and ")}</span>
+        {saved ? <span><i className="rh-dot" />{saved.name} · {plural(saved.n, "claim")} · saved {saved.at} to {saved.folders.join(" and ")}</span>
           : arInv ? <span><i className="rh-dot off" />{f.client_id ? "AR Inventory goes to " + rc.folder("SLA & KPI") : "Pick a client to put its AR Inventory report in OneDrive"}</span> : null}
         {arInv && <span>Then below: Upload from OneDrive, and pick it with the period's other files</span>}
       </div>
-      {fed && fed.state === "ok" && <div className="alert info mb rh-note"><b>Already added from Brahmastra.</b> Today's AR Inventory for {fed.client} ({fmtInt(fed.n)} claims, {fed.at}) is in {fed.dName}'s uploads below, matched to its slot for you to check before anything is calculated. To use a different file, upload it in the same box and it takes its place.</div>}
+      {fed && fed.state === "ok" && <div className="alert info mb rh-note"><b>Already added from Brahmastra.</b> Today's AR Inventory for {fed.client} ({plural(fed.n, "claim")}, {fed.at}) is in {fed.dName}'s uploads below, matched to its slot for you to check before anything is calculated. To use a different file, upload it in the same box and it takes its place.</div>}
       {fed && fed.state === "pick" && <div className="alert warn mb rh-note">{fed.dName ? <><b>{fed.dName}</b> is not a Brahmastra client name I can match.</> : null} Pick its client above and its AR Inventory goes into the uploads below by itself.</div>}
       {fed && fed.state === "none" && <div className="alert info mb rh-note">{fed.client} has no open AR in Brahmastra today, so nothing was added. Upload the AR Inventory below if you have it.</div>}
       {fed && fed.state === "error" && <div className="alert warn mb rh-note">The AR Inventory could not be added by itself: {fed.msg}</div>}
@@ -8594,14 +8721,14 @@ function TeamDesk({ ctx, from, to, rangeLabel, fixedUser }) {
     return [...m.values()].sort((a, b) => b.waiting - a.waiting || a.name.localeCompare(b.name));
   }, [all]);
   const csv = () => downloadText(toCSV(rows.map((r) => ({ Biller: r.who, Client: r.client_name + (r.location_name ? " · " + r.location_name : ""), "Claim #": r.claim_no, Patient: r.patient, Payer: r.payer, Balance: r.balance, Priority: r.priority,
-    Allocated: r.assigned_at ? new Date(r.assigned_at).toLocaleString() : "", "Work done": r.st.label, Entries: r.entries || 0, "SAAG status": r.status || "", Action: r.action || "", Bucket: r.work_bucket || "", Note: r.comment || "",
-    "Worked by": r.by_name || "", "Worked at": r.last_at ? new Date(r.last_at).toLocaleString() : "", "Next follow-up": r.next_follow_up || r.follow_up_on || "" })),
+    Allocated: r.assigned_at ? new Date(r.assigned_at).toLocaleString(LOC) : "", "Work done": r.st.label, Entries: r.entries || 0, "SAAG status": r.status || "", Action: r.action || "", Bucket: r.work_bucket || "", Note: r.comment || "",
+    "Worked by": r.by_name || "", "Worked at": r.last_at ? new Date(r.last_at).toLocaleString(LOC) : "", "Next follow-up": r.next_follow_up || r.follow_up_on || "" })),
     ["Biller", "Client", "Claim #", "Patient", "Payer", "Balance", "Priority", "Allocated", "Work done", "Entries", "SAAG status", "Action", "Bucket", "Note", "Worked by", "Worked at", "Next follow-up"].map((h) => ({ label: h, key: h }))), `team-allocations-${from}-to-${to}.csv`);
   return (
     <div className="stack">
       <div className="grid g4">
         <Kpi label="On desks" value={fmtInt(all.filter((r) => r.assigned_to && r.state !== "closed").length)} sub={"allocated, " + rangeLabel} tone="accent" />
-        <Kpi label="Worked" value={fmtInt(count("worked"))} sub={fmtInt(all.reduce((n, r) => n + (r.entries || 0), 0)) + " entries"} tone="good" />
+        <Kpi label="Worked" value={fmtInt(count("worked"))} sub={plural(all.reduce((n, r) => n + (r.entries || 0), 0), "entry", "entries")} tone="good" />
         <Kpi label="Not worked yet" value={fmtInt(count("waiting"))} sub={all.filter((r) => r.st.label === "Follow-up overdue").length + " with the follow-up overdue"} tone={count("waiting") ? "warn" : undefined} />
         <Kpi label="Closed" value={fmtInt(count("closed"))} sub="resolved in the period" />
       </div>
@@ -8931,7 +9058,7 @@ function ReportsView({ ctx, from, to, embedded }) {
           <Kpi label="Entries" value={fmtInt(rows.length)} sub={`${fmtInt(claims)} distinct claims`} tone="accent" />
           <Kpi label="Balance touched" value={fmtMoney(sum(rows.filter((r) => r.kind === "work"), (r) => r.balance))} sub="sum over worked entries" />
           <Kpi label="Resolved now" value={fmtInt(new Set(rows.filter((r) => r.state === "closed").map((r) => r.claim_id || r.id)).size)} sub="claims now closed, each counted once" tone="good" />
-          <Kpi label="Top SAAG status" value={byStatus[0] ? byStatus[0].key : "–"} sub={byStatus[0] ? fmtInt(byStatus[0].n) + " entries · " + fmtMoney(byStatus[0].amt) : ""} />
+          <Kpi label="Top SAAG status" value={byStatus[0] ? byStatus[0].key : "–"} sub={byStatus[0] ? plural(byStatus[0].n, "entry", "entries") + " · " + fmtMoney(byStatus[0].amt) : ""} />
         </div>
       )}
       <div className="card tight">
@@ -9079,7 +9206,7 @@ function QueueView({ ctx, me, go, refreshTasks }) {
           <Combo sm width={140} value={f.saag_bucket} onChange={(v) => set("saag_bucket", v)} placeholder="Any bucket" options={[{ id: "", label: "Any bucket" }, ...BUCKETS4.map((b) => ({ id: b, label: b }))]} />
           <Combo sm width={150} value={f.state} onChange={(v) => set("state", v)} placeholder="Any state" options={[{ id: "", label: "Any state" }, { id: "assigned", label: "Not worked" }, { id: "in_progress", label: "Open now" }, { id: "completed", label: "Worked today" }, { id: "closed", label: "Closed today" }]} />
           {Object.values(f).some((v) => v !== "") && <button className="btn sm link" onClick={() => setF(EMPTY_F)}>clear</button>}
-          <span style={{ flex: 1 }} /><span className="small muted">{fmtInt(rows.length)} claims · {fmtMoney(sum(rows, (r) => r.balance))}</span>
+          <span style={{ flex: 1 }} /><span className="small muted">{plural(rows.length, "claim")} · {fmtMoney(sum(rows, (r) => r.balance))}</span>
         </div>
         <ErrorBox error={list.error} />
         <div className="table-wrap"><table className="t"><thead><tr>{qSort.Th("due", "Due")}{qSort.Th("claim_no", "Claim #")}{qSort.Th("patient", "Patient")}{qSort.Th("payer", "Payer")}{qSort.Th("provider", "Provider")}{qSort.Th("cpt", "CPT")}{qSort.Th("dos", "DOS")}{qSort.Th("age_days", "Age", "r")}{qSort.Th("balance", "Balance", "r")}{qSort.Th("tier", "Tier")}{qSort.Th("file_status", "File status")}{qSort.Th("saag", "SAAG")}{qSort.Th("bucket", "Bucket")}{qSort.Th("follow_up_on", "Follow-up")}{qSort.Th("state", "State")}</tr></thead>

@@ -424,7 +424,11 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
   steps past due, hand-offs on their desk. Billers: their list for today, escalations their team lead answered
   and hand-offs sent back to them in the last 3 days. Feedback readers: new feedback. It refreshes every 2 minutes
   and on every page change; the number counts what is new since you last opened it.
-- **Phones**: every page fits a phone screen; the menu sits under the logo and wide tables scroll sideways.
+- **Pop-ups**: Esc or a click on the shaded area closes only the top pop-up (Esc in an open dropdown closes just the
+  dropdown). If something was typed in it, it first asks **Discard what you typed?** (Keep editing / Discard), so typed
+  text is never lost by accident. Tab stays inside the open pop-up.
+- **Phones**: every page fits a phone screen; the menu sits under the logo (on a tablet or a narrow window too, whenever
+  it does not fit beside it) and wide tables scroll sideways.
 - **Signing out when idle**: after 24 hours without a key, click, scroll or touch in any Brahmastra tab (working
   inside the embedded Sasha's Third Eye or SLA page counts: a key, click, mouse move or touch there; the page left
   open with nothing done does not), a 1-minute warning shows, then the person is signed out to keep patient data
@@ -692,7 +696,8 @@ escalations, Billable / Assign FTE, over 90), what needs attention and a button,
 The button opens the **digest dashboard** (`#/digest?span=...&week=...`, also from SLA › Monday digest › Open the
 dashboard): landscape, one card per client with its SLA score and band, **Billable FTE** and **Assign FTE**, AR, over 90,
 collected, each area's score, the escalation line and what pulls it down, and what needs attention. Pick another span or
-one of the 8 weeks before, and download it as a one-page landscape PDF. Supervisors see only the spans they are on.
+one of the 8 weeks before, and download it as a one-page landscape PDF (always printed in the Light colours, whatever
+the theme). Supervisors see only the spans they are on.
 
 ### Resources from Shastra WFM (SLA scorecard and Monday digest)
 
@@ -871,6 +876,8 @@ Everyone opens **Settings** from their name (top right): the theme (Light, Navy 
 Shastra, or Match my computer), the text size, their password, signing out on every other device, their roster
 profile (Emp ID, designation, department, who they report to, projects, shift, daily target) and the connected apps.
 The theme is saved to the account (`users.prefs_json`), so it follows the person to any computer.
+Money, numbers and dates are always written US style ($146,376 · Nov 11, 2026 · Wed, Nov 11 · 9:30 AM), whatever
+language the browser or the computer is set to.
 
 ## Each client's folders in OneDrive (Brahmastra Clients)
 
