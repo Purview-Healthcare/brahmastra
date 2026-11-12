@@ -490,6 +490,14 @@ const postingWorld = async ({ backup = true } = {}) => {
     /k === "attention" && attention && attention\.n > 0 \?/.test(src) && /k === "live" && attention && attention\.escalations > 0 \?[\s\S]{0,300}?\{attention\.escalations\}<\/span>/.test(src) && !/\(k === "attention" \|\| k === "live"\)/.test(src));
 }
 
+{
+  // The chip and its dialog are page code (checked in a browser by the tester's repro-E-21.js and fix-E/page-E-21.js); here the rule.
+  S("E-21: a location chip asks before switching a location off");
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("E-21: the chip asks first when the location is on, and switches it back on in one click", /const clickLoc = \(c, l\) => \(l\.active \? setLocOff\(/.test(src) && /onClick=\{c\.can_edit === false \? undefined : \(\) => clickLoc\(c, l\)\}/.test(src) && !/=> toggleLoc\(l\)\}>/.test(src));
+  ok("E-21: the last active location says what switching it off means", /only active location of \$\{locOff\.client\}/.test(src) && /nothing reaches anyone/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

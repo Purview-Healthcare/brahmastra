@@ -2388,6 +2388,9 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
     try { await rpc("locations.save", { client_id: c.id, name }); setLocName({ ...locName, [c.id]: "" }); toast("Location added."); reload(); } catch (e) { toast(e.message, "err"); }
   };
   const toggleLoc = async (l) => { try { await rpc("locations.save", { id: l.id, name: l.name, active: !l.active }); reload(); } catch (e) { toast(e.message, "err"); } };
+  // Switching a location off is asked first, and the last active one says what that means; switching one back on is one click.
+  const [locOff, setLocOff] = useState(null);
+  const clickLoc = (c, l) => (l.active ? setLocOff({ l, client: c.name, last: c.locations.filter((x) => x.active).length === 1 }) : toggleLoc(l));
   const makeFolders = async (c) => { setBusy(true); try { const r = await rpc("clients.setupFolders", c ? { client_id: c.id } : {}); toast(r.failed.length ? `Folders made for ${r.done}; not for ${r.failed.length}: ${r.failed[0].error}` : c ? "Folders made in OneDrive for " + c.name + "." : `Folders made in OneDrive for ${r.done} clients.`, r.failed.length ? "err" : "ok"); reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const wbStatus = (id) => (ctx.settings && ctx.settings["workbook_status:" + id]) || null;
   /* No workbook link: Brahmastra keeps the month's Production file in the Purviewautomate OneDrive by itself. */
@@ -2450,7 +2453,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
           <AccessRow c={c} ctx={ctx} me={me} onSaved={reload} dir={dir} />
           <div className="row mt" style={{ alignItems: "flex-start" }}>
             <div className="pill-list" style={{ flex: 1 }}>
-              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={c.can_edit === false ? undefined : l.active ? "Click to deactivate" : "Click to reactivate"} onClick={c.can_edit === false ? undefined : () => toggleLoc(l)}>{l.name}{!l.active ? " (off)" : ""}</span></span>)}
+              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={c.can_edit === false ? undefined : l.active ? "Click to deactivate" : "Click to reactivate"} onClick={c.can_edit === false ? undefined : () => clickLoc(c, l)}>{l.name}{!l.active ? " (off)" : ""}</span></span>)}
               {!c.locations.length && <span className="muted small">No locations yet.</span>}
             </div>
             {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>
@@ -2461,6 +2464,9 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
         </div>
       ))}
       {hist && <ClientHistory c={hist} onClose={() => setHist(null)} />}
+      {locOff && <Confirm title={"Switch off " + locOff.l.name + "?"} confirmLabel="Switch off" danger onNo={() => setLocOff(null)} onYes={() => { const l = locOff.l; setLocOff(null); toggleLoc(l); }}
+        text={locOff.last ? `${locOff.l.name} is the only active location of ${locOff.client}. With no active location the client's profile is incomplete and nothing reaches anyone (uploads and allocation need a location) until one is switched on again.`
+          : `${locOff.l.name} is taken off uploads and allocation until it is switched on again. Its claims stay as they are.`} />}
       {prof && <ClientProfileForm ctx={ctx} client={prof.client} onClose={() => { setProf(null); reload(); }} onSaved={() => { setProf(null); reload(); }} />}
       {edit && (
         <Modal title={edit.id ? "Edit client" : "New client"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || !edit.name.trim()}>{busy ? "Saving…" : "Save"}</button></>}>
