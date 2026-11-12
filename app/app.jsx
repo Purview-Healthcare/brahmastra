@@ -728,18 +728,106 @@ function Wordmark({ size = 22, tag = "claim allocation & follow-up" }) {
   );
 }
 const Spinner = ({ label }) => <span className="muted small"><span className="spin" /> {label || "Working…"}</span>;
-function Modal({ title, sub, onClose, children, wide, narrow, footer }) {
-  useEffect(() => { const h = (e) => { if (e.key === "Escape" && onClose) onClose(); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, [onClose]);
+/* ---------- pop-ups: one behaviour for all of them ----------
+   Every pop-up (Modal, the claim profile, Ctrl+K, the not-logged-in alert, the side panels) is a layer marked data-layer.
+   Only the top one (the last in the page) answers Escape and Tab, so a box opened on a box closes on its own; Escape in an
+   open dropdown closes only the dropdown (Combo takes it first). Focus starts inside the top pop-up, Tab and Shift+Tab stay
+   inside it, and focus goes back where it was when it closes. When something was typed in it, Escape, a click on the shade
+   or its Close button first asks "Discard what you typed?" (Keep editing / Discard): typed text is never lost silently. */
+const topLayer = () => { const all = document.querySelectorAll("[data-layer]"); return all.length ? all[all.length - 1] : null; };
+const TYPED_SEL = 'textarea, input:not([type]), input[type="text"], input[type="number"], input[type="email"], input[type="date"], input[type="month"], input[type="time"], input[type="tel"], input[type="url"], input[type="password"]';
+const FOCUS_SEL = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+/* Where Tab (back: Shift+Tab) goes in a pop-up whose focusable parts are `list`: null lets the browser move on (it stays
+   inside), "box" when nothing in it takes focus; from the last part it wraps to the first and back. */
+function tabStop(list, active, back) {
+  if (!list.length) return "box";
+  const i = list.indexOf(active);
+  if (i < 0) return back ? list[list.length - 1] : list[0];
+  if (back && i === 0) return list[list.length - 1];
+  if (!back && i === list.length - 1) return list[0];
+  return null;
+}
+/* Typed text that closing would lose: a box still in the pop-up whose text changed since it was first touched. */
+const typedIn = (seen, root) => [...seen].some(([el, was]) => el.isConnected && root.contains(el) && el.value !== was);
+function useLayer(onClose, guard = true) {
+  const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose);
+  closeFn.current = onClose;
+  const [asking, setAsking] = useState(false);
+  const [opener] = useState(() => document.activeElement);
+  const close = () => { const f = closeFn.current; if (!f) return; if (guard && ref.current && typedIn(seen.current, ref.current)) setAsking(true); else f(); };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    const el = ref.current; if (!el) return undefined;
+    // the text of a box as it was before any typing: when it first gets focus, or at the first keystroke
+    const note = (e) => { const t = e.target; if (t && t.matches && t.matches(TYPED_SEL) && !t.closest(".combo-list") && !seen.current.has(t)) seen.current.set(t, t.value); };
+    el.addEventListener("focusin", note); el.addEventListener("beforeinput", note, true);
+    note({ target: document.activeElement });
+    if (topLayer() === el && !el.contains(document.activeElement)) { try { (box.current || el).focus({ preventScroll: true }); } catch (e) {} }
+    const key = (e) => {
+      if (e.defaultPrevented || e.isComposing || topLayer() !== el) return;
+      if (e.key === "Escape") { e.preventDefault(); closeRef.current(); return; }
+      if (e.key !== "Tab") return;
+      const list = [...el.querySelectorAll(FOCUS_SEL)].filter((x) => x.getClientRects().length && getComputedStyle(x).visibility !== "hidden");
+      const to = tabStop(list, document.activeElement, e.shiftKey);
+      if (to) { e.preventDefault(); (to === "box" ? box.current || el : to).focus(); }
+    };
+    window.addEventListener("keydown", key);
+    return () => {
+      el.removeEventListener("focusin", note); el.removeEventListener("beforeinput", note, true); window.removeEventListener("keydown", key);
+      if (opener && opener !== document.body && opener.isConnected && opener.focus) { try { opener.focus({ preventScroll: true }); } catch (e) {} }
+    };
+  }, []);
+  // a press on the shade itself (not inside the box, not on the shade's scroll bar) closes it like Escape
+  const shade = (e) => {
+    const s = e.currentTarget, r = s.getBoundingClientRect();
+    if (e.target !== s || e.clientX >= r.left + s.clientWidth || e.clientY >= r.top + s.clientHeight) return;
+    e.preventDefault(); close();
+  };
+  const ask = asking ? <DiscardAsk onKeep={() => setAsking(false)} onDiscard={() => { setAsking(false); if (closeFn.current) closeFn.current(); }} /> : null;
+  return { ref, box, close, shade, ask };
+}
+function DiscardAsk({ onKeep, onDiscard }) {
+  const L = useLayer(onKeep, false);
   return (
-    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
-      <div className={"modal" + (wide ? " wide" : "") + (narrow ? " narrow" : "")}>
+    <div className="overlay ask-overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className="modal narrow" ref={L.box} tabIndex={-1} role="alertdialog" aria-modal="true" aria-label="Discard what you typed?">
+        <h2>Discard what you typed?</h2>
+        <div className="sub">It has not been saved.</div>
+        <div className="row mt" style={{ justifyContent: "flex-end" }}><button type="button" className="btn" autoFocus onClick={onKeep}>Keep editing</button><button type="button" className="btn danger" onClick={onDiscard}>Discard</button></div>
+      </div>
+    </div>
+  );
+}
+/* A pop-up that only closes from its own buttons (the not-logged-in alert): focus and Tab stay in it. */
+function AlertLayer({ className, label, boxClass, children }) {
+  const L = useLayer(null, false);
+  return <div className={"overlay " + className} data-layer="" ref={L.ref} role="alertdialog" aria-label={label}><div className={boxClass} ref={L.box} tabIndex={-1}>{children}</div></div>;
+}
+/* A panel from the right edge, over a page or a pop-up (Claim history, How it works): a layer of its own, so Escape or a
+   click on its shade closes only the panel. */
+function SidePanel({ className, label, onClose, children }) {
+  const L = useLayer(onClose, false);
+  return (
+    <>
+      <div className="hist-shade" onClick={onClose} />
+      <div className={"hist" + (className ? " " + className : "")} data-layer="" ref={(n) => { L.ref.current = n; L.box.current = n; }} tabIndex={-1} role="dialog" aria-label={label}>{children}</div>
+    </>
+  );
+}
+function Modal({ title, sub, onClose, children, wide, narrow, footer }) {
+  const L = useLayer(onClose);
+  return (
+    <div className="overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className={"modal" + (wide ? " wide" : "") + (narrow ? " narrow" : "")} ref={L.box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
         <div className="row between top mb">
           <div><h2>{title}</h2>{sub && <div className="sub">{sub}</div>}</div>
-          {onClose && <button className="btn sm" onClick={onClose}>Close</button>}
+          {onClose && <button className="btn sm" onClick={L.close}>Close</button>}
         </div>
         {children}
         {footer && <div className="row mt" style={{ justifyContent: "flex-end" }}>{footer}</div>}
       </div>
+      {L.ask}
     </div>
   );
 }
@@ -814,6 +902,16 @@ function useRpc(op, payload, deps = [], enabled = true) {
   }, [...deps, tick, enabled]);
   return { ...state, reload: () => setTick((t) => t + 1) };
 }
+/* Escape while a dropdown's list is open closes only the list: it is taken before anything else hears it (the pop-up
+   around the dropdown stays open, whatever has the focus). */
+function useComboEsc(open, setOpen) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const k = (e) => { if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); e.stopPropagation(); setOpen(false); } };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+  }, [open]);
+}
 /* A dropdown that works like a select with a search box inside: click it, type a few letters and the
    list narrows to them; click an option (or press Enter for the first match) to pick it; ✕ clears. */
 function Combo({ value, options, onChange, placeholder, disabled, sm, width, clearable = true }) {
@@ -823,6 +921,7 @@ function Combo({ value, options, onChange, placeholder, disabled, sm, width, cle
   const qRef = useRef(null);
   useEffect(() => { const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; window.addEventListener("mousedown", h); return () => window.removeEventListener("mousedown", h); }, []);
   useEffect(() => { if (open) { setQ(""); const t = setTimeout(() => qRef.current && qRef.current.focus(), 0); return () => clearTimeout(t); } }, [open]);
+  useComboEsc(open, setOpen);
   const val = String(value == null ? "" : value);
   const sel = options.find((o) => String(o.id) === val);
   const needle = q.trim().toLowerCase();
@@ -860,6 +959,7 @@ function SuggestCombo({ value, onChange, field, extra, placeholder, sm, width })
   const qRef = useRef(null);
   useEffect(() => { const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; window.addEventListener("mousedown", h); return () => window.removeEventListener("mousedown", h); }, []);
   useEffect(() => { if (open) { setQ(""); const t = setTimeout(() => qRef.current && qRef.current.focus(), 0); return () => clearTimeout(t); } }, [open]);
+  useComboEsc(open, setOpen);
   const extraKey = JSON.stringify(extra || {});
   useEffect(() => {
     if (!open) return;
@@ -1379,6 +1479,7 @@ function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {
   const [found, setFound] = useState({ rows: [], loading: false });
   const inp = useRef(null);
   const list = useRef(null);
+  const L = useLayer(onClose, false);
   useEffect(() => { if (inp.current) inp.current.focus(); }, []);
   useEffect(() => {
     const t = q.trim();
@@ -1407,8 +1508,8 @@ function CommandPalette({ ctx, me, pages, onClose, go, openClaim, openCoach }) {
   };
   useEffect(() => { const el = list.current && list.current.querySelector(".on"); if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" }); }, [sel]);
   return (
-    <div className="overlay cmdk-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="cmdk" role="dialog" aria-label="Search">
+    <div className="overlay cmdk-overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className="cmdk" role="dialog" aria-modal="true" aria-label="Search" ref={L.box} tabIndex={-1}>
         <div className="cmdk-in"><SearchIcon /><input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey}
           placeholder={me.role === "supervisor" ? "Go to a page, client, biller, or a claim # / account / patient…" : "Go to a page, or find a claim # / account / patient…"} />
           {found.loading ? <span className="spin" /> : <kbd>Esc</kbd>}</div>
@@ -1536,8 +1637,7 @@ function MissingAlertPopup({ alerts, onChanged }) {
   const dismiss = () => act(() => rpc("team.alertDismiss", { user_id: a.user_id }), () => `Noted: no more alerts about ${first} today.`);
   const where = a.clients.length === 1 ? a.clients[0] : "those clients";
   return (
-    <div className="overlay miss-pop" role="alertdialog" aria-label={a.name + " has not logged in"}>
-      <div className="modal miss-modal">
+    <AlertLayer className="miss-pop" label={a.name + " has not logged in"} boxClass="modal miss-modal">
         <div className="row between top mb"><div><h2>⚠ {a.name} has not logged in</h2><div className="sub">Purview Shastra · checked {clockNow()}{list.length > 1 ? ` · ${Math.min(idx, list.length - 1) + 1} of ${list.length}` : ""}</div></div>
           <button type="button" className="btn icon" title="Remind me in 30 minutes" disabled={busy} onClick={snooze}>✕</button></div>
         <div className="stack" style={{ gap: 10 }}>
@@ -1561,8 +1661,7 @@ function MissingAlertPopup({ alerts, onChanged }) {
           {list.length > 1 && <button type="button" className="btn sm" onClick={() => setIdx((idx + 1) % list.length)}>Next ›</button>}
           <span style={{ flex: 1 }} /><AskComputer />
         </div>
-      </div>
-    </div>
+    </AlertLayer>
   );
 }
 function AllocBanner({ items, onGo, onSeen }) {
@@ -4737,9 +4836,8 @@ function ClaimHistory({ claimId, claim, me, version }) {
   return (
     <>
       {!open && <button className="hist-tab" title="Everything that happened to this claim, with date and time" onClick={() => { setOpen(true); setTick((t) => t + 1); }}>🕘<span>CLAIM HISTORY</span><i>{n}</i></button>}
-      {open && <div className="hist-shade" onClick={() => setOpen(false)} />}
       {open && (
-        <div className="hist">
+        <SidePanel label="Claim history" onClose={() => setOpen(false)}>
           <div className="hist-top">
             <div className="row between"><div><h2 style={{ margin: 0 }}>Claim history</h2><div className="sub">{[claim.claim_no || "No claim #", claim.patient, claim.payer].filter(Boolean).join(" · ")}</div></div><button className="btn sm" onClick={() => setOpen(false)}>✕</button></div>
             <div className="row mt8" style={{ gap: 5, flexWrap: "wrap" }}>{HIST_FILTERS.map(([k, l]) => <button key={k} className={"chip " + (filter === k ? "on" : "")} style={{ fontSize: 12, padding: "4px 10px" }} onClick={() => setFilter(k)}>{l}</button>)}</div>
@@ -4750,7 +4848,7 @@ function ClaimHistory({ claimId, claim, me, version }) {
             {q.data && !items.length && <div className="muted small mt">Nothing here yet.</div>}
             {days.map((d) => <div key={d.k}><div className="hist-day">{dayLabel(d.k)}</div><div className="hist-tl">{d.items.map((it, i) => <HistEvent key={i} it={it} onFile={openFile} onEdit={(x) => { setEdit(x); setOpen(false); }} />)}</div></div>)}
           </div>
-        </div>
+        </SidePanel>
       )}
       {edit && (
         <Modal title="Edit this entry" sub={"Written " + fmtWhen(edit.at)} onClose={() => setEdit(null)} wide>
@@ -5209,18 +5307,16 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   const changed = () => { q.reload(); setVer((v) => v + 1); onChanged && onChanged(); };
   const act = async (label, fn) => { setBusy(true); try { await fn(); toast(label); changed(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const sup = me.role === "supervisor";
-  // Esc closes the drawer when nothing is open on top of it (a box opened from the drawer closes first).
-  const ovRef = useRef(null);
-  useEffect(() => { const k = (e) => { if (e.key !== "Escape" || !ovRef.current) return; const all = document.querySelectorAll(".overlay"); if (all[all.length - 1] === ovRef.current) onClose(); };
-    window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+  // a pop-up like the others: Esc closes it when nothing is open on top of it (a box opened from it closes first)
+  const L = useLayer(onClose);
   return (
-    <div className="overlay" ref={ovRef} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal wide" style={{ maxWidth: 1240, background: "var(--card2)", position: "relative" }}>
+    <div className="overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
+      <div className="modal wide" ref={L.box} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Claim profile" style={{ maxWidth: 1240, background: "var(--card2)", position: "relative" }}>
         <ErrorBox error={q.error} />
         {!c && !q.error && <Spinner />}
         {c && (
           <div className="stack" style={{ gap: 14, paddingRight: 30 }}>
-            <ClaimHeader c={c}>{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={onClose}>Close</button></ClaimHeader>
+            <ClaimHeader c={c}>{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={L.close}>Close</button></ClaimHeader>
             {c.locked && <div className="alert info"><b>Posting closed this claim: the payment is posted.</b> {ro ? "Anyone can open it to read; it is not on your desk, so there is nothing to work here." : "Anyone can open it to read."} Its notes can no longer be edited (only QA is left).</div>}
             <ClaimInfo c={c} siblings={q.data.siblings} />
             <HandoffCard handoffs={q.data.handoffs} role={q.data.handoff_role} onChanged={changed} />
@@ -5255,6 +5351,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
         )}
       </div>
       {patientOf && <PatientModal id={patientOf} ctx={ctx} me={me} onClose={() => setPatientOf(null)} onOpenClaim={() => {}} />}
+      {L.ask}
     </div>
   );
 }
@@ -6875,11 +6972,8 @@ function HubHead({ page, onHow, frame, compact }) {
 }
 function HowDrawer({ page, onClose }) {
   const p = HUB_PAGES[page];
-  useEffect(() => { const esc = (e) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", esc); return () => window.removeEventListener("keydown", esc); }, []);
   return (
-    <>
-      <div className="hist-shade" onClick={onClose} />
-      <div className="hist rh-how">
+    <SidePanel className="rh-how" label={"How " + p.title.toLowerCase() + " works"} onClose={onClose}>
         <div className="hist-top row between"><div><div className="rh-eyebrow"><span className={"rh-tag " + p.group}>{p.group === "int" ? "Internal" : "For clients"}</span>{p.app}</div><h2 style={{ marginTop: 6 }}>How {p.title.toLowerCase()} works</h2></div><button className="btn sm" onClick={onClose}>Close</button></div>
         <div className="hist-body">
           <div className="rh-how-sec"><div className="rh-how-l">What it shows</div><div>{p.what}</div></div>
@@ -6888,8 +6982,7 @@ function HowDrawer({ page, onClose }) {
             {p.steps.map(([t, d], i) => <div key={i} className="rh-how-step"><span className="stepn">{i + 1}</span><div><div className="b">{t}</div><div className="small muted">{d}</div></div></div>)}</div>
           <div className="rh-how-sec"><div className="rh-how-l">Files</div><div>Uploads come only from the Purviewautomate OneDrive. Saved reports go to OneDrive › Brahmastra Reports › team lead › client.</div></div>
         </div>
-      </div>
-    </>
+    </SidePanel>
   );
 }
 /* The app itself. Its address carries embed=1 (no header of its own) and the Brahmastra theme. */
