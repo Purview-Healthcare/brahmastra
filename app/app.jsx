@@ -7272,15 +7272,16 @@ const crPl = (n, one, many) => crF.int(n) + " " + (Math.round(n) === 1 ? one : m
 const crMoneySub = (v) => (crF.moneyK(v) !== crF.money(v, 0) ? crF.money(v, 0) : "");
 const crF = {
   int: (n) => (n == null || isNaN(n)) ? "–" : Math.round(n).toLocaleString("en-US"),
-  money: (n, d) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n), dd = d == null ? (v < 1000 ? 2 : 0) : d; return (neg ? "-$" : "$") + v.toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd }); },
-  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg ? "-$" : "$") + s; },
+  // no sign on an amount that rounds to zero at the decimals shown (a total a hair below zero is $0.00, as fmtMoney writes it)
+  money: (n, d) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n), dd = d == null ? (v < 1000 ? 2 : 0) : d, s = v.toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
+  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
   num: (n) => (n == null || isNaN(n)) ? "–" : (Math.abs(n) >= 1e4 ? (n / 1e3).toFixed(1) + "K" : Math.round(n).toLocaleString("en-US")),
   pct: (n, d = 0) => (n == null || isNaN(n) || !isFinite(n)) ? "–" : (n * 100).toFixed(d) + "%",
   date: (d) => d ? `${String(d.getDate()).padStart(2, "0")} ${CRM_S[d.getMonth()]} ${d.getFullYear()}` : "–",
   dateShort: (d) => d ? `${String(d.getDate()).padStart(2, "0")} ${CRM_S[d.getMonth()]}` : "–",
   iso: (d) => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : "",
   monthYear: (d) => d ? `${CRM_L[d.getMonth()]} ${d.getFullYear()}` : "–",
-  signed: (n, f) => n == null || isNaN(n) ? "–" : (n > 0 ? "+" : "") + f(n),
+  signed: (n, f) => n == null || isNaN(n) ? "–" : (n > 0 && /[1-9]/.test(f(n)) ? "+" : "") + f(n),
 };
 /* dates (local, day precision) */
 const crD = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };

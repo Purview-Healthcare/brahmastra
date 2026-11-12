@@ -280,6 +280,13 @@ S("A-12: a table's Total row is the sum of the rows it shows");
   ok("A-12: a claims table is unchanged (whole numbers, Total 6)", /<td>Total<\/td><td class="n">6<\/td>/.test(cnt), cnt.slice(-200));
 }
 
+S("N-21 (the same slip as Third Eye's): an amount that rounds to zero carries no sign on the report");
+{ const f = X("crF"), hair = 0.3 - 0.1 - 0.2;                        // -0.0000000000000000277 in floating point
+  ok("N-21: a hair below zero is $0.00 and $0 (never -$0.00 / -$0)", f.money(hair) === "$0.00" && f.money(hair, 0) === "$0" && f.moneyK(hair) === "$0", [f.money(hair), f.money(hair, 0), f.moneyK(hair)]);
+  ok("N-21: a change of a hair above zero has no plus sign", f.signed(1e-17, f.money) === "$0.00" && f.signed(5, (v) => f.money(v, 0)) === "+$5", [f.signed(1e-17, f.money), f.signed(5, (v) => f.money(v, 0))]);
+  ok("N-21: a real credit keeps its minus ($12.50, $0.01, $1,500)", f.money(-12.5) === "-$12.50" && f.money(-0.005, 2) === "-$0.01" && f.moneyK(-1500) === "-$1,500", [f.money(-12.5), f.money(-0.005, 2), f.moneyK(-1500)]);
+}
+
 Date.now = realNow;
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
