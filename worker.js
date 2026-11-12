@@ -5558,12 +5558,16 @@ const OPS = {
       c._num = c._gen ? "" : c._alt;                      // the claim number's key; none for a made-up number
     });
     const byMatch = new Map(), byAlt = new Map(), byFp = new Map();
-    const SEL = "SELECT id, match_key, alt_key, fp_key, claim_no, payer, state, touches, assigned_to, worked_before, follow_up_on, inventory_kind FROM claims WHERE client_id = ? AND ";
+    const SEL = "SELECT id, match_key, alt_key, fp_key, claim_no, payer, state, touches, assigned_to, worked_before, last_worked_on, follow_up_on, inventory_kind FROM claims WHERE client_id = ? AND ";
     for (const chunk of chunks(rows.map((c) => str(c.match_key, 300)), 80)) (await all(env, SEL + `match_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => byMatch.set(r.match_key, r));
     for (const chunk of chunks([...new Set(rows.map((c) => c._num).filter(Boolean))], 80)) (await all(env, SEL + `alt_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!isGeneratedNo(r) && !byAlt.has(r.alt_key)) byAlt.set(r.alt_key, r); });
     for (const chunk of chunks([...new Set(rows.map((c) => c._fp).filter(Boolean))], 80)) (await all(env, SEL + `fp_key IN (${chunk.map(() => "?").join(",")}) ORDER BY created_at`, client.id, ...chunk)).forEach((r) => { if (!byFp.has(r.fp_key)) byFp.set(r.fp_key, []); byFp.get(r.fp_key).push(r); });
     const stmts = [];
     const taken = new Set(), altSeen = new Set();
+    // A previously worked claim whose follow-up date is still to come is worked and waiting, like a claim worked in Brahmastra:
+    // it is not in the pool, and comes back into it on that date.
+    const today = isoDate(payload.today) || isoToday();
+    const WAITS = "Worked before: back in the pool on its follow-up date";
     for (const c of rows) {
       const key = str(c.match_key, 300);
       // Two rows of one file whose claim numbers differ only in format ("D-55555" and "d55555") are one claim: the first row counts.
@@ -5594,9 +5598,10 @@ const OPS = {
       // September and the October worked file keeps both entries in its history even though the claim shows the latest file.
       const fileWork = (id) => (kind === "worked" || vals.file_comments ? claimEvent(env, id, user, "file_work", str(file_name, 200), fileSnapshot(kind, vals, c, lastWorked, followUp)) : null);
       if (!ex) {
-        const state = !exclude ? "open" : closedInFile ? "closed" : "excluded";
-        const reason = !exclude ? "" : closedInFile ? "Closed in " + kind + " file" + (vals.file_status ? ": " + vals.file_status : "") : exclude;
-        if (state === "open") counts.inserted++; else if (state === "closed") counts.closed++; else counts.excluded++;
+        const waits = !exclude && !!followUp && followUp > today;
+        const state = waits ? "completed" : !exclude ? "open" : closedInFile ? "closed" : "excluded";
+        const reason = waits ? WAITS : !exclude ? "" : closedInFile ? "Closed in " + kind + " file" + (vals.file_status ? ": " + vals.file_status : "") : exclude;
+        if (state === "open" || state === "completed") counts.inserted++; else if (state === "closed") counts.closed++; else counts.excluded++;
         const nid = uuid();
         const fw = fileWork(nid); if (fw) stmts.push(fw);
         stmts.push(env.DB.prepare(`INSERT INTO claims (id, client_id, location_id, batch_id, first_batch_id, match_key, claim_no, account_no, patient, payer, dos, cpt, provider,
@@ -5617,6 +5622,11 @@ const OPS = {
         else counts.updated++;
       } else if (ex.state === "closed" || ex.state === "excluded") { newState = "open"; reason = "Reopened by " + kind + " upload"; clearAssign = 1; counts.reopened++; }
       else counts.updated++;
+      // an unassigned claim the worked file gives a later follow-up leaves the pool until that date (the date as the UPDATE below keeps it)
+      if (newState === "open" && followUp) {
+        const fu = !ex.last_worked_on || (lastWorked && lastWorked >= ex.last_worked_on) ? followUp : ex.follow_up_on;
+        if (fu && fu > today) { newState = "completed"; reason = reason || WAITS; }
+      }
       { const fw = fileWork(ex.id); if (fw) stmts.push(fw); }
       stmts.push(claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), { kind, batch: bid, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance, ...(newState !== ex.state ? { changes: { state: [ex.state, newState] } } : {}) }));
       stmts.push(env.DB.prepare(`UPDATE claims SET location_id = COALESCE(?, location_id), batch_id = ?, claim_no = CASE WHEN ? <> '' THEN ? ELSE claim_no END,

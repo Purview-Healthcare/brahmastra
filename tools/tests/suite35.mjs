@@ -275,6 +275,40 @@ S("A-13: a claim loaded without a claim number, then with its real number");
     [dry, got.map((c) => [c.claim_no, c.payer])]);
 }
 
+const billers = await q("SELECT id, name, email FROM users WHERE role = 'user' AND active = 1 ORDER BY name");
+S("A-07: previously worked claims wait for their follow-up date");
+{
+  const HW = ["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status", "Date Worked", "Comments"];
+  const cl = await mkClient("Made-up Clinic S35 A07");
+  await A("clients.saveTeam", { client_id: cl.id, team: [billers[0].id] });
+  const up = await upload(cl, [HW,
+    ["9807001", "Test Patient One", "Aetna", "09/10/2026", "800.00", "Pending", "11/05/2026", "Called the payer, claim in process, call back in 30 days"],
+    ["9807002", "Test Patient Two", "Aetna", "08/10/2026", "600.00", "Pending", "09/01/2026", "Called the payer, in process"],
+    ["9807003", "Test Patient Three", "Aetna", "08/11/2026", "500.00", "Pending", "", ""]], { kind: "worked" });
+  const st = async () => Object.fromEntries((await claimsOf(cl)).map((c) => [c.claim_no, c.state + " " + c.follow_up_on + " " + (c.assigned_to ? "on a list" : "no list")]));
+  let now = await st();
+  ok("A-07: worked 11/05 (follow-up 12/05) is stored as worked and waiting; one whose follow-up has come, or with no date worked, is open", now["9807001"] === "completed 2026-12-05 no list" && now["9807002"] === "open 2026-10-01 no list" && now["9807003"] === "open  no list" && up.r.inserted === 3, [now, up.r]);
+  const pool = async (today) => (await A("claims.eligible", { client_id: cl.id, today })).claims.map((c) => c.claim_no).sort().join();
+  const inv = await A("inventory.status", { client_id: cl.id, today: TODAY });
+  ok("A-07: it is not in the pool today and is not counted as unassigned (Inventory status: 2 unassigned, 1 follow-up later)", (await pool(TODAY)) === "9807002,9807003" && inv.stages.open.n === 2 && inv.stages.later.n === 1, [await pool(TODAY), inv.stages.open.n, inv.stages.later.n]);
+  const al = await app.autoAllocate({ ctx: null, client: { id: cl.id }, loc: { id: cl.loc } });
+  now = await st();
+  ok("A-07: the allocation after loading hands out the two open claims and leaves the waiting one", al.applied === 2 && now["9807001"] === "completed 2026-12-05 no list" && /^assigned .* on a list$/.test(now["9807002"]), [al.applied, now]);
+  ok("A-07: on its follow-up date it is back in the pool, and can be allocated", (await pool("2026-12-04")) === "" && (await pool("2026-12-05")) === "9807001"
+    && (await A("alloc.apply", { client_id: cl.id, today: "2026-12-05", assignments: [{ id: (await q1("SELECT id FROM claims WHERE client_id = ? AND claim_no = '9807001'", cl.id)).id, user_id: billers[0].id, priority: 10 }] })).applied === 1, [await pool("2026-12-04"), await pool("2026-12-05")]);
+  // a claim already on file: an unassigned one leaves the pool when a worked file gives it a later follow-up, one on a list stays there
+  const c2 = await mkClient("Made-up Clinic S35 A07 b");
+  await A("clients.saveTeam", { client_id: c2.id, team: [billers[0].id] });
+  const HF = ["Claim ID", "Patient Name", "Payer", "Date of Service", "AR Balance", "Status"];
+  await upload(c2, [HF, ["9807101", "Test Patient One", "Aetna", "09/10/2026", "800.00", "Pending"], ["9807102", "Test Patient Two", "Aetna", "09/11/2026", "700.00", "Pending"]]);
+  await A("alloc.reassign", { ids: [(await q1("SELECT id FROM claims WHERE client_id = ? AND claim_no = '9807102'", c2.id)).id], user_id: billers[0].id });
+  const up2 = await upload(c2, [HW, ["9807101", "Test Patient One", "Aetna", "09/10/2026", "800.00", "Pending", "11/05/2026", "In process"], ["9807102", "Test Patient Two", "Aetna", "09/11/2026", "700.00", "Pending", "11/05/2026", "In process"]], { kind: "worked", name: "worked.csv" });
+  const s2 = Object.fromEntries((await claimsOf(c2)).map((c) => [c.claim_no, c.state]));
+  ok("A-07: a worked file with a later follow-up takes an unassigned claim out of the pool; a claim on a biller's list stays on it", s2["9807101"] === "completed" && s2["9807102"] === "assigned" && up2.r.updated === 2, [s2, up2.r]);
+  await A("inventory.undoBatch", { batch_id: up2.r.batch_id });
+  ok("A-07: undoing that worked file puts the claim back in the pool", (await q1("SELECT state FROM claims WHERE client_id = ? AND claim_no = '9807101'", c2.id)).state === "open");
+}
+
 globalThis.Date = RealDate;
 const fails = results.filter((r) => !r.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
