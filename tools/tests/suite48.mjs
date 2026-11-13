@@ -435,6 +435,27 @@ S("K-03: the SAAG reference shows where the four desk actions really land");
   ok("K-03: every other action still shows the workbook's effective matrix and bucket", plain.effective === "Pending-Collectible Insurance" && plain.bucket === "Payer" && !plain.routed, plain);
 }
 
+S("K-15: money on the digest from $999,500 up is written in millions ($1M, not $1000K)");
+{
+  const m = (n) => rig.app.digestMoney(n);
+  ok("K-15: the digest page writes $999,600 as $1M and keeps the other forms", m(999600) === "$1M" && m(999500) === "$1M" && m(999400) === "$999K" && m(1234567) === "$1.23M" && m(45600) === "$46K",
+    [m(999600), m(999500), m(999400), m(1234567), m(45600)]);
+  // the Monday email's AR box (dShort): a span whose clients' AR at the end of the week adds up to 999,600
+  const realNow = Date.now;
+  try {
+    Date.now = () => Date.parse("2026-11-09T05:30:00Z");
+    const spans = (await A("digest.spans", {})).spans || [];
+    const sp = spans.find((x) => (x.clients || []).some((c) => c.id === sun.id));
+    const ids = sp.clients.map((c) => c.id);
+    await sql("DELETE FROM client_snapshots WHERE client_id IN (SELECT value FROM json_each(?))", JSON.stringify(ids));
+    for (const [i, cid] of ids.entries()) await sql("INSERT INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, ar_owed, over90_owed, at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      cid, "2026-11-08", i === 0 ? 999600 - 100 * (ids.length - 1) : 100, 10, 0, 0, 0, i === 0 ? 999600 - 100 * (ids.length - 1) : 100, 0, Date.parse("2026-11-08T18:00:00Z"));
+    const mail = await A("digest.preview", { span: sp.key });
+    const html = String(mail.html || "");
+    ok("K-15: the Monday email's AR for that week reads $1M, not $1000K", html.includes("$1M") && !html.includes("1000K"), (html.match(/\$[0-9.,]+[KM]?/g) || []).slice(0, 8));
+  } finally { Date.now = realNow; }
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -2830,7 +2830,8 @@ const tatLine = (t) => t ? t.parts.map((x) => `${x.label} ${x.pct}% (${x.met} of
 // worst first: red SLA, then amber, green, then clients Drishti has not scored, by health
 const digestOrder = (ds) => [...ds].sort((a, b) => (a.card ? a.card.score : 999) - (b.card ? b.card.score : 999) || ({ risk: 0, watch: 1, good: 2 }[a.health] - { risk: 0, watch: 1, good: 2 }[b.health]));
 const BAND_LOOK = { ok: ["Green", "#127A4D", "#E3F5EC", "#1A9E6A"], warn: ["Amber", "#935300", "#FDF0D7", "#E8A13C"], miss: ["Red", "#BA2340", "#FDE7EB", "#C94F4F"] };
-const dShort = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + (Math.round(n / 1e4) / 100) + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : dMoney(n));
+// from $999,500 the K figure would round to 1000K: it is written in M
+const dShort = (n) => (n == null ? "–" : Math.abs(n) >= 999500 ? "$" + (Math.round(n / 1e4) / 100) + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : dMoney(n));
 /* The Monday email: short, in plain tables that hold up in Outlook and on a phone, with a button to the full digest dashboard
    in Brahmastra (landscape, every detail). Clients, staff and figures only: no patient names, claim or account numbers. */
 function spanEmail(span, wk, ds, appUrl, extra = {}) {
@@ -5769,7 +5770,7 @@ const OPS = {
     const pfBy = new Map(pf.rows.map((r) => [r.client_id, r]));
     const T = OVER90_TARGET;
     // a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none
-    const money = (v) => { const a = Math.abs(v || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((v || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
+    const money = (v) => { const a = Math.abs(v || 0), n = String(a >= 999500 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((v || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
     const pl = (n, w) => n + " " + w + (n === 1 ? "" : "s");
     const deptName = { posting: "Posting", submission: "Submission", subcheck: "Submission", rejection: "Rejections" };
     // What to do first, most SLA-damaging first. Each card: the number, why it matters, and the one action.

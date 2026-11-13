@@ -4948,6 +4948,8 @@ function hashNav() {
 }
 /* The Monday digest as a landscape dashboard: one card per client, worst first, with its SLA score, Billable and Assign FTE,
    AR, escalations and what pulls it down. Download it as a landscape PDF. */
+/* Money on the digest page: $1.23M, $456K, $9,876. From $999,500 the K figure would round to 1000K, so it is written in M. */
+function digestMoney(n) { return n == null ? "–" : Math.abs(n) >= 999500 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString(LOC); }
 function DigestDashboard({ params, go }) {
   const [span, setSpan] = useState((params && params.span) || "");
   const [week, setWeek] = useState((params && params.week) || "");
@@ -4962,7 +4964,7 @@ function DigestDashboard({ params, go }) {
   if (q.error) return <ErrorBox error={q.error} />;
   if (!d) return <Spinner label="Building the digest…" />;
   if (d.empty) return <div className="card"><h2>Monday digest</h2><Empty>No digests yet: add clients and their managers first, then each manager's clients get a Monday digest.</Empty></div>;
-  const R = d.rollup, money = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString(LOC));
+  const R = d.rollup, money = digestMoney;
   const f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
   const dd = (iso) => fmtDate(iso).replace(/, \d{4}$/, "");
   const bandWord = { ok: "Green", warn: "Amber", miss: "Red" };
@@ -7089,7 +7091,7 @@ function drPerNote(dr) { const l = dr && dr.kind && dr.kind !== "month" ? String
 const INV_STAGES = [["open", "Unassigned", "#9AA5B1"], ["list", "On a biller's list", "#22CAE4"], ["later", "Worked, follow-up later", "#30C48D"], ["due", "Follow-up due today", "#F5A623"],
   ["overdue", "Follow-up overdue", "#E5484D"], ["waiting", "Waiting on the client", "#7C5CFF"], ["desk", "At Posting / Submission", "#2563EB"]];
 // a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none (the same rule as the server's cards)
-const fmtK = (v) => { const a = Math.abs(Number(v) || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((Number(v) || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
+const fmtK = (v) => { const a = Math.abs(Number(v) || 0), n = String(a >= 999500 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((Number(v) || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
 function InvStrip({ stages, mini }) {
   const tot = INV_STAGES.reduce((t, [k]) => t + (stages[k] ? stages[k].n : 0), 0);
   if (!tot) return <div className={mini ? "inv-mini" : "inv-strip"} style={{ background: "var(--soft)" }} />;
@@ -7745,7 +7747,7 @@ const crF = {
   int: (n) => (n == null || isNaN(n)) ? "–" : Math.round(n).toLocaleString("en-US"),
   // no sign on an amount that rounds to zero at the decimals shown (a total a hair below zero is $0.00, as fmtMoney writes it)
   money: (n, d) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n), dd = d == null ? (v < 1000 ? 2 : 0) : d, s = v.toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
-  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
+  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 999500 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
   num: (n) => (n == null || isNaN(n)) ? "–" : (Math.abs(n) >= 1e4 ? (n / 1e3).toFixed(1) + "K" : Math.round(n).toLocaleString("en-US")),
   pct: (n, d = 0) => (n == null || isNaN(n) || !isFinite(n)) ? "–" : (n * 100).toFixed(d) + "%",
   date: (d) => d ? `${String(d.getDate()).padStart(2, "0")} ${CRM_S[d.getMonth()]} ${d.getFullYear()}` : "–",
