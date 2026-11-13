@@ -487,8 +487,10 @@ const postingWorld = async ({ backup = true } = {}) => {
   const strip = (await TI("notify.list", { today: w.today() })).items.filter((i) => i.key === "escalations" && i.n > 0);
   ok("E-20: one late team task counts on Needs attention but is no escalation (the Live status Needs you line shows none)", at.n === 1 && at.tasks_late === 1 && at.escalations === 0 && !strip.length, at);
   const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  // the owner's later decision (suite46, E-20): the Live status tab counts the open escalations plus the flagged claims waiting
   ok("E-20: the page gives the Live status tab the escalation count and Needs attention the attention count",
-    /k === "attention" && attention && attention\.n > 0 \?/.test(src) && /k === "live" && attention && attention\.escalations > 0 \?[\s\S]{0,300}?\{attention\.escalations\}<\/span>/.test(src) && !/\(k === "attention" \|\| k === "live"\)/.test(src));
+    /k === "attention" && attention && attention\.n > 0 \?/.test(src) && /const liveN = attention \? \(attention\.escalations \|\| 0\) \+ \(attention\.esc_open \|\| 0\) : 0;/.test(src)
+    && /k === "live" && liveN > 0 \?[\s\S]{0,400}?\{liveN\}<\/span>/.test(src) && !/\(k === "attention" \|\| k === "live"\)/.test(src));
 }
 
 {

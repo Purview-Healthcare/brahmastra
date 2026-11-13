@@ -144,9 +144,9 @@ result (and, the first time, the audit trail) names them.
   in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
   Inventory & allocation, Escalation tracker) and **Manage** (Team, Note templates, Clients &
   locations, SAAG reference, TFL / AFL, Roster for admins, Audit trail for admins and the VP). Client 360 is not on
-  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count (claims flagged
-  by billers waiting for an answer, the first line of its **Needs you**) shows on the Live status tab, and the attention
-  and hand-off counts on the group button while it is closed.
+  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The Live
+  status tab counts its two lists, the open escalations (Escalation tracker) plus the claims flagged by billers waiting for
+  an answer, red once one of them is past its time; the attention and hand-off counts show on the group button while it is closed.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
@@ -218,7 +218,7 @@ does not count).
 | Page | From |
 |---|---|
 | Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, Future DOS for a date of service typed in the future, and Unknown age for a claim with no date of service or age), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
-| AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet*; a claim worked twice counts once, at its latest entry, in the KPIs and the charts |
+| AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet*; a claim worked twice counts once, at its latest entry, in the KPIs, the charts and the filters (a filter picks claims by their latest entry, so a clicked bar matches the KPIs; the line under Claims worked gives the work entries) |
 | Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof); the rejection rate is of the claims submitted in the period (of the claims worked for a client with no Submission records), and a period with no submission has no rate |
 | Client assistance | requests sent to the client, with their reason and whether they were answered; a request counts in every period it was waiting, however long ago it was sent |
 | EV | the EV production file uploaded on the start screen (verifications, insurance wise, verification type or status) |
@@ -268,12 +268,20 @@ worked today against the target, closed today and **left over** (allocated befor
 into **high priority** (the High tier) and other. Worked and closed today count the whole day from midnight IST,
 entries before the shift time too, as Team status and My day do (a night shift's count to the day it began).
 
-- **On the floor now**: each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
+- **Working now** (on the floor now): each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
   after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
-  been on it (the claim number opens the claim), pace today against their target, on desk, closed today and left
+  been on it, or, with no claim open, the claim they last worked (in the last 7 days) with its client and how long ago (the claim
+  number opens the claim; a claim of a client that is not yours shows only as another client's claim), pace today against their target, on desk, closed today and left
   over. Managers and above see the billers grouped by team lead: each group opens and closes (a closed group shows
   working, idle and on desks), **Expand all** / **Collapse all**, or **One list**. Click a biller's name to open
   **their claims**.
+- **Open escalations**: the Escalation tracker's open escalations on your clients (and the client, location or team lead
+  picked), oldest first: the client, the SR number (and the claim number when it has one), who logged it and how long ago, and
+  the working hours it has been open. Red as in the tracker: open over 24 working hours with no reason given yet, or past
+  the expected close date.
+- **Flagged by billers**: the claims billers flagged for the team lead that still wait for an answer, as in Needs attention:
+  the claim number (it opens the claim), client, who flagged it and how long ago, and the working hours waiting; red past
+  the 48 working hours, not while it is on hold. The **Live status** tab counts these two lists, red when one of them is red.
 - Below the floor: unassigned claims, claims with Posting / Submission and follow-ups due today.
 - Posting and Submission people are not on the floor: they have their own desks.
 - **Shastra**: each person's attendance in Purview Shastra now, read every 2 minutes with Shastra's own rules
@@ -590,7 +598,10 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 "Extra client access"):
 
 - **View only**: the client, its claims, dashboards and reports become visible to
-  them, nothing can be changed. The card shows "shared · view only".
+  them, nothing can be changed. The card shows "shared · view only". Its claims open read only, marked **View only**:
+  the claim, its history, its notes and files, with no entry, note, file, assignment or other action, and the server
+  refuses any change, whatever else the person once was on the claim. A view-only share never puts the client's claims on
+  anyone's list (Can edit does), and it does not take Payment posting or Submission people past their desk.
 - **Can edit**: they work it like their own client: upload, allocate, answer
   Needs attention, keep its RACI. A shared biller can be picked in allocation.
 

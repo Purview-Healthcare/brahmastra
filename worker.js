@@ -3236,7 +3236,8 @@ async function billerFor(env, userId, clientId) {
   const projects = (u.projects || []).map((p) => (p && p.name != null ? p.name : p)).filter(Boolean);
   if (!projects.length && !(u.scope_projects || []).length && u.source !== "roster") return u;
   const sc = await scopeOf(env, u);
-  return sc == null || sc.includes(clientId) ? u : null;
+  // a view-only share is for looking: it never puts the client's claims on someone's list (Can edit does: README, Crossover access)
+  return sc == null || (sc.includes(clientId) && !viewOnlyOf(u, clientId)) ? u : null;
 }
 /* Who a hand-off may be given to (the same idea as billerFor, for the desks): the active people of its desk (Payment posting for a
    posting hand-off; Submission for a submission, a rejection or a recheck) who can work the claim's client: it is in their
@@ -3259,6 +3260,10 @@ const canEditClient = (user, clientId) => inScope(user, clientId) && !(user.scop
 const leadFor = (user, clientId) => user.role === "supervisor" && canEditClient(user, clientId);
 const viewOnly = () => denied("This client is shared with you view-only: you can look, not change it.");
 const editableOr = (user, clientId) => { if (!inScope(user, clientId)) throw outOfScope(); if (!canEditClient(user, clientId)) throw viewOnly(); };
+// A view-only share is someone's only way to a client: they may open its claims to read (README: View only), never change them,
+// whatever else they are on a claim (who last worked it, whose list it is on, who wrote an entry). Every claim write checks it.
+const viewOnlyOf = (user, clientId) => !!(user && user.scope_view_only && user.scope_view_only.has(clientId));
+const writableOr = (user, clientId) => { if (viewOnlyOf(user, clientId)) throw viewOnly(); };
 // The clients someone may change: their scope minus the view-only shares (null means everything).
 const editScope = (user) => (!user || !user.scope ? null : (user.scope_view_only && user.scope_view_only.size ? user.scope.filter((id) => !user.scope_view_only.has(id)) : user.scope));
 const editScopeSql = (user, col) => (editScope(user) == null ? "" : ` AND ${col} IN ${IN_LIST}`);
@@ -3777,6 +3782,10 @@ async function canSeeClaim(env, user, c) {
 const postedClosed = (c) => !!c && c.state === "closed" && c.handoff_status === "posted";
 const POSTED_CLOSED_SQL = "(c.state = 'closed' AND c.handoff_status = 'posted')";
 async function canViewClaim(env, user, c) { return postedClosed(c) || (await canSeeClaim(env, user, c)); }
+/* A view-only share of the claim's client opens its claims to read: the claim, its history, notes and files (README: View only).
+   Not for Payment posting and Submission people: a share does not take them past their desk. */
+const viewShareOf = (user, c) => !!c && !deskOf(user) && viewOnlyOf(user, c.client_id);
+async function canReadClaim(env, user, c) { return viewShareOf(user, c) || (await canViewClaim(env, user, c)); }
 
 /* --------------------------------------------------------- the ops */
 /* ---- how a claim is recognised across uploads ----
@@ -4753,7 +4762,29 @@ const OPS = {
       (await all(env, `SELECT DISTINCT nt.user_id AS id FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.user_id IN ${IN_LIST} AND nt.created_at > ?${cw}${lw}`, ida, since, ...ca, ...la)).forEach((x) => touched.add(x.id));
       people = people.filter((u) => touched.has(u.id) || f.teamIds.has(u.id));
     }
-    if (!people.length) return { rows: [], totals: { people: 0 }, leads: f.leads, can_pick_lead: f.canPickLead };
+    // The two lists under the floor, in this person's view (their clients; a client, location or team lead picked narrows them):
+    // the Escalation tracker's open escalations, red as the tracker shows them (open over 24 working hours with no reason given yet,
+    // or past the expected close date), and the claims billers flagged for the team lead still waiting for an answer (red past the
+    // 48 working hours of Needs attention, unless on hold).
+    const todayIst = istISO(now), ew = f.clientIds ? ` AND e.client_id IN ${IN_LIST}` : "";
+    const escalations = (await all(env, `SELECT e.id, e.client_id, e.sr, e.kind, e.dept, e.claim_no, e.created_at, e.created_by_name, e.delay_reason, e.expected_on, cl.name AS client_name
+        FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id WHERE e.status != 'resolved'${scopeSql(user, "e.client_id")}${ew}${f.locationId ? " AND (e.location_id = ? OR e.location_id IS NULL)" : ""}
+        ORDER BY e.created_at LIMIT 300`, ...scopeArgs(user), ...ca, ...la))
+      .map((e) => { const past = escPast(e.created_at, now), reason = past && !e.delay_reason, late = !!e.expected_on && e.expected_on < todayIst;
+        return { id: e.id, client_id: e.client_id, client_name: e.client_name || "", sr: e.sr, kind: escKind(e), dept: e.dept, claim_no: e.claim_no || "", by: e.created_by_name || "", at: e.created_at,
+          open_hours: Math.floor(workingHoursBetween(e.created_at, now)), past_24: past, needs_reason: reason, past_expected: late, red: reason || late }; })
+      .sort((a, b) => b.red - a.red || a.at - b.at);
+    const flagged = (await all(env, `SELECT c.id, c.client_id, c.claim_no, c.escalated_at, cl.name AS client_name, COALESCE(fb.name, u.name) AS by_name,
+        EXISTS (SELECT 1 FROM tat_holds t WHERE t.kind = 'flag' AND t.ref_id = c.id AND t.cleared_at IS NULL AND t.until >= ? AND (t.since IS NULL OR t.since = c.escalated_at)) AS held
+        FROM claims c LEFT JOIN users fb ON fb.id = c.escalated_by LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN clients cl ON cl.id = c.client_id
+        WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")}${cw}${lw} ORDER BY c.escalated_at LIMIT 300`,
+      todayIst, ...scopeArgs(user), ...ca, ...la))
+      .map((r) => { const late = !!r.escalated_at && addWorkingHours(r.escalated_at, ATTN_TAT_HOURS) < now && !r.held;
+        return { id: r.id, client_id: r.client_id, client_name: r.client_name || "", claim_no: r.claim_no || "", by: r.by_name || "", at: r.escalated_at,
+          waiting_ms: r.escalated_at ? workingHoursBetween(r.escalated_at, now) * 3600000 : 0, held: !!r.held, red: late }; })
+      .sort((a, b) => b.red - a.red || (a.at || 0) - (b.at || 0));
+    const lists = { escalations, flagged, attn_tat_hours: ATTN_TAT_HOURS };
+    if (!people.length) return { rows: [], totals: { people: 0 }, leads: f.leads, can_pick_lead: f.canPickLead, ...lists };
     const ids = people.map((u) => u.id), ida = listArg(ids);
     const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, c.tier, c.balance, c.follow_up_on, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
       WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN ${IN_LIST}${cw}${lw}`, ida, ...ca, ...la);
@@ -4761,6 +4792,9 @@ const OPS = {
     const notes = await all(env, `SELECT nt.user_id, nt.kind, nt.created_at, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here FROM notes nt JOIN claims c ON c.id = nt.claim_id
       WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN ${IN_LIST}`, ...ca, ...la, since, ida);
     const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN ${IN_LIST}${cw}${lw}`, since, ida, ...ca, ...la);
+    // the claim each person last worked (their latest entry in the last 7 days, on any client) and when: shown when no claim is open
+    const lastWork = new Map((await all(env, `SELECT n.user_id, n.claim_id, MAX(n.created_at) AS at, c.claim_no, c.client_id, cl.name AS client_name FROM notes n JOIN claims c ON c.id = n.claim_id
+      LEFT JOIN clients cl ON cl.id = c.client_id WHERE n.kind = 'work' AND n.user_id IN ${IN_LIST} AND n.created_at > ? GROUP BY n.user_id`, ida, now - 7 * 86400000)).map((r) => [r.user_id, r]));
     const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN ${IN_LIST}`, today, ida)).map((r) => [r.user_id, r]));
     const live = await shastraLive(env);
     const weekdayToday = isWorkDay(today);   // Monday to Friday, not a Shastra holiday
@@ -4808,6 +4842,8 @@ const OPS = {
         // client's claim, and then nothing of it is shown (claim number, client, payer, balance), only that it is elsewhere
         current: cur ? { ...(inScope(user, cur.client_id) ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance } : { id: null, claim_no: "", client: "", payer: "", balance: null, elsewhere: true }),
           minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
+        // the same rule for the claim last worked: its number and client only when the client is one of the viewer's
+        last_claim: lastWork.has(u.id) ? (({ claim_id, claim_no, client_id, client_name, at }) => ({ at, ...(inScope(user, client_id) ? { id: claim_id, claim_no: claim_no || "", client: client_name || "" } : { id: null, claim_no: "", client: "", elsewhere: true }) }))(lastWork.get(u.id)) : null,
         status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, off_day: offDay, in_shift: inShift,
         untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null };
     });
@@ -4815,7 +4851,7 @@ const OPS = {
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
     const present = rows.filter((r) => r.status !== "out");
     const add = (k) => rows.reduce((t, r) => t + r[k], 0);
-    return { rows, weekend: !weekdayToday, holiday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
+    return { rows, ...lists, weekend: !weekdayToday, holiday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
       capacity: weekdayToday ? present.reduce((t, r) => t + r.capacity, 0) : 0, in_weekend: weekdayToday ? null : present.filter((r) => !r.off_day).length, carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
       behind: rows.filter((r) => r.behind).length, working: rows.filter((r) => r.status === "working").length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
   },
@@ -6891,16 +6927,17 @@ const OPS = {
   "claims.get": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT c.*, u.name AS assigned_name, wb.name AS last_worked_name, l.name AS location_name, cl.name AS client_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN users wb ON wb.id = c.last_worked_by LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    const see = await canSeeClaim(env, user, c);
-    if (!see && !postedClosed(c)) throw denied("This claim is not in your queue.");
-    return claimBundle(env, user, c, { viewOnly: !see });
+    const see = await canSeeClaim(env, user, c), share = viewShareOf(user, c);
+    if (!see && !share && !postedClosed(c)) throw denied("This claim is not in your queue.");
+    // a view-only share reads it, whatever else the person was on the claim: nothing to work, add or change
+    return claimBundle(env, user, c, { viewOnly: !see || share, viewShare: share });
   },
   /* Everything that happened to one claim, newest first: loads and refreshes, assignments, openings, work entries
      (SAAG, the note fields and what changed), notes, escalations and answers, skips, files and state changes. */
   "claims.timeline": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT c.*, u.name AS assigned_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
-    if (!(await canViewClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    if (!(await canReadClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const [notes, files, events] = await Promise.all([
       all(env, "SELECT * FROM notes WHERE claim_id = ? ORDER BY created_at DESC LIMIT 300", c.id),
       all(env, "SELECT id, user_name, name, type, size, created_at FROM attachments WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id),
@@ -6918,7 +6955,7 @@ const OPS = {
       if (n.kind === "work") {
         const ev = workEv.find((e) => e.user_id === n.user_id && Math.abs(e.at - n.created_at) < 5000);
         const d = ev ? jsonObj(ev.data_json) : {};
-        out.push({ at: n.created_at, kind: "work", id: n.id, editable: !postedClosed(c) && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
+        out.push({ at: n.created_at, kind: "work", id: n.id, editable: !postedClosed(c) && !viewOnlyOf(user, c.client_id) && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
           follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at, edited_by: (n.edited_by && edNames.get(n.edited_by)) || "" });
       } else if (n.kind === "skip") out.push({ at: n.created_at, kind: "skip", who: n.user_name, text: n.comment });
       else if (/^Escalation answered:/.test(n.comment || "")) out.push({ at: n.created_at, kind: "answer", who: n.user_name, text: n.comment.replace(/^Escalation answered:\s*/, "") });
@@ -7109,12 +7146,14 @@ const OPS = {
     const now = Date.now();
     // "Next" while a claim is open: that claim goes back to the list (nothing saved) and the following one opens.
     const skipId = str(payload.skip_id, 60);
-    if (skipId) await run(env, "UPDATE claims SET state = 'assigned', started_at = NULL, updated_at = ? WHERE id = ? AND assigned_to = ? AND state = 'in_progress'", now, skipId, user.id);
-    let c = await one(env, "SELECT * FROM claims WHERE assigned_to = ? AND state = 'in_progress' LIMIT 1", user.id);
+    // a claim of a client this person only has a view-only share of is never opened for work (it is read only to them)
+    const vo = [...(user.scope_view_only || [])], voSql = vo.length ? ` AND client_id NOT IN ${IN_LIST}` : "", voa = vo.length ? [listArg(vo)] : [];
+    if (skipId) await run(env, `UPDATE claims SET state = 'assigned', started_at = NULL, updated_at = ? WHERE id = ? AND assigned_to = ? AND state = 'in_progress'${voSql}`, now, skipId, user.id, ...voa);
+    let c = await one(env, `SELECT * FROM claims WHERE assigned_to = ? AND state = 'in_progress'${voSql} LIMIT 1`, user.id, ...voa);
     // Pick the top claim in two plain steps (no RETURNING / subquery update), retrying once if it was taken meanwhile.
     for (let attempt = 0; !c && attempt < 2; attempt++) {
-      const cand = await one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)
-          ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, first_up DESC, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority + ${TURN90_BOOST()} DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, skipId || "", today, today);
+      const cand = await one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)${voSql}
+          ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, first_up DESC, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority + ${TURN90_BOOST()} DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, ...voa, skipId || "", today, today);
       if (!cand) break;
       const r = await run(env, "UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned'", now, now, cand.id);
       if (changesOf(r)) { c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id); await claimEvent(env, c.id, user, "opened", "Next claim").run(); }
@@ -7126,6 +7165,7 @@ const OPS = {
   "queue.skip": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", payload.id);
     if (!c || c.assigned_to !== user.id) throw denied("This claim is not in your queue.");
+    writableOr(user, c.client_id);
     if (c.state !== "in_progress") throw bad("This claim is not open on your desk.");
     const now = Date.now();
     const reason = str(payload.reason, 500).trim();
@@ -7141,6 +7181,7 @@ const OPS = {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
     if (c.assigned_to !== user.id && !leadFor(user, c.client_id)) throw denied("This claim is not on your desk.");
+    writableOr(user, c.client_id);
     if (!["in_progress", "assigned", "completed"].includes(c.state)) throw bad("This claim is not open for work (it is " + c.state + ").");
     // Saved from My day (the claim open on the desk): a second save from another tab or a double click adds nothing.
     if (payload.desk && !(c.state === "in_progress" && c.assigned_to === user.id)) throw bad("This claim was already saved, or it is no longer open on your desk.");
@@ -7206,6 +7247,7 @@ const OPS = {
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
     if (c.assigned_to !== user.id && !leadFor(user, c.client_id)) throw denied("This claim is not on your desk.");
+    writableOr(user, c.client_id);
     if (!["assigned", "in_progress", "completed"].includes(c.state)) throw bad("This claim is " + c.state + " and cannot be opened for work.");
     const now = Date.now();
     await env.DB.batch([
@@ -7246,6 +7288,7 @@ const OPS = {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", n.claim_id);
     if (n.user_id !== user.id && !(c && leadFor(user, c.client_id))) throw denied("Only the author or a team lead can edit this note.");
     if (!c) throw bad("Claim not found.");
+    writableOr(user, c.client_id);
     if (deskOf(user) && !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     if (postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): its notes can no longer be edited.");
     const saag = validateWork(payload);
@@ -7314,6 +7357,7 @@ const OPS = {
     const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
     if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    writableOr(user, c.client_id);
     // A note in the standard format (DOS, CLM#, DENIAL, SOURCE/REF, PRE CALL CHECK, RCA/FINDINGS, ACTION) without a SAAG entry; plain text still works.
     let comment, fields = null;
     if (payload.note) {
@@ -7342,6 +7386,7 @@ const OPS = {
     const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
     if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    writableOr(user, c.client_id);
     const name = str(payload.name, 200).replace(/[\\/\u0000-\u001f]/g, "_").trim();
     if (!name) throw bad("The file has no name.");
     const data = String(payload.data || "");
@@ -7366,7 +7411,7 @@ const OPS = {
     const a = await one(env, "SELECT * FROM attachments WHERE id = ?", payload.id);
     if (!a) throw bad("This file is no longer attached.");
     const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", a.claim_id);
-    if (!c || !(await canViewClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    if (!c || !(await canReadClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", a.id);
     return { name: a.name, type: a.type, size: a.size, data: parts.map((p) => p.data).join("") };
   },
@@ -7378,6 +7423,7 @@ const OPS = {
     const ac = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", a.claim_id);
     if (deskOf(user) && !(ac && (await canSeeClaim(env, user, ac)))) throw denied("This claim is not in your queue.");
     if (!(ac && leadFor(user, ac.client_id)) && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
+    if (ac) writableOr(user, ac.client_id);
     // a claim Posting closed is read only: the EOB and the proof its posting rests on stay with it (files can still be added)
     if (postedClosed(ac)) throw bad("Posting closed this claim (the payment is posted): its files can no longer be removed.");
     await env.DB.batch([
@@ -7892,6 +7938,7 @@ const OPS = {
     if (!h) throw bad("That hand-off was not found.");
     if (!["pending", "assigned"].includes(h.status)) throw bad("This hand-off is already closed.");
     if (!(user.is_admin || h.lead_id === user.id || h.backup_id === user.id)) throw denied("Only the department lead or backup assigns these.");
+    writableOr(user, h.client_id);
     const to = await one(env, "SELECT id, name FROM users WHERE id = ? AND active = 1", payload.user_id);
     if (!to) throw bad("Pick an active team member.");
     // Being given a hand-off opens its claim to that person and lets them close it: only someone of this desk who can work the
@@ -7920,6 +7967,7 @@ const OPS = {
       const ok = recheck && (isRecheckBiller(user, h, c) || (cl0 && [cl0.submission_lead, cl0.submission_backup, cl0.rejection_lead, cl0.rejection_backup].includes(user.id)) || leadFor(user, h.client_id));
       if (!ok) throw denied("This hand-off is not yours.");
     }
+    writableOr(user, h.client_id);
     // The page says where the hand-off stood when the person chose (seen). If someone else has since moved it between the desk and
     // waiting on the client, the choice was made on an old screen: it is refused, so the first of two different choices wins.
     const seen = str(payload.seen, 20), side = (st) => (st === "client" ? "client" : "desk");
@@ -8740,8 +8788,12 @@ const OPS = {
       const helpIds = new Set(); for (const part of chunks(lt.map((t) => t.id), 80)) for (const h of await all(env, `SELECT DISTINCT task_id FROM team_task_people WHERE status = 'help' AND task_id IN (${part.map(() => "?").join(",")})`, ...part)) helpIds.add(h.task_id);
       tk = { open: lt.length, late: lt.filter((t) => !(t.hold_until && t.hold_until >= today) && now > t.due_at).length, help: helpIds.size };
     }
+    // For the Live status tab (not part of n): the Escalation tracker's open escalations in this person's view, and how many are red
+    // as the tracker shows them (open over 24 working hours with no reason given yet, or past the expected close date)
+    const eo = await all(env, `SELECT created_at, delay_reason, expected_on FROM escalations WHERE status != 'resolved'${one1("client_id")}${scopeSql(user, "client_id")}`, ...cargs, ...scopeArgs(user));
+    const istToday = istISO(now), escRed = eo.filter((e) => (escPast(e.created_at, now) && !e.delay_reason) || (!!e.expected_on && e.expected_on < istToday)).length;
     return { n: ((r && r.n) || 0) + ((cr && cr.n) || 0) + ((fd && fd.n) || 0) + tk.late + tk.help, escalations: (r && r.n) || 0, client_to_send: (cr && cr.n) || 0, from_desks: (fd && fd.n) || 0, overdue: (r && r.overdue) || 0, my_desk: (mine && mine.n) || 0,
-      tasks: tk.open, tasks_late: tk.late, tasks_help: tk.help };
+      tasks: tk.open, tasks_late: tk.late, tasks_help: tk.help, esc_open: eo.length, esc_late: escRed };
   },
   /* Supervisor review of anything in Needs attention (a biller's escalation, or a claim a department sent back): four notes
      (why it came, what was reviewed, the findings, the next action) go into the claim history, then it goes to the biller who
@@ -9039,17 +9091,17 @@ async function claimBundle(env, user, c, opts = {}) {
   const { raw_json, lines_json, ...rest } = c;
   const now = Date.now();
   const edNames = await namesOf(env, notes.map((n) => n.edited_by));
-  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), edited_by_name: (n.edited_by && edNames.get(n.edited_by)) || "", editable: !locked && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
+  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), edited_by_name: (n.edited_by && edNames.get(n.edited_by)) || "", editable: !locked && !opts.viewOnly && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
   const handoffs = await all(env, `SELECT h.*, l.name AS lead_name, b.name AS backup_name, a.name AS assigned_name FROM handoffs h LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
       LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
   const role = await handoffRole(env, user, c.id);
   const limits = payerKey(c.payer) ? await one(env, "SELECT tfl_days, afl_days, note, updated_at, updated_by_name FROM payer_limits WHERE client_id = ? AND payer_key = ?", c.client_id, payerKey(c.payer)) : null;
-  const attachments = files.map((a) => ({ ...a, deletable: !locked && (leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS)) }));
+  const attachments = files.map((a) => ({ ...a, deletable: !locked && !opts.viewOnly && (leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS)) }));
   // whether this client has an active Posting / Submission / Rejections person (the same rule as queue.complete): a claim sent
   // there leaves AR with no follow-up date until the desk is done
   const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")}, subcheck_hours FROM clients WHERE id = ?`, c.client_id);
   const [dp, ds, dr] = await Promise.all(["posting", "submission", "rejection"].map((d) => deskPeople(env, dc, d)));
-  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr, recheck_hours: subcheckHours(dc), locked, view_only: !!opts.viewOnly }, notes: shaped, attachments, siblings,
+  return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr, recheck_hours: subcheckHours(dc), locked, view_only: !!opts.viewOnly, view_share: !!opts.viewShare }, notes: shaped, attachments, siblings,
     handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role, payer_limits: limits || null };
 }
 

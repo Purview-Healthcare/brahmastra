@@ -1813,10 +1813,11 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   useEffect(() => { document.title = pageLabel + " · Brahmastra"; }, [pageLabel]);
   const allowedViews = [...navItems(nav).map(([k]) => k), "mytasks", ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   useEffect(() => { if (!menu && !openG) return; const h = () => { setMenu(false); setOpenG(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu, openG]);
-  // Live status carries the escalation count (claims flagged by billers waiting for an answer, the first line of its Needs you);
-  // Needs attention, and the Work group while it is closed, carry the whole attention count
+  // Live status carries what its two lists show: the open escalations (Escalation tracker) and the claims flagged by billers waiting
+  // for an answer, red once one is past its time; Needs attention, and the Work group while it is closed, carry the whole attention count
+  const liveN = attention ? (attention.escalations || 0) + (attention.esc_open || 0) : 0;
   const navBadge = (k) => k === "attention" && attention && attention.n > 0 ? <span className={"badge " + (attention.overdue || attention.tasks_late ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.n}</span>
-    : k === "live" && attention && attention.escalations > 0 ? <span className={"badge " + (attention.overdue ? "red" : "amber")} style={{ marginLeft: 6 }} title="Claims flagged by billers waiting for your answer">{attention.escalations}</span>
+    : k === "live" && liveN > 0 ? <span className={"badge " + (attention.overdue || attention.esc_late ? "red" : "amber")} style={{ marginLeft: 6 }} title={[attention.esc_open ? plural(attention.esc_open, "open escalation") : "", attention.escalations ? plural(attention.escalations, "claim flagged by a biller", "claims flagged by billers") + " waiting for an answer" : ""].filter(Boolean).join(" and ")}>{liveN}</span>
     : k === "teamtasks" && attention && attention.tasks > 0 ? <span className={"badge " + (attention.tasks_late || attention.tasks_help ? "red" : "amber")} style={{ marginLeft: 6 }}>{attention.tasks}</span>
     : k === "mytasks" && tasks && tasks.open > 0 ? <span className={"badge " + (tasks.late ? "red" : tasks.unseen ? "teal" : "amber")} style={{ marginLeft: 6 }} title={tasks.late ? tasks.late + " past the TAT" : tasks.unseen ? tasks.unseen + " new" : "to do"}>{tasks.open}</span>
     : k === "handoffs" && handoffs && handoffs.n > 0 ? <span className={"badge " + (handoffs.overdue ? "red" : "amber")} style={{ marginLeft: 6 }}>{handoffs.n}</span>
@@ -2038,7 +2039,7 @@ function LiveStatusView({ ctx, me, go, params }) {
   const openClaims = (extra) => go("claims", { clientId, locationId: locId, ...extra });
   return (
     <div className="stack">
-      <div className="row between top"><div><h1>Live status</h1><div className="sub">What everyone is working on right now, and the claims on their desks.</div></div><span className="small muted">{stamp}</span></div>
+      <div className="row between top"><div><h1>Live status</h1><div className="sub">What everyone is working on right now, the claims on their desks, the open escalations and the claims billers flagged for you.</div></div><span className="small muted">{stamp}</span></div>
       <div className="row dash-filters" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
         <div style={{ minWidth: 220 }}><ClientPicker ctx={ctx} clientId={clientId} setClientId={(v) => { setClientId(v); setLocId(""); }} allowAll /></div>
         {clientId && <div style={{ minWidth: 180 }}><LocationPicker ctx={ctx} clientId={clientId} locId={locId} setLocId={setLocId} /></div>}
@@ -2056,6 +2057,7 @@ function LiveStatusView({ ctx, me, go, params }) {
         <Kpi label="Left over" value={<span className={t.carried ? "amber-ink" : ""}>{fmtInt(t.carried)}</span>} sub={t.carried ? <><span className="red-ink b">{fmtInt(t.left_high)} high priority</span> · {fmtInt(t.carried - t.left_high)} other</> : "allocated before this shift, all worked"} />
       </div>}
       <LiveFloor ctx={ctx} me={me} go={go} q={live} clientId={clientId} locId={locId} grouped={canLead && !leadId} filtered={!!(clientId || leadId)} />
+      <LiveLists ctx={ctx} me={me} go={go} q={live} />
       {d && <div className="grid g3">
         <Kpi label="Unassigned" value={fmtInt(st("open").n)} sub={fmtMoney(st("open").amt) + " waiting for allocation"} onClick={() => openClaims({ state: "open" })} />
         <Kpi label="With Posting / Submission" value={fmtInt(st("in_process").n)} sub={fmtMoney(st("in_process").amt) + " in process"} onClick={() => openClaims({ state: "in_process" })} />
@@ -5876,7 +5878,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   const [ver, setVer] = useState(0);
   const [patientOf, setPatientOf] = useState(null);
   const c = q.data && q.data.claim;
-  // view only: a claim Posting closed, opened by someone it is not with (anyone may read it; nothing to work here)
+  // view only: a claim Posting closed, opened by someone it is not with (anyone may read it; nothing to work here), or a claim of a
+  // client shared with this person view-only (they read it, its history and notes; the server refuses every change)
   const ro = !!(c && c.view_only);
   // a desk still has the claim (Payment posting, Submission or Rejections): a team lead closes or excludes it once the desk is done
   const atDesk = ((q.data && q.data.handoffs) || []).find((h) => h.dept !== "subcheck" && ["pending", "assigned", "client"].includes(h.status));
@@ -5893,7 +5896,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
         {!c && !q.error && <Spinner />}
         {c && (
           <div className="stack" style={{ gap: 14, paddingRight: 30 }}>
-            <ClaimHeader c={c}>{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={L.close}>Close</button></ClaimHeader>
+            <ClaimHeader c={c}>{c.view_share && <span className="badge amber" title="This client is shared with you view-only">view only</span>}{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={L.close}>Close</button></ClaimHeader>
+            {c.view_share && <div className="alert warn view-only-note"><b>View only.</b> {c.client_name || "This client"} is shared with you to look at: you can read this claim, its history and its notes. Nothing can be added, changed or assigned here.</div>}
             {c.locked && <div className="alert info"><b>Posting closed this claim: the payment is posted.</b> {ro ? "Anyone can open it to read; it is not on your desk, so there is nothing to work here." : "Anyone can open it to read."} Its notes can no longer be edited (only QA is left).</div>}
             <ClaimInfo c={c} siblings={q.data.siblings} />
             <HandoffCard handoffs={q.data.handoffs} role={q.data.handoff_role} onChanged={changed} />
@@ -6910,6 +6914,47 @@ const SH_TONE = { present: "green", late: "amber", break: "amber", out: "gray", 
 const SH_OFF_NOTE = { off: "", pending: "Shastra status shows in a moment.", not_set_up: "Shastra status shows once the live attendance feed is set up in Purview Shastra (dev/shastra-live-feed.sql).", error: "Purview Shastra did not answer just now; Shastra status will show again by itself.", stale: "Purview Shastra has not answered for over 10 minutes, so its status is not shown; it comes back by itself." };
 const shCell = (r) => !r.shastra ? <span className="muted">–</span>
   : <><span className={"badge " + (SH_TONE[r.shastra.state] || "gray")}>{r.shastra.label}</span>{r.shastra.sub ? <div className={"tiny " + (r.shastra.state === "missing" ? "red-ink b" : "muted")}>{r.shastra.sub}</div> : null}</>;
+/* How long ago, in plain words: just now, 25 min ago, 3 h ago, 2 days ago. */
+const agoText = (ms) => { if (!ms) return ""; const m = Math.max(0, Math.floor((Date.now() - ms) / 60000)); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.floor(m / 60) + " h ago" : plural(Math.floor(m / 1440), "day") + " ago"; };
+/* Live status, under the floor: the open escalations (Escalation tracker) and the claims billers flagged for the team lead that
+   still wait for an answer, in the viewer's clients (and the client, location or team lead picked). Red as on their own pages. */
+function LiveLists({ ctx, me, go, q }) {
+  const [claim, setClaim] = useState(null);
+  const d = q.data; if (!d) return null;
+  const esc = d.escalations || [], fl = d.flagged || [], SHOW = 12;
+  const count = (xs) => <span className={"badge " + (xs.some((x) => x.red) ? "red" : xs.length ? "amber" : "gray")} style={{ marginLeft: 6 }}>{xs.length}</span>;
+  const escState = (e) => e.needs_reason ? <span className="badge red">{e.open_hours} h · reason needed</span> : e.past_expected ? <span className="badge red">past the expected date</span>
+    : <span className={"badge " + (e.past_24 ? "amber" : "gray")}>{e.open_hours} h</span>;
+  return (
+    <div className="grid g2 live-lists">
+      <div className="card live-esc">
+        <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}><div className="cv-sec" style={{ margin: 0 }}>Open escalations{count(esc)}</div>
+          <button type="button" className="btn sm link" onClick={() => go("escalations", { status: "open" })}>Escalation tracker ›</button></div>
+        <div className="tiny muted">Still open in the Escalation tracker, oldest first. Red: open over 24 working hours with no reason given yet, or past the expected close date.</div>
+        {!esc.length ? <div className="mt8"><Empty>No open escalations.</Empty></div> : <div className="table-wrap mt8"><table className="t"><thead><tr><th>SR / claim</th><th>Client</th><th>Logged by</th><th>Open</th></tr></thead>
+          <tbody>{esc.slice(0, SHOW).map((e) => <tr key={e.id} className={e.red ? "tat-missed" : ""}>
+            <td className="small"><b className="mono">SR{e.sr}</b>{e.claim_no ? <span className="mono"> · {e.claim_no}</span> : null}<div className="tiny muted">{e.kind === "internal" ? "Internal" : "External"} · {e.dept}</div></td>
+            <td className="small">{e.client_name}</td>
+            <td className="small">{e.by || "–"}<div className="tiny muted">{agoText(e.at)}</div></td>
+            <td style={{ whiteSpace: "nowrap" }}>{escState(e)}</td></tr>)}</tbody></table></div>}
+        {esc.length > SHOW && <button type="button" className="btn sm link mt8" onClick={() => go("escalations", { status: "open" })}>{fmtInt(esc.length - SHOW)} more in the Escalation tracker ›</button>}
+      </div>
+      <div className="card live-flag">
+        <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}><div className="cv-sec" style={{ margin: 0 }}>Flagged by billers{count(fl)}</div>
+          <button type="button" className="btn sm link" onClick={() => go("attention", { tab: "esc" })}>Needs attention ›</button></div>
+        <div className="tiny muted">Claims billers flagged for you, waiting for your answer, oldest first. Red: past the {d.attn_tat_hours || 48} working hours (not while on hold).</div>
+        {!fl.length ? <div className="mt8"><Empty>Nothing flagged is waiting.</Empty></div> : <div className="table-wrap mt8"><table className="t"><thead><tr><th>Claim #</th><th>Client</th><th>Flagged by</th><th>Waiting</th></tr></thead>
+          <tbody>{fl.slice(0, SHOW).map((r) => <tr key={r.id} className={r.red ? "tat-missed" : ""}>
+            <td><button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.id)}>{r.claim_no || "claim"}</button></td>
+            <td className="small">{r.client_name}</td>
+            <td className="small">{r.by || "–"}<div className="tiny muted">{agoText(r.at)}</div></td>
+            <td style={{ whiteSpace: "nowrap" }}>{r.held ? <span className="badge gray">on hold</span> : <span className={"badge " + (r.red ? "red" : "gray")}>{r.red ? "TAT missed · " : ""}{fmtWait(r.waiting_ms)}</span>}</td></tr>)}</tbody></table></div>}
+        {fl.length > SHOW && <button type="button" className="btn sm link mt8" onClick={() => go("attention", { tab: "esc" })}>{fmtInt(fl.length - SHOW)} more in Needs attention ›</button>}
+      </div>
+      {claim && <ClaimDrawer id={claim} ctx={ctx} me={me} onClose={() => setClaim(null)} onChanged={() => q.reload()} />}
+    </div>
+  );
+}
 function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
   const [busy, setBusy] = useState(false);
   const [outFor, setOutFor] = useState(null);
@@ -6938,7 +6983,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
   const setAll = (open) => setClosed(open ? {} : Object.fromEntries(groups.map((g) => [g.key || "none", true])));
   return (
     <div className="card dash-team">
-      <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}><div className="cv-sec" style={{ margin: 0 }}>On the floor now</div>
+      <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}><div><div className="cv-sec" style={{ margin: 0 }}>Working now</div><div className="tiny muted">On the floor now: each person, their state and the claim they are on (or the last one they worked)</div></div>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>{grouped && <><div className="seg2">{[["tl", "By team lead"], ["one", "One list"]].map(([k, l]) => <button key={k} type="button" className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</div>
           {byTl && <><button type="button" className="btn sm" onClick={() => setAll(true)}>Expand all</button><button type="button" className="btn sm" onClick={() => setAll(false)}>Collapse all</button></>}</>}
           <span className="small muted">click a name to open their claims, a claim number to open the claim</span></div></div>
@@ -6958,7 +7003,10 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 <td className="sh-cell">{shCell(r)}</td>
                 <td><span className={"badge " + TT_STATUS[r.status][0]}>{TT_STATUS[r.status][1]}{r.status === "idle" && r.idle_min != null ? " · " + r.idle_min + " min" : ""}</span></td>
                 <td style={{ minWidth: 190 }}>{r.current ? <>{r.current.elsewhere ? <span className="small muted" title="A claim of a client that is not one of yours">on another client's claim</span> : <button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.current.id)}>{r.current.claim_no || "claim"}</button>}{r.current.minutes != null ? <span className="small muted"> · {r.current.minutes} min</span> : null}<div className="tiny muted">{[r.current.client, r.current.payer, r.current.balance != null ? fmtMoney(r.current.balance) : ""].filter(Boolean).join(" · ")}</div></>
-                  : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span> : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })}</span> : <span className="tiny muted">–</span>}</td>
+                  : r.out ? <span className="tiny muted">{r.out.reason || "marked out"} · by {r.out.by}</span>
+                  // no claim open: the claim they last worked, and how long ago (its number and client only when the client is one of yours)
+                  : r.last_claim ? <><span className="small muted">last worked </span>{r.last_claim.elsewhere ? <span className="small muted" title="A claim of a client that is not one of yours">another client's claim</span> : <button type="button" className="btn link mono" style={{ padding: 0 }} onClick={() => setClaim(r.last_claim.id)}>{r.last_claim.claim_no || "claim"}</button>}<span className="small muted"> · {agoText(r.last_claim.at)}</span>{r.last_claim.client ? <div className="tiny muted">{r.last_claim.client}</div> : null}</>
+                  : r.last ? <span className="tiny muted">no claim open · last entry {new Date(r.last).toLocaleTimeString(LOC, { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })}</span> : <span className="tiny muted">–</span>}</td>
                 <td style={{ minWidth: 180 }}>{r.status === "out" ? <span className="tiny muted">–</span> : <><div className="row" style={{ gap: 8 }}><div className="bar" style={{ flex: 1, minWidth: 90 }}><i style={{ width: Math.min(100, r.worked / Math.max(1, r.capacity) * 100) + "%", background: r.behind ? "#E8A13C" : undefined }} /></div><b className="small">{r.worked}</b><span className="tiny muted">/ {r.capacity}</span></div>
                   <div className={"tiny " + (r.behind ? "amber-ink" : "muted")}>{r.expected ? (r.behind ? "behind: about " + r.expected + " expected by now" : "on pace (" + r.expected + " expected by now)") : r.worked ? "just started" : "shift not started"}{r.skips ? " · " + r.skips + " skipped" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div></>}</td>
                 <td className="num">{r.on_desk}</td>
@@ -7897,7 +7945,10 @@ function crCtx(DS, R, pageId, sel) {
     const of = (rg) => { const xs = !ds ? [] : ds.dateField && rg ? ds.recs.filter((r) => inR(r, rg)) : ds.recs.slice(); return ds && ds.dedupe ? crDedupe(xs) : xs; };
     cache[role] = { ds, all: of(range), prevAll: prevRange ? of(prevRange) : [] }; } return cache[role]; };
   return { pageId, sel, range, prevRange, ds: (role) => get(role).ds, rows: (role, except) => crApplySel(get(role).all, sel, except), rowsAll: (role) => get(role).all,
-    prev: (role) => crApplySel(get(role).prevAll, sel, null), hasPrev: (role) => !!(prevRange && get(role).prevAll.length),
+    prev: (role) => crApplySel(get(role).prevAll, sel, null), hasPrev: (role) => !!(prevRange && get(role).prevAll.length), prevAll: (role) => get(role).prevAll,
+    // claims, not entries: one row per claim (its latest entry in the period) first, then the filters, so a filter picks claims by
+    // their latest entry and a picked bar always matches the KPIs
+    claims: (role, except) => crApplySel(crClaimsOf(get(role).all), sel, except), prevClaims: (role) => crApplySel(crClaimsOf(get(role).prevAll), sel, null),
     snapshot: (role) => { const ds = DS[role]; return ds ? ds.recs : []; }, DS, R };
 }
 /* ---------- card factories and insight helpers (Third Eye's) ---------- */
@@ -7906,16 +7957,15 @@ const crDimLabel = (ds, field) => ({ payerKey: "Payer", bucket: "Aging bucket", 
 function crCardBar(c, field, title, opts = {}) {
   const role = opts.role, ds = c.ds(role); if (!ds) return null;
   const id = `${c.pageId}.${role}.${field}`;
-  let rows = c.rows(role, field); if (opts.rowFilter) rows = rows.filter(opts.rowFilter);
-  if (opts.claims) rows = crClaimsOf(rows);   // claims, not entries: one row per claim (its latest entry), as the page's KPIs count
+  // claims, not entries: one row per claim (its latest entry), as the page's KPIs count, before the filters
+  let rows = opts.claims ? c.claims(role, field) : c.rows(role, field); if (opts.rowFilter) rows = rows.filter(opts.rowFilter);
   const measure = (c.R.cardMeasure && c.R.cardMeasure[id]) || opts.measure || "count";
   let items = crAgg(rows, field, ds, { measure, order: opts.order });
   if (opts.filterItems) items = items.filter(opts.filterItems);
   if (!items.length) return { id, title, sub: opts.sub, cols: opts.cols || 6, type: "empty" };
   if (opts.emph) crEmph80(items);
   crMarkSel(items, c.sel[field]);
-  let prevRows = opts.prev && c.hasPrev(role) ? c.prev(role) : null; if (prevRows && opts.rowFilter) prevRows = prevRows.filter(opts.rowFilter);
-  if (prevRows && opts.claims) prevRows = crClaimsOf(prevRows);
+  let prevRows = opts.prev && c.hasPrev(role) ? (opts.claims ? c.prevClaims(role) : c.prev(role)) : null; if (prevRows && opts.rowFilter) prevRows = prevRows.filter(opts.rowFilter);
   const prevItems = prevRows ? crAgg(prevRows, field, ds, { measure }) : null;
   const m = CR_MEASURE[measure], sec = measure === "count" ? { key: "amount", label: "Amount", fmt: crF.money } : { key: "count", label: "Claims", fmt: crF.int };
   return { id, title, sub: opts.sub, cols: opts.cols || 6, type: opts.type || "hbar", dim: field, dimLabel: crDimLabel(ds, field), items, prevItems, measure, canToggle: true, measureLabel: m.label,
@@ -8179,9 +8229,11 @@ function crBuildPayment(c) {
 }
 function crBuildAR(c) {
   const R = c.R, ds = c.ds("worked"); if (!ds) return null;
-  const entries = c.rows("worked", null), prevE = c.hasPrev("worked") ? c.prev("worked") : null;
-  // claims, not entries: one row per claim (its latest entry); paid / denied: claims with such an entry in the period
-  const all = crClaimsOf(entries), prev = prevE ? crClaimsOf(prevE) : null;
+  // claims, not entries: one row per claim (its latest entry), then the filters (a filter picks claims by their latest entry, so a
+  // picked bar matches the KPIs); paid / denied: claims with such an entry in the period; the entries: those of the claims shown
+  const all = c.claims("worked", null), prev = c.hasPrev("worked") ? c.prevClaims("worked") : null;
+  const keyOf = (r) => r.id || r.invoice || r._i, shown = crIdsOf(all), shownPrev = prev ? crIdsOf(prev) : null;
+  const entries = c.rowsAll("worked").filter((r) => shown.has(keyOf(r))), prevE = prev ? c.prevAll("worked").filter((r) => shownPrev.has(keyOf(r))) : null;
   const amt = crSum(all, (r) => r.amount), wd = crWorkingDaysIn(c.range, all, ds.dateField);
   const paidIds = crIdsOf(entries.filter(crIsPaid)), denIds = crIdsOf(entries.filter(crIsDenied));
   const paid = all.filter((r) => paidIds.has(r.id || r.invoice || r._i)), den = all.filter((r) => denIds.has(r.id || r.invoice || r._i));
@@ -8680,7 +8732,8 @@ function CrCover({ rep, pages, mode }) {
 function crSliceSource(c, pid) {
   if (pid === "inventory" || pid === "inventory2") { const s = crInvSets({ ...c, sel: {} }); return { ds: s.ds, rows: s.curSet }; }
   const role = { ev: "ev", submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
-  return role && c.ds(role) ? { ds: c.ds(role), rows: c.rowsAll(role) } : null;
+  // AR production counts claims at their latest entry: so do its filter lists
+  return role && c.ds(role) ? { ds: c.ds(role), rows: pid === "ar" ? crClaimsOf(c.rowsAll(role)) : c.rowsAll(role) } : null;
 }
 function crHasPage(DS, pid) {
   if (pid === "cover" || pid === "exec") return true;
