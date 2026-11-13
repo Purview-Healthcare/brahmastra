@@ -4092,7 +4092,7 @@ function stackCriteria() {
     assoc: [
       { name: "Productivity", max: 10, how: "Achieved / Expected for the month: the numbers Team status shows (claims worked and team task items done, against the daily target on the days in; a half day counts half; no target before the date of joining). Typed by the team lead for someone Brahmastra has no work numbers for.", bands: W("prod"), list: L("prod") },
       { name: "Quality", max: 10, how: "The month's quality %, typed by the team lead.", bands: W("qual"), list: L("qual") },
-      { name: "Attendance", max: 10, how: "From Purview Shastra, on the working days (Monday to Friday, holidays left out, from the date of joining): approved and sick leave are AL (an approved half day 0.5), leave without pay and absent are LWP (a half day without pay 0.5). LWP of half a day or more scores 0; otherwise by AL + LWP.", bands: W("leave"), list: L("leave") },
+      { name: "Attendance", max: 10, how: "From Purview Shastra, on the working days (Monday to Friday, holidays left out, from the date of joining): approved and sick leave are AL (Shastra's maternity leave and sabbatical too; an approved half day 0.5), leave without pay and absent are LWP (a half day without pay 0.5); week off, holiday and comp off are neither. LWP of half a day or more scores 0; otherwise by AL + LWP.", bands: W("leave"), list: L("leave") },
       { name: "Late login", max: 1, group: "Others", how: "The days Purview Shastra marks the person late.", bands: W("count"), list: L("count") },
       { name: "Breaks over", max: 1, group: "Others", how: "The days the breaks added up to more than " + STACK_BREAK_LIMIT_MIN + " minutes.", bands: W("count"), list: L("count") },
       { name: "Team player", max: 1, group: "Others", how: "Typed by the team lead; Yes unless they change it.", bands: "Yes: 1 · No: 0", list: [{ text: "Yes", score: 1 }, { text: "No", score: 0 }] },
@@ -4101,7 +4101,7 @@ function stackCriteria() {
       { name: "Stack", max: 5, how: "The total out of 40 as a percentage.", bands: W("stack"), list: L("stack") },
     ],
     tl: [
-      { name: "Productivity", max: 10, how: "The average of the team members' productivity percentages.", bands: W("tlProd"), list: L("tlProd") },
+      { name: "Productivity", max: 10, how: "The average of the team members' productivity percentages (the members who have one).", bands: W("tlProd"), list: L("tlProd") },
       { name: "Quality", max: 10, how: "The average quality % of the team members who have one.", bands: W("tlQual"), list: L("tlQual") },
       { name: "Shrinkage", max: 10, how: "The average of the members' shrinkage (AL + LWP as a share of the working days).", bands: W("tlShrink"), list: L("tlShrink") },
       { name: "Attrition", max: 5, how: "People of the team who left in the month: the exit date in Purview Shastra, or the day the roster sync switched them off. Typed by the manager where Brahmastra cannot tell.", bands: W("tlAttr"), list: L("tlAttr") },
