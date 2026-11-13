@@ -2247,6 +2247,8 @@ async function syncShastra(env, by) {
   }
   await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings, removed,
     emails: res.warnings.slice(0, 200), no_access: res.excluded.length });
+  // someone new, or with a changed Emp ID or email, may have floor days in Shastra that matched nobody: Team status asks again
+  if (sm.new + sm.updated) { const fl = await getSetting(env, "floor_sync", null); if (fl && fl.days && Object.keys(fl.days).length) await setSetting(env, "floor_sync", { ...fl, days: {} }); }
   try { await syncWfm(env); } catch (e) {}
   try { await syncHolidays(env); } catch (e) {}
   return { ...res, removed, synced: true };
@@ -2255,8 +2257,10 @@ async function syncShastra(env, by) {
    returns each person's days: the attendance status, time on the floor (finished shifts, breaks taken out; a shift still
    open counts up to now), time logged in, breaks, and the minutes Shastra Guard saw no movement or a locked screen while
    they were punched in (breaks left out). Team status asks for its dates; the days are kept in floor_days, a day is
-   settled once fetched 12 hours after it ended, and anything newer is asked again after 10 minutes. */
-const FLOOR_FRESH_MS = 10 * 60000, SH_BREAK_ALLOW_MIN = 60;
+   settled once fetched 12 hours after it ended, and anything newer is asked again after 10 minutes. Shastra corrects days
+   afterwards (a missed punch-out, a day regularised at month close), so a settled day of this month or last month is asked
+   again after 3 hours, and every kept day after a roster sync that brought in or changed people (their rows matched nobody). */
+const FLOOR_FRESH_MS = 10 * 60000, FLOOR_RECHECK_MS = 3 * 3600000, SH_BREAK_ALLOW_MIN = 60;
 async function fetchFloor(env, from, to) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
   let r = null, data = null;
@@ -2270,8 +2274,8 @@ async function shastraFloor(env, from, to, today, off) {
   const st = (await getSetting(env, "floor_sync", null)) || {};
   st.days = st.days || {};
   const now = Date.now(), last = to > today ? today : to, dayEnd = (d) => Date.parse(d + "T00:00:00Z") - off * 60000 + 86400000;
-  const stale = [];
-  for (let d = from; d <= last; d = addDays(d, 1)) { const at = st.days[d] || 0; if (!(at > dayEnd(d) + 12 * 3600000 || now - at < FLOOR_FRESH_MS)) stale.push(d); }
+  const stale = [], recheckFrom = prevMonthISO(today.slice(0, 7)) + "-01";
+  for (let d = from; d <= last; d = addDays(d, 1)) { const at = st.days[d] || 0; if (!(at > dayEnd(d) + 12 * 3600000 ? d < recheckFrom || now - at < FLOOR_RECHECK_MS : now - at < FLOOR_FRESH_MS)) stale.push(d); }
   if (stale.length && !(st.fail_at && now - st.fail_at < FLOOR_FRESH_MS)) {
     // Shastra answers at most 93 days a call (dev/shastra-floor-feed.sql): longer dates are asked in parts and the answers joined
     const a = stale[0], b = stale[stale.length - 1];

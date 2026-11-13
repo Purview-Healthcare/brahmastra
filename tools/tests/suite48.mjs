@@ -31,8 +31,12 @@ const graph = async (url, init) => {
   if (m === "PATCH" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/s1\/range/))) { const b = JSON.parse(init.body); if (b.values) (OD.rows.get(r[1]) || []).push(...b.values); return J({}); }
   return J({ error: "fake graph: no route " + m + " " + path }, 404);
 };
+// Shastra's floor and live feeds: made-up rows the checks set as they go
+const FLOOR = { rows: [], calls: 0 }, LIVE = { rows: [], day: "" };
 const fetchMock = async (url, init) => {
   if (url.includes("brahmastra_roster")) return J({ ok: true, rows: feed });
+  if (url.includes("brahmastra_floor")) { FLOOR.calls++; const b = JSON.parse(init.body); return J({ ok: true, rows: FLOOR.rows.filter((r) => r.date >= b.p_from && r.date <= b.p_to) }); }
+  if (url.includes("brahmastra_live")) return J({ ok: true, day: LIVE.day, rows: LIVE.rows });
   if (url.includes("login.microsoftonline.com")) return J({ access_token: "t" });
   if (url.includes("graph.microsoft.com")) return graph(url, init);
   return new Response("nope", { status: 500 });
@@ -43,13 +47,17 @@ const DB = rig.backend.env.DB; const q = async (s, ...a) => (await DB.prepare(s)
 const sql = (s, ...a) => DB.prepare(s).bind(...a).run();
 await rig.app.seedDemo(() => {});
 const login = async (email, pw) => as(null)("auth.login", { email, passHash: await sha(pw) });
-const A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
+let A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
 await A("roster.syncShastra");
 const users = (await A("users.list")).users; const U = (n) => users.find((u) => u.name === n).id;
 const TOK = {};
 const firstIn = async (name, email) => { await as(null)("auth.firstPassword", { user_id: U(name), passHash: await sha("pw-" + email) }); TOK[name] = (await login(email, "pw-" + email)).token; return as(TOK[name]); };
-const L1 = await firstIn("Lead Rk One", "rk-lead1@purview-healthcare.com"), L2 = await firstIn("Lead Rk Two", "rk-lead2@purview-healthcare.com");
-const B1 = await firstIn("Biller Rk One", "rk-b1@purview-healthcare.com");
+let L1 = await firstIn("Lead Rk One", "rk-lead1@purview-healthcare.com"), L2 = await firstIn("Lead Rk Two", "rk-lead2@purview-healthcare.com");
+let B1 = await firstIn("Biller Rk One", "rk-b1@purview-healthcare.com");
+// a sign-in with the clock moved weeks ahead clears the sessions that look expired then: everyone signs in again afterwards
+const signInAgain = async () => { A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
+  for (const [n, e] of [["Lead Rk One", "rk-lead1@purview-healthcare.com"], ["Lead Rk Two", "rk-lead2@purview-healthcare.com"], ["Biller Rk One", "rk-b1@purview-healthcare.com"]]) TOK[n] = (await login(e, "pw-" + e)).token;
+  L1 = as(TOK["Lead Rk One"]); L2 = as(TOK["Lead Rk Two"]); B1 = as(TOK["Biller Rk One"]); };
 const sun = (await A("clients.list")).clients.find((c) => /Sunrise/.test(c.name));
 await A("clients.saveTeam", { client_id: sun.id, team: [U("Biller Rk One"), U("Biller Rk Two")] });
 // hold the next database batch whose SQL matches re until release() is called, so another request lands between a read and its write
@@ -231,7 +239,7 @@ S("K-12: client names in OneDrive (Production file names keep the month; two cli
       const A2 = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token), B2 = as((await login("rk-b1@purview-healthcare.com", "pw-rk-b1@purview-healthcare.com")).token);
       await entry(lc, "RKL-8800003", { A: A2, B: B2 }); await sleep(600);
     } finally { Date.now = realNow; }
-  } finally { rig.liveEnv.DEMO = true; }
+  } finally { rig.liveEnv.DEMO = true; await signInAgain(); }
   const files = [...OD.items.values()].filter((x) => x.kind === "file" && /^AR Production/.test(x.name)).map((x) => x.name);
   ok("K-12: a name that fits keeps exactly today's file name", files.includes("AR Production - Rk Meadow Dental - Nov 2026.xlsx"), files);
   const lf = files.filter((f) => f.startsWith("AR Production - Rk Valley"));
@@ -239,6 +247,39 @@ S("K-12: client names in OneDrive (Production file names keep the month; two cli
     lf.length === 2 && lf.some((f) => f.endsWith(" - Nov 2026.xlsx")) && lf.some((f) => f.endsWith(" - Dec 2026.xlsx")) && lf.every((f) => f.length <= 85), lf);
   const folders = (await q("SELECT od_folder_id FROM clients WHERE name LIKE 'Rk %' AND od_folder_id IS NOT NULL")).map((r) => r.od_folder_id);
   ok("K-12: each client has a folder of its own", folders.length >= 2 && new Set(folders).size === folders.length, folders);
+}
+
+S("K-07: Team status picks up a past day Shastra corrected, and people linked to Shastra later");
+{
+  const fr = (emp, date, tof) => ({ emp_id: emp, email: "", date, status: "present", tof_min: tof, idle_min: 0, locked_min: 0, logged_min: tof, break_min: 0, open: false, guard: false });
+  const realNow = Date.now, at = (iso) => { Date.now = () => Date.parse(iso); };
+  const floorOf = async (who, day, today) => { const t = await A("team.status", { from: day, to: day, today, tz_offset_min: 330 }); const r = t.rows.find((x) => x.name === who); return r ? r.on_floor_min : undefined; };
+  try {
+    // Mon 9 Nov: Shastra closed the biller's shift at 12:00 by mistake (180 minutes); the biller of a new joiner not in the roster yet
+    FLOOR.rows = [fr("RA1", "2026-11-09", 180), fr("RA7", "2026-11-09", 480), fr("RA1", "2026-09-14", 300)];
+    at("2026-11-11T04:30:00Z");   // Wed 11 Nov 10:00 IST
+    const first = await floorOf("Biller Rk One", "2026-11-09", "2026-11-11");
+    FLOOR.rows[0] = fr("RA1", "2026-11-09", 480);   // the team lead corrects the punch-out in Shastra
+    at("2026-11-11T05:30:00Z");   // an hour later
+    const soon = await floorOf("Biller Rk One", "2026-11-09", "2026-11-11");
+    at("2026-11-11T08:00:00Z");   // three and a half hours after the first read
+    const later = await floorOf("Biller Rk One", "2026-11-09", "2026-11-11");
+    ok("K-07: a past day of this month is asked again a few hours later: Shastra's corrected punch-out shows (180, then 480 minutes)", first === 180 && soon === 180 && later === 480, { first, soon, later });
+    // a day two months back stays as first read (Shastra is not asked again for it)
+    at("2026-11-11T08:05:00Z");
+    const old1 = await floorOf("Biller Rk One", "2026-09-14", "2026-11-11");
+    FLOOR.rows[2] = fr("RA1", "2026-09-14", 420);
+    at("2026-11-11T12:30:00Z");
+    const old2 = await floorOf("Biller Rk One", "2026-09-14", "2026-11-11");
+    ok("K-07: a settled day from before last month is not asked again", old1 === 300 && old2 === 300, { old1, old2 });
+    // the hourly roster sync brings in the new joiner: Team status asks Shastra again and shows their day
+    const before = await floorOf("Biller Rk Seven", "2026-11-09", "2026-11-11");
+    feed.push(P({ emp_id: "RA7", name: "Biller Rk Seven", reports_to: "Lead Rk One", doj: "2026-11-02", email: "rk-b7@purview-healthcare.com" }));
+    await A("roster.syncShastra");
+    at("2026-11-11T12:35:00Z");
+    const after = await floorOf("Biller Rk Seven", "2026-11-09", "2026-11-11");
+    ok("K-07: someone linked to their Shastra row by a later roster sync gets the floor time Shastra already had for them", before === undefined && after === 480, { before, after });
+  } finally { Date.now = realNow; }
 }
 
 const fails = results.filter((x) => !x.pass);
