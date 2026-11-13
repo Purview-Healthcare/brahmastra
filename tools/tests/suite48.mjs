@@ -3,6 +3,7 @@
    OneDrive names for long client names, the floor feed's past days, comp off on Live status, the digest's AR for its week, text cut
    without a word, and the SAAG reference page. Made-up people and data only. */
 import { makeRig } from "./rig.mjs";
+import vm from "vm";
 const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 500))); };
@@ -367,6 +368,19 @@ S("K-05: typed text over a box's limit is refused with a message, never cut; a l
     longName.length === 234 && at.attachment.name.length === 200 && at.attachment.name.endsWith(".pdf") && fb.ok && fbf && fbf.name.length <= 120 && fbf.name.endsWith(".png"), { at: at.attachment.name.length, end: at.attachment.name.slice(-6), fb: fb.e || (fbf && fbf.name.slice(-8)) });
   const short = await A("attachments.add", { claim_id: open3[5].id, name: "eob-7711041.pdf", type: "application/pdf", data: "JVBERi0xLjQK" });
   ok("K-05: a short file name is kept as it is", short.attachment.name === "eob-7711041.pdf", short.attachment.name);
+}
+
+S("K-06: Back, Forward or a new address while a pop-up holds typed text asks first (the page's own code)");
+{
+  // the page code as built (app.js): its pop-ups register in LAYER_GUARDS; typedLayerFor decides whether a move must ask first
+  const page = (code) => vm.runInContext(code, rig.app);
+  page("globalThis.__rkTyped = { typed: () => true, ask() {} }; globalThis.__rkEmpty = { typed: () => false, ask() {} }; LAYER_GUARDS.add(__rkEmpty); LAYER_GUARDS.add(__rkTyped);");
+  const held = page("typedLayerFor({ view: 'escalations', params: null }, { view: 'claims', params: null }) === __rkTyped");
+  const same = page("typedLayerFor({ view: 'escalations', params: null }, { view: 'escalations', params: null }) === null");
+  page("LAYER_GUARDS.delete(__rkTyped)");
+  const free = page("typedLayerFor({ view: 'escalations', params: null }, { view: 'claims', params: null }) === null");
+  page("LAYER_GUARDS.delete(__rkEmpty)");
+  ok("K-06: Back to another page with typed text in a pop-up is held for 'Discard what you typed?'; no move, or nothing typed, goes on", held && same && free, { held, same, free });
 }
 
 const fails = results.filter((x) => !x.pass);

@@ -519,7 +519,8 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
   and on every page change; the number counts what is new since you last opened it.
 - **Pop-ups**: Esc or a click on the shaded area closes only the top pop-up (Esc in an open dropdown closes just the
   dropdown). If something was typed in it, it first asks **Discard what you typed?** (Keep editing / Discard), so typed
-  text is never lost by accident. Tab stays inside the open pop-up.
+  text is never lost by accident; the browser's Back and Forward ask the same (the page stays until Discard), and a
+  reload or closing the tab gets the browser's own "Leave site?" question. Tab stays inside the open pop-up.
 - **Phones**: every page fits a phone screen; the menu sits under the logo (on a tablet or a narrow window too, whenever
   it does not fit beside it) and wide tables scroll sideways.
 - **Signing out when idle**: after 24 hours without a key, click, scroll or touch in any Brahmastra tab (working

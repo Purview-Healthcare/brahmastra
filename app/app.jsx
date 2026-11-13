@@ -806,7 +806,8 @@ const Spinner = ({ label }) => <span className="muted small"><span className="sp
    Only the top one (the last in the page) answers Escape and Tab, so a box opened on a box closes on its own; Escape in an
    open dropdown closes only the dropdown (Combo takes it first). Focus starts inside the top pop-up, Tab and Shift+Tab stay
    inside it, and focus goes back where it was when it closes. When something was typed in it, Escape, a click on the shade
-   or its Close button first asks "Discard what you typed?" (Keep editing / Discard): typed text is never lost silently. */
+   or its Close button first asks "Discard what you typed?" (Keep editing / Discard), and so do the browser's Back and Forward
+   (the page stays until Discard) and a reload (the browser's own "Leave site?"): typed text is never lost silently. */
 const topLayer = () => { const all = document.querySelectorAll("[data-layer]"); return all.length ? all[all.length - 1] : null; };
 const TYPED_SEL = 'textarea, input:not([type]), input[type="text"], input[type="number"], input[type="email"], input[type="date"], input[type="month"], input[type="time"], input[type="tel"], input[type="url"], input[type="password"]';
 const FOCUS_SEL = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
@@ -822,10 +823,20 @@ function tabStop(list, active, back) {
 }
 /* Typed text that closing would lose: a box still in the pop-up whose text changed since it was first touched. */
 const typedIn = (seen, root) => [...seen].some(([el, was]) => el.isConnected && root.contains(el) && el.value !== was);
+/* The open pop-ups that ask before typed text is thrown away, so the browser's Back and Forward (App) and a reload (the
+   browser's own "Leave site?") ask first too: { typed(), ask(then) }, the last opened on top. */
+const LAYER_GUARDS = new Set();
+/* Back, Forward or a new address (from cur to h): the top pop-up holding typed text, which asks before the page moves; none when
+   nothing would be lost or the page stays where it is. */
+function typedLayerFor(cur, h) {
+  if (!cur || !cur.view || !h || (cur.view === h.view && JSON.stringify(cur.params) === JSON.stringify(h.params))) return null;
+  return [...LAYER_GUARDS].reverse().find((x) => x.typed()) || null;
+}
 function useLayer(onClose, guard = true) {
   const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose);
   closeFn.current = onClose;
   const [asking, setAsking] = useState(false);
+  const after = useRef(null);   // what follows a Discard asked for by Back or Forward: going where the person was going
   const [opener] = useState(() => document.activeElement);
   const close = () => { const f = closeFn.current; if (!f) return; if (guard && ref.current && typedIn(seen.current, ref.current)) setAsking(true); else f(); };
   const closeRef = useRef(close);
@@ -846,7 +857,11 @@ function useLayer(onClose, guard = true) {
       if (to) { e.preventDefault(); (to === "box" ? box.current || el : to).focus(); }
     };
     window.addEventListener("keydown", key);
+    const g = { typed: () => !!(guard && closeFn.current && el.isConnected && typedIn(seen.current, el)), ask: (then) => { after.current = then; setAsking(true); } };
+    const unload = (e) => { if (g.typed()) { e.preventDefault(); e.returnValue = ""; } };
+    LAYER_GUARDS.add(g); window.addEventListener("beforeunload", unload);
     return () => {
+      LAYER_GUARDS.delete(g); window.removeEventListener("beforeunload", unload);
       el.removeEventListener("focusin", note); el.removeEventListener("beforeinput", note, true); window.removeEventListener("keydown", key);
       if (opener && opener !== document.body && opener.isConnected && opener.focus) { try { opener.focus({ preventScroll: true }); } catch (e) {} }
     };
@@ -857,7 +872,7 @@ function useLayer(onClose, guard = true) {
     if (e.target !== s || e.clientX >= r.left + s.clientWidth || e.clientY >= r.top + s.clientHeight) return;
     e.preventDefault(); close();
   };
-  const ask = asking ? <DiscardAsk onKeep={() => setAsking(false)} onDiscard={() => { setAsking(false); if (closeFn.current) closeFn.current(); }} /> : null;
+  const ask = asking ? <DiscardAsk onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
   return { ref, box, close, shade, ask };
 }
 function DiscardAsk({ onKeep, onDiscard }) {
@@ -9876,6 +9891,7 @@ function navKeep(patch) {
 function App() {
   const [me, setMe] = useState(undefined);
   const [nav, setNav] = useState(() => navFromHistory() || { view: null, params: null });
+  const navRef = useRef(nav); navRef.current = nav;
   const [ctx, setCtx] = useState({ clients: [], codes: [], users: [], loaded: false });
   const [pwOpen, setPwOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
@@ -9888,7 +9904,11 @@ function App() {
   useEffect(() => {
     (async () => { if (!TOKEN) { setMe(null); return; } try { const r = await rpc("auth.me"); if (Array.isArray(r.holidays)) APP_HOLIDAYS = new Set(r.holidays); setMe(r.user); } catch (e) { setMe(null); } })();
     const h = () => setMe(null);
-    const hh = () => { const h = navFromHistory(); if (h) setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
+    const hh = () => { const h = navFromHistory(); if (!h) return;
+      // Back, Forward or a new address while a pop-up holds typed text: stay on the page and ask first, as Escape does
+      const cur = navRef.current, g = typedLayerFor(cur, h);
+      if (g) { try { history.pushState({ bnav: cur }, "", navHash(cur.view, cur.params)); } catch (e) {} g.ask(() => go(h.view, h.params)); return; }
+      setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
     window.addEventListener("brahmastra:signedout", h);
     window.addEventListener("hashchange", hh);
     window.addEventListener("popstate", hh);
