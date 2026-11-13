@@ -5475,7 +5475,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
   const [ver, setVer] = useState(0);
   const [patientOf, setPatientOf] = useState(null);
   const c = q.data && q.data.claim;
-  // view only: a claim Posting closed, opened by someone it is not with (anyone may read it; nothing to work here)
+  // view only: a claim Posting closed, opened by someone it is not with (anyone may read it; nothing to work here), or a claim of a
+  // client shared with this person view-only (they read it, its history and notes; the server refuses every change)
   const ro = !!(c && c.view_only);
   // a desk still has the claim (Payment posting, Submission or Rejections): a team lead closes or excludes it once the desk is done
   const atDesk = ((q.data && q.data.handoffs) || []).find((h) => h.dept !== "subcheck" && ["pending", "assigned", "client"].includes(h.status));
@@ -5492,7 +5493,8 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
         {!c && !q.error && <Spinner />}
         {c && (
           <div className="stack" style={{ gap: 14, paddingRight: 30 }}>
-            <ClaimHeader c={c}>{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={L.close}>Close</button></ClaimHeader>
+            <ClaimHeader c={c}>{c.view_share && <span className="badge amber" title="This client is shared with you view-only">view only</span>}{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={L.close}>Close</button></ClaimHeader>
+            {c.view_share && <div className="alert warn view-only-note"><b>View only.</b> {c.client_name || "This client"} is shared with you to look at: you can read this claim, its history and its notes. Nothing can be added, changed or assigned here.</div>}
             {c.locked && <div className="alert info"><b>Posting closed this claim: the payment is posted.</b> {ro ? "Anyone can open it to read; it is not on your desk, so there is nothing to work here." : "Anyone can open it to read."} Its notes can no longer be edited (only QA is left).</div>}
             <ClaimInfo c={c} siblings={q.data.siblings} />
             <HandoffCard handoffs={q.data.handoffs} role={q.data.handoff_role} onChanged={changed} />

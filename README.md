@@ -521,7 +521,10 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 "Extra client access"):
 
 - **View only**: the client, its claims, dashboards and reports become visible to
-  them, nothing can be changed. The card shows "shared · view only".
+  them, nothing can be changed. The card shows "shared · view only". Its claims open read only, marked **View only**:
+  the claim, its history, its notes and files, with no entry, note, file, assignment or other action, and the server
+  refuses any change, whatever else the person once was on the claim. A view-only share never puts the client's claims on
+  anyone's list (Can edit does), and it does not take Payment posting or Submission people past their desk.
 - **Can edit**: they work it like their own client: upload, allocate, answer
   Needs attention, keep its RACI. A shared biller can be picked in allocation.
 

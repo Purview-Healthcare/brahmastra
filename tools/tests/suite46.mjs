@@ -1,6 +1,7 @@
 /* Suite 46: the owner's decisions after the second bug test (fixer DB). E-20: Live status shows who works on what, the Escalation
-   tracker's open escalations and the claims flagged by billers, and its tab counts the two lists. The clock is fixed at
-   Tue 10 Nov 2026 14:00 IST. Made-up data only ("Test Patient", made-up claim numbers, made-up people). */
+   tracker's open escalations and the claims flagged by billers, and its tab counts the two lists. N-09: a view-only share opens the
+   client's claims read only, and every write is refused. The clock is fixed at Tue 10 Nov 2026 14:00 IST.
+   Made-up data only ("Test Patient", made-up claim numbers, made-up people). */
 import fs from "fs";
 import vm from "vm";
 import { makeRig, REPO } from "./rig.mjs";
@@ -180,6 +181,123 @@ await world("E-20", async () => {
   ok("E-20: a biller cannot open Live status (nor its lists)", refused(r), r);
   r = await T(() => (w.c("Pavan Poster")).then((PV) => PV("team.huddle", { today: TODAY })));
   ok("E-20: nor a Payment posting person", refused(r), r);
+});
+
+/* ======================= N-09: a view-only share opens the client's claims, read only ======================= */
+await world("N-09", async () => {
+  const w = await makeWorld();
+  const { A, T, id, sun, lake, sql, rows, row } = w;
+  const TI = await w.c("Tina Lead"), AR = await w.c("Arun Agent"), VK = await w.c("Vik Viewer"), BO = await w.c("Bo Viewer"), ED = await w.c("Eda Editor"), PV = await w.c("Pavan Poster");
+  await sql("UPDATE claims SET escalated = 0");
+  const pool = async (clientId, n) => (await rows("SELECT id, claim_no FROM claims WHERE client_id = ? AND state = 'open' ORDER BY id LIMIT ?", clientId, n));
+  const [c1, c2, c3, c4, c5] = await pool(sun.id, 5), [k1] = await pool(lake.id, 1);
+  await A("alloc.reassign", { ids: [c1.id, c2.id, c5.id], user_id: id["Arun Agent"] });
+  // Arun works c1 and attaches a file to it, and flags c2 for Tina
+  const pdf = Buffer.from("%PDF-1.4 made-up test file").toString("base64");
+  await AR("queue.open", { id: c1.id }); await AR("attachments.add", { claim_id: c1.id, name: "eob.pdf", type: "application/pdf", data: pdf }); await work(AR, c1.id);
+  await flag(AR, c2.id);
+  const file1 = (await row("SELECT id FROM attachments WHERE claim_id = ?", c1.id)).id, entry1 = (await row("SELECT id FROM notes WHERE claim_id = ? AND kind = 'work'", c1.id)).id;
+
+  S("N-09: before any share, Sunrise's claims are closed to Vik and Bo");
+  let r = await T(() => VK("claims.get", { id: c1.id }));
+  ok("N-09: Vik cannot open a Sunrise claim", refused(r, /not in your queue/), r);
+  await A("clients.accessSave", { client_id: sun.id, user_id: id["Vik Viewer"], level: "view" });
+  await A("clients.accessSave", { client_id: sun.id, user_id: id["Bo Viewer"], level: "view" });
+  await A("clients.accessSave", { client_id: sun.id, user_id: id["Eda Editor"], level: "edit" });
+  await A("clients.accessSave", { client_id: lake.id, user_id: id["Pavan Poster"], level: "view" });
+
+  S("N-09: with a view-only share they open the claim, its history and its notes, marked view only");
+  r = await T(() => VK("claims.get", { id: c1.id }));
+  const g = r.r || {};
+  ok("N-09: Vik (a team lead, view-only share of Sunrise) opens the claim it lists on Claims, marked view only", r.ok && g.claim.id === c1.id && g.claim.view_only === true && g.claim.view_share === true
+    && (await VK("claims.list", { client_id: sun.id, state: "", page_size: 500 })).rows.some((x) => x.id === c1.id), r.ok ? g.claim.view_only : r);
+  ok("N-09: he sees its notes (Arun's entry) and its file, with nothing to edit or remove", r.ok && g.notes.some((n) => n.id === entry1) && g.notes.every((n) => !n.editable) && g.attachments.some((a) => a.id === file1) && g.attachments.every((a) => !a.deletable), r.ok && g.notes.map((n) => [n.kind, n.editable]));
+  const tl = await T(() => VK("claims.timeline", { id: c1.id }));
+  ok("N-09: he sees its history: the entry, the file and the assignment, no entry editable", tl.ok && tl.r.items.some((x) => x.kind === "work" && x.id === entry1) && tl.r.items.some((x) => x.kind === "file") && tl.r.items.filter((x) => x.kind === "work").every((x) => !x.editable), tl.ok ? tl.r.items.map((x) => x.kind) : tl);
+  r = await T(() => VK("attachments.get", { id: file1 }));
+  ok("N-09: he can open the file to read it", r.ok && r.r.name === "eob.pdf" && r.r.data === pdf, r.ok ? r.r.name : r);
+  r = await T(() => BO("claims.get", { id: c1.id }));
+  ok("N-09: Bo (a biller with a view-only share) opens it read only too", r.ok && r.r.claim.view_only === true && r.r.claim.view_share === true, r.ok ? r.r.claim.view_only : r);
+  r = await T(() => VK("claims.get", { id: k1.id }));
+  ok("N-09: a client not shared with him stays closed", refused(r, /not in your queue/), r);
+  r = await T(() => PV("claims.get", { id: k1.id }));
+  ok("N-09: a Payment posting person with a view-only share still sees only their desk (no claim of it opens)", refused(r, /not in your queue/), r);
+
+  S("N-09: every write is refused for a view-only share, whatever the page sends");
+  const snap = async () => JSON.stringify([await rows("SELECT * FROM claims WHERE client_id = ? ORDER BY id", sun.id), await rows("SELECT id, claim_id, kind, comment, status, created_at, edited_at FROM notes ORDER BY id"),
+    await rows("SELECT id, claim_id FROM attachments ORDER BY id"), await rows("SELECT * FROM handoffs ORDER BY id"), await rows("SELECT * FROM tat_holds ORDER BY id"), await rows("SELECT * FROM payer_limits ORDER BY client_id, payer_key"),
+    await rows("SELECT id FROM escalations ORDER BY id"), await rows("SELECT id, claim_id, kind FROM claim_events ORDER BY id")]);
+  // anything the call returns must change nothing; an error is the usual answer
+  const noChange = async (label, fn, re) => { const before = await snap(); const x = await T(fn); const same = (await snap()) === before;
+    ok("N-09: " + label + ": " + (x.ok ? "nothing changes" : "refused, nothing changes"), same && (!x.ok ? refused(x, re) : (x.r.changed === 0 || x.r.applied === 0)), x); };
+  const four = { why: "flagged by the biller", reviewed: "the claim history and the EOB", findings: "the payer needs a call about it", next: "call the payer and update the claim" };
+  const wf = { saag: INFORM, note: NOTE, today: TODAY };
+  await noChange("Vik adds a note", () => VK("notes.add", { claim_id: c1.id, note: NOTE }));
+  await noChange("Vik saves a work entry", () => VK("queue.complete", { id: c1.id, rework: true, ...wf }));
+  await noChange("Vik opens it for work", () => VK("queue.open", { id: c1.id }));
+  await noChange("Vik skips it", () => VK("queue.skip", { id: c1.id, reason: "test" }));
+  await noChange("Vik edits Arun's entry", () => VK("notes.update", { id: entry1, ...wf }));
+  await noChange("Vik attaches a file", () => VK("attachments.add", { claim_id: c1.id, name: "x.pdf", type: "application/pdf", data: pdf }));
+  await noChange("Vik removes the file", () => VK("attachments.delete", { id: file1 }));
+  await noChange("Vik assigns it (to Arun, to himself)", async () => { await VK("alloc.reassign", { ids: [c3.id], user_id: id["Arun Agent"] }); return VK("alloc.reassign", { ids: [c3.id], user_id: id["Vik Viewer"] }); });
+  await noChange("Vik unassigns it", () => VK("alloc.unassign", { ids: [c1.id] }));
+  await noChange("Vik allocates the client's claims", () => VK("alloc.apply", { client_id: sun.id, assignments: [{ id: c3.id, user_id: id["Arun Agent"] }] }), VIEW_ONLY);
+  await noChange("Vik closes, excludes or reopens it", async () => { let changed = 0; for (const state of ["closed", "excluded", "open"]) changed += (await VK("claims.setState", { ids: [c1.id, c3.id], state })).changed; return { changed }; });
+  await noChange("Vik changes its priority", () => VK("claims.setPriority", { ids: [c1.id], level: "top", category: "Client request", comment: "the client asked for it" }));
+  await noChange("Vik answers the flagged claim", () => VK("attention.answer", { id: c2.id, comment: "Call the payer again and note the reference" }), VIEW_ONLY);
+  await noChange("Vik reviews the flagged claim", () => VK("attention.review", { id: c2.id, ...four, route: "biller", today: TODAY }), VIEW_ONLY);
+  await noChange("Vik puts the flagged claim on hold", () => VK("tat.hold", { kind: "flag", id: c2.id, reason: "Waiting on the payer", until: "2026-11-13" }), VIEW_ONLY);
+  await noChange("Vik saves the payer's TFL", () => VK("payers.saveLimit", { client_id: sun.id, payer: "Aetna", tfl_days: 90 }), VIEW_ONLY);
+  await noChange("Vik logs an escalation", () => VK("escalations.save", escPayload(w, sun.id, id["Tina Lead"])), VIEW_ONLY);
+
+  S("N-09: a view-only person who once worked a claim cannot write on it now");
+  // Bo worked c4 before (it is on his list, his entry and file are minutes old) and is the biller of its recheck; now he has only the view share
+  await sql("UPDATE claims SET assigned_to = ?, assigned_at = ?, state = 'assigned', last_worked_by = ? WHERE id = ?", id["Bo Viewer"], NOW - 3600000, id["Bo Viewer"], c4.id);
+  await sql("INSERT INTO notes (id, claim_id, user_id, user_name, kind, status, sub_status, action, bucket, comment, created_at) VALUES ('n46-bo', ?, ?, 'Bo Viewer', 'work', 'Claim Denied', 'COB Issue', 'INFORM', 'Payer', 'made-up entry', ?)", c4.id, id["Bo Viewer"], NOW - 1800000);
+  await sql("INSERT INTO attachments (id, claim_id, user_id, user_name, name, type, size, created_at) VALUES ('a46-bo', ?, ?, 'Bo Viewer', 'proof.pdf', 'application/pdf', 20, ?)", c4.id, id["Bo Viewer"], NOW - 1800000);
+  await sql(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, due_at, saag_action, biller_id, available_at) VALUES ('h46-bo', ?, ?, 'subcheck', 'pending', ?, ?, 'Bo Viewer', ?, 'Recheck', ?, ?)`,
+    c4.id, sun.id, NOW - 86400000 * 3, id["Bo Viewer"], NOW + 86400000, id["Bo Viewer"], NOW - 3600000);
+  r = await T(() => BO("claims.get", { id: c4.id }));
+  ok("N-09: on his old claim Bo is read only too (no form, nothing editable)", r.ok && r.r.claim.view_only === true && r.r.notes.every((n) => !n.editable) && r.r.attachments.every((a) => !a.deletable), r.ok ? r.r.claim.view_only : r);
+  await noChange("Bo adds a note", () => BO("notes.add", { claim_id: c4.id, note: NOTE }), VIEW_ONLY);
+  await noChange("Bo opens it for work", () => BO("queue.open", { id: c4.id }), VIEW_ONLY);
+  await noChange("Bo saves a work entry", () => BO("queue.complete", { id: c4.id, ...wf }), VIEW_ONLY);
+  await noChange("Bo edits his own entry", () => BO("notes.update", { id: "n46-bo", ...wf }), VIEW_ONLY);
+  await noChange("Bo attaches a file", () => BO("attachments.add", { claim_id: c4.id, name: "x.pdf", type: "application/pdf", data: pdf }), VIEW_ONLY);
+  await noChange("Bo removes his own file", () => BO("attachments.delete", { id: "a46-bo" }), VIEW_ONLY);
+  await noChange("Bo marks his recheck accepted", () => BO("handoffs.close", { id: "h46-bo", outcome: "complete", proof: { ref: "ACK1", date: TODAY } }), VIEW_ONLY);
+  const nx = await T(() => BO("queue.next", { today: TODAY }));
+  ok("N-09: Next claim does not open it for him", nx.ok && !nx.r.claim && (await row("SELECT state FROM claims WHERE id = ?", c4.id)).state === "assigned", nx);
+  await sql("UPDATE claims SET state = 'in_progress', started_at = ? WHERE id = ?", NOW - 60000, c4.id);
+  await noChange("Bo skips it", () => BO("queue.skip", { id: c4.id, reason: "test" }), VIEW_ONLY);
+
+  S("N-09: a view-only share never puts the client's claims on someone's list");
+  r = await T(() => A("alloc.reassign", { ids: [c3.id], user_id: id["Bo Viewer"] }));
+  ok("N-09: the admin cannot give Bo a Sunrise claim (reassign)", refused(r, /cannot be given/) && !(await row("SELECT assigned_to FROM claims WHERE id = ?", c3.id)).assigned_to, r);
+  r = await T(() => A("alloc.apply", { client_id: sun.id, assignments: [{ id: c3.id, user_id: id["Bo Viewer"] }] }));
+  ok("N-09: nor through Allocate", refused(r, /Pick active billers/) && !(await row("SELECT assigned_to FROM claims WHERE id = ?", c3.id)).assigned_to, r);
+  const rp = await TI("attention.reviewPeople", { id: c2.id });
+  ok("N-09: nor as the other biller a review sends a claim to", !(rp.people || []).some((p) => p.id === id["Bo Viewer"]) && (rp.people || []).some((p) => p.id === id["Arun Agent"]), rp.people && rp.people.map((p) => p.name));
+  await A("clients.accessSave", { client_id: sun.id, user_id: id["Bo Viewer"], level: "edit" });
+  r = await T(() => A("alloc.reassign", { ids: [c3.id], user_id: id["Bo Viewer"] }));
+  ok("N-09: with Can edit he can be given it (README: a shared biller can be picked)", r.ok && r.r.changed === 1, r);
+  await A("clients.accessSave", { client_id: sun.id, user_id: id["Bo Viewer"], level: "view" });
+
+  S("N-09: an edit share and the client's own people work as before");
+  r = await T(() => ED("claims.get", { id: c1.id }));
+  ok("N-09: Eda (Can edit) opens it to work, not view only", r.ok && r.r.claim.view_only === false && !r.r.claim.view_share, r.ok ? r.r.claim.view_only : r);
+  r = await T(() => ED("notes.add", { claim_id: c1.id, note: NOTE }));
+  ok("N-09: and adds a note", r.ok, r);
+  r = await T(() => AR("notes.add", { claim_id: c1.id, note: NOTE }));
+  ok("N-09: Arun adds a note on his claim", r.ok, r);
+  r = await T(() => TI("claims.get", { id: c1.id }));
+  ok("N-09: Tina opens it to work, with Arun's entry editable for her", r.ok && !r.r.claim.view_only && r.r.notes.some((n) => n.id === entry1 && n.editable), r.ok ? r.r.claim.view_only : r);
+
+  S("N-09: the page says plainly that the claim is view only, and offers nothing to do");
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("N-09: the claim shows a View only note and badge for a view-only share", /\{c\.view_share && <div className="alert warn view-only-note"><b>View only\.<\/b>/.test(src) && /is shared with you to look at: you can read this claim, its history and its notes\. Nothing can be added, changed or assigned here\./.test(src)
+    && /\{c\.view_share && <span className="badge amber"[^>]*>view only<\/span>\}/.test(src));
+  ok("N-09: view only hides the team lead actions, the work form, the note form and the patient's other claims", /const ro = !!\(c && c\.view_only\);/.test(src) && /\{sup && !ro && !q\.data\.handoff_role && \(/.test(src) && /\{!ro && \(c\.mine \|\| \(sup && /.test(src) && /\{!ro && q\.data\.handoff_role && !c\.mine && <NoteForm/.test(src) && /\{!ro && <button className="btn sm" onClick=\{\(\) => setPatientOf/.test(src));
 });
 
 const failed = results.filter((x) => !x.pass);
