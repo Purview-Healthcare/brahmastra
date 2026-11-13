@@ -7458,6 +7458,9 @@ function ClientView({ ctx, me, go, params }) {
   );
 }
 /* ---------- SAAG reference ---------- */
+/* Where a SAAG action lands, as the work form and the server apply it: the four desk actions follow Purview's workflow
+   (ROUTED_EFFECTIVE), every other action the workbook's effective matrix. */
+function saagLanding(a) { const routed = ROUTED_EFFECTIVE(a.action), eff = routed || a.effective || ""; return { effective: eff, bucket: EFFECTIVE_BUCKET[eff] || "", routed: !!routed }; }
 function SaagView() {
   const [status, setStatus] = useState(SAAG.statuses[0] || "");
   const [sub, setSub] = useState("");
@@ -7474,7 +7477,7 @@ function SaagView() {
       <div className="grid g2-1">
         <div className="card tight"><div className="b small mb">Sub-statuses of {status}</div><div className="pill-list">{subs.map((u) => <button key={u} className={"chip " + (sub === u ? "on" : "")} onClick={() => setSub(u)}>{u}</button>)}</div></div>
         <div className="card tight"><div className="b small mb">{sub ? `Actions for ${status} › ${sub}` : "Pick a sub-status to see its actions"}</div>
-          {sub && <div className="table-wrap"><table className="t"><thead><tr><th>Action</th><th>Effective matrix</th><th>Bucket</th></tr></thead><tbody>{acts.map((a) => <tr key={a.action}><td>{a.action}</td><td className="small">{a.effective || "–"}</td><td><span className={"badge " + (EFFECTIVE_BUCKET[a.effective] === "Closed" ? "green" : "teal")}>{EFFECTIVE_BUCKET[a.effective] || "–"}</span></td></tr>)}</tbody></table></div>}</div>
+          {sub && <div className="table-wrap"><table className="t"><thead><tr><th>Action</th><th>Effective matrix</th><th>Bucket</th></tr></thead><tbody>{acts.map((a) => { const l = saagLanding(a); return <tr key={a.action}><td>{a.action}</td><td className="small">{l.effective || "–"}{l.routed ? <span className="badge gray" style={{ marginLeft: 6 }} title={"Purview's workflow for the desks; the workbook says " + (a.effective || "nothing")}>workflow</span> : null}</td><td><span className={"badge " + (l.bucket === "Closed" ? "green" : "teal")}>{l.bucket || "–"}</span></td></tr>; })}</tbody></table></div>}</div>
       </div>
       <div className="card tight small muted">Bucket mapping: Pending-Collectible Insurance → Payer · Pending-Client Assistance and Pending-Collectible Patient → Client · Pending-Purview internal review → Purview · Processing-Closed and Payment-Cash In Bank → Closed. Purview's workflow for the desks: Need to Post/Posting Correction → AR Closed-Pending Posting (Closed; Posting Closed once posted) · Need to Resubmit, Need to Submit Paper Claim and Correction, Resubmission &amp; Reprocessing → Pending-Submission (Purview; with the payer for AR's follow-up once submitted). A biller can change the bucket on other entries. When the workbook changes, regenerate <span className="mono">lib/saag.js</span> (see README) and the whole team gets the new matrix on the next refresh.</div>
     </div>

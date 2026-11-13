@@ -424,6 +424,17 @@ S("K-09: two team leads allocating the same claims at the same moment: history a
     stays.assigned_to === seven && stays.state === "in_progress" && rb.moved === 3 && evs === 3 && after2 - before2 === 3 && bell2 && /^3 new claims were allocated to you/.test(bell2.text), { rb, evs, moved: after2 - before2, bell: bell2 && bell2.text, stays });
 }
 
+S("K-03: the SAAG reference shows where the four desk actions really land");
+{
+  const L = (action, effective) => rig.app.saagLanding({ action, effective });
+  const post = L("Need to Post/Posting Correction", "Pending-Collectible Insurance"), paper = L("Need to Submit Paper Claim", "Pending-Client Assistance");
+  const corr = L("Correction, Resubmission & Reprocessing", "Pending-Collectible Insurance"), resub = L("Need to Resubmit", "Pending-Purview internal review");
+  const plain = L("EOB not Available/Requested EOB", "Pending-Collectible Insurance");
+  ok("K-03: Need to Post/Posting Correction lands in AR Closed-Pending Posting (Closed); the three submission actions in Pending-Submission (Purview), as the work form saves them",
+    post.effective === "AR Closed-Pending Posting" && post.bucket === "Closed" && post.routed && [paper, corr, resub].every((x) => x.effective === "Pending-Submission" && x.bucket === "Purview" && x.routed), { post, paper, corr, resub });
+  ok("K-03: every other action still shows the workbook's effective matrix and bucket", plain.effective === "Pending-Collectible Insurance" && plain.bucket === "Payer" && !plain.routed, plain);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

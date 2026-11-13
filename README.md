@@ -1269,7 +1269,10 @@ again when that entry is edited into a follow-up.
 ### SAAG reference and updates
 
 **SAAG** shows the matrix: pick a status, a sub-status, and see the actions
-with their Effective Matrix and bucket. When the workbook changes, run
+with their Effective Matrix and bucket. The four desk actions show where the work form puts them, Purview's workflow
+(tagged "workflow"): Need to Post/Posting Correction lands in AR Closed-Pending Posting (Closed); Need to Resubmit,
+Need to Submit Paper Claim and Correction, Resubmission & Reprocessing land in Pending-Submission (Purview). When the
+workbook changes, run
 
 ```
 powershell -ExecutionPolicy Bypass -File dev\build-saag.ps1 -Workbook "C:\path\SAAG_Claim_Entry_Tool.xlsx"
