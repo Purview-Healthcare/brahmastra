@@ -2976,6 +2976,13 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
   useEffect(() => { if (reload) reload(); }, []);
   const [hist, setHist] = useState(null);
   const [prof, setProf] = useState(null);
+  // a bell line about a client's profile (a rejected recheck with nobody set for Rejections or Submission) opens that profile
+  const profAsked = useRef(false);
+  useEffect(() => {
+    if (profAsked.current || ro || !params || params.focus !== "profile" || !params.client_id) return;
+    const c = ctx.clients.find((x) => x.id === params.client_id);
+    if (c && c.can_edit !== false) { profAsked.current = true; setProf({ client: c }); }
+  }, [params && params.client_id, params && params.focus, ctx.clients]);
   // Find a client: by name, code or location, and narrow by status. Opening a client from elsewhere clears the search so it shows.
   const [cq, setCq] = useState(""), [cf, setCf] = useState("all");
   useEffect(() => { if (params && params.client_id) { setCq(""); setCf("all"); } }, [params && params.client_id]);
@@ -3062,7 +3069,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
           <AccessRow c={c} ctx={ctx} me={me} onSaved={reload} dir={dir} />
           <div className="row mt" style={{ alignItems: "flex-start" }}>
             <div className="pill-list" style={{ flex: 1 }}>
-              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={c.can_edit === false ? undefined : l.active ? "Click to deactivate" : "Click to reactivate"} onClick={c.can_edit === false ? undefined : () => clickLoc(c, l)}>{l.name}{!l.active ? " (off)" : ""}</span></span>)}
+              {c.locations.map((l) => <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><span className={"chip " + (l.active ? "on" : "")} title={c.can_edit === false ? (l.active ? undefined : "Stopped working here: switched off") : l.active ? "Click if the team has stopped working here: it switches the location off" : "Stopped working here. Click to switch it on again when the work starts again"} onClick={c.can_edit === false ? undefined : () => clickLoc(c, l)}>{l.name}{!l.active ? " · stopped working here" : ""}</span></span>)}
               {!c.locations.length && <span className="muted small">No locations yet.</span>}
             </div>
             {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>
@@ -3073,9 +3080,9 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
         </div>
       ))}
       {hist && <ClientHistory c={hist} onClose={() => setHist(null)} />}
-      {locOff && <Confirm title={"Switch off " + locOff.l.name + "?"} confirmLabel="Switch off" danger onNo={() => setLocOff(null)} onYes={() => { const l = locOff.l; setLocOff(null); toggleLoc(l); }}
-        text={locOff.last ? `${locOff.l.name} is the only active location of ${locOff.client}. With no active location the client's profile is incomplete and nothing reaches anyone (uploads and allocation need a location) until one is switched on again.`
-          : `${locOff.l.name} is taken off uploads and allocation until it is switched on again. Its claims stay as they are.`} />}
+      {locOff && <Confirm title={"Switch off " + locOff.l.name + "?"} confirmLabel="Stopped working here: switch off" danger onNo={() => setLocOff(null)} onYes={() => { const l = locOff.l; setLocOff(null); toggleLoc(l); }}
+        text={"Switch a location off only when the team has stopped working it. " + (locOff.last ? `${locOff.l.name} is the only active location of ${locOff.client}. With no active location the client's profile is incomplete and nothing reaches anyone (uploads and allocation need a location) until one is switched on again.`
+          : `${locOff.l.name} is taken off uploads and allocation: an upload leaves its rows out. Its claims stay as they are.`) + " Switch it on again here if the work starts again."} />}
       {prof && <ClientProfileForm ctx={ctx} client={prof.client} onClose={() => { setProf(null); reload(); }} onSaved={() => { setProf(null); reload(); }} />}
       {edit && (
         <Modal title={edit.id ? "Edit client" : "New client"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" onClick={save} disabled={busy || !edit.name.trim()}>{busy ? "Saving…" : "Save"}</button></>}>
@@ -3673,6 +3680,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const [over, setOver] = useState(false);
   const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
+  const [leftOut, setLeftOut] = useState([]);   // rows for a switched-off location: left out, never loaded
   const inputRef = useRef();
   const client = ctx.clients.find((c) => c.id === clientId);
   const today = todayISO();
@@ -3734,12 +3742,14 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           groups.push({ loc, claims: list, note });
         }
       } else groups.push({ loc: locsNow.find((l) => l.id === locId) || null, claims: built.claims, note: "" });
-      // claims never go into a location that is switched off: it is switched on again (as a name it did not know is added), and the result says so
-      for (const g of groups) if (g.loc && !g.loc.active) { const r = await rpc("locations.save", { id: g.loc.id, name: g.loc.name, active: true }); g.loc = { ...g.loc, ...r.location }; g.note = "it was switched off: switched on again"; }
+      // a location is switched off only when the team has stopped working it: its rows are left out (never loaded there, and the
+      // location stays off), and the result says how many, for which location
+      const off = groups.filter((g) => g.loc && !g.loc.active).map((g) => ({ location: g.loc.name, rows: g.claims.reduce((t, c) => t + (c.lines || 1), 0) }));
+      const live = groups.filter((g) => !(g.loc && !g.loc.active));
       const results = [];
       let done = 0;
-      for (const g of groups) {
-        const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, source: file.source || "file", web_url: file.webUrl || "", claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / groups.length) });
+      for (const g of live) {
+        const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, source: file.source || "file", web_url: file.webUrl || "", claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / live.length) });
         const row = { ...r, location: g.loc ? g.loc.name : "(no location)", note: g.note || "", total: g.claims.length, assigned: null };
         const team = g.loc && g.loc.team && g.loc.team.length ? g.loc.team : (client.team || []);
         const wants = g.loc ? g.loc.auto_allocate !== false : client.auto_allocate !== false;
@@ -3749,13 +3759,13 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
         results.push(row);
         done++;
       }
-      setResult(results); setProgress(1);
-      toast("Inventory loaded.");
+      setResult(results); setLeftOut(off); setProgress(1);
+      toast(!live.length ? "Nothing was loaded: the location is switched off." : off.length ? "Inventory loaded. Some rows were left out: see below." : "Inventory loaded.", live.length ? "ok" : "err");
       reload();
     } catch (e) { toast(e.message, "err"); setStep(3); }
     setBusy(false);
   };
-  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setProgress(null); };
+  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setLeftOut([]); setProgress(null); };
   const downloadSample = (k) => {
     const rows = makeSampleRows({ kind: k, seed: k === "worked" ? 5 : 3, count: 120, today });
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -3812,7 +3822,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
             </Field>
           </div>
           {client && client.locations.length > 0 && (
-            <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created, and a switched-off location named in it is switched on again)</label>
+            <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created; rows for a location the team stopped working, switched off, are left out)</label>
           )}
           {client && locMode !== "file" && (
             <div className="card tight row between">
@@ -3844,7 +3854,8 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           {progress != null && progress < 1 && <div><div className="bar"><i style={{ width: Math.round(progress * 100) + "%" }} /></div><div className="small muted mt8"><span className="spin" /> Loading claims… {Math.round(progress * 100)}%</div></div>}
           {result && (
             <>
-              <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
+              {result.length > 0 && <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>}
+              {leftOut.map((x) => <div key={x.location} className="alert warn"><b>{x.location}: {plural(x.rows, "row")} left out.</b> {x.location} is switched off because the team stopped working it, so nothing was loaded into it. If the work starts again, switch it on in Clients &amp; locations, then upload the file again. <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => go("clients", { client_id: clientId })}>Open Clients &amp; locations</button></div>)}
               {built && built.summary.datesUnread > 0 && <div className="alert warn">{plural(built.summary.datesUnread, "date")} in the file could not be read (no year or no day, as in 26-Oct, or not a date) and {built.summary.datesUnread === 1 ? "was" : "were"} left empty. Check the date columns in the file.</div>}
               {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
@@ -7322,7 +7333,8 @@ function ClientView({ ctx, me, go, params }) {
   const [missing, setMissing] = useState(() => !!(params && params.client_id) && !active.some((c) => c.id === params.client_id));
   useEffect(() => { try { if (cid) localStorage.setItem("brahmastra:c360", cid); } catch (e) {} }, [cid]);
   const [dr, setDr] = useState(() => newRange("month"));
-  const [month, setMonth] = useState("");
+  // the month-end checklist: the month in the link (the bell's month-end line names it), else the server's (the month still being closed)
+  const [month, setMonth] = useState(() => (params && /^\d{4}-(0[1-9]|1[0-2])$/.test(params.month || "") ? params.month : ""));
   // The client report is Dashboard › Client 360 report now; an old Client 360 › Client report link goes there.
   useEffect(() => { if (params && params.tab === "report" && cid) go("dashboard", { tab: "report", client_id: cid }); }, [params && params.tab]);
   const [from, to] = rangeSpan(dr);

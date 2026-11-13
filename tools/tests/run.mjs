@@ -4,7 +4,7 @@ import { spawnSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const runs = ["suite1.mjs", "suite2.mjs", "suite3.mjs", "suite4.mjs", "suite5.mjs", "suite6.mjs", "suite7.mjs", "suite8.mjs", "suite9.mjs", "suite10.mjs", "suite11.mjs", "suite12.mjs", "suite13.mjs", "suite14.mjs", "suite15.mjs", "suite16.mjs", "suite17.mjs", "suite18.mjs", "suite19.mjs", "suite20.mjs", "suite21.mjs", "suite22.mjs", "suite23.mjs", "suite24.mjs", "suite25.mjs", "suite26.mjs", "suite27.mjs", "suite28.mjs", "suite29.mjs", "suite30.mjs", "suite31.mjs", "suite32.mjs", "suite33.mjs", "suite34.mjs", "suite35.mjs", "suite36.mjs", "suite37.mjs", "suite38.mjs", "suite39.mjs", "suite40.mjs", "suite41.mjs", "suite41n.mjs", "suite42.mjs", "suite43.mjs", "suite44.mjs", "suite47.mjs", "sweep.mjs"];
+const runs = ["suite1.mjs", "suite2.mjs", "suite3.mjs", "suite4.mjs", "suite5.mjs", "suite6.mjs", "suite7.mjs", "suite8.mjs", "suite9.mjs", "suite10.mjs", "suite11.mjs", "suite12.mjs", "suite13.mjs", "suite14.mjs", "suite15.mjs", "suite16.mjs", "suite17.mjs", "suite18.mjs", "suite19.mjs", "suite20.mjs", "suite21.mjs", "suite22.mjs", "suite23.mjs", "suite24.mjs", "suite25.mjs", "suite26.mjs", "suite27.mjs", "suite28.mjs", "suite29.mjs", "suite30.mjs", "suite31.mjs", "suite32.mjs", "suite33.mjs", "suite34.mjs", "suite35.mjs", "suite36.mjs", "suite37.mjs", "suite38.mjs", "suite39.mjs", "suite40.mjs", "suite41.mjs", "suite41n.mjs", "suite42.mjs", "suite43.mjs", "suite44.mjs", "suite45.mjs", "suite47.mjs", "sweep.mjs"];
 let failed = 0;
 for (const f of runs) {
   const r = spawnSync(process.execPath, [path.join(here, f)], { cwd: here, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

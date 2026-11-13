@@ -176,8 +176,10 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 - escalations, missed tasks, entries made, RACI;
 - the **month-end checklist** (inventory uploaded, internal reports reviewed, AR Inventory sent to the SLA
   scorecard, client pack built, SLA scored with its score, pack sent), each with a due working day of the next
-  month; inventory and the scorecard step tick by themselves; a score typed for a month Drishti has scored gives
-  way to Drishti's, and the step says so;
+  month, never later than the 5th (month end closes on the 5th); it opens on last month while any of last month's
+  steps is not done, else on this month (a client added this month has no last month to close); inventory and the
+  scorecard step tick by themselves; a score typed for a month Drishti has scored gives way to Drishti's, and the
+  step says so;
 - the **client call log**: calls, emails, meetings, notes and the next call with what to prepare (up to 2,000 characters
   an entry: the box counts them, and a longer entry is refused, never cut).
 
@@ -317,8 +319,9 @@ roster, grouped by team lead (no Emp ID):
 - **Ramp-up**: Training and OJT are due in production 6 weeks from their start (the start date kept on Team status,
   otherwise the date of joining), or on the date the lead agreed. People past it show in a red banner.
 - **Attainment**: entries against the target (the daily target for each working day in the dates from the date of joining; a half day counts
-  half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a Saturday
-  worked, and Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
+  half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a day worked
+  on a Saturday, Sunday or holiday: marked Present or Overtime there, it gets the day's target and 8 hours of floor
+  time like any working day; Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
   way does not count against anyone; with only today picked, it is today's. A night shift (one that crosses midnight)
   counts to the day it began, its hours and entries, until an hour and a half after it ends (05:00 IST at the earliest),
   so that day is not finished while the shift is still running. Production people under 90% are
@@ -369,8 +372,8 @@ bar to narrow the charts), then:
   people, missed tasks, escalations over 24 hours and SLA average (Drishti's, as in the SLA score average above;
   the scores typed at month-end when none of the manager's clients is scored in Drishti), for the dates. The VP sees every manager, a
   manager their own line.
-- **Data freshness**: inventory older than a week, an SLA not scored after its due day, a failed or late roster
-  sync.
+- **Data freshness**: inventory older than a week, last month's SLA not scored after its due day (until it is
+  scored), a failed or late roster sync.
 - **Audit trail** (admins and the VP): who shared a client or took it back, changed the RACI, who gets feedback, a
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
   with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
@@ -513,9 +516,10 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
   or that they worked, and Payment posting and Submission people also the claims on their desk and of the clients
   they are responsible for.
 - **The bell** lists what needs you now, each line opening the page that deals with it. Team leads: escalations
-  (red after 24 hours), client requests to send, missed tasks, claims on the desks of people out today, month-end
-  steps past due, hand-offs on their desk. Billers: their list for today, escalations their team lead answered
-  and hand-offs sent back to them in the last 3 days. Feedback readers: new feedback. It refreshes every 2 minutes
+  (red after 24 hours), client requests to send, missed tasks, claims on the desks of people out today, last month's
+  month-end steps past due (until they are done; the line opens Client 360 on that month), hand-offs on their desk.
+  Billers: their list for today, escalations their team lead answered and hand-offs sent back to them in the last 3
+  days. Feedback readers: new feedback. It refreshes every 2 minutes
   and on every page change; the number counts what is new since you last opened it.
 - **Pop-ups**: Esc or a click on the shaded area closes only the top pop-up (Esc in an open dropdown closes just the
   dropdown). If something was typed in it, it first asks **Discard what you typed?** (Keep editing / Discard), so typed
@@ -699,7 +703,11 @@ once it opens (the client's recheck time after submitting; until then the row sa
 as can the recheck person, the Submission and Rejections people and the client's AR team leads. Rejected again goes
 straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT. With nobody set for
 either, it goes back on the biller's list, unless the claim was already closed or excluded: then it stays so, and the
-rejection is kept on the recheck and in the claim history.
+rejection is kept on the recheck and in the claim history. Either way the client's team lead(s) get a line in the bell
+(the claim number only) saying nobody active is set for Rejections or Submission on the client's profile; it opens the
+profile. A client with Submission in its scope cannot be saved without an active Submission person (new or edited, on the
+profile or on the client card), so this happens when that person is later switched off or leaves, or when Submission
+was taken out of the scope while a recheck was still open.
 
 **Supervisor review in Needs attention.** Each escalation (and each claim a department sent back) has **Review**:
 four notes (why it came, what was reviewed, the findings, the next action) go on the claim's timeline only (who escalated it and when, who reviewed it, where it went; the claim's notes and work stay as they were), and the claim
@@ -891,12 +899,23 @@ Accounts are limited to email domains with "purview" in them (`*purview*` in
 Worker's `ALLOWED_DOMAINS` variable can tighten it). Passwords are hashed in
 the browser and hashed again on the server with a per-user salt and the
 `PEPPER` secret. Codes are six digits, hashed on the server, valid for ten
-minutes, five attempts, at most one per 45 seconds and ten per hour per
-email. Asking for a new code does not cancel one that is still valid: any of
-them works, once, and signing in uses them all up. After ten in an hour a new
-one is still sent when none is valid any more and nobody typed a wrong code in
-that hour, so nobody can lock a person (or the admin) out by asking for codes
-in their name. Sessions last at least 24 hours after the last use and extend while in use.
+minutes, at most one per 45 seconds and ten per hour per email. Asking for a
+new code does not cancel one that is still valid: any of them works, once, and
+signing in uses them all up. After ten in an hour a new one is still sent when
+none is valid any more and nobody typed a wrong code in that hour, so nobody
+can lock a person (or the admin) out by asking for codes in their name. Wrong
+codes are counted for each email per caller (the network address Cloudflare
+gives) and in all, on every screen that takes a code (Email code, Access Admin,
+sign in by name): five wrong codes from one network in an hour stop that network
+trying codes for that email for the hour, but the person's codes keep working
+from anywhere else, so typing wrong codes in someone's name no longer locks them
+out. A code ends only after ten wrong codes in all, from every network: twice one
+network's five, so guessing stays hopeless (at most 100 tries an hour against at
+most ten codes of 900,000 possible, and only by someone using several networks
+who also fills the person's mailbox with codes). People on one office network
+share one address: there, five wrong codes stop everyone in that office from
+typing codes for that email for the hour (a password, or another network, still
+works). No Cloudflare setting is needed. Sessions last at least 24 hours after the last use and extend while in use.
 
 **Email delivery** (needed for codes in production). Set these on the Worker:
 
@@ -1089,9 +1108,12 @@ computer or downloaded to be uploaded again. Third Eye has no sign-in. **How it 
 Brahmastra then signs people in to Drishti with Drishti's own 12-hour session token. Someone who has no Drishti
 account yet gets one, created from their Brahmastra profile under the manager they report to (that manager must
 be on Drishti's People tab). Brahmastra's admin opens Drishti as its Admin, and nobody else does. Everyone else
-gets the Drishti account of their own email, and only of an email from Purview Shastra or one the admin set: an
-address the person or their team lead typed on Team (where Shastra had none) still gets their sign-in codes, but
-it does not open Drishti until the email is added in Shastra. Never put the secret in the repository.
+gets the Drishti account of their own email, and only of an email from Purview Shastra, one the admin set, or one the
+person showed is theirs: an address the person or their team lead typed on Team (where Shastra had none) still gets
+their sign-in codes, but it opens Drishti only once the person has signed in with a code emailed to it (**Email code**
+on the sign-in screen, or the code emailed when they sign in by name; a code a team lead hands over does not count),
+or once the email is added in Shastra. The SLA tab tells them so. A roster sync keeps that while the email stays the
+same; typing another email makes it a typed one again. Never put the secret in the repository.
 
 **E. Test.** Sign in as a team lead → Team → **Send a test email**. When it
 arrives, sign out and try **Sign in with a code**.
@@ -1152,8 +1174,12 @@ BR-... number from Brahmastra; when a later file carries its real number it is f
 two claims. Several service
 lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
-locations automatically: a name the client does not have yet becomes a new location, and a
-switched-off location named in the file is switched on again; the result says which.
+locations automatically: a name the client does not have yet becomes a new location (the result says so).
+A location is switched off only when the team has stopped working it (on the client card it reads
+**stopped working here**), so an upload never loads claims into it and never switches it on: its rows are
+left out, and the result says how many rows, for which location, and that it is switched off because the
+team stopped working it: switch it on in Clients & locations if the work starts again, then upload again.
+Claims already in a switched-off location stay as they are.
 
 **Upload history** lists every batch. **Undo** removes the claims that upload added which nobody has
 opened or worked yet (no entry, never opened, no note, attachment or hand-off), also when the upload had already

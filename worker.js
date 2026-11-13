@@ -100,6 +100,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS otps (id TEXT PRIMARY KEY, email TEXT NOT NULL, code_hash TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT 'login', data_json TEXT NOT NULL DEFAULT '{}',
      created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS idx_otps_email ON otps (email, created_at)`,
+  // each wrong sign-in code: for which email, from which caller (CF-Connecting-IP), when (kept a day; see checkOtp)
+  `CREATE TABLE IF NOT EXISTS otp_fails (email TEXT NOT NULL, caller TEXT NOT NULL, at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_otp_fails ON otp_fails (email, caller, at)`,
   `CREATE TABLE IF NOT EXISTS claim_events (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '',
      kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', data_json TEXT NOT NULL DEFAULT '{}')`,
   `CREATE INDEX IF NOT EXISTS idx_claim_events_claim ON claim_events (claim_id, at)`,
@@ -194,6 +197,8 @@ const SCHEMA = [
 /* Columns added after the first release. ensureReady() adds any that an
    existing database is missing, so upgrades need no manual migration. */
 const EXTRA_COLUMNS = {
+  // how a sign-in code reached the person: email (sent to the address), lead (a team lead handed it over), screen (demo, no email)
+  otps: [["via", "TEXT NOT NULL DEFAULT ''"]],
   // kind 'alloc': "N new claims were allocated to you"; seen_at once the biller has closed the banner
   user_notices: [["kind", "TEXT NOT NULL DEFAULT ''"], ["seen_at", "INTEGER"]],
   notes: [["status", "TEXT NOT NULL DEFAULT ''"], ["sub_status", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT NOT NULL DEFAULT ''"], ["bucket", "TEXT NOT NULL DEFAULT ''"],
@@ -253,7 +258,8 @@ const EXTRA_COLUMNS = {
     ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"],
     // Where the email came from: 0 Purview Shastra (or an account made by hand), 1 typed in Brahmastra by the person or a team lead
-    // where Shastra had none, 2 set by the admin. A typed one signs the person in here but never picks their Drishti account.
+    // where Shastra had none, 2 set by the admin, 3 typed in Brahmastra and then proved: the person signed in with a code emailed to
+    // it. A typed one (1) signs the person in here but never picks their Drishti account; a proved one (3) does.
     ["email_typed", "INTEGER NOT NULL DEFAULT 0"],
     // When the roster sync switched the person off (cleared if they come back): the Stack report's attrition dates a leaver by it
     // when Shastra sends no exit date.
@@ -272,7 +278,9 @@ const EXTRA_COLUMNS = {
 };
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const OTP_TTL_MS = 10 * 60 * 1000;
-const OTP_MAX_TRIES = 5;
+// Wrong sign-in codes (see checkOtp): 5 from one caller for one email in an hour stop that caller trying codes for that email for
+// the hour; a code ends only after 10 wrong codes in all, from every caller.
+const OTP_CALLER_TRIES = 5, OTP_MAX_TRIES = 10;
 /* Files attached to a claim are kept in D1 as base64, split into parts that stay well under D1's row size limit. */
 const ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 const ATTACH_PART_CHARS = 512 * 1024;
@@ -1500,8 +1508,11 @@ async function issueOtp(env, email, purpose, data, { byTeamLead = false } = {}) 
     if (recent.tries > 0) throw new ApiError(429, "Too many codes requested for this email in the last hour. Try again later.");
   }
   const code = otpCode();
+  // how it reaches the person: a team lead hands it over, the demo (no email) shows it on screen, otherwise it is emailed to the
+  // address (a sign-in with an emailed code proves the address is the person's: see emailProved)
+  const via = byTeamLead ? "lead" : env.DEMO && !env.EMAIL_PROVIDER ? "screen" : "email";
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO otps (id, email, code_hash, purpose, data_json, created_at, expires_at) VALUES (?,?,?,?,?,?,?)").bind(uuid(), email, await otpHash(env, email, code), purpose, JSON.stringify(data || {}), now, now + OTP_TTL_MS),
+    env.DB.prepare("INSERT INTO otps (id, email, code_hash, purpose, data_json, created_at, expires_at, via) VALUES (?,?,?,?,?,?,?,?)").bind(uuid(), email, await otpHash(env, email, code), purpose, JSON.stringify(data || {}), now, now + OTP_TTL_MS, via),
     env.DB.prepare("DELETE FROM otps WHERE expires_at < ?").bind(now - 86400000),
   ]);
   return code;
@@ -1514,22 +1525,45 @@ async function deliverOtp(env, email, code, purpose) {
   await sendEmail(env, { to: email, subject: `Your Brahmastra code: ${code}`, text, html });
   return { sent: true };
 }
-async function checkOtp(env, email, code) {
-  const now = Date.now();
+/* A code typed for an email (Email code, Access Admin, sign in by name). Anyone signed out can type codes in someone's name, so
+   wrong codes are counted per caller (Cloudflare's CF-Connecting-IP) as well as in all:
+   - five wrong codes from one caller in an hour stop that caller trying codes for that email until the hour is over (no code is
+     even checked), but do not end the person's codes: they still work from anywhere else;
+   - a code ends only after ten wrong codes in all, from every caller (each wrong code counts against every code still valid, so
+     more codes never mean more guesses).
+   Ten is twice one caller's five, so one caller alone can never end the person's codes, and guessing stays hopeless: a code is
+   one of 900,000, and at most ten are sent to an email in an hour (none more after a wrong code), so even someone with many
+   callers, filling the person's mailbox with codes, gets at most 100 tries an hour against them (under 1 in 9,000); one caller
+   gets five tries an hour against at most ten codes (under 1 in 18,000, as before). */
+const CALLER_STOPPED = "Too many wrong codes were typed here, so codes for this email are not checked from here for an hour. The codes already sent still work from another network.";
+async function checkOtp(env, email, code, caller) {
+  const now = Date.now(), who = str(caller, 64) || "local";
+  const mine = ((await one(env, "SELECT COUNT(*) AS n FROM otp_fails WHERE email = ? AND caller = ? AND at > ?", email, who, now - 3600000)) || {}).n || 0;
+  if (mine >= OTP_CALLER_TRIES) throw new ApiError(429, CALLER_STOPPED);
   // Every code still valid for this email works (a new request does not cancel the one already in the mailbox).
   const live = await all(env, "SELECT * FROM otps WHERE email = ? AND consumed = 0 AND expires_at >= ? ORDER BY created_at DESC LIMIT 20", email, now);
   if (!live.length) throw new ApiError(401, "That code has expired or was never sent. Request a new one.");
   const hash = await otpHash(env, email, String(code || "").replace(/\s/g, ""));
   const row = live.find((r) => sameHash(hash, r.code_hash));
   if (!row) {
-    // a wrong code counts against every code still valid, so more codes never mean more guesses; each is dead after 5
-    await run(env, "UPDATE otps SET tries = tries + 1, consumed = CASE WHEN tries + 1 >= ? THEN 1 ELSE consumed END WHERE email = ? AND consumed = 0 AND expires_at >= ?", OTP_MAX_TRIES, email, now);
-    throw new ApiError(401, live.every((r) => r.tries + 1 >= OTP_MAX_TRIES) ? "Too many wrong codes. Request a new one." : "That code doesn't match. Check the latest email and try again.");
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO otp_fails (email, caller, at) VALUES (?,?,?)").bind(email, who, now),
+      env.DB.prepare("UPDATE otps SET tries = tries + 1, consumed = CASE WHEN tries + 1 >= ? THEN 1 ELSE consumed END WHERE email = ? AND consumed = 0 AND expires_at >= ?").bind(OTP_MAX_TRIES, email, now),
+      env.DB.prepare("DELETE FROM otp_fails WHERE at < ?").bind(now - 86400000),
+    ]);
+    if (live.every((r) => r.tries + 1 >= OTP_MAX_TRIES)) throw new ApiError(401, "Too many wrong codes for this email. Request a new one.");
+    throw new ApiError(401, mine + 1 >= OTP_CALLER_TRIES ? CALLER_STOPPED : "That code doesn't match. Check the latest email and try again.");
   }
   // one sign-in uses up every code still valid for this email
   await run(env, "UPDATE otps SET consumed = 1 WHERE email = ? AND consumed = 0", email);
   let data = {}; try { data = JSON.parse(row.data_json || "{}"); } catch {}
-  return { purpose: row.purpose, data };
+  return { purpose: row.purpose, data, via: row.via || "" };
+}
+/* A sign-in with a code that was emailed to the address proves the address is the person's: an email typed in Brahmastra (1)
+   becomes proved (3) and then opens their Drishti account. A code a team lead handed over, or one shown on screen, proves nothing.
+   Typing another email makes it typed again (users.save); a roster sync keeps the proof while the email stays the same. */
+async function emailProved(env, u, via) {
+  if (via === "email" && u && u.email_typed === 1) await run(env, "UPDATE users SET email_typed = 3 WHERE id = ? AND email = ? AND email_typed = 1", u.id, u.email);
 }
 async function openSession(env, u, via) {
   const now = Date.now();
@@ -2112,8 +2146,10 @@ async function importRoster(env, user, payload) {
       role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
       roster_status: row.status, exit_date: row.exit_date, doj: row.doj, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
     // An email Shastra sends is Shastra's (0). One kept from before, that Shastra does not send, counts as typed in Brahmastra (1)
-    // unless the admin set it (2) or the account was made by hand and is matched now (2).
-    next.email_typed = emailOk && next.email === row.email ? 0 : !match || match.email_missing ? 0 : match.email_typed === 2 || (match.source !== "roster" && match.email_typed !== 1) ? 2 : 1;
+    // unless the admin set it (2), the account was made by hand and is matched now (2), or the person proved it with a code
+    // emailed to it (3, kept while the email stays the same).
+    next.email_typed = emailOk && next.email === row.email ? 0 : !match || match.email_missing ? 0 : match.email_typed === 3 && next.email === match.email ? 3
+      : match.email_typed === 2 || (match.source !== "roster" && match.email_typed !== 1 && match.email_typed !== 3) ? 2 : 1;
     // Last check: an email another row (or another account) already has is never written twice.
     const holderNow = byEmail.get(next.email);
     if (planMail.has(next.email) || (holderNow && (!match || holderNow.id !== match.id) && !next.free_email_from)) {
@@ -2305,12 +2341,12 @@ async function shastraFloor(env, from, to, today, off) {
 /* Shastra's attendance status for a day: in (a full day), a half day, unplanned (absent, sick, leave without pay),
    leave (approved, maternity, sabbatical) or off (week off, holiday, comp off: not a working day). Unknown or missing:
    Brahmastra's own Out today mark decides. Shastra still reads its older spellings "half-day" and "leave" (approved
-   leave), and counts Overtime as a day at work. */
+   leave), and counts Overtime as a day at work, on a Saturday, Sunday or holiday as on a working day. */
 function shastraDay(status) {
   const s = String(status || "").trim().toLowerCase();
   if (!s) return null;
   if (["present", "late", "p", "l"].includes(s)) return { share: 1, kind: "in" };
-  if (["overtime", "ot"].includes(s)) return { share: 1, kind: "in", overtime: true };
+  if (["overtime", "ot"].includes(s)) return { share: 1, kind: "in" };   // any day, a Saturday, Sunday or holiday too
   if (["half_day", "half-day", "half_day_lwp", "hd", "hd-lwp"].includes(s)) return { share: 0.5, kind: "half" };
   if (["absent", "a", "sick_leave", "sl", "lwp"].includes(s)) return { share: 0, kind: "unplanned" };
   if (["approved_leave", "leave", "al", "maternity_leave", "ml", "sabbatical", "sb"].includes(s)) return { share: 0, kind: "leave" };
@@ -2991,15 +3027,27 @@ function healthOf({ pct, sla, tfl, escLate, waitingN, oldest, missed }) {
   out.sort((a, b) => (a.tone === "red" ? 0 : 1) - (b.tone === "red" ? 0 : 1));
   return { health: !out.length ? "good" : out.some((r) => r.tone === "red") ? "risk" : "watch", reasons: out };
 }
-/* The month being closed: last month during the first 10 days of a month, else this month. */
 /* A real month (01 to 12), from 2000 up to this month: a typed "2026-13" or "2099-12" would become the client's latest SLA. */
 const okMonth = (m, todayIso) => typeof m === "string" && /^(\d{4})-(0[1-9]|1[0-2])$/.test(m) && m >= "2000-01" && m <= String(todayIso || isoToday()).slice(0, 7);
-const closingMonth = (todayIso) => { const [y, m, d] = todayIso.split("-").map(Number); if (d > 10) return `${y}-${String(m).padStart(2, "0")}`; const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y; return `${py}-${String(pm).padStart(2, "0")}`; };
 /* The n-th working day (Mon to Fri) of the month after `month` (YYYY-MM). */
 function nthWorkingDayAfter(month, n) {
   const [y, m] = month.split("-").map(Number);
   let d = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1)), k = 0;
   for (;;) { const w = d.getUTCDay(), iso = d.toISOString().slice(0, 10); if (w !== 0 && w !== 6 && !HOLIDAYS.has(iso)) { k++; if (k === n) return iso; } d = new Date(d.getTime() + 86400000); }
+}
+/* Month end closes on the 5th: a month-end step is due on its working day of the next month, and never later than the 5th. */
+const monthendDue = (month, n) => { const d = nthWorkingDayAfter(month, n), cap = nextMonthISO(month) + "-05"; return d < cap ? d : cap; };
+/* A client added this month (from the 1st, 00:00 IST, to the end of today) has no last month to close. */
+const addedThisMonth = (createdAt, todayIso) => { const t = String(todayIso);
+  return createdAt >= Date.parse(t.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000 && createdAt < Date.parse(t + "T00:00:00Z") - IST_MIN * 60000 + 86400000; };
+/* The month a client's month-end is still being closed: last month while any of its steps is not done (a step past due stays
+   reminded until it is done), else this month. */
+async function closingMonthOf(env, clientId, todayIso) {
+  const cur = String(todayIso).slice(0, 7), last = prevMonthISO(cur), keys = MONTHEND_STEPS.map(([k]) => k);
+  const c = await one(env, "SELECT created_at FROM clients WHERE id = ?", clientId);
+  if (!c || addedThisMonth(c.created_at, todayIso)) return cur;
+  const d = await one(env, `SELECT COUNT(*) AS n FROM client_monthend WHERE client_id = ? AND month = ? AND done_at IS NOT NULL AND step IN (${keys.map(() => "?").join(",")})`, clientId, last, ...keys);
+  return d && d.n >= keys.length ? cur : last;
 }
 async function monthendAuto(env, clientId, month, step, byName) {
   await run(env, `INSERT INTO client_monthend (client_id, month, step, done_at, done_by_name, auto) VALUES (?,?,?,?,?,1)
@@ -4186,10 +4234,10 @@ const OPS = {
     const code = await issueOtp(env, email, "signup", { first_name: first, last_name: last, designation, passHash: payload.passHash, capacity: 35 });
     return { email, ...(await deliverOtp(env, email, code, "signup")) };
   },
-  "auth.verifyOtp": async ({ env, payload }) => {
+  "auth.verifyOtp": async ({ env, payload, caller }) => {
     const email = mailClean(payload.email);
     if (!mailOk(email) || !String(payload.code || "").trim()) throw bad("Enter the email and the code.");
-    const { purpose, data } = await checkOtp(env, email, payload.code);
+    const { purpose, data, via } = await checkOtp(env, email, payload.code, caller);
     let u = await one(env, "SELECT * FROM users WHERE email = ?", email);
     if (purpose === "signup") {
       if (u) throw bad("That email already has an account. Sign in instead.");
@@ -4202,6 +4250,7 @@ const OPS = {
     if (!u || !u.active) throw new ApiError(403, "This account is not active. Ask your team lead.");
     const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     if (u.must_change && !u.pass_hash) await run(env, "UPDATE users SET must_change = 0 WHERE id = ?", u.id);
+    await emailProved(env, u, via);
     return openSession(env, u, "otp");
   },
 
@@ -4226,10 +4275,10 @@ const OPS = {
     const code = await issueOtp(env, u.email, "login", {});
     return { user_id: u.id, name: u.name, email_hint: maskEmail(u.email), ...(await deliverOtp(env, u.email, code, "login")) };
   },
-  "auth.adminVerify": async ({ env, payload }) => {
+  "auth.adminVerify": async ({ env, payload, caller }) => {
     const u = await one(env, "SELECT * FROM users WHERE id = ? AND role = 'admin' AND active = 1", str(payload.user_id, 60));
     if (!u) throw bad("No admin account is set up.");
-    await checkOtp(env, u.email, payload.code);
+    await checkOtp(env, u.email, payload.code, caller);
     return openSession(env, u, "otp");
   },
   "auth.setupCode": async ({ env, payload }) => {
@@ -4243,13 +4292,15 @@ const OPS = {
     return { via: "email", email_hint: maskEmail(u.email), ...d };
   },
   /* The code proves it is really them (a lead-issued sign-in code counts too); then the password is saved and they are in. */
-  "auth.completeSetup": async ({ env, payload }) => {
+  "auth.completeSetup": async ({ env, payload, caller }) => {
     const u = await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(payload.user_id, 60));
     if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
     if (!isHash(payload.passHash)) throw bad("Set a password.");
     await nameSignInOk(env, u);
-    const { purpose } = await checkOtp(env, u.email, payload.code);
+    const { purpose, via } = await checkOtp(env, u.email, payload.code, caller);
     if (purpose !== "setup" && purpose !== "login") throw bad("That code is not valid here. Ask for a new one.");
+    // (an emailed code proves the address here too; a code the team lead handed over does not)
+    await emailProved(env, u, via);
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
     await env.DB.batch([
@@ -4877,9 +4928,9 @@ const OPS = {
       const fd = fl.byUser.get(u.id), myDay = dayOf(u), doj = isoDate(u.doj);
       let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0, unknownDone = 0;
       for (const d of span) {
-        const x = fd && fd.get(d), sd0 = x ? shastraDay(x.status) : null, wd = weekday(d);
-        // Overtime on a working day is a day in; a weekend or holiday worked as overtime adds no target (its entries still count)
-        const sd = sd0 && sd0.overtime && !wd ? null : sd0;
+        // Overtime is a day in, on a working day and also on a Saturday, Sunday or Shastra holiday: like a Saturday marked Present,
+        // it gets the day's target and 8 hours of floor time, and that day's entries are judged against it
+        const x = fd && fd.get(d), sd = x ? shastraDay(x.status) : null, wd = weekday(d);
         let share = 0;
         if (!(doj && d < doj)) {
           if (sd) { share = sd.share; if (sd.kind === "in") full++; else if (sd.kind === "half") half++; else if (sd.kind !== "off") { out++; if (sd.kind === "unplanned") unplanned++; } }
@@ -5375,8 +5426,9 @@ const OPS = {
     let alerts = [];
     const add = (key, tone, n, text, view, params) => { if (n > 0) items.push({ key, tone, n, text, view, params: params || null }); };
     // what was done to this person: made responsible for a client, or taken off one (two weeks)
-    for (const n of await all(env, "SELECT id, text, view, client_id, at FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
-      items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: n.view === "escalations" && n.client_id ? { client_id: n.client_id } : null, at: n.at });
+    // (a notice about a client's profile opens that profile: a rejected recheck with nobody set for Rejections or Submission)
+    for (const n of await all(env, "SELECT id, text, view, client_id, at, kind FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
+      items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: n.view === "escalations" && n.client_id ? { client_id: n.client_id } : n.kind === "profile" && n.client_id ? { client_id: n.client_id, focus: "profile" } : null, at: n.at });
     const ho = await OPS["handoffs.count"]({ env, user });
     add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the TAT` : ""), "handoffs");
     if (user.role === "supervisor") {
@@ -5426,13 +5478,15 @@ const OPS = {
       alerts = miss.alerts;
       const cl = (await OPS["clients.list"]({ env, user })).clients.filter((c) => c.active && c.can_edit && c.profile_gaps.length);
       add("profiles", "amber", cl.length, (cl.length === 1 ? cl[0].name + "'s profile is" : cl.length + " client profiles are") + " incomplete: " + (cl.length === 1 ? cl[0].profile_gaps.slice(0, 3).join(", ") : "scope of work, locations, targets or the people responsible"), "clients");
-      const month = closingMonth(today);
-      const mine = (await all(env, "SELECT id, name FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id));
+      // last month's month-end steps past their due day stay here until they are done (no cut-off); a client added this month has none.
+      // The line opens Client 360 on that month.
+      const month = prevMonthISO(today.slice(0, 7));
+      const mine = (await all(env, "SELECT id, name, created_at FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id) && !addedThisMonth(c.created_at, today));
       if (mine.length) {
         const done = new Set((await all(env, "SELECT client_id, step FROM client_monthend WHERE month = ? AND done_at IS NOT NULL", month)).map((r) => r.client_id + "\u0001" + r.step));
-        const late = []; for (const c of mine) { const n = MONTHEND_STEPS.filter(([k, , due]) => nthWorkingDayAfter(month, due) < today && !done.has(c.id + "\u0001" + k)).length; if (n) late.push({ c, n }); }
+        const late = []; for (const c of mine) { const n = MONTHEND_STEPS.filter(([k, , due]) => monthendDue(month, due) < today && !done.has(c.id + "\u0001" + k)).length; if (n) late.push({ c, n }); }
         const n = late.reduce((t, x) => t + x.n, 0);
-        add("monthend", "amber", n, plural(n, "month-end step", "month-end steps") + ` for ${monthName(month)} past due` + (late.length === 1 ? " at " + late[0].c.name : ` at ${late.length} clients`), "client", late.length ? { client_id: late[0].c.id } : null);
+        add("monthend", "amber", n, plural(n, "month-end step", "month-end steps") + ` for ${monthName(month)} past due` + (late.length === 1 ? " at " + late[0].c.name : ` at ${late.length} clients`), "client", late.length ? { client_id: late[0].c.id, month } : null);
       }
     } else {
       const r = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)", user.id, today);
@@ -5564,7 +5618,7 @@ const OPS = {
     await snapshotIfStale(env);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const lc = await leadClientIds(env, user, payload.lead_id);
-    const clients = (await all(env, "SELECT id, name, code, team_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id) && (!lc || lc.includes(c.id)) && (!payload.client_id || c.id === payload.client_id));
+    const clients = (await all(env, "SELECT id, name, code, team_json, created_at FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id) && (!lc || lc.includes(c.id)) && (!payload.client_id || c.id === payload.client_id));
     const ids = new Set(clients.map((c) => c.id));
     const mapOf = (rows, k = "client_id") => new Map(rows.filter((r) => ids.has(r[k])).map((r) => [r[k], r]));
     const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END";
@@ -5590,7 +5644,8 @@ const OPS = {
     const collTo = payload.to_ms != null ? num(payload.to_ms, now) : now;
     const coll = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt FROM handoffs WHERE dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ? GROUP BY client_id`, monthStart, collTo));
     const raci = new Map((await OPS["raci.list"]({ env, user, payload })).rows.map((r) => [r.client_id, r]));
-    const closing = closingMonth(today), slaDue = nthWorkingDayAfter(closing, 4);
+    // last month's SLA, from its due day (the 4th working day, never later than the 5th) until it is scored: no cut-off
+    const closing = prevMonthISO(today.slice(0, 7)), slaDue = monthendDue(closing, 4), hadLast = new Set(clients.filter((c) => !addedThisMonth(c.created_at, today)).map((c) => c.id));
     const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, clients, today) : new Map();
     if (drs.size) await drTickMonthEnd(env, drs);
     // each client's SLA for its health line: Drishti's score for a month it has scored, else the one typed at month-end (as Client 360)
@@ -5620,7 +5675,7 @@ const OPS = {
       const days = r.last_inventory ? Math.floor((now - r.last_inventory) / 86400000) : null;
       if (days == null) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: no inventory uploaded yet` });
       else if (days > 7) fresh.push({ tone: days > 14 ? "red" : "amber", client_id: r.client_id, text: `${r.client}: inventory last uploaded ${days} days ago` });
-      if ((!r.sla || r.sla.month < closing) && today > slaDue) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: SLA for ${monthName(closing)} not scored yet (was due ${slaDue})` });
+      if ((!r.sla || r.sla.month < closing) && today > slaDue && hadLast.has(r.client_id)) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: SLA for ${monthName(closing)} not scored yet (was due ${slaDue})` });
     }
     const sync = await getSetting(env, "shastra_sync", null);
     if (env.SHASTRA_FEED_KEY && sync && sync.ok === false) fresh.unshift({ tone: "red", text: `Roster sync from Purview Shastra failed: ${sync.error || "no answer"}` });
@@ -6060,7 +6115,8 @@ const OPS = {
     const esc = (await trackerEsc(env, clientId)).get(clientId) || { n: 0, late: 0 };
     const missed = (await missedByClient(env, payload)).get(clientId) || { ar: 0, posting: 0, submission: 0 };
     const worked = await one(env, "SELECT COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, from, to);
-    const month = okMonth(payload.month, today) ? payload.month : closingMonth(today);
+    // the month asked for, else the month still being closed for this client (last month while any of its steps is not done)
+    const month = okMonth(payload.month, today) ? payload.month : await closingMonthOf(env, clientId, today);
     // The SLA here is the one the scorecard, the Portfolio and the digest show: Drishti's score for a month Drishti has scored,
     // the score typed at month-end only for a month it has not. The month-end step ticks itself from Drishti on this page too.
     const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, [c], today) : new Map();
@@ -6069,7 +6125,7 @@ const OPS = {
     const me = new Map((await all(env, "SELECT * FROM client_monthend WHERE client_id = ? AND month = ?", clientId, month)).map((r) => [r.step, r]));
     // the SLA step shows the score in use; typed: what a person typed for the month, when Drishti's score for it differs
     const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key), dm = key === "sla" && r ? slaAll.months.get(month) : null;
-      return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: dm ? dm.score : r ? r.score : null, typed: dm && dm.typed != null ? dm.typed : null, note: r ? r.note : "" }; });
+      return { key, label, auto, due: monthendDue(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: dm ? dm.score : r ? r.score : null, typed: dm && dm.typed != null ? dm.typed : null, note: r ? r.note : "" }; });
     const log = await all(env, "SELECT id, at, kind, text, next_on, by_name, by_id FROM client_log WHERE client_id = ? ORDER BY at DESC LIMIT 30", clientId);
     const raci = (await OPS["raci.list"]({ env, user, payload })).rows.find((r) => r.client_id === clientId) || null;
     const team = parseTeam(c.team_json).length;
@@ -6148,7 +6204,7 @@ const OPS = {
     const clientId = str(payload.client_id, 60);
     editableOr(user, clientId);
     if (payload.step !== "sla_inventory") throw bad("Only that step is ticked this way.");
-    await monthendAuto(env, clientId, closingMonth(isoDate(payload.today) || isoToday()), "sla_inventory", user.name);
+    await monthendAuto(env, clientId, await closingMonthOf(env, clientId, isoDate(payload.today) || isoToday()), "sla_inventory", user.name);
     return { ok: true };
   },
 
@@ -6408,7 +6464,12 @@ const OPS = {
     if (kind !== "fresh" && kind !== "worked") throw bad("kind must be fresh or worked.");
     const client = await one(env, "SELECT id, follow_up_days FROM clients WHERE id = ?", client_id);
     if (!client) throw bad("Unknown client.");
-    if (location_id) { const l = await one(env, "SELECT id FROM locations WHERE id = ? AND client_id = ?", location_id, client.id); if (!l) throw bad("Unknown location."); }
+    if (location_id) {
+      const l = await one(env, "SELECT id, name, active FROM locations WHERE id = ? AND client_id = ?", location_id, client.id);
+      if (!l) throw bad("Unknown location.");
+      // a location is switched off only when the team has stopped working it: an upload never loads claims into it (nor switches it on)
+      if (!l.active) throw bad(`${l.name} is switched off because the team stopped working it, so nothing was loaded into it. If the work starts again, switch it on in Clients & locations, then upload again.`);
+    }
     const now = Date.now();
     let bid = batch_id;
     if (!bid) {
@@ -7548,7 +7609,7 @@ const OPS = {
     const me = await one(env, "SELECT email, email_missing, email_typed FROM users WHERE id = ?", user.id);
     const email = me && !me.email_missing ? String(me.email || "").toLowerCase() : "";
     if (!email) throw bad("Your account has no email address yet. Ask for it to be added in Purview Shastra.");
-    if (me.email_typed === 1) throw denied("Your email address was added in Brahmastra, not in Purview Shastra, so it does not pick your Drishti account. Ask for it to be added in Purview Shastra.");
+    if (me.email_typed === 1) throw denied(`Your email address (${email}) was added in Brahmastra, not in Purview Shastra, so it does not open Drishti until you show it is yours: sign out, then sign in once with Email code, using ${email} and the code sent to it. The SLA tab then opens as you. (Or ask for it to be added in Purview Shastra.)`);
     if (email === adminEmail) throw denied("That email address belongs to Drishti's Admin. Only Brahmastra's admin opens Drishti as its Admin.");
     const find = async () => ((await call({ a: "users.list", t: admin })).users || []).find((u) => String(u.email || "").toLowerCase() === email);
     let du = await find(), created = false;
@@ -7600,7 +7661,7 @@ const OPS = {
       if (!r.ok) throw new ApiError(502, "OneDrive did not save " + name + " (" + r.status + ").");
       saved.push(path.slice(0, -1).join(" › "));
     }
-    try { await monthendAuto(env, c.id, closingMonth(isoDate(payload.today) || isoToday()), "sla_inventory", user.name); } catch (e) {}
+    try { await monthendAuto(env, c.id, await closingMonthOf(env, c.id, isoDate(payload.today) || isoToday()), "sla_inventory", user.name); } catch (e) {}
     return { name, folders: saved };
   },
   /* The AR inventory as it stands now (open, on desks and worked claims), in the columns Drishti's AR Inventory report reads. */
@@ -7973,6 +8034,12 @@ const OPS = {
         // the recheck and in the claim history).
         stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ?${KEEP}`).bind(today, now, c.id));
         went = kept ? "kept" : "biller";
+        // the client's team lead(s) hear it in the bell: the claim number only, and that nobody active is set on the profile; the
+        // line opens the client's profile (kind "profile") so they can set someone
+        const cl2 = await one(env, "SELECT name FROM clients WHERE id = ?", h.client_id);
+        const told = `${c.claim_no ? "Claim " + c.claim_no : "A claim"} was marked Rejected at its recheck, but nobody active is set for Rejections or Submission on ${(cl2 && cl2.name) || "the client"}'s profile to correct and resubmit it. Set someone on the profile.`;
+        for (const u of await escalationPeople(env, h.client_id))
+          stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id, kind) VALUES (?,?,?,?,?,?,?)").bind(uuid(), u.id, now, told.slice(0, 300), "clients", h.client_id, "profile"));
       }
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `Submission rejected (${reason}): ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "", ...(kept ? { kept: c.state } : {}) }));
@@ -9045,7 +9112,10 @@ export default {
           // Changing a client's data needs edit access; a view-only share is not enough.
           if (user.scope_view_only && user.scope_view_only.size && payload.client_id && EDIT_OPS.test(op) && user.scope_view_only.has(String(payload.client_id))) throw viewOnly();
         }
-        const result = await handler({ env, user, token, payload, ctx });
+        // who is calling, for the sign-in code limits: the address Cloudflare gives (CF-Connecting-IP); the demo and the tests have
+        // none, and count as one stand-in caller
+        const caller = String(request.headers.get("CF-Connecting-IP") || "").trim().slice(0, 64) || "local";
+        const result = await handler({ env, user, token, payload, ctx, caller });
         return json(result || { ok: true });
       }
       throw new ApiError(404, "Not found.");
