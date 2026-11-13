@@ -2961,15 +2961,27 @@ function healthOf({ pct, sla, tfl, escLate, waitingN, oldest, missed }) {
   out.sort((a, b) => (a.tone === "red" ? 0 : 1) - (b.tone === "red" ? 0 : 1));
   return { health: !out.length ? "good" : out.some((r) => r.tone === "red") ? "risk" : "watch", reasons: out };
 }
-/* The month being closed: last month during the first 10 days of a month, else this month. */
 /* A real month (01 to 12), from 2000 up to this month: a typed "2026-13" or "2099-12" would become the client's latest SLA. */
 const okMonth = (m, todayIso) => typeof m === "string" && /^(\d{4})-(0[1-9]|1[0-2])$/.test(m) && m >= "2000-01" && m <= String(todayIso || isoToday()).slice(0, 7);
-const closingMonth = (todayIso) => { const [y, m, d] = todayIso.split("-").map(Number); if (d > 10) return `${y}-${String(m).padStart(2, "0")}`; const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y; return `${py}-${String(pm).padStart(2, "0")}`; };
 /* The n-th working day (Mon to Fri) of the month after `month` (YYYY-MM). */
 function nthWorkingDayAfter(month, n) {
   const [y, m] = month.split("-").map(Number);
   let d = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1)), k = 0;
   for (;;) { const w = d.getUTCDay(), iso = d.toISOString().slice(0, 10); if (w !== 0 && w !== 6 && !HOLIDAYS.has(iso)) { k++; if (k === n) return iso; } d = new Date(d.getTime() + 86400000); }
+}
+/* Month end closes on the 5th: a month-end step is due on its working day of the next month, and never later than the 5th. */
+const monthendDue = (month, n) => { const d = nthWorkingDayAfter(month, n), cap = nextMonthISO(month) + "-05"; return d < cap ? d : cap; };
+/* A client added this month (from the 1st, 00:00 IST, to the end of today) has no last month to close. */
+const addedThisMonth = (createdAt, todayIso) => { const t = String(todayIso);
+  return createdAt >= Date.parse(t.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000 && createdAt < Date.parse(t + "T00:00:00Z") - IST_MIN * 60000 + 86400000; };
+/* The month a client's month-end is still being closed: last month while any of its steps is not done (a step past due stays
+   reminded until it is done), else this month. */
+async function closingMonthOf(env, clientId, todayIso) {
+  const cur = String(todayIso).slice(0, 7), last = prevMonthISO(cur), keys = MONTHEND_STEPS.map(([k]) => k);
+  const c = await one(env, "SELECT created_at FROM clients WHERE id = ?", clientId);
+  if (!c || addedThisMonth(c.created_at, todayIso)) return cur;
+  const d = await one(env, `SELECT COUNT(*) AS n FROM client_monthend WHERE client_id = ? AND month = ? AND done_at IS NOT NULL AND step IN (${keys.map(() => "?").join(",")})`, clientId, last, ...keys);
+  return d && d.n >= keys.length ? cur : last;
 }
 async function monthendAuto(env, clientId, month, step, byName) {
   await run(env, `INSERT INTO client_monthend (client_id, month, step, done_at, done_by_name, auto) VALUES (?,?,?,?,?,1)
@@ -4992,13 +5004,15 @@ const OPS = {
       alerts = miss.alerts;
       const cl = (await OPS["clients.list"]({ env, user })).clients.filter((c) => c.active && c.can_edit && c.profile_gaps.length);
       add("profiles", "amber", cl.length, (cl.length === 1 ? cl[0].name + "'s profile is" : cl.length + " client profiles are") + " incomplete: " + (cl.length === 1 ? cl[0].profile_gaps.slice(0, 3).join(", ") : "scope of work, locations, targets or the people responsible"), "clients");
-      const month = closingMonth(today);
-      const mine = (await all(env, "SELECT id, name FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id));
+      // last month's month-end steps past their due day stay here until they are done (no cut-off); a client added this month has none.
+      // The line opens Client 360 on that month.
+      const month = prevMonthISO(today.slice(0, 7));
+      const mine = (await all(env, "SELECT id, name, created_at FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id) && !addedThisMonth(c.created_at, today));
       if (mine.length) {
         const done = new Set((await all(env, "SELECT client_id, step FROM client_monthend WHERE month = ? AND done_at IS NOT NULL", month)).map((r) => r.client_id + "\u0001" + r.step));
-        const late = []; for (const c of mine) { const n = MONTHEND_STEPS.filter(([k, , due]) => nthWorkingDayAfter(month, due) < today && !done.has(c.id + "\u0001" + k)).length; if (n) late.push({ c, n }); }
+        const late = []; for (const c of mine) { const n = MONTHEND_STEPS.filter(([k, , due]) => monthendDue(month, due) < today && !done.has(c.id + "\u0001" + k)).length; if (n) late.push({ c, n }); }
         const n = late.reduce((t, x) => t + x.n, 0);
-        add("monthend", "amber", n, plural(n, "month-end step", "month-end steps") + ` for ${monthName(month)} past due` + (late.length === 1 ? " at " + late[0].c.name : ` at ${late.length} clients`), "client", late.length ? { client_id: late[0].c.id } : null);
+        add("monthend", "amber", n, plural(n, "month-end step", "month-end steps") + ` for ${monthName(month)} past due` + (late.length === 1 ? " at " + late[0].c.name : ` at ${late.length} clients`), "client", late.length ? { client_id: late[0].c.id, month } : null);
       }
     } else {
       const r = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)", user.id, today);
@@ -5130,7 +5144,7 @@ const OPS = {
     await snapshotIfStale(env);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const lc = await leadClientIds(env, user, payload.lead_id);
-    const clients = (await all(env, "SELECT id, name, code, team_json FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id) && (!lc || lc.includes(c.id)) && (!payload.client_id || c.id === payload.client_id));
+    const clients = (await all(env, "SELECT id, name, code, team_json, created_at FROM clients WHERE active = 1 ORDER BY name")).filter((c) => inScope(user, c.id) && (!lc || lc.includes(c.id)) && (!payload.client_id || c.id === payload.client_id));
     const ids = new Set(clients.map((c) => c.id));
     const mapOf = (rows, k = "client_id") => new Map(rows.filter((r) => ids.has(r[k])).map((r) => [r[k], r]));
     const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END";
@@ -5156,7 +5170,8 @@ const OPS = {
     const collTo = payload.to_ms != null ? num(payload.to_ms, now) : now;
     const coll = mapOf(await all(env, `SELECT client_id, COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt FROM handoffs WHERE dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ? GROUP BY client_id`, monthStart, collTo));
     const raci = new Map((await OPS["raci.list"]({ env, user, payload })).rows.map((r) => [r.client_id, r]));
-    const closing = closingMonth(today), slaDue = nthWorkingDayAfter(closing, 4);
+    // last month's SLA, from its due day (the 4th working day, never later than the 5th) until it is scored: no cut-off
+    const closing = prevMonthISO(today.slice(0, 7)), slaDue = monthendDue(closing, 4), hadLast = new Set(clients.filter((c) => !addedThisMonth(c.created_at, today)).map((c) => c.id));
     const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, clients, today) : new Map();
     if (drs.size) await drTickMonthEnd(env, drs);
     // each client's SLA for its health line: Drishti's score for a month it has scored, else the one typed at month-end (as Client 360)
@@ -5186,7 +5201,7 @@ const OPS = {
       const days = r.last_inventory ? Math.floor((now - r.last_inventory) / 86400000) : null;
       if (days == null) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: no inventory uploaded yet` });
       else if (days > 7) fresh.push({ tone: days > 14 ? "red" : "amber", client_id: r.client_id, text: `${r.client}: inventory last uploaded ${days} days ago` });
-      if ((!r.sla || r.sla.month < closing) && today > slaDue) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: SLA for ${monthName(closing)} not scored yet (was due ${slaDue})` });
+      if ((!r.sla || r.sla.month < closing) && today > slaDue && hadLast.has(r.client_id)) fresh.push({ tone: "amber", client_id: r.client_id, text: `${r.client}: SLA for ${monthName(closing)} not scored yet (was due ${slaDue})` });
     }
     const sync = await getSetting(env, "shastra_sync", null);
     if (env.SHASTRA_FEED_KEY && sync && sync.ok === false) fresh.unshift({ tone: "red", text: `Roster sync from Purview Shastra failed: ${sync.error || "no answer"}` });
@@ -5626,7 +5641,8 @@ const OPS = {
     const esc = (await trackerEsc(env, clientId)).get(clientId) || { n: 0, late: 0 };
     const missed = (await missedByClient(env, payload)).get(clientId) || { ar: 0, posting: 0, submission: 0 };
     const worked = await one(env, "SELECT COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, from, to);
-    const month = okMonth(payload.month, today) ? payload.month : closingMonth(today);
+    // the month asked for, else the month still being closed for this client (last month while any of its steps is not done)
+    const month = okMonth(payload.month, today) ? payload.month : await closingMonthOf(env, clientId, today);
     // The SLA here is the one the scorecard, the Portfolio and the digest show: Drishti's score for a month Drishti has scored,
     // the score typed at month-end only for a month it has not. The month-end step ticks itself from Drishti on this page too.
     const drOv = await drishtiOverview(env), drs = drOv.state === "ok" ? drSummary(drOv, [c], today) : new Map();
@@ -5635,7 +5651,7 @@ const OPS = {
     const me = new Map((await all(env, "SELECT * FROM client_monthend WHERE client_id = ? AND month = ?", clientId, month)).map((r) => [r.step, r]));
     // the SLA step shows the score in use; typed: what a person typed for the month, when Drishti's score for it differs
     const monthend = MONTHEND_STEPS.map(([key, label, due, auto]) => { const r = me.get(key), dm = key === "sla" && r ? slaAll.months.get(month) : null;
-      return { key, label, auto, due: nthWorkingDayAfter(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: dm ? dm.score : r ? r.score : null, typed: dm && dm.typed != null ? dm.typed : null, note: r ? r.note : "" }; });
+      return { key, label, auto, due: monthendDue(month, due), done: !!(r && r.done_at), done_at: r ? r.done_at : null, done_by_name: r ? r.done_by_name : "", by_itself: !!(r && r.auto), score: dm ? dm.score : r ? r.score : null, typed: dm && dm.typed != null ? dm.typed : null, note: r ? r.note : "" }; });
     const log = await all(env, "SELECT id, at, kind, text, next_on, by_name, by_id FROM client_log WHERE client_id = ? ORDER BY at DESC LIMIT 30", clientId);
     const raci = (await OPS["raci.list"]({ env, user, payload })).rows.find((r) => r.client_id === clientId) || null;
     const team = parseTeam(c.team_json).length;
@@ -5714,7 +5730,7 @@ const OPS = {
     const clientId = str(payload.client_id, 60);
     editableOr(user, clientId);
     if (payload.step !== "sla_inventory") throw bad("Only that step is ticked this way.");
-    await monthendAuto(env, clientId, closingMonth(isoDate(payload.today) || isoToday()), "sla_inventory", user.name);
+    await monthendAuto(env, clientId, await closingMonthOf(env, clientId, isoDate(payload.today) || isoToday()), "sla_inventory", user.name);
     return { ok: true };
   },
 
@@ -7151,7 +7167,7 @@ const OPS = {
       if (!r.ok) throw new ApiError(502, "OneDrive did not save " + name + " (" + r.status + ").");
       saved.push(path.slice(0, -1).join(" › "));
     }
-    try { await monthendAuto(env, c.id, closingMonth(isoDate(payload.today) || isoToday()), "sla_inventory", user.name); } catch (e) {}
+    try { await monthendAuto(env, c.id, await closingMonthOf(env, c.id, isoDate(payload.today) || isoToday()), "sla_inventory", user.name); } catch (e) {}
     return { name, folders: saved };
   },
   /* The AR inventory as it stands now (open, on desks and worked claims), in the columns Drishti's AR Inventory report reads. */

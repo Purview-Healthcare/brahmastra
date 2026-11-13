@@ -6930,7 +6930,8 @@ function ClientView({ ctx, me, go, params }) {
   const [missing, setMissing] = useState(() => !!(params && params.client_id) && !active.some((c) => c.id === params.client_id));
   useEffect(() => { try { if (cid) localStorage.setItem("brahmastra:c360", cid); } catch (e) {} }, [cid]);
   const [dr, setDr] = useState(() => newRange("month"));
-  const [month, setMonth] = useState("");
+  // the month-end checklist: the month in the link (the bell's month-end line names it), else the server's (the month still being closed)
+  const [month, setMonth] = useState(() => (params && /^\d{4}-(0[1-9]|1[0-2])$/.test(params.month || "") ? params.month : ""));
   // The client report is Dashboard › Client 360 report now; an old Client 360 › Client report link goes there.
   useEffect(() => { if (params && params.tab === "report" && cid) go("dashboard", { tab: "report", client_id: cid }); }, [params && params.tab]);
   const [from, to] = rangeSpan(dr);

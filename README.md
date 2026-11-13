@@ -176,8 +176,10 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
 - escalations, missed tasks, entries made, RACI;
 - the **month-end checklist** (inventory uploaded, internal reports reviewed, AR Inventory sent to the SLA
   scorecard, client pack built, SLA scored with its score, pack sent), each with a due working day of the next
-  month; inventory and the scorecard step tick by themselves; a score typed for a month Drishti has scored gives
-  way to Drishti's, and the step says so;
+  month, never later than the 5th (month end closes on the 5th); it opens on last month while any of last month's
+  steps is not done, else on this month (a client added this month has no last month to close); inventory and the
+  scorecard step tick by themselves; a score typed for a month Drishti has scored gives way to Drishti's, and the
+  step says so;
 - the **client call log**: calls, emails, meetings, notes and the next call with what to prepare (up to 2,000 characters
   an entry: the box counts them, and a longer entry is refused, never cut).
 
@@ -369,8 +371,8 @@ bar to narrow the charts), then:
   people, missed tasks, escalations over 24 hours and SLA average (Drishti's, as in the SLA score average above;
   the scores typed at month-end when none of the manager's clients is scored in Drishti), for the dates. The VP sees every manager, a
   manager their own line.
-- **Data freshness**: inventory older than a week, an SLA not scored after its due day, a failed or late roster
-  sync.
+- **Data freshness**: inventory older than a week, last month's SLA not scored after its due day (until it is
+  scored), a failed or late roster sync.
 - **Audit trail** (admins and the VP): who shared a client or took it back, changed the RACI, who gets feedback, a
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
   with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
@@ -440,9 +442,10 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
   or that they worked, and Payment posting and Submission people also the claims on their desk and of the clients
   they are responsible for.
 - **The bell** lists what needs you now, each line opening the page that deals with it. Team leads: escalations
-  (red after 24 hours), client requests to send, missed tasks, claims on the desks of people out today, month-end
-  steps past due, hand-offs on their desk. Billers: their list for today, escalations their team lead answered
-  and hand-offs sent back to them in the last 3 days. Feedback readers: new feedback. It refreshes every 2 minutes
+  (red after 24 hours), client requests to send, missed tasks, claims on the desks of people out today, last month's
+  month-end steps past due (until they are done; the line opens Client 360 on that month), hand-offs on their desk.
+  Billers: their list for today, escalations their team lead answered and hand-offs sent back to them in the last 3
+  days. Feedback readers: new feedback. It refreshes every 2 minutes
   and on every page change; the number counts what is new since you last opened it.
 - **Pop-ups**: Esc or a click on the shaded area closes only the top pop-up (Esc in an open dropdown closes just the
   dropdown). If something was typed in it, it first asks **Discard what you typed?** (Keep editing / Discard), so typed
