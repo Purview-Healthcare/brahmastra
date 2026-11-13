@@ -1298,6 +1298,11 @@ any other filter, selected and assigned, or downloaded.
   strong passwords. Put the Worker behind Cloudflare Access if you want SSO.
 - Uploads go to the server in chunks of 250 claims; very large files just take
   a little longer.
+- Typed text is never cut without a word. Each box takes up to a set length (an escalation's description, comment,
+  root cause and actions 2,000 characters; a claim note or feedback 4,000; a desk comment 2,000; a Team status
+  comment 500; names 120 to 160). The longer boxes count the characters as the text nears the limit, and text over
+  it is refused with a message naming the box, so nothing is saved until it is shortened. A file name over its limit
+  (200 characters) is shortened before its ending, so a .pdf stays a .pdf.
 - Timely filing is modelled with the common 90-day window; the appeal filing
   limit prompt starts at 360 days. Both live in `index.html` (`urgencyOf`).
 - Not carried over from the previous Brahmastra: the departmental TAT boards,

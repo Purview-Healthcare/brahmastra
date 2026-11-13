@@ -330,6 +330,45 @@ S("K-13: the Monday digest's AR is the week's own (its Sunday's reading), whenev
   } finally { Date.now = realNow; await signInAgain(); }
 }
 
+S("K-05: typed text over a box's limit is refused with a message, never cut; a long file name keeps its ending");
+{
+  const me = (await A("auth.me")).user, biller = U("Biller Rk One");
+  const words = (n, tag) => { let t = ""; while (t.length < n - tag.length - 1) t += "the payer said the claim needs a corrected form "; return t.slice(0, n - tag.length - 1) + " " + tag; };
+  const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const open3 = (await q("SELECT id, payer FROM claims WHERE client_id = ? AND state = 'open' AND assigned_to IS NULL LIMIT 6", sun.id));
+  const esc = { kind: "external", client_id: sun.id, location_id: "all", day, dept: "Account Receivable", raised_who: "Office manager", reported_to: "Team lead", owner_id: me.id, channels: ["Email"], email_subject: "Subject line", description: "The error description here", comment: "A comment", status: "open" };
+  const hid = "rk-ho-1"; await sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id) VALUES (?,?,?,?,?,?,?,?)", hid, open3[0].id, sun.id, "posting", "pending", Date.now(), Date.now() + 86400000, me.id);
+  const boxes = [
+    ["Error description", 2000, (t) => A("escalations.save", { ...esc, description: t })], ["Comment", 2000, (t) => A("escalations.save", { ...esc, comment: t })],
+    ["Root cause", 2000, (t) => A("escalations.save", { ...esc, rca: t })], ["Email subject", 300, (t) => A("escalations.save", { ...esc, email_subject: t })],
+    ["Raised by", 120, (t) => A("escalations.save", { ...esc, raised_who: t })], ["Reported to", 120, (t) => A("escalations.save", { ...esc, reported_to: t })],
+    ["The comment", 500, (t) => A("team.saveNote", { user_id: biller, comment: t })], ["The comment", 2000, (t) => A("handoffs.close", { id: hid, outcome: "pending", note: t })],
+    ["The note", 2000, (t) => A("coach.noteAdd", { user_id: biller, kind: "concern", text: t })], ["The comment", 600, (t) => A("claims.setPriority", { ids: [open3[1].id], level: "top", category: "Client request", comment: t })],
+    ["The text", 1500, (t) => A("templates.save", { client_id: sun.id, title: "Rk long template", text: t })], ["The note", 300, (t) => A("payers.saveLimit", { client_id: sun.id, payer: open3[2].payer, tfl_days: 90, afl_days: 180, note: t })],
+    ["The note", 4000, (t) => A("notes.add", { claim_id: open3[3].id, comment: t })], ["Your message", 4000, (t) => A("feedback.send", { kind: "bug", message: t, page: "x", files: [] })],
+    ["The reason", 120, (t) => A("team.setOut", { user_id: biller, reason: t, today: day })], ["The note", 300, (t) => A("monthend.set", { client_id: sun.id, month: day.slice(0, 7), step: "pack", done: true, note: t })],
+    ["The client's name", 160, (t) => A("clients.save", { name: t, code: "RKLNG", locations: ["Main"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: me.id } } } })],
+    ["A location's name", 160, (t) => A("clients.save", { name: "Rk Long Location Client", code: "RKLL", locations: [t], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: me.id } } } })],
+  ];
+  const out = [];
+  for (const [label, max, call] of boxes) { const r = await T(() => call(words(max + 50, "END"))); out.push({ label, max, refused: !r.ok && r.e.startsWith(label + " is too long: " + (max + 50).toLocaleString("en-US") + " characters, and it takes up to " + max.toLocaleString("en-US")) ? 1 : r.ok ? "SAVED" : r.e }); }
+  const bad1 = out.filter((x) => x.refused !== 1);
+  ok("K-05: 50 characters over the limit in each of 18 boxes is refused with a message naming the box and its limit (nothing saved, nothing cut)", !bad1.length, bad1);
+  const full = words(2000, "END-OF-TEXT"), r1 = await T(() => A("escalations.save", { ...esc, description: full }));
+  const st = r1.ok ? (await q("SELECT description FROM escalations WHERE sr = ? AND client_id = ?", r1.r.sr, sun.id))[0] : null;
+  const n500 = words(500, "END-OF-NOTE"); await A("team.saveNote", { user_id: biller, comment: n500 }); const tn = (await q("SELECT comment FROM team_notes WHERE user_id = ?", biller))[0];
+  ok("K-05: text exactly at the limit is kept whole (an escalation's 2,000-character description, a 500-character Team status comment)", st && st.description === full && tn && tn.comment === n500, { e: r1.e, len: st && st.description.length, tn: tn && tn.comment.length });
+  // file names: 234 characters ending .pdf on a claim, a team task and feedback
+  const longName = "Remittance advice for the corrected claim " + "x".repeat(188) + ".pdf";
+  const at = await A("attachments.add", { claim_id: open3[4].id, name: longName, type: "application/pdf", data: "JVBERi0xLjQK" });
+  const fb = await T(() => A("feedback.send", { kind: "bug", message: "The upload screen stopped half way, see the picture", page: "x", files: [{ name: "Screenshot " + "y".repeat(140) + ".png", type: "image/png", b64: "iVBORw0KGgo=" }] }));
+  const fbf = (await q("SELECT name FROM feedback_files ORDER BY rowid DESC LIMIT 1"))[0];
+  ok("K-05: a file name over the limit keeps its ending: a claim's 234-character .pdf is kept as 200 characters ending .pdf; feedback's picture ends .png",
+    longName.length === 234 && at.attachment.name.length === 200 && at.attachment.name.endsWith(".pdf") && fb.ok && fbf && fbf.name.length <= 120 && fbf.name.endsWith(".png"), { at: at.attachment.name.length, end: at.attachment.name.slice(-6), fb: fb.e || (fbf && fbf.name.slice(-8)) });
+  const short = await A("attachments.add", { claim_id: open3[5].id, name: "eob-7711041.pdf", type: "application/pdf", data: "JVBERi0xLjQK" });
+  ok("K-05: a short file name is kept as it is", short.attachment.name === "eob-7711041.pdf", short.attachment.name);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

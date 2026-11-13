@@ -914,6 +914,9 @@ function Confirm({ title, text, confirmLabel = "Confirm", danger, onYes, onNo, b
 const Field = ({ label, children, hint, style }) => (
   <label className="field" style={style}><span>{label}</span>{children}{hint && <span className="tiny muted" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{hint}</span>}</label>
 );
+/* How much of a box's limit is used, shown once the text nears it and in red over it (the server refuses longer text with a
+   message naming the box; it never cuts it). */
+const TextLimit = ({ v, max }) => { const n = String(v == null ? "" : v).length; return n > max * 0.9 ? <span className={"tiny " + (n > max ? "red-ink" : "muted")} style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{fmtInt(n)} of {fmtInt(max)} characters{n > max ? ": too long, shorten it" : ""}</span> : null; };
 const Kpi = ({ label, value, sub, tone, onClick, on, title }) => (
   <div className={"kpi" + (tone ? " " + tone : "") + (on ? " on" : "")} onClick={onClick} title={title} role={onClick ? "button" : undefined} style={onClick ? { cursor: "pointer" } : undefined}>
     <div className="l">{label}</div><div className="v">{value}</div>{sub && <div className="s">{sub}</div>}
@@ -2667,7 +2670,7 @@ function TeamStatusTab({ ctx, me, go }) {
         <div className="stack">
           <div className="grid g2"><Field label="Start (training, OJT or a plan)" hint="Empty: the date of joining"><input className="input" type="date" value={edit.start || ""} onChange={(e) => setEdit({ ...edit, start: e.target.value })} /></Field>
             <Field label="Due in production (or plan end)" hint={"Empty: " + d.ramp_weeks + " weeks from the start"}><input className="input" type="date" value={edit.end || ""} onChange={(e) => setEdit({ ...edit, end: e.target.value })} /></Field></div>
-          <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={edit.comment || ""} onChange={(e) => setEdit({ ...edit, comment: e.target.value })} placeholder="What was agreed, what to check next" /></Field>
+          <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={edit.comment || ""} onChange={(e) => setEdit({ ...edit, comment: e.target.value })} placeholder="What was agreed, what to check next" /><TextLimit v={edit.comment} max={500} /></Field>
           {edit.r.comment_by && <div className="tiny muted">Last saved by {edit.r.comment_by}{edit.r.comment_at ? " · " + fmtWhen(edit.r.comment_at) : ""}</div>}
         </div></Modal>}
     </div>
@@ -4119,7 +4122,7 @@ function PriorityModal({ ids, rows, onClose, onDone }) {
           <div className="stack mt8" style={{ gap: 6 }}>{LEVELS.map(([k, l, d]) => (
             <label key={k || "auto"} className="check" style={{ alignItems: "flex-start" }}><input type="radio" name="prio-level" checked={level === k} onChange={() => setLevel(k)} /> <span><b>{l}</b> <span className="tiny muted">· {d}{one && base(one) != null && k ? " (score " + applyLevelUI(one.priority, k) + ")" : ""}</span></span></label>))}</div></div>
         <Field label="Why are you changing it?"><Combo value={category} onChange={setCategory} placeholder="Pick the reason…" options={PRIORITY_WHY.map((x) => ({ id: x, label: x }))} /></Field>
-        <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="e.g. Client escalated these on today's call; TFL ends next week for this payer." /></Field>
+        <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="e.g. Client escalated these on today's call; TFL ends next week for this payer." /><TextLimit v={comment} max={600} /></Field>
         <div className="alert info" style={{ fontSize: 12.5 }}><b>Why we ask:</b> every change and its reason is kept on the claim's history and in <b>Priority changes</b>. Reviewing them shows what the automatic score misses (a payer, a client request, deadlines), so the allocation rules can be improved and fewer claims need moving by hand.</div>
         <ErrorBox error={err} />
       </div>
@@ -4239,7 +4242,7 @@ function HoldModal({ row, reasons, maxDays, onClose, onDone }) {
     <Modal title={"Can't close yet · " + (row.claim_no || row.type)} sub={[row.client_name, row.type, row.over_h ? row.over_h + " h over the TAT" : row.late ? "past the TAT" : "within the TAT"].filter(Boolean).join(" · ")} onClose={onClose} narrow>
       <div className="stack" style={{ gap: 10 }}>
         <Field label="Why it cannot be closed yet"><select className="input" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}><option value="">Pick a reason…</option>{reasons.map((x) => <option key={x} value={x}>{x}</option>)}</select></Field>
-        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 60 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. Payer said the reprocessing takes 5 working days; call back on the date" /></Field>
+        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 60 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. Payer said the reprocessing takes 5 working days; call back on the date" /><TextLimit v={f.note} max={500} /></Field>
         <Field label="Expected close date" hint={"Up to " + (maxDays || 30) + " days ahead"}><input className="input" type="date" min={today} max={max} value={f.until} onChange={(e) => setF({ ...f, until: e.target.value })} /></Field>
         <div className="tiny muted">It turns amber and leaves the reminders until that date. If it is still open after the date, it comes back as past the expected date. The reason goes on the claim's timeline.</div>
         <ErrorBox error={err} />
@@ -4502,7 +4505,7 @@ function TaskHoldModal({ task, reasons, onClose, onDone }) {
     <Modal title={"Can't close yet · " + clip(task.title, 60)} sub="Why it can't be closed yet, and the date you expect it to close (up to 30 days ahead). No past-TAT reminders until then." narrow onClose={onClose}>
       <div className="stack">
         <Field label="Why it cannot be closed yet"><select className="input" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}><option value="">Pick a reason…</option>{(reasons || []).map((x) => <option key={x} value={x}>{x}</option>)}</select></Field>
-        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 56 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
+        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 56 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /><TextLimit v={f.note} max={500} /></Field>
         <Field label="Expected close date"><input className="input" type="date" min={todayISO()} max={max} value={f.until} onChange={(e) => setF({ ...f, until: e.target.value })} style={{ width: 180 }} /></Field>
         <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!ok || busy} onClick={save}>{busy ? "Saving…" : "Put on hold"}</button></div>
       </div>
@@ -4884,8 +4887,8 @@ function EscalationTrackerView({ ctx, me, params }) {
               <Field label="Channels used"><div className="seg2">{(d.channels || ["Email", "Teams", "Call"]).map((k) => { const on = (form.channels || []).includes(k); return <button key={k} type="button" className={on ? "on" : ""} onClick={() => set("channels", on ? (form.channels || []).filter((x) => x !== k) : [...(form.channels || []), k])}>{k}</button>; })}</div></Field>
               <Field label="Email subject (or a short title)"><input className="input" value={form.email_subject} onChange={(e) => set("email_subject", e.target.value)} placeholder={form.kind === "internal" ? "The email's subject, or a short title if it was not by email" : "The client's email subject, or a short title if it came by call or Teams"} /></Field>
             </div>
-            <Field label="Error description"><textarea className="textarea" style={{ minHeight: 64 }} value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What went wrong, in plain words. No patient names." /></Field>
-            <Field label="Comment"><textarea className="textarea" style={{ minHeight: 44 }} value={form.comment} onChange={(e) => set("comment", e.target.value)} placeholder="What has been done so far, or anything else to know" /></Field>
+            <Field label="Error description"><textarea className="textarea" style={{ minHeight: 64 }} value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What went wrong, in plain words. No patient names." /><TextLimit v={form.description} max={2000} /></Field>
+            <Field label="Comment"><textarea className="textarea" style={{ minHeight: 44 }} value={form.comment} onChange={(e) => set("comment", e.target.value)} placeholder="What has been done so far, or anything else to know" /><TextLimit v={form.comment} max={2000} /></Field>
             <div className="grid g2">
               <Field label="Status"><div className="seg2">{[["open", "Open"], ["resolved", "Closed"]].map(([k, l]) => <button key={k} type="button" className={form.status === k ? "on" : ""} onClick={() => setForm((f) => ({ ...f, status: k, close_on: k === "resolved" ? (f.close_on || todayISO()) : "" }))}>{l}</button>)}</div></Field>
               <Field label={"Error (Y/N)" + (form.status === "resolved" ? "" : " (needed to close)")}><div className="seg2">{[["Y", "Y · our error"], ["N", "N · not our error"]].map(([k, l]) => <button key={k} type="button" className={form.is_error === k ? "on" : ""} onClick={() => set("is_error", k)}>{l}</button>)}</div></Field>
@@ -4899,10 +4902,10 @@ function EscalationTrackerView({ ctx, me, params }) {
               <Field label="DOW of the error" hint="Date of work: the day the work with the error was done"><input className="input" type="date" value={form.error_dow} max={form.day || todayISO()} onChange={(e) => set("error_dow", e.target.value)} /></Field>
             </div>}
             {form.status === "resolved" && <div className="tiny muted">To close: Error (Y/N), with who made it and the DOW when it is our error, the review date, rework completed, root cause, corrective action, preventive action and the close date.</div>}
-            <Field label={"Root cause" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.rca} onChange={(e) => set("rca", e.target.value)} placeholder="Why it happened" /></Field>
+            <Field label={"Root cause" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.rca} onChange={(e) => set("rca", e.target.value)} placeholder="Why it happened" /><TextLimit v={form.rca} max={2000} /></Field>
             <div className="grid g2">
-              <Field label={"Corrective action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.corrective} onChange={(e) => set("corrective", e.target.value)} placeholder="What was done to fix this one" /></Field>
-              <Field label={"Preventive action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.preventive} onChange={(e) => set("preventive", e.target.value)} placeholder="What stops it happening again" /></Field>
+              <Field label={"Corrective action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.corrective} onChange={(e) => set("corrective", e.target.value)} placeholder="What was done to fix this one" /><TextLimit v={form.corrective} max={2000} /></Field>
+              <Field label={"Preventive action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.preventive} onChange={(e) => set("preventive", e.target.value)} placeholder="What stops it happening again" /><TextLimit v={form.preventive} max={2000} /></Field>
             </div>
             {form.status === "resolved" && <Field label="Close date"><input className="input" type="date" value={form.close_on} min={form.day} max={todayISO()} onChange={(e) => set("close_on", e.target.value)} /></Field>}
           </div>}
@@ -4912,7 +4915,7 @@ function EscalationTrackerView({ ctx, me, params }) {
         <Modal title={"SR" + why.row.sr + " is open over 24 working hours"} sub={why.row.client_name + " · " + why.row.dept + ": " + why.row.description} onClose={() => setWhy(null)} narrow
           footer={<><button className="btn" onClick={() => setWhy(null)} disabled={busy}>Cancel</button><button className="btn primary" onClick={saveWhy} disabled={busy}>{busy ? "Saving…" : "Save"}</button></>}>
           <div className="stack">
-            <Field label="Why it is still open"><textarea className="textarea" style={{ minHeight: 70 }} value={why.reason} onChange={(e) => setWhy({ ...why, reason: e.target.value })} placeholder="e.g. Waiting on the client's corrected charge template" /></Field>
+            <Field label="Why it is still open"><textarea className="textarea" style={{ minHeight: 70 }} value={why.reason} onChange={(e) => setWhy({ ...why, reason: e.target.value })} placeholder="e.g. Waiting on the client's corrected charge template" /><TextLimit v={why.reason} max={1000} /></Field>
             <Field label="Expected close date (TAT)"><input className="input" type="date" min={todayISO()} value={why.expected_on} onChange={(e) => setWhy({ ...why, expected_on: e.target.value })} /></Field>
             <div className="tiny muted">Both go to the client's OneDrive file. If the date passes with the escalation still open, it turns red again and asks for a new date.</div>
           </div>
@@ -5080,7 +5083,7 @@ function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, o
           <div className="stack">
             {sent.row.note && <div className="cell small">{sent.row.note}</div>}
             <Field label="How it was sent"><div className="seg2">{SENT_HOW_UI.map((h) => <button key={h} type="button" className={sent.how === h ? "on" : ""} onClick={() => setSent({ ...sent, how: h })}>{h}</button>)}</div></Field>
-            <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={sent.note} onChange={(e) => setSent({ ...sent, note: e.target.value })} placeholder="e.g. Emailed Dr Vontella's office manager, asked for the ERA by Friday" /></Field>
+            <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={sent.note} onChange={(e) => setSent({ ...sent, note: e.target.value })} placeholder="e.g. Emailed Dr Vontella's office manager, asked for the ERA by Friday" /><TextLimit v={sent.note} max={600} /></Field>
             <div className="tiny muted">The department sees who sent it and when. If the client has not answered in 3 working days, it comes back to them as Chase the client.</div>
           </div>
         </Modal>
@@ -5116,10 +5119,10 @@ function ReviewModal({ row, people, onClose, onDone }) {
       <div className="stack">
         {row.review_context && <div className="cell small">{row.review_context}</div>}
         <div className="grid g2">
-          <Field label="1. Why it came to you"><textarea className="textarea" style={{ minHeight: 56 }} value={f.why} onChange={(e) => set("why", e.target.value)} placeholder="e.g. Escalated by the biller: payer says the claim was never received" /></Field>
-          <Field label="2. What you reviewed"><textarea className="textarea" style={{ minHeight: 56 }} value={f.reviewed} onChange={(e) => set("reviewed", e.target.value)} placeholder="e.g. Claim history, the payer portal and the clearinghouse report" autoFocus /></Field>
-          <Field label="3. Findings"><textarea className="textarea" style={{ minHeight: 56 }} value={f.findings} onChange={(e) => set("findings", e.target.value)} placeholder="e.g. Submitted to the wrong payer ID" /></Field>
-          <Field label="4. Next action"><textarea className="textarea" style={{ minHeight: 56 }} value={f.next} onChange={(e) => set("next", e.target.value)} placeholder="e.g. Correct the payer ID and resubmit today" /></Field>
+          <Field label="1. Why it came to you"><textarea className="textarea" style={{ minHeight: 56 }} value={f.why} onChange={(e) => set("why", e.target.value)} placeholder="e.g. Escalated by the biller: payer says the claim was never received" /><TextLimit v={f.why} max={1000} /></Field>
+          <Field label="2. What you reviewed"><textarea className="textarea" style={{ minHeight: 56 }} value={f.reviewed} onChange={(e) => set("reviewed", e.target.value)} placeholder="e.g. Claim history, the payer portal and the clearinghouse report" autoFocus /><TextLimit v={f.reviewed} max={1000} /></Field>
+          <Field label="3. Findings"><textarea className="textarea" style={{ minHeight: 56 }} value={f.findings} onChange={(e) => set("findings", e.target.value)} placeholder="e.g. Submitted to the wrong payer ID" /><TextLimit v={f.findings} max={2000} /></Field>
+          <Field label="4. Next action"><textarea className="textarea" style={{ minHeight: 56 }} value={f.next} onChange={(e) => set("next", e.target.value)} placeholder="e.g. Correct the payer ID and resubmit today" /><TextLimit v={f.next} max={2000} /></Field>
         </div>
         <Field label="Send it to">
           <div className="stack" style={{ gap: 8 }}>
@@ -5176,7 +5179,7 @@ function EscalationsView({ ctx, me, refreshAttention, clientId, pick, tat, onHol
           footer={<><button className="btn" onClick={() => setAnswer(null)} disabled={busy}>Cancel</button><button className="btn primary" onClick={send} disabled={busy || answer.text.trim().length < 8}>{busy ? "Saving…" : "Send answer"}</button></>}>
           <div className="stack">
             {answer.row.last_note && <div className="cell small">{answer.row.last_note}</div>}
-            <Field label="Your answer"><textarea className="textarea" value={answer.text} onChange={(e) => setAnswer({ ...answer, text: e.target.value })} placeholder="What the biller should do next…" autoFocus /></Field>
+            <Field label="Your answer"><textarea className="textarea" value={answer.text} onChange={(e) => setAnswer({ ...answer, text: e.target.value })} placeholder="What the biller should do next…" autoFocus /><TextLimit v={answer.text} max={4000} /></Field>
             {answer.row.assigned_to && <label className="check"><input type="checkbox" checked={answer.back} onChange={(e) => setAnswer({ ...answer, back: e.target.checked })} /> Put it back on {answer.row.assigned_name || "the biller"}'s list today</label>}
           </div>
         </Modal>
@@ -5720,7 +5723,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
           {outcome === "other" && <Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Waiting for the clearinghouse to come back up" autoFocus /></Field>}
           {outcome !== "resume" && outcome !== "pending" && outcome !== "inprocess" && outcome !== "other" && <Field label={outcome === "back" ? "What is needed from AR" : "What is needed from the client"}><Combo value={reason} onChange={setReason} placeholder="Pick…" options={reasons.map((x) => ({ id: x, label: x }))} /></Field>}
           <Field label={outcome === "resume" || outcome === "inprocess" ? "Comment (optional)" : "Comment"} hint={outcome === "resume" || outcome === "inprocess" ? "" : "At least a few words"}><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} autoFocus={outcome !== "other"}
-            placeholder={outcome === "back" ? "What AR should do or fix before sending it again." : outcome === "client" ? "What is needed from the client, so the team lead can send it." : outcome === "pending" || outcome === "other" ? "Where it stands, e.g. posted 2 of 3 lines, waiting for the batch to close." : outcome === "inprocess" ? "Optional: what you are doing now." : "What the client sent or said."} /></Field>
+            placeholder={outcome === "back" ? "What AR should do or fix before sending it again." : outcome === "client" ? "What is needed from the client, so the team lead can send it." : outcome === "pending" || outcome === "other" ? "Where it stands, e.g. posted 2 of 3 lines, waiting for the batch to close." : outcome === "inprocess" ? "Optional: what you are doing now." : "What the client sent or said."} /><TextLimit v={note} max={2000} /></Field>
           <div className="tiny muted">{help}</div>
           <ErrorBox error={err} />
         </div>
@@ -5735,7 +5738,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
           <Field label="Accepted on"><input className="input" type="date" value={p.date} max={todayISO()} onChange={(e) => setP({ ...p, date: e.target.value })} /></Field>
           <Field label="Payer claim # / reference (optional)"><input className="input mono" value={p.ref} onChange={(e) => setP({ ...p, ref: e.target.value })} autoFocus /></Field>
         </div> : <Field label="Rejection code (what was wrong)"><Combo value={reason} onChange={setReason} placeholder="Pick the code…" options={REJECT_REASONS_UI.map((x) => ({ id: x, label: x }))} /></Field>}
-        <Field label={outcome === "complete" ? "Note (optional)" : "What was rejected"}><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder={outcome === "complete" ? "" : "Rejection message, what must be corrected before resubmitting."} /></Field>
+        <Field label={outcome === "complete" ? "Note (optional)" : "What was rejected"}><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder={outcome === "complete" ? "" : "Rejection message, what must be corrected before resubmitting."} /><TextLimit v={note} max={2000} /></Field>
         {outcome === "complete" && <ProofFiles files={files} setFiles={setFiles} why={PROOF_WHY.subcheck} />}
         <div className="tiny muted">{outcome === "complete" ? "The claim shows Submission accepted; the biller still follows up on payment after 15 days." : "The claim goes straight back to the Submission team's queue to correct and resubmit, within the client's TAT."}</div>
         <ErrorBox error={err} />
@@ -5757,7 +5760,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
           </div>
           {posting && <PostingAmounts h={h} p={p} setP={setP} />}
           {h.dept === "submission" && <SubmissionFileFields p={p} setP={setP} />}
-          <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything AR or QA should know about this one." /></Field>
+          <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything AR or QA should know about this one." /><TextLimit v={note} max={2000} /></Field>
           <ProofFiles files={files} setFiles={setFiles} why={PROOF_WHY[h.dept] || PROOF_WHY.submission} />
           <div className="tiny muted">{posting ? "The claim shows Payment posted and closes for AR; posting QA audits it later." : "The claim goes back to the biller with a 15-day follow-up, and a recheck (accepted or rejected?) opens 48 working hours from now."}</div>
         </>
@@ -6842,7 +6845,7 @@ function FeedbackModal({ page, onClose }) {
       footer={<><button className="btn" onClick={onClose} disabled={!!busy}>Cancel</button><button className="btn primary" onClick={send} disabled={!ok}>{busy === "Sending…" ? "Sending…" : "Send feedback"}</button></>}>
       <div className="stack">
         <div className="seg2" role="radiogroup">{FB_KINDS.map(([k, l]) => <button key={k} type="button" className={kind === k ? "on" : ""} onClick={() => setKind(k)}>{l}</button>)}</div>
-        <Field label="What is it about" hint={"At least a few words · page: " + page}><textarea className="textarea" style={{ minHeight: 110 }} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder={FB_HINT[kind]} autoFocus /></Field>
+        <Field label="What is it about" hint={"At least a few words · page: " + page}><textarea className="textarea" style={{ minHeight: 110 }} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder={FB_HINT[kind]} autoFocus /><TextLimit v={msg} max={4000} /></Field>
         <div className={"fb-drop" + (drag ? " on" : "")} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); add([...e.dataTransfer.files]); }}>
           <button type="button" className="btn sm" disabled={!!busy || files.length >= 4} onClick={capture}>{busy === "Taking the screenshot…" ? busy : "📷 Capture this screen"}</button>
           <button type="button" className="btn sm" disabled={!!busy || files.length >= 4} onClick={() => pickRef.current && pickRef.current.click()}>📎 Attach pictures or a PDF</button>
@@ -7022,6 +7025,7 @@ function CoachDrawer({ userId, onClose }) {
           <div className="row mt8" style={{ gap: 6, flexWrap: "wrap" }}><div className="seg2">{COACH_KIND.map(([k, l]) => <button key={k} className={n.kind === k ? "on" : ""} onClick={() => setN({ ...n, kind: k })}>{l}</button>)}</div></div>
           <div className="row mt8" style={{ gap: 6 }}><textarea className="textarea" style={{ minHeight: 54, flex: 1 }} value={n.text} onChange={(e) => setN({ ...n, text: e.target.value })} placeholder="What was discussed, agreed or worth keeping in mind" />
             <button className="btn primary" disabled={busy || n.text.trim().length < 8} onClick={add}>Add</button></div>
+          <TextLimit v={n.text} max={2000} />
           {d.notes.map((x) => <div key={x.id} className="c3-log mt8"><b>{(COACH_KIND.find(([k]) => k === x.kind) || ["", x.kind])[1]} · {fmtWhen(x.at)} · {x.by_name}{x.mine && <button className="btn link sm" style={{ padding: "0 4px" }} disabled={busy} onClick={() => del(x)}>remove</button>}</b><div>{x.text}</div></div>)}
           {!d.notes.length && <div className="tiny muted mt8">No notes yet.</div>}</div>
       </div>}
@@ -7048,7 +7052,7 @@ function TemplatesView({ ctx, me }) {
       {edit && <Modal title={edit.id ? "Edit template" : "New template"} narrow onClose={() => setEdit(null)} footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || edit.title.trim().length < 3 || edit.text.trim().length < 8} onClick={save}>Save</button></>}>
         <div className="stack">
           <Field label="Title" hint="What billers see in the list"><input className="input" value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="e.g. Claim in process, call back in 15 days" autoFocus /></Field>
-          <Field label="Text" hint="Inserted into RCA / findings; leave blanks like [ref] to fill in"><textarea className="textarea" style={{ minHeight: 110 }} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} placeholder="Called the payer, claim is in process since [date], expected to finalize in [n] days. Ref [ref]." /></Field>
+          <Field label="Text" hint="Inserted into RCA / findings; leave blanks like [ref] to fill in"><textarea className="textarea" style={{ minHeight: 110 }} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} placeholder="Called the payer, claim is in process since [date], expected to finalize in [n] days. Ref [ref]." /><TextLimit v={edit.text} max={1500} /></Field>
           <Field label="Client"><Combo value={edit.client_id} onChange={(v) => setEdit({ ...edit, client_id: v })} placeholder="Every client" options={ctx.clients.filter((c) => c.active && c.can_edit !== false).map((c) => ({ id: c.id, label: c.name }))} /></Field>
         </div></Modal>}
     </div>

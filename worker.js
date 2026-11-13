@@ -1932,6 +1932,53 @@ function sameHash(a, b) { // constant time
 const mailClean = (e) => String(e || "").trim().toLowerCase();
 const mailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 const str = (v, max = 4000) => (v == null ? "" : String(v)).slice(0, max);
+/* The boxes people type in, and how much each op keeps of them (op: { field: [most characters, the box's name] }). Longer
+   text is refused before the op runs, with a message naming the box and its limit (the page counts the characters near
+   it), so typed text is never cut without a word. A list (a new client's locations) is checked item by item. */
+const TYPED_MAX = {
+  "escalations.save": { raised_who: [120, "Raised by"], reported_to: [120, "Reported to"], email_subject: [300, "Email subject"], description: [2000, "Error description"],
+    comment: [2000, "Comment"], rca: [2000, "Root cause"], corrective: [2000, "Corrective action"], preventive: [2000, "Preventive action"] },
+  "escalations.reason": { reason: [1000, "Why it is still open"] },
+  "handoffs.close": { note: [2000, "The comment"], reason: [120, "The reason"] },
+  "notes.add": { comment: [4000, "The note"] },
+  "attention.review": { why: [1000, "Why it came to you"], reviewed: [1000, "What you reviewed"], findings: [2000, "Findings"], next: [2000, "Next action"] },
+  "attention.answer": { comment: [4000, "Your answer"] },
+  "attention.clientSent": { note: [600, "The comment"] },
+  "queue.skip": { reason: [500, "The reason"] },
+  "coach.noteAdd": { text: [2000, "The note"] },
+  "claims.setPriority": { comment: [600, "The comment"] },
+  "templates.save": { title: [80, "The title"], text: [1500, "The text"] },
+  "payers.saveLimit": { note: [300, "The note"] },
+  "monthend.set": { note: [300, "The note"] },
+  "team.setOut": { reason: [120, "The reason"] },
+  "team.saveNote": { comment: [500, "The comment"] },
+  "feedback.send": { message: [4000, "Your message"] },
+  "clients.save": { name: [160, "The client's name"], locations: [160, "A location's name"] },
+  "locations.save": { name: [160, "The location's name"] },
+  "tat.hold": { note: [500, "The note"] },
+  "tasks.hold": { note: [500, "The note"] },
+  "stack.save": { note: [200, "The note"] },
+  "inventory.enrich": { note: [500, "The note"] },
+  "users.save": { name: [120, "The name"] },
+};
+function typedTooLong(op, payload) {
+  const t = Object.prototype.hasOwnProperty.call(TYPED_MAX, op) ? TYPED_MAX[op] : null; if (!t) return;
+  for (const [k, [max, label]] of Object.entries(t)) for (const v of Array.isArray(payload[k]) ? payload[k] : [payload[k]]) {
+    const n = v == null || typeof v === "object" ? 0 : String(v).length;
+    if (n > max) throw bad(`${label} is too long: ${n.toLocaleString("en-US")} characters, and it takes up to ${max.toLocaleString("en-US")}. Shorten it.`);
+  }
+}
+/* A file's name kept to max characters: a longer one is cut before its ending, so a ".pdf" stays a PDF when it is opened. The
+   names of files added to a claim, a team task or feedback (op: [where the names are, most characters]). */
+const keepEnding = (v, max) => { const s = v == null ? "" : String(v); if (s.length <= max) return s; const m = /\.[A-Za-z0-9]{1,10}$/.exec(s), end = m ? m[0] : "";
+  return s.slice(0, max - end.length).replace(/[\s.]+$/, "") + end; };
+const FILE_NAMES = { "attachments.add": ["name", 200], "tasks.create": ["files", 200], "tasks.update": ["files", 200], "feedback.send": ["files", 120] };
+function fileNamesKept(op, payload) {
+  const f = Object.prototype.hasOwnProperty.call(FILE_NAMES, op) ? FILE_NAMES[op] : null; if (!f) return;
+  const [k, max] = f;
+  if (k === "name") { if (typeof payload.name === "string") payload.name = keepEnding(payload.name, max); }
+  else if (Array.isArray(payload[k])) payload[k] = payload[k].map((x) => (x && typeof x === "object" && typeof x.name === "string" ? { ...x, name: keepEnding(x.name, max) } : x));
+}
 /* Typed text in a LIKE pattern: D1 refuses a LIKE or GLOB pattern over 50 bytes ("LIKE or GLOB pattern too complex", a 500), so
    the text is cut to its first 48 bytes (whole characters) inside the two % signs: a longer search finds what its first 48
    characters find. likeCut(s, n) cuts to n bytes for other patterns. */
@@ -9092,6 +9139,8 @@ export default {
           // Changing a client's data needs edit access; a view-only share is not enough.
           if (user.scope_view_only && user.scope_view_only.size && payload.client_id && EDIT_OPS.test(op) && user.scope_view_only.has(String(payload.client_id))) throw viewOnly();
         }
+        // typed text over a box's limit is refused with a message (never cut); a long file name keeps its ending (.pdf)
+        typedTooLong(op, payload); fileNamesKept(op, payload);
         const result = await handler({ env, user, token, payload, ctx });
         return json(result || { ok: true });
       }
