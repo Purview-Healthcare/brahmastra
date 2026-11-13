@@ -100,6 +100,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS otps (id TEXT PRIMARY KEY, email TEXT NOT NULL, code_hash TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT 'login', data_json TEXT NOT NULL DEFAULT '{}',
      created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS idx_otps_email ON otps (email, created_at)`,
+  // each wrong sign-in code: for which email, from which caller (CF-Connecting-IP), when (kept a day; see checkOtp)
+  `CREATE TABLE IF NOT EXISTS otp_fails (email TEXT NOT NULL, caller TEXT NOT NULL, at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_otp_fails ON otp_fails (email, caller, at)`,
   `CREATE TABLE IF NOT EXISTS claim_events (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, at INTEGER NOT NULL, user_id TEXT, user_name TEXT NOT NULL DEFAULT '',
      kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', data_json TEXT NOT NULL DEFAULT '{}')`,
   `CREATE INDEX IF NOT EXISTS idx_claim_events_claim ON claim_events (claim_id, at)`,
@@ -265,7 +268,9 @@ const EXTRA_COLUMNS = {
 };
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const OTP_TTL_MS = 10 * 60 * 1000;
-const OTP_MAX_TRIES = 5;
+// Wrong sign-in codes (see checkOtp): 5 from one caller for one email in an hour stop that caller trying codes for that email for
+// the hour; a code ends only after 10 wrong codes in all, from every caller.
+const OTP_CALLER_TRIES = 5, OTP_MAX_TRIES = 10;
 /* Files attached to a claim are kept in D1 as base64, split into parts that stay well under D1's row size limit. */
 const ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 const ATTACH_PART_CHARS = 512 * 1024;
@@ -1510,17 +1515,34 @@ async function deliverOtp(env, email, code, purpose) {
   await sendEmail(env, { to: email, subject: `Your Brahmastra code: ${code}`, text, html });
   return { sent: true };
 }
-async function checkOtp(env, email, code) {
-  const now = Date.now();
+/* A code typed for an email (Email code, Access Admin, sign in by name). Anyone signed out can type codes in someone's name, so
+   wrong codes are counted per caller (Cloudflare's CF-Connecting-IP) as well as in all:
+   - five wrong codes from one caller in an hour stop that caller trying codes for that email until the hour is over (no code is
+     even checked), but do not end the person's codes: they still work from anywhere else;
+   - a code ends only after ten wrong codes in all, from every caller (each wrong code counts against every code still valid, so
+     more codes never mean more guesses).
+   Ten is twice one caller's five, so one caller alone can never end the person's codes, and guessing stays hopeless: a code is
+   one of 900,000, and at most ten are sent to an email in an hour (none more after a wrong code), so even someone with many
+   callers, filling the person's mailbox with codes, gets at most 100 tries an hour against them (under 1 in 9,000); one caller
+   gets five tries an hour against at most ten codes (under 1 in 18,000, as before). */
+const CALLER_STOPPED = "Too many wrong codes were typed here, so codes for this email are not checked from here for an hour. The codes already sent still work from another network.";
+async function checkOtp(env, email, code, caller) {
+  const now = Date.now(), who = str(caller, 64) || "local";
+  const mine = ((await one(env, "SELECT COUNT(*) AS n FROM otp_fails WHERE email = ? AND caller = ? AND at > ?", email, who, now - 3600000)) || {}).n || 0;
+  if (mine >= OTP_CALLER_TRIES) throw new ApiError(429, CALLER_STOPPED);
   // Every code still valid for this email works (a new request does not cancel the one already in the mailbox).
   const live = await all(env, "SELECT * FROM otps WHERE email = ? AND consumed = 0 AND expires_at >= ? ORDER BY created_at DESC LIMIT 20", email, now);
   if (!live.length) throw new ApiError(401, "That code has expired or was never sent. Request a new one.");
   const hash = await otpHash(env, email, String(code || "").replace(/\s/g, ""));
   const row = live.find((r) => sameHash(hash, r.code_hash));
   if (!row) {
-    // a wrong code counts against every code still valid, so more codes never mean more guesses; each is dead after 5
-    await run(env, "UPDATE otps SET tries = tries + 1, consumed = CASE WHEN tries + 1 >= ? THEN 1 ELSE consumed END WHERE email = ? AND consumed = 0 AND expires_at >= ?", OTP_MAX_TRIES, email, now);
-    throw new ApiError(401, live.every((r) => r.tries + 1 >= OTP_MAX_TRIES) ? "Too many wrong codes. Request a new one." : "That code doesn't match. Check the latest email and try again.");
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO otp_fails (email, caller, at) VALUES (?,?,?)").bind(email, who, now),
+      env.DB.prepare("UPDATE otps SET tries = tries + 1, consumed = CASE WHEN tries + 1 >= ? THEN 1 ELSE consumed END WHERE email = ? AND consumed = 0 AND expires_at >= ?").bind(OTP_MAX_TRIES, email, now),
+      env.DB.prepare("DELETE FROM otp_fails WHERE at < ?").bind(now - 86400000),
+    ]);
+    if (live.every((r) => r.tries + 1 >= OTP_MAX_TRIES)) throw new ApiError(401, "Too many wrong codes for this email. Request a new one.");
+    throw new ApiError(401, mine + 1 >= OTP_CALLER_TRIES ? CALLER_STOPPED : "That code doesn't match. Check the latest email and try again.");
   }
   // one sign-in uses up every code still valid for this email
   await run(env, "UPDATE otps SET consumed = 1 WHERE email = ? AND consumed = 0", email);
@@ -3892,10 +3914,10 @@ const OPS = {
     const code = await issueOtp(env, email, "signup", { first_name: first, last_name: last, designation, passHash: payload.passHash, capacity: 35 });
     return { email, ...(await deliverOtp(env, email, code, "signup")) };
   },
-  "auth.verifyOtp": async ({ env, payload }) => {
+  "auth.verifyOtp": async ({ env, payload, caller }) => {
     const email = mailClean(payload.email);
     if (!mailOk(email) || !String(payload.code || "").trim()) throw bad("Enter the email and the code.");
-    const { purpose, data, via } = await checkOtp(env, email, payload.code);
+    const { purpose, data, via } = await checkOtp(env, email, payload.code, caller);
     let u = await one(env, "SELECT * FROM users WHERE email = ?", email);
     if (purpose === "signup") {
       if (u) throw bad("That email already has an account. Sign in instead.");
@@ -3933,10 +3955,10 @@ const OPS = {
     const code = await issueOtp(env, u.email, "login", {});
     return { user_id: u.id, name: u.name, email_hint: maskEmail(u.email), ...(await deliverOtp(env, u.email, code, "login")) };
   },
-  "auth.adminVerify": async ({ env, payload }) => {
+  "auth.adminVerify": async ({ env, payload, caller }) => {
     const u = await one(env, "SELECT * FROM users WHERE id = ? AND role = 'admin' AND active = 1", str(payload.user_id, 60));
     if (!u) throw bad("No admin account is set up.");
-    await checkOtp(env, u.email, payload.code);
+    await checkOtp(env, u.email, payload.code, caller);
     return openSession(env, u, "otp");
   },
   "auth.setupCode": async ({ env, payload }) => {
@@ -3950,12 +3972,12 @@ const OPS = {
     return { via: "email", email_hint: maskEmail(u.email), ...d };
   },
   /* The code proves it is really them (a lead-issued sign-in code counts too); then the password is saved and they are in. */
-  "auth.completeSetup": async ({ env, payload }) => {
+  "auth.completeSetup": async ({ env, payload, caller }) => {
     const u = await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(payload.user_id, 60));
     if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
     if (!isHash(payload.passHash)) throw bad("Set a password.");
     await nameSignInOk(env, u);
-    const { purpose, via } = await checkOtp(env, u.email, payload.code);
+    const { purpose, via } = await checkOtp(env, u.email, payload.code, caller);
     if (purpose !== "setup" && purpose !== "login") throw bad("That code is not valid here. Ask for a new one.");
     // (an emailed code proves the address here too; a code the team lead handed over does not)
     await emailProved(env, u, via);
@@ -8641,7 +8663,10 @@ export default {
           // Changing a client's data needs edit access; a view-only share is not enough.
           if (user.scope_view_only && user.scope_view_only.size && payload.client_id && EDIT_OPS.test(op) && user.scope_view_only.has(String(payload.client_id))) throw viewOnly();
         }
-        const result = await handler({ env, user, token, payload, ctx });
+        // who is calling, for the sign-in code limits: the address Cloudflare gives (CF-Connecting-IP); the demo and the tests have
+        // none, and count as one stand-in caller
+        const caller = String(request.headers.get("CF-Connecting-IP") || "").trim().slice(0, 64) || "local";
+        const result = await handler({ env, user, token, payload, ctx, caller });
         return json(result || { ok: true });
       }
       throw new ApiError(404, "Not found.");

@@ -394,6 +394,90 @@ const MAIL = { EMAIL_PROVIDER: "webhook", EMAIL_WEBHOOK_URL: "https://mail-hook.
     (await w.U("Tina Lead")).email_typed === 0 && rt.ok && st.dr.verify(rt.r.token)[1] !== "admin" && ra.ok && ra.r.role === "admin" && st.dr.verify(ra.r.token)[0] === "admin", [rt, ra]);
 }
 
+/* ================= D-07: wrong sign-in codes are counted per caller: someone else's cannot lock a person out ================= */
+{
+  const w = await makeWorld({ envExtra: MAIL });
+  const { id, st } = w;
+  let t = Date.now();
+  const call = (ip, op, payload) => w.at(t, () => w.from(ip, op, payload));
+  const step = (sec = 60) => { t += sec * 1000; };
+  const codeFor = (to) => { const m = [...st.mails].reverse().find((x) => x.to === to); return m ? (m.subject.match(/(\d{6})/) || [])[1] : null; };
+  const wrongFor = (to) => { const c = Number(codeFor(to)); return String(c === 999999 ? 100000 : c + 1); };
+  // made-up network addresses (documentation ranges): the admin's office, a biller's home, and three others
+  const ADMIN_NET = "198.51.100.10", HOME = "198.51.100.20", X1 = "203.0.113.7", X2 = "203.0.113.8", X3 = "203.0.113.9";
+  const ADMIN = "supervisor" + D, ARUN = "arun" + D, PAT = "pat" + D, SANA = "sana" + D;
+  const five = async (ip, op, payload) => { const out = []; for (let i = 0; i < 5; i++) out.push(await call(ip, op, payload)); return out; };
+
+  S("D-07: wrong codes from another caller no longer stop the real person's code");
+  const asked = await call(ADMIN_NET, "auth.adminCode", {});
+  step(5);
+  let bad = await five(X1, "auth.adminVerify", { user_id: asked.r.user_id, code: wrongFor(ADMIN) });
+  ok("D-07: five wrong codes in the admin's name from one caller: the first four do not match, the fifth stops that caller",
+    bad.every((x) => !x.ok && x.status === 401) && bad.slice(0, 4).every((x) => /doesn't match/.test(x.e)) && /^Too many wrong codes were typed here, so codes for this email are not checked from here for an hour\./.test(bad[4].e), bad.map((x) => x.e));
+  let r = await call(X1, "auth.adminVerify", { user_id: asked.r.user_id, code: codeFor(ADMIN) });
+  ok("D-07: that caller is not even checked for the hour: the right code is refused from there (and stays unused)", !r.ok && r.status === 429, r);
+  r = await call(ADMIN_NET, "auth.adminVerify", { user_id: asked.r.user_id, code: codeFor(ADMIN) });
+  ok("D-07: the admin's code still signs the admin in from the admin's own network", r.ok && r.r.user.is_admin === true, r);
+  step();
+  await call(HOME, "auth.sendOtp", { email: ARUN });
+  bad = await five(X1, "auth.verifyOtp", { email: ARUN, code: wrongFor(ARUN) });
+  r = await call(HOME, "auth.verifyOtp", { email: ARUN, code: codeFor(ARUN) });
+  ok("D-07: the same for a person's emailed code (Email code): five wrong codes elsewhere, and their code still works", bad.every((x) => !x.ok) && r.ok && r.r.user.id === id["Arun Agent"], [bad.map((x) => x.e), r]);
+  const su = await call(HOME, "auth.setupCode", { user_id: id["Pat Present"] });
+  bad = await five(X1, "auth.completeSetup", { user_id: id["Pat Present"], code: wrongFor(PAT), passHash: "c".repeat(64) });
+  r = await call(HOME, "auth.completeSetup", { user_id: id["Pat Present"], code: codeFor(PAT), passHash: "d".repeat(64) });
+  ok("D-07: and for signing in by name (the emailed setup code)", su.ok && su.r.via === "email" && bad.every((x) => !x.ok) && /Too many wrong codes were typed here/.test(bad[4].e) && r.ok && r.r.user.id === id["Pat Present"], [su, bad.map((x) => x.e), r]);
+  r = await call(X1, "auth.verifyOtp", { email: SANA, code: "123456" });
+  ok("D-07: a stopped caller is stopped for that email only: another email's code is still checked", !r.ok && r.status === 401 && /expired or was never sent|doesn't match/.test(r.e), r);
+  step(61 * 60);
+  await call(HOME, "auth.sendOtp", { email: ARUN });
+  r = await call(X1, "auth.verifyOtp", { email: ARUN, code: wrongFor(ARUN) });
+  ok("D-07: after the hour that caller may try again", !r.ok && r.status === 401 && /doesn't match/.test(r.e), r);
+  r = await call(HOME, "auth.verifyOtp", { email: ARUN, code: codeFor(ARUN) });
+  ok("D-07: (and the person's new code works)", r.ok, r);
+
+  S("D-07: guessing is still capped");
+  step();
+  await call(HOME, "auth.sendOtp", { email: SANA });
+  const real = codeFor(SANA);
+  bad = [...(await five(X2, "auth.verifyOtp", { email: SANA, code: wrongFor(SANA) }))];
+  r = await call(HOME, "auth.verifyOtp", { email: SANA, code: "000000" });
+  ok("D-07: the person's own typo from their network counts too: the sixth wrong code in all still does not match", !r.ok && /doesn't match/.test(r.e), r);
+  bad.push(...(await five(X3, "auth.verifyOtp", { email: SANA, code: wrongFor(SANA) })));
+  // in all: five from one caller, the person's typo (the sixth), then a third caller's fourth is the tenth
+  ok("D-07: ten wrong codes in all (two other callers and one typo here) end the codes for that email", bad[8].e === "Too many wrong codes for this email. Request a new one." && /expired or was never sent/.test(bad[9].e), bad.map((x) => x.e));
+  r = await call(HOME, "auth.verifyOtp", { email: SANA, code: real });
+  ok("D-07: so the code that was sent no longer works anywhere", !r.ok && r.status === 401 && /expired or was never sent/.test(r.e), r);
+  const tries = (await w.row("SELECT tries, consumed FROM otps WHERE email = ? ORDER BY created_at DESC LIMIT 1", SANA));
+  ok("D-07: a code ends at ten wrong codes, from every caller together", tries.tries === 10 && tries.consumed === 1, tries);
+  step();
+  r = await call(HOME, "auth.sendOtp", { email: SANA });
+  const again = await call(HOME, "auth.verifyOtp", { email: SANA, code: codeFor(SANA) });
+  ok("D-07: the person asks for a new code and signs in with it", r.ok && again.ok && again.r.user.id === id["Sana Sunday"], [r, again]);
+  step();
+  const X4 = "203.0.113.10", HANA = "hana" + D;
+  await call(HOME, "auth.sendOtp", { email: HANA });
+  for (let i = 0; i < 3; i++) await call(X4, "auth.verifyOtp", { email: HANA, code: wrongFor(HANA) });
+  const n4 = await call(X4, "auth.completeSetup", { user_id: id["Hana Holiday"], code: wrongFor(HANA), passHash: "e".repeat(64) });
+  const n5 = await call(X4, "auth.completeSetup", { user_id: id["Hana Holiday"], code: wrongFor(HANA), passHash: "e".repeat(64) });
+  r = await call(X4, "auth.verifyOtp", { email: HANA, code: codeFor(HANA) });
+  ok("D-07: one caller's wrong codes add up across the screens that take a code (three on Email code, two on sign in by name: stopped)",
+    /doesn't match/.test(n4.e) && /Too many wrong codes were typed here/.test(n5.e) && !r.ok && r.status === 429, [n4.e, n5.e, r]);
+  r = await call(HOME, "auth.verifyOtp", { email: HANA, code: codeFor(HANA) });
+  ok("D-07: (Hana's own code still works from her network)", r.ok && r.r.user.id === id["Hana Holiday"], r);
+
+  S("D-07: the caps on codes sent stay");
+  step();
+  await call(HOME, "auth.sendOtp", { email: "walt" + D });
+  r = await call(X1, "auth.sendOtp", { email: "walt" + D });
+  ok("D-07: still at most one code every 45 seconds per email, whoever asks", !r.ok && r.status === 429 && /less than a minute ago/.test(r.e), r);
+  const src = fs.readFileSync(REPO + "/worker.js", "utf8");
+  ok("D-07: the caller is Cloudflare's CF-Connecting-IP, with one stand-in caller when there is none (the demo, these checks)",
+    /const caller = String\(request\.headers\.get\("CF-Connecting-IP"\) \|\| ""\)\.trim\(\)\.slice\(0, 64\) \|\| "local";/.test(src) && /handler\(\{ env, user, token, payload, ctx, caller \}\)/.test(src));
+  ok("D-07: every op that checks a code passes the caller: Email code (verifyOtp), Access Admin (adminVerify), sign in by name (completeSetup)",
+    (src.match(/await checkOtp\(env, [^)]*, caller\)/g) || []).length === 3 && (src.match(/checkOtp\(/g) || []).length === 4);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
