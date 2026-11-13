@@ -7540,7 +7540,10 @@ function crCtx(DS, R, pageId, sel) {
     const of = (rg) => { const xs = !ds ? [] : ds.dateField && rg ? ds.recs.filter((r) => inR(r, rg)) : ds.recs.slice(); return ds && ds.dedupe ? crDedupe(xs) : xs; };
     cache[role] = { ds, all: of(range), prevAll: prevRange ? of(prevRange) : [] }; } return cache[role]; };
   return { pageId, sel, range, prevRange, ds: (role) => get(role).ds, rows: (role, except) => crApplySel(get(role).all, sel, except), rowsAll: (role) => get(role).all,
-    prev: (role) => crApplySel(get(role).prevAll, sel, null), hasPrev: (role) => !!(prevRange && get(role).prevAll.length),
+    prev: (role) => crApplySel(get(role).prevAll, sel, null), hasPrev: (role) => !!(prevRange && get(role).prevAll.length), prevAll: (role) => get(role).prevAll,
+    // claims, not entries: one row per claim (its latest entry in the period) first, then the filters, so a filter picks claims by
+    // their latest entry and a picked bar always matches the KPIs
+    claims: (role, except) => crApplySel(crClaimsOf(get(role).all), sel, except), prevClaims: (role) => crApplySel(crClaimsOf(get(role).prevAll), sel, null),
     snapshot: (role) => { const ds = DS[role]; return ds ? ds.recs : []; }, DS, R };
 }
 /* ---------- card factories and insight helpers (Third Eye's) ---------- */
@@ -7549,16 +7552,15 @@ const crDimLabel = (ds, field) => ({ payerKey: "Payer", bucket: "Aging bucket", 
 function crCardBar(c, field, title, opts = {}) {
   const role = opts.role, ds = c.ds(role); if (!ds) return null;
   const id = `${c.pageId}.${role}.${field}`;
-  let rows = c.rows(role, field); if (opts.rowFilter) rows = rows.filter(opts.rowFilter);
-  if (opts.claims) rows = crClaimsOf(rows);   // claims, not entries: one row per claim (its latest entry), as the page's KPIs count
+  // claims, not entries: one row per claim (its latest entry), as the page's KPIs count, before the filters
+  let rows = opts.claims ? c.claims(role, field) : c.rows(role, field); if (opts.rowFilter) rows = rows.filter(opts.rowFilter);
   const measure = (c.R.cardMeasure && c.R.cardMeasure[id]) || opts.measure || "count";
   let items = crAgg(rows, field, ds, { measure, order: opts.order });
   if (opts.filterItems) items = items.filter(opts.filterItems);
   if (!items.length) return { id, title, sub: opts.sub, cols: opts.cols || 6, type: "empty" };
   if (opts.emph) crEmph80(items);
   crMarkSel(items, c.sel[field]);
-  let prevRows = opts.prev && c.hasPrev(role) ? c.prev(role) : null; if (prevRows && opts.rowFilter) prevRows = prevRows.filter(opts.rowFilter);
-  if (prevRows && opts.claims) prevRows = crClaimsOf(prevRows);
+  let prevRows = opts.prev && c.hasPrev(role) ? (opts.claims ? c.prevClaims(role) : c.prev(role)) : null; if (prevRows && opts.rowFilter) prevRows = prevRows.filter(opts.rowFilter);
   const prevItems = prevRows ? crAgg(prevRows, field, ds, { measure }) : null;
   const m = CR_MEASURE[measure], sec = measure === "count" ? { key: "amount", label: "Amount", fmt: crF.money } : { key: "count", label: "Claims", fmt: crF.int };
   return { id, title, sub: opts.sub, cols: opts.cols || 6, type: opts.type || "hbar", dim: field, dimLabel: crDimLabel(ds, field), items, prevItems, measure, canToggle: true, measureLabel: m.label,
@@ -7822,9 +7824,11 @@ function crBuildPayment(c) {
 }
 function crBuildAR(c) {
   const R = c.R, ds = c.ds("worked"); if (!ds) return null;
-  const entries = c.rows("worked", null), prevE = c.hasPrev("worked") ? c.prev("worked") : null;
-  // claims, not entries: one row per claim (its latest entry); paid / denied: claims with such an entry in the period
-  const all = crClaimsOf(entries), prev = prevE ? crClaimsOf(prevE) : null;
+  // claims, not entries: one row per claim (its latest entry), then the filters (a filter picks claims by their latest entry, so a
+  // picked bar matches the KPIs); paid / denied: claims with such an entry in the period; the entries: those of the claims shown
+  const all = c.claims("worked", null), prev = c.hasPrev("worked") ? c.prevClaims("worked") : null;
+  const keyOf = (r) => r.id || r.invoice || r._i, shown = crIdsOf(all), shownPrev = prev ? crIdsOf(prev) : null;
+  const entries = c.rowsAll("worked").filter((r) => shown.has(keyOf(r))), prevE = prev ? c.prevAll("worked").filter((r) => shownPrev.has(keyOf(r))) : null;
   const amt = crSum(all, (r) => r.amount), wd = crWorkingDaysIn(c.range, all, ds.dateField);
   const paidIds = crIdsOf(entries.filter(crIsPaid)), denIds = crIdsOf(entries.filter(crIsDenied));
   const paid = all.filter((r) => paidIds.has(r.id || r.invoice || r._i)), den = all.filter((r) => denIds.has(r.id || r.invoice || r._i));
@@ -8323,7 +8327,8 @@ function CrCover({ rep, pages, mode }) {
 function crSliceSource(c, pid) {
   if (pid === "inventory" || pid === "inventory2") { const s = crInvSets({ ...c, sel: {} }); return { ds: s.ds, rows: s.curSet }; }
   const role = { ev: "ev", submission: "submission", rejection: "rejection", payment: "payment", ar: "worked", denials: "denial", rca: "denial", ca: "clientAssistance" }[pid];
-  return role && c.ds(role) ? { ds: c.ds(role), rows: c.rowsAll(role) } : null;
+  // AR production counts claims at their latest entry: so do its filter lists
+  return role && c.ds(role) ? { ds: c.ds(role), rows: pid === "ar" ? crClaimsOf(c.rowsAll(role)) : c.rowsAll(role) } : null;
 }
 function crHasPage(DS, pid) {
   if (pid === "cover" || pid === "exec") return true;

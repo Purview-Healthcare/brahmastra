@@ -1,6 +1,7 @@
 /* Suite 46: the owner's decisions after the second bug test (fixer DB). E-20: Live status shows who works on what, the Escalation
    tracker's open escalations and the claims flagged by billers, and its tab counts the two lists. N-09: a view-only share opens the
-   client's claims read only, and every write is refused. The clock is fixed at Tue 10 Nov 2026 14:00 IST.
+   client's claims read only, and every write is refused. F-02: the Client 360 report counts claims (one per claim, its latest entry)
+   on the AR production page, filters included, and on its other pages. The clock is fixed at Tue 10 Nov 2026 14:00 IST.
    Made-up data only ("Test Patient", made-up claim numbers, made-up people). */
 import fs from "fs";
 import vm from "vm";
@@ -298,6 +299,79 @@ await world("N-09", async () => {
   ok("N-09: the claim shows a View only note and badge for a view-only share", /\{c\.view_share && <div className="alert warn view-only-note"><b>View only\.<\/b>/.test(src) && /is shared with you to look at: you can read this claim, its history and its notes\. Nothing can be added, changed or assigned here\./.test(src)
     && /\{c\.view_share && <span className="badge amber"[^>]*>view only<\/span>\}/.test(src));
   ok("N-09: view only hides the team lead actions, the work form, the note form and the patient's other claims", /const ro = !!\(c && c\.view_only\);/.test(src) && /\{sup && !ro && !q\.data\.handoff_role && \(/.test(src) && /\{!ro && \(c\.mine \|\| \(sup && /.test(src) && /\{!ro && q\.data\.handoff_role && !c\.mine && <NoteForm/.test(src) && /\{!ro && <button className="btn sm" onClick=\{\(\) => setPatientOf/.test(src));
+});
+
+/* ======================= F-02: the Client 360 report counts claims ======================= */
+await world("F-02", async () => {
+  const w = await makeWorld();
+  const { A, app, sql, rows } = w;
+  const X = (expr) => vm.runInContext(expr, app);
+  const me = (await rows("SELECT id FROM users WHERE email = ?", "supervisor" + D))[0];
+  let seq = 0;
+  const mkClient = async (cid, name) => { await sql("INSERT INTO clients (id, name, created_at) VALUES (?,?,?)", cid, name, Date.parse("2026-01-01T00:00:00Z")); return cid; };
+  const claim = async (cid, o) => { const cl = "c46-" + (++seq);
+    await sql(`INSERT INTO claims (id, client_id, match_key, claim_no, patient, payer, dos, balance, billed, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      cl, cid, "mk-" + cl, "CLM-46" + seq, "Test Patient " + seq, o.payer, o.dos, o.bal, o.billed, "assigned", Date.parse("2026-07-01T00:00:00Z"), NOW); return cl; };
+  const note = (claimId, day, st, sub, act, mv) => sql("INSERT INTO notes (id, claim_id, user_id, user_name, kind, status, sub_status, action, bucket, created_at) VALUES (?,?,?,?, 'work', ?,?,?,?,?)",
+    "n46-" + (++seq), claimId, me.id, "Test Biller", st, sub, act, mv, ist(day, "11:00"));
+  const october = () => { const range = { start: new Date(2026, 9, 1), end: new Date(2026, 9, 31), kind: "month" }, prev = app.crShift(range);
+    const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    return { range, payload: { from: iso(range.start), to: iso(range.end), prev_from: iso(prev.start), prev_to: iso(prev.end), period_key: X("crPeriodKey")(range) } }; };
+  const report = async (cid) => { const per = october(); const raw = await A("creport.get", { client_id: cid, ...per.payload });
+    const DS = app.crDatasets(raw), R = { range: per.range, compare: true, client: "Test Clinic", periodName: "October", cardMeasure: {} };
+    const ctx = (pid, sel = {}) => app.crCtx(DS, R, pid, sel);
+    return { DS, R, raw, ctx, ar: (sel) => app.crBuildAR(ctx("ar", sel)), denials: (sel) => app.crBuildDenials(ctx("denials", sel)), exec: () => app.crBuildExec(ctx("exec"), raw), ca: () => app.crBuildCA(ctx("ca")),
+      rejection: () => app.crBuildRejection(ctx("rejection")) }; };
+  const kpi = (m, label) => m.kpis.find((k) => k.label === label) || {};
+  const card = (m, f) => m.cards.find((c) => c.id === "ar.worked." + f);
+  const sum = (c, k) => c.items.reduce((t, x) => t + x[k], 0);
+  const cid = await mkClient("c46-f02", "Test Clinic F02");
+  // a: denied on 5 Oct, then paid on 20 Oct ($1,000); b: paid on 6 Oct ($500); c: denied on 7 Oct (53 days old) and 21 Oct (67 days old) ($300)
+  const a = await claim(cid, { payer: "Medicare", dos: "2026-09-01", bal: 400, billed: 1000 }), b = await claim(cid, { payer: "Aetna", dos: "2026-09-02", bal: 300, billed: 500 }), c = await claim(cid, { payer: "Aetna", dos: "2026-08-15", bal: 300, billed: 300 });
+  await note(a, "2026-10-05", "Claim Denied", "CO-16 Missing information", "Corrected claim sent", "Payer"); await note(a, "2026-10-20", "Claim Paid", "Paid in full", "Close", "Closed");
+  await note(b, "2026-10-06", "Claim Paid", "Paid in full", "Close", "Closed");
+  await note(c, "2026-10-07", "Claim Denied", "CO-50 Not medically necessary", "Appeal filed", "Payer"); await note(c, "2026-10-21", "Claim Denied", "CO-50 Not medically necessary", "Appeal filed", "Payer");
+  const r = await report(cid);
+
+  S("F-02: AR production counts claims: one per claim, at its latest entry, in the KPIs and every chart");
+  const ar = r.ar({});
+  ok("F-02: Claims worked 3 and Amount worked $1,800 (5 entries on 3 claims)", kpi(ar, "Claims worked").value === "3" && kpi(ar, "Amount worked").value === "$1,800", ar.kpis.map((k) => k.label + " " + k.value));
+  ok("F-02: the small line under Claims worked gives the work entries: 5 entries", kpi(ar, "Claims worked").sub === "5 entries", kpi(ar, "Claims worked"));
+  const st = card(ar, "purviewStatus"), paidBar = st.items.find((x) => /paid/i.test(x.label)), denBar = st.items.find((x) => /denied/i.test(x.label));
+  ok("F-02: Status wise breakdown at each claim's latest entry: Claim Paid $1,500 (2 claims), Claim Denied $300 (1 claim)", paidBar && paidBar.amount === 1500 && paidBar.count === 2 && denBar && denBar.amount === 300 && denBar.count === 1, st.items.map((x) => [x.label, x.count, x.amount]));
+  ok("F-02: all four charts add up to Claims worked and Amount worked (3 claims, $1,800)", ["bucket", "purviewStatus", "action", "payerKey"].every((f) => card(ar, f) && sum(card(ar, f), "count") === 3 && sum(card(ar, f), "amount") === 1800),
+    ["bucket", "purviewStatus", "action", "payerKey"].map((f) => card(ar, f) && [f, sum(card(ar, f), "count"), sum(card(ar, f), "amount")]));
+  ok("F-02: Confirmed paid and Denied count the claims with such an entry in October: 2 of 3 each", kpi(ar, "Confirmed paid").value === "67%" && kpi(ar, "Confirmed paid").sub === "2 claims" && kpi(ar, "Denied").value === "67%" && kpi(ar, "Denied").sub === "2 claims", ar.kpis);
+
+  S("F-02: a filter picks claims by their latest entry, so a picked bar matches the KPIs");
+  const pick = (f, key) => ({ [f]: new Set([key]) });
+  let m = r.ar(pick("purviewStatus", denBar.key));
+  const stD = card(m, "purviewStatus"), picked = stD.items.find((x) => x.key === denBar.key);
+  ok("F-02: picking Claim Denied: 1 claim, $300, as its bar (claim a was denied, then paid: it is a paid claim now)", kpi(m, "Claims worked").value === "1" && kpi(m, "Amount worked").value === "$300" && picked.count === 1 && picked.amount === 300,
+    { kpis: m.kpis.map((k) => k.label + " " + k.value), bar: picked && [picked.count, picked.amount] });
+  ok("F-02: and the other charts show that one claim (Aetna $300), its 2 entries under Claims worked", sum(card(m, "payerKey"), "amount") === 300 && sum(card(m, "bucket"), "count") === 1 && kpi(m, "Claims worked").sub === "2 entries", m.cards.map((x) => [x.id, sum(x, "count"), sum(x, "amount")]));
+  const bk = card(ar, "bucket"), b3160 = bk.items.find((x) => /31/.test(x.label) && /60/.test(x.label));
+  m = r.ar(pick("bucket", b3160.key));
+  const bkP = card(m, "bucket").items.find((x) => x.key === b3160.key);
+  ok("F-02: picking 31-60 days: claims a and b ($1,500), as its bar (c was 53 days old on 7 Oct but 67 at its latest entry)", kpi(m, "Claims worked").value === "2" && kpi(m, "Amount worked").value === "$1,500" && bkP.count === 2 && bkP.amount === 1500,
+    { kpis: m.kpis.map((k) => k.value), bar: bkP && [bkP.count, bkP.amount], bars: bk.items.map((x) => [x.label, x.count]) });
+  const sl = app.crSliceSource(r.ctx("ar"), "ar");
+  ok("F-02: the filter lists offer the claims at their latest entry (3 claims: paid 2, denied 1)", sl.rows.length === 3 && X("crAgg")(sl.rows, "purviewStatus", sl.ds, { measure: "count" }).map((x) => x.count).join(",") === "2,1", sl.rows.length);
+  m = r.ar(pick("payerKey", card(ar, "payerKey").items.find((x) => /aetna/i.test(x.label)).key));
+  ok("F-02: picking Aetna: claims b and c, $800, 3 entries; Confirmed paid 1, Denied 1", kpi(m, "Claims worked").value === "2" && kpi(m, "Amount worked").value === "$800" && kpi(m, "Claims worked").sub === "3 entries" && kpi(m, "Confirmed paid").sub === "1 claim" && kpi(m, "Denied").sub === "1 claim", m.kpis);
+
+  S("F-02: the report's other pages count claims too");
+  const dn = r.denials({});
+  ok("F-02: Denials: 2 denied claims ($1,300), each once however often it was denied, 66.7% of the 3 claims worked (as AR production's Denied)", kpi(dn, "Denied claims").value === "2" && kpi(dn, "Denied amount").value === "$1,300" && kpi(dn, "Denial rate").value === "66.7%", dn.kpis.map((k) => k.label + " " + k.value));
+  const ex = r.exec();
+  ok("F-02: Executive summary: Claims worked 3, denial rate 66.7% (2 claims)", kpi(ex, "Claims worked").value === "3" && kpi(ex, "Denial rate").value === "66.7%" && kpi(ex, "Denial rate").sub === "2 claims", ex.kpis.map((k) => k.label + " " + k.value));
+  const cid2 = await mkClient("c46-f02b", "Test Clinic F02b");
+  const d = await claim(cid2, { payer: "Aetna", dos: "2026-09-10", bal: 250, billed: 250 }), e = await claim(cid2, { payer: "Cigna", dos: "2026-09-11", bal: 150, billed: 150 });
+  await note(d, "2026-10-08", "Claim Denied", "Need medical records", "Requested from the client", "Client"); await note(d, "2026-10-22", "Claim Denied", "Need medical records", "Requested from the client", "Client");
+  await note(e, "2026-10-09", "Claim Rejected", "Invalid member ID", "Corrected and resubmitted", "Payer"); await note(e, "2026-10-12", "Claim Rejected", "Invalid member ID", "Corrected and resubmitted", "Payer");
+  const r2 = await report(cid2), ca = r2.ca(), rj = r2.rejection();
+  ok("F-02: Client assistance: a claim whose entries put it with the client twice is one claim ($250)", kpi(ca, "Claims needing the client").value === "1" && kpi(ca, "Amount on hold").value === "$250", ca.kpis.map((k) => k.label + " " + k.value));
+  ok("F-02: Rejections read from the AR entries: a claim rejected twice is one rejected claim, of 2 claims worked", kpi(rj, "Rejected claims").value === "1" && kpi(rj, "Rejection rate").value === "50.0%", rj.kpis.map((k) => k.label + " " + k.value));
 });
 
 const failed = results.filter((x) => !x.pass);
