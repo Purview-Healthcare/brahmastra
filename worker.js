@@ -650,7 +650,7 @@ async function folderTrouble(env, clientId, error) {
   const c = await one(env, "SELECT id, name, ar_mode, ar_lead FROM clients WHERE id = ?", clientId);
   if (!c) return;
   const leadNames = await clientTeamLeads(env, c.id, null);
-  const people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND (id = ? OR name IN (${leadNames.map(() => "?").join(",") || "NULL"}))`, c.ar_mode === "person" ? c.ar_lead : "", ...leadNames);
+  const people = await all(env, `SELECT id, email, email_missing FROM users WHERE active = 1 AND (id = ? OR name IN ${IN_LIST})`, c.ar_mode === "person" ? c.ar_lead : "", listArg(leadNames));
   const text = `Brahmastra could not save production to ${c.name}'s OneDrive folder: ${String(error).slice(0, 160)}. Entries are still saved in Brahmastra; tell your admin.`;
   for (const u of people) {
     await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), u.id, Date.now(), text, "clients", c.id);
@@ -887,7 +887,7 @@ async function syncEscalations(env, clientId, months) {
    lead: the admins, so a notice is never sent to nobody. */
 async function escalationPeople(env, clientId) {
   const names = await clientTeamLeads(env, clientId, null);
-  let people = await all(env, `SELECT id, name, email, email_missing FROM users WHERE active = 1 AND name IN (${names.map(() => "?").join(",") || "NULL"})`, ...names);
+  let people = await all(env, `SELECT id, name, email, email_missing FROM users WHERE active = 1 AND name IN ${IN_LIST}`, listArg(names));
   if (!people.length) people = await all(env, "SELECT id, name, email, email_missing FROM users WHERE active = 1 AND role = 'admin'");
   return people;
 }
@@ -1043,7 +1043,7 @@ function blankTat() {
 /* The holds in force or past for these clients: kind + ref -> the latest one not cleared. */
 async function tatHolds(env, ids) {
   if (!ids.length) return new Map();
-  const rows = await all(env, `SELECT * FROM tat_holds WHERE cleared_at IS NULL AND client_id IN (${ids.map(() => "?").join(",")}) ORDER BY at`, ...ids);
+  const rows = await all(env, `SELECT * FROM tat_holds WHERE cleared_at IS NULL AND client_id IN ${IN_LIST} ORDER BY at`, listArg(ids));
   return new Map(rows.map((h) => [h.kind + ":" + h.ref_id, h]));
 }
 async function tatBoard(env, clientIds, now = Date.now()) {
@@ -1051,7 +1051,7 @@ async function tatBoard(env, clientIds, now = Date.now()) {
   const per = new Map(ids.map((id) => [id, blankTat()]));
   if (!ids.length) return per;
   // due soon: within DUE_SOON_HOURS working hours (a task due Monday 02:00 is due soon on Friday 23:00)
-  const IN = `(${ids.map(() => "?").join(",")})`, soonCut = addWorkingHours(now, DUE_SOON_HOURS), today = istISO(now);
+  const IN = IN_LIST, idsArg = listArg(ids), soonCut = addWorkingHours(now, DUE_SOON_HOURS), today = istISO(now);
   const holds = await tatHolds(env, ids);
   // a hold counts while its date has not passed; one whose date passed travels with the item as "past the expected date"
   const holdOf = (kind, ref, since) => { const h = holds.get(kind + ":" + ref); if (!h || (kind === "flag" && h.since && since && h.since !== since)) return { on: null, past: null };
@@ -1059,7 +1059,7 @@ async function tatBoard(env, clientIds, now = Date.now()) {
   // waiting on the client keeps the desk's TAT running, so it stays here (README: the clock keeps running)
   const desk = await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, h.status, h.due_at, h.created_at, h.available_at, h.created_by_name, c.claim_no, c.balance, u.name AS with_name
     FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
-    WHERE h.status IN ('pending','assigned','client') AND h.client_id IN ${IN} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?) ORDER BY h.due_at LIMIT 5000`, ...ids, now);
+    WHERE h.status IN ('pending','assigned','client') AND h.client_id IN ${IN} AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?) ORDER BY h.due_at LIMIT 5000`, idsArg, now);
   for (const h of desk) {
     const t = per.get(h.client_id), k = h.dept === "subcheck" ? "submission" : h.dept, b = t && t.desks[k];
     if (!b) continue;
@@ -1083,18 +1083,18 @@ async function tatBoard(env, clientIds, now = Date.now()) {
     else if (due <= soonCut) { a.soon++; t.soon.push({ ...item, left_h: Math.round(workingHoursBetween(now, due) * 10) / 10 }); }
   };
   for (const r of await all(env, `SELECT c.id, c.client_id, c.claim_no, c.escalated_at, e.name AS by_name FROM claims c LEFT JOIN users e ON e.id = c.escalated_by
-      WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND c.client_id IN ${IN} AND NOT ${BOUNCE_WAITING_SQL("c", now)} LIMIT 5000`, ...ids)) {
+      WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND c.client_id IN ${IN} AND NOT ${BOUNCE_WAITING_SQL("c", now)} LIMIT 5000`, idsArg)) {
     const t = per.get(r.client_id); if (t) attnItem(t, "flagged", "flag", r.id, r.id, r.escalated_at || now, r.claim_no, r.by_name);
   }
   for (const r of await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, COALESCE(h.paused_at, h.created_at) AS at, h.client_req_by_name AS by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
-      WHERE h.status = 'client' AND h.client_sent_at IS NULL AND h.client_id IN ${IN} LIMIT 5000`, ...ids)) {
+      WHERE h.status = 'client' AND h.client_sent_at IS NULL AND h.client_id IN ${IN} LIMIT 5000`, idsArg)) {
     const t = per.get(r.client_id); if (t) attnItem(t, "requests", "handoff", r.id, r.claim_id, r.at, r.claim_no, r.by_name, { dept: r.dept });
   }
   // sent back by the desks: waiting until a team lead reviews it (or a biller works it, or it goes to a desk again)
   for (const r of await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, h.done_at, h.done_by_name, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
       WHERE h.status IN ('assistance','back') AND h.done_at > ? AND h.client_id IN ${IN} AND NOT (c.reviewed_at IS NOT NULL AND c.reviewed_at > h.done_at)
         AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)
-        AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at) LIMIT 5000`, now - 30 * 86400000, ...ids)) {
+        AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at) LIMIT 5000`, now - 30 * 86400000, idsArg)) {
     const t = per.get(r.client_id); if (t) attnItem(t, "back", "handoff", r.id, r.claim_id, r.done_at, r.claim_no, r.done_by_name, { dept: r.dept });
   }
   return per;
@@ -1130,7 +1130,7 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
   const out = new Map(ids.map((id) => [id, { posting: blank(), submission: blank(), attention: blank(), missed_list: [] }]));
   if (!ids.length) return out;
   // every task due in the window, also the ones not due yet (a month still running): tally() counts those as open
-  const IN = `(${ids.map(() => "?").join(",")})`;
+  const IN = IN_LIST, idsArg = listArg(ids);
   const tally = (s, due, closed, who, row) => {
     if (closed == null && due >= now) { s.open++; return; }
     s.due++;
@@ -1139,7 +1139,7 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
   };
   for (const h of await all(env, `SELECT h.client_id, h.dept, h.status, h.due_at, h.created_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no, COALESCE(NULLIF(h.done_by_name, ''), u.name) AS who
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
-      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, ...ids, from, to)) {
+      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, idsArg, from, to)) {
     const o = out.get(h.client_id); if (!o) continue;
     const k = h.dept === "posting" ? "posting" : "submission", open = HO_OPEN.includes(h.status);
     tally(o[k], h.due_at, open ? null : h.closed_at, h.who || "", () => o.missed_list.push({ dept: k, claim_no: h.claim_no || "", sent: h.created_at, due: h.due_at, closed: open ? null : h.closed_at, who: h.who || "" }));
@@ -1148,13 +1148,13 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
   const attn = async (sql, args) => { for (const r of await all(env, sql, ...args)) { const o = out.get(r.client_id); if (!o || !r.start) continue; const due = addWorkingHours(r.start, ATTN_TAT_HOURS); if (due < from || due > to) continue; tally(o.attention, due, r.closed_at || null, ""); } };
   const back = now - 120 * 86400000;
   await attn(`SELECT client_id, escalated_at AS start, CASE WHEN escalated = 1 THEN NULL ELSE COALESCE(escalation_answered_at, reviewed_at, updated_at) END AS closed_at FROM claims c
-    WHERE client_id IN ${IN} AND escalated_at > ? AND (escalated = 1 OR escalation_answered_at >= escalated_at OR reviewed_at >= escalated_at) AND NOT ${BOUNCE_FLAG_SQL("c")}`, [...ids, back]);
+    WHERE client_id IN ${IN} AND escalated_at > ? AND (escalated = 1 OR escalation_answered_at >= escalated_at OR reviewed_at >= escalated_at) AND NOT ${BOUNCE_FLAG_SQL("c")}`, [idsArg, back]);
   // the first of: reviewed by a team lead, worked by a biller, sent to a desk again (none yet: still open)
   await attn(`SELECT h.client_id, h.done_at AS start, NULLIF(MIN(COALESCE(CASE WHEN c.reviewed_at > h.done_at THEN c.reviewed_at END, 9e15),
         COALESCE((SELECT MIN(n.created_at) FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at), 9e15),
         COALESCE((SELECT MIN(h2.created_at) FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at), 9e15)), 9e15) AS closed_at
-    FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.status IN ('assistance','back') AND h.client_id IN ${IN} AND h.done_at > ?`, [...ids, back]);
-  await attn(`SELECT client_id, COALESCE(paused_at, created_at) AS start, COALESCE(client_sent_at, client_answered_at) AS closed_at FROM handoffs WHERE client_req_by_name <> '' AND client_id IN ${IN} AND COALESCE(paused_at, created_at) > ?`, [...ids, back]);
+    FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.status IN ('assistance','back') AND h.client_id IN ${IN} AND h.done_at > ?`, [idsArg, back]);
+  await attn(`SELECT client_id, COALESCE(paused_at, created_at) AS start, COALESCE(client_sent_at, client_answered_at) AS closed_at FROM handoffs WHERE client_req_by_name <> '' AND client_id IN ${IN} AND COALESCE(paused_at, created_at) > ?`, [idsArg, back]);
   for (const o of out.values()) for (const k of ["posting", "submission", "attention"]) { const s = o[k]; s.pct = s.due ? Math.round(s.met / s.due * 1000) / 10 : null; }
   return out;
 }
@@ -1170,8 +1170,8 @@ async function denialHistory(env, clientIds, payer = null) {
   const ids = [...new Set(clientIds || [])].filter(Boolean); if (!ids.length) return [];
   return await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status, c.client_id, c.payer
     FROM notes n JOIN claims c ON c.id = n.claim_id
-    WHERE n.kind = 'work' AND c.client_id IN (${ids.map(() => "?").join(",")})${payer != null ? " AND c.payer = ?" : ""} AND n.created_at > ? AND (${DENIED_SQL} OR ${PAID_SQL})
-    ORDER BY n.claim_id, n.created_at LIMIT 50000`, ...ids, ...(payer != null ? [payer] : []), Date.now() - 365 * 86400000);
+    WHERE n.kind = 'work' AND c.client_id IN ${IN_LIST}${payer != null ? " AND c.payer = ?" : ""} AND n.created_at > ? AND (${DENIED_SQL} OR ${PAID_SQL})
+    ORDER BY n.claim_id, n.created_at LIMIT 50000`, listArg(ids), ...(payer != null ? [payer] : []), Date.now() - 365 * 86400000);
 }
 /* What worked for a denial reason: per (client, payer, reason) and per (client, reason), each action tried and how often a payment followed. */
 function whatWorked(rows) {
@@ -1210,11 +1210,11 @@ function denialEpisodes(rows) {
 }
 async function repeatDenialClaims(env, ids, now = Date.now()) {
   if (!ids.length) return [];
-  const IN = `(${ids.map(() => "?").join(",")})`;
+  const IN = IN_LIST;
   // claims still being worked with 2 or more denial entries in the year, then every work entry of those claims in time order
   const cand = await all(env, `SELECT n.claim_id FROM notes n JOIN claims c ON c.id = n.claim_id
       WHERE n.kind = 'work' AND ${DENIED_SQL} AND c.client_id IN ${IN} AND c.state IN ('open','assigned','in_progress','completed','in_process') AND n.created_at > ?
-      GROUP BY n.claim_id HAVING COUNT(*) >= 2 LIMIT 2000`, ...ids, now - 365 * 86400000);
+      GROUP BY n.claim_id HAVING COUNT(*) >= 2 LIMIT 2000`, listArg(ids), now - 365 * 86400000);
   const out = [];
   for (const part of chunks(cand.map((r) => r.claim_id), 80)) {
     const rows = await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status FROM notes n
@@ -1229,7 +1229,7 @@ async function repeatDenialClaims(env, ids, now = Date.now()) {
 }
 async function repeatDenials(env, clientIds, now = Date.now()) {
   const ids = [...new Set(clientIds || [])].filter(Boolean); if (!ids.length) return { claims: [], patterns: [] };
-  const IN = `(${ids.map(() => "?").join(",")})`;
+  const IN = IN_LIST;
   const worked = whatWorked(await denialHistory(env, ids));
   // the same claim denied again for the same reason, still being worked and not paid since
   const reps = (await repeatDenialClaims(env, ids, now)).sort((a, b) => b.last_at - a.last_at).slice(0, 500);
@@ -1245,7 +1245,7 @@ async function repeatDenials(env, clientIds, now = Date.now()) {
         SELECT c.client_id, cl.name AS client_name, c.payer, n.claim_id, c.balance, MAX(COALESCE(NULLIF(n.sub_status, ''), 'Other')) AS reason, LOWER(TRIM(COALESCE(NULLIF(n.sub_status, ''), 'Other'))) AS rk, MAX(n.created_at) AS last_at
         FROM notes n JOIN claims c ON c.id = n.claim_id LEFT JOIN clients cl ON cl.id = c.client_id
         WHERE n.kind = 'work' AND ${DENIED_SQL} AND c.client_id IN ${IN} AND n.created_at > ? GROUP BY c.client_id, c.payer, n.claim_id, rk)
-      GROUP BY client_id, payer, rk HAVING COUNT(*) >= 3 ORDER BY claims DESC, bal DESC LIMIT 200`, ...ids, now - 30 * 86400000))
+      GROUP BY client_id, payer, rk HAVING COUNT(*) >= 3 ORDER BY claims DESC, bal DESC LIMIT 200`, listArg(ids), now - 30 * 86400000))
     .map((r) => ({ ...r, worked: worked(r.client_id, r.payer, r.reason) }));
   return { claims, patterns };
 }
@@ -1919,6 +1919,11 @@ function sameHash(a, b) { // constant time
 const mailClean = (e) => String(e || "").trim().toLowerCase();
 const mailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 const str = (v, max = 4000) => (v == null ? "" : String(v)).slice(0, max);
+/* Typed text in a LIKE pattern: D1 refuses a LIKE or GLOB pattern over 50 bytes ("LIKE or GLOB pattern too complex", a 500), so
+   the text is cut to its first 48 bytes (whole characters) inside the two % signs: a longer search finds what its first 48
+   characters find. likeCut(s, n) cuts to n bytes for other patterns. */
+const likeCut = (s, n = 48) => { let out = "", b = 0; for (const ch of String(s)) { const c = ch.codePointAt(0), k = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; if (b + k > n) break; out += ch; b += k; } return out; };
+const likeAny = (s) => "%" + likeCut(s) + "%";
 const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 /* A whole number typed in a box, from lo to hi. Anything else (empty, a fraction, out of range) is refused with msg,
    never saved as some other number. */
@@ -1950,9 +1955,17 @@ const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_
 const PREF_KEYS = { theme: ["light", "navy", "gold", "auto"], text: ["normal", "large"], digest: ["on", "off"] };
 function userPrefs(j) { let o = {}; try { o = JSON.parse(j || "{}") || {}; } catch (e) { o = {}; } const out = {}; for (const k in PREF_KEYS) if (PREF_KEYS[k].includes(o[k])) out[k] = o[k]; return out; }
 
-const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).first();
-const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...p).all()).results || [];
-const run = (env, sql, ...p) => env.DB.prepare(sql).bind(...p).run();
+// D1 refuses undefined as a value (D1_TYPE_ERROR, a 500): a value left out of a call is NULL, so a missing id finds nothing
+// and the op answers its own message ("Claim not found."), as the demo does.
+const d1Vals = (p) => p.map((v) => (v === undefined ? null : v));
+const one = (env, sql, ...p) => env.DB.prepare(sql).bind(...d1Vals(p)).first();
+const all = async (env, sql, ...p) => (await env.DB.prepare(sql).bind(...d1Vals(p)).all()).results || [];
+const run = (env, sql, ...p) => env.DB.prepare(sql).bind(...d1Vals(p)).run();
+/* A list bound as ONE value, a JSON array: `col IN ${IN_LIST}` with the value listArg(ids). D1 takes at most 100 bound values in
+   a statement, so a list that grows with the people or the clients (a span, a team, every active client) is never bound one value
+   per item; json_each gives the same rows as the list written out. */
+const IN_LIST = "(SELECT value FROM json_each(?))";
+const listArg = (list) => JSON.stringify([...list]);
 const changesOf = (r) => (r && r.meta && Number(r.meta.changes)) || 0;
 async function batchAll(env, stmts, size = 50) {
   const out = [];
@@ -2131,24 +2144,28 @@ async function importRoster(env, user, payload) {
   if (payload.dry_run) return out;
 
   // Apply: people first, then who reports to whom, then project access and teams.
-  const now = Date.now();
+  // A row that already holds exactly what would be written is not written again: an unchanged roster made 3 database calls a
+  // person on every hourly sync, and D1 allows 1,000 calls an invocation (the hourly job is one).
+  const now = Date.now(), freed = new Set();
+  const holds = (p, vals) => !!p.match && !freed.has(p.match.id) && Object.keys(vals).every((k) => p.match[k] === vals[k]);
   for (const p of plan) {
     if (p.action === "skip") continue;
     const n = p.next;
-    if (n.free_email_from) await run(env, "UPDATE users SET email = ?, email_missing = 1 WHERE id = ?", "freed-" + String(n.free_email_from).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) + "@no-email.invalid", n.free_email_from);
+    if (n.free_email_from) { freed.add(n.free_email_from); await run(env, "UPDATE users SET email = ?, email_missing = 1 WHERE id = ?", "freed-" + String(n.free_email_from).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) + "@no-email.invalid", n.free_email_from); }
     let id = p.match && p.match.id;
+    const [first, ...rest] = n.name.split(/\s+/);
     if (!id) {
       id = uuid();
-      const [first, ...rest] = n.name.split(/\s+/);
       await run(env, `INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at, source)
         VALUES (?,?,?,?,?,?,?,'','',0,?,35,?,'roster')`, id, n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, now);
-    } else {
-      const [first, ...rest] = n.name.split(/\s+/);
+    } else if (!holds(p, { email: n.email, name: n.name, first_name: first || "", last_name: rest.join(" "), designation: n.designation, role: n.role, active: n.active, source: "roster" })) {
       await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
     }
-    await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, email_typed = ?, shift = ?, city = ?,
-      off_at = CASE WHEN ? = 1 THEN NULL ELSE off_at END WHERE id = ?`,
-      n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, n.active ? 1 : 0, id);
+    if (!holds(p, { emp_id: n.emp_id, position: n.position, roster_kind: n.roster_kind, department: n.department, departments_also: n.departments_also, roster_status: n.roster_status, exit_date: n.exit_date,
+      doj: n.doj || "", reports_to_name: n.reports_to_name, projects_json: n.projects_json, access_all: n.access_all, email_missing: n.email_missing, email_typed: n.email_typed, shift: n.shift, city: n.city, ...(n.active ? { off_at: null } : {}) }))
+      await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, email_typed = ?, shift = ?, city = ?,
+        off_at = CASE WHEN ? = 1 THEN NULL ELSE off_at END WHERE id = ?`,
+        n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, n.active ? 1 : 0, id);
     p.id = id;
     // switched off now: the day is kept (the Stack report's attrition), as is everything else they did
     if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); await run(env, "UPDATE users SET off_at = ? WHERE id = ?", now, id); }
@@ -2159,7 +2176,8 @@ async function importRoster(env, user, payload) {
   const off = [...leaving.map((u) => u.id), ...dropped];
   for (const id of off) { await run(env, "UPDATE users SET active = 0, off_at = ? WHERE id = ?", now, id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
   const idByName = new Map(); plan.forEach((p) => { if (p.id) idByName.set(p.row.name.toLowerCase(), p.id); });
-  for (const p of plan) if (p.id) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", idByName.get(String(p.row.reports_to || "").toLowerCase()) || null, p.id);
+  for (const p of plan) { if (!p.id) continue; const to = idByName.get(String(p.row.reports_to || "").toLowerCase()) || null;
+    if (!p.match || freed.has(p.match.id) || p.match.reports_to !== to) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", to, p.id); }
   await recomputeScopes(env);
   await autoMapProjects(env);
   await syncTeams(env);
@@ -2376,7 +2394,7 @@ async function shareEqually(env, user, src, o) {
   const why = (u) => out.has(u.id) ? "out today" : ({ leave: "on leave", missing: "not logged in", notin: "not in yet", absent: "absent", out: "logged out", offclock: "not on the clock" })[stateOf(u)] || "not in";
   const claims = await all(env, `SELECT id, client_id, priority, tier FROM claims WHERE assigned_to = ? AND state = 'assigned'${editScopeSql(user, "client_id")} ORDER BY priority DESC`, src.id, ...editScopeArgs(user));
   const ids = [...new Set(claims.map((c) => c.client_id))];
-  const cls = ids.length ? await all(env, `SELECT id, name, team_json FROM clients WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids) : [];
+  const cls = ids.length ? await all(env, `SELECT id, name, team_json FROM clients WHERE id IN ${IN_LIST}`, listArg(ids)) : [];
   const load = new Map((await all(env, "SELECT assigned_to, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_to IS NOT NULL GROUP BY assigned_to")).map((x) => [x.assigned_to, x.n]));
   const given = new Map(), moves = [], skipped = new Map(), perClient = [];
   let left = 0;
@@ -2824,7 +2842,7 @@ async function spanData(env, span, wk) {
   const dIds = ds.map((d) => d.client.id), ref = istISO(Date.now());
   if (dIds.length && wk.week === digestWeek(Date.now()).week) {
     const t9 = new Map((await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM (SELECT c.client_id, c.balance, ${AGE_SQL("c.")} AS age FROM claims c
-        WHERE c.client_id IN (${dIds.map(() => "?").join(",")}) AND c.state IN ${WORKABLE} AND c.balance > 0) WHERE age BETWEEN 84 AND 90 GROUP BY client_id`, ref, ...dIds)).map((r) => [r.client_id, r]));
+        WHERE c.client_id IN ${IN_LIST} AND c.state IN ${WORKABLE} AND c.balance > 0) WHERE age BETWEEN 84 AND 90 GROUP BY client_id`, ref, listArg(dIds))).map((r) => [r.client_id, r]));
     for (const d of ds) d.turn90 = t9.get(d.client.id) || null;
   }
   // TAT last week: Payment posting, Submission and Needs attention, and where it was missed most (no claim numbers in the digest)
@@ -3027,7 +3045,7 @@ async function signInBlock(env, u) {
 async function nameSignInOk(env, u) { if (u.email_missing) return; const block = await signInBlock(env, u); if (block) throw new ApiError(403, block); }
 
 const andList = (xs) => (xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
-const namesOf = async (env, ids) => { const u = [...new Set(ids.filter(Boolean))]; return new Map(u.length ? (await all(env, `SELECT id, name FROM users WHERE id IN (${u.map(() => "?").join(",")})`, ...u)).map((r) => [r.id, r.name]) : []); };
+const namesOf = async (env, ids) => { const u = [...new Set(ids.filter(Boolean))]; return new Map(u.length ? (await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(u))).map((r) => [r.id, r.name]) : []); };
 /* Open hand-offs follow a new posting / submission / rejections person or follow-up checker: the ones waiting on the client too
    (they are still open: the new person sees them under Waiting on client and resumes them when the client answers). */
 async function followHandoffs(env, clientId, dept, lead, backup) {
@@ -3112,7 +3130,7 @@ async function noticeResponsibility(env, actor, client, before, after) {
   aTeam.filter((x) => !bTeam.includes(x)).forEach((x) => added.push([x, "team"]));
   bTeam.filter((x) => !aTeam.includes(x)).forEach((x) => removed.push([x, "team"]));
   const who = (actor && actor.name) || "Someone", now = Date.now();
-  const people = new Map((await all(env, `SELECT id, name, email, email_missing, active FROM users WHERE id IN (${[...added, ...removed].map(() => "?").join(",") || "NULL"})`, ...[...added, ...removed].map(([u]) => u))).map((u) => [u.id, u]));
+  const people = new Map((await all(env, `SELECT id, name, email, email_missing, active FROM users WHERE id IN ${IN_LIST}`, listArg([...added, ...removed].map(([u]) => u)))).map((u) => [u.id, u]));
   for (const [uid, col] of added) {
     if (actor && uid === actor.id) continue;
     const role = col === "team" ? "one of the billers" : "the " + RESP_LABEL[col];
@@ -3195,12 +3213,12 @@ const viewOnly = () => denied("This client is shared with you view-only: you can
 const editableOr = (user, clientId) => { if (!inScope(user, clientId)) throw outOfScope(); if (!canEditClient(user, clientId)) throw viewOnly(); };
 // The clients someone may change: their scope minus the view-only shares (null means everything).
 const editScope = (user) => (!user || !user.scope ? null : (user.scope_view_only && user.scope_view_only.size ? user.scope.filter((id) => !user.scope_view_only.has(id)) : user.scope));
-const editScopeSql = (user, col) => { const sc = editScope(user); return sc == null ? "" : ` AND ${col} IN (${sc.length ? sc.map(() => "?").join(",") : "NULL"})`; };
-const editScopeArgs = (user) => editScope(user) || [];
+const editScopeSql = (user, col) => (editScope(user) == null ? "" : ` AND ${col} IN ${IN_LIST}`);
+const editScopeArgs = (user) => { const sc = editScope(user); return sc == null ? [] : [listArg(sc)]; };
 const isSME = (u) => u && u.source === "roster" && /\bsme\b|subject matter/i.test(String(u.designation || ""));
-// " AND col IN (...)" for a scoped team lead, "" otherwise; scopeArgs gives the matching parameters.
-const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`);
-const scopeArgs = (user) => (user && user.scope) || [];
+// " AND col IN (...)" for a scoped team lead, "" otherwise; scopeArgs gives the matching parameter (the span as one value).
+const scopeSql = (user, col) => (!user || !user.scope ? "" : ` AND ${col} IN ${IN_LIST}`);
+const scopeArgs = (user) => (user && user.scope ? [listArg(user.scope)] : []);
 const outOfScope = () => denied("That project is not one of yours.");
 /* A client of a team lead's own span, for matching a roster project to it: one they may change and are responsible for (set on
    its profile), or that one of their own projects is already matched to, or that they added themselves. A client someone shared
@@ -3338,9 +3356,9 @@ async function visibleUsers(env, user, mode) {
   if (mode === "span") return users.filter(own);
   const sc = mode === "edit" ? editScope(user) : user.scope;
   const teams = new Set();
-  for (const c of await all(env, "SELECT team_json FROM clients WHERE id IN (" + (sc.length ? sc.map(() => "?").join(",") : "NULL") + ")", ...sc)) parseTeam(c.team_json).forEach((id) => teams.add(id));
+  for (const c of await all(env, "SELECT team_json FROM clients WHERE id IN " + IN_LIST, listArg(sc))) parseTeam(c.team_json).forEach((id) => teams.add(id));
   // People a client was shared with count as on it, so crossover billers can be picked and allocated.
-  if (sc.length) for (const g of await all(env, `SELECT user_id FROM client_access WHERE client_id IN (${sc.map(() => "?").join(",")})`, ...sc)) teams.add(g.user_id);
+  if (sc.length) for (const g of await all(env, `SELECT user_id FROM client_access WHERE client_id IN ${IN_LIST}`, listArg(sc))) teams.add(g.user_id);
   return users.filter((u) => own(u) || teams.has(u.id));
 }
 const inSpan = async (env, user, id) => !user.scope || (await visibleUsers(env, user, "span")).some((u) => u.id === id);
@@ -4194,7 +4212,7 @@ const OPS = {
   "auth.lookup": async ({ env, payload }) => {
     const q = str(payload.q, 80).trim().toLowerCase().replace(/[%_]/g, " ");
     if (q.length < 2) return { matches: [] };
-    const like = "%" + q + "%";
+    const like = likeAny(q);
     const rows = await all(env, `SELECT id, name, emp_id, designation, department, email, email_missing, pass_hash, role FROM users
       WHERE active = 1 AND (lower(name) LIKE ? OR lower(emp_id) LIKE ? OR (role = 'admin' AND ? LIKE '%admin%')) ORDER BY role = 'admin' DESC, name LIMIT 8`, like, like, q);
     return { matches: rows.map((u) => ({ id: u.id, name: u.name, emp_id: u.emp_id || "", designation: u.role === "admin" ? "Admin" : u.designation || "", department: u.department || "",
@@ -4675,24 +4693,24 @@ const OPS = {
     const f = await dashTeamFilter(env, user, payload);
     let people = f.people;
     const since = now - 26 * 3600000;
-    const cw = f.clientIds ? ` AND c.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "", ca = f.clientIds || [];
+    const cw = f.clientIds ? ` AND c.client_id IN ${IN_LIST}` : "", ca = f.clientIds ? [listArg(f.clientIds)] : [];
     const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
     if (f.narrow && people.length) {
       // A client or location picked: the people on it (its team, people it is shared with) and anyone with claims or entries on it.
-      const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
-      const touched = new Set((await all(env, `SELECT DISTINCT c.assigned_to AS id FROM claims c WHERE c.assigned_to IN (${qs}) AND c.state IN ('assigned','in_progress')${cw}${lw}`, ...ids, ...ca, ...la)).map((x) => x.id));
-      (await all(env, `SELECT DISTINCT nt.user_id AS id FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.user_id IN (${qs}) AND nt.created_at > ?${cw}${lw}`, ...ids, since, ...ca, ...la)).forEach((x) => touched.add(x.id));
+      const ids = people.map((u) => u.id), ida = listArg(ids);
+      const touched = new Set((await all(env, `SELECT DISTINCT c.assigned_to AS id FROM claims c WHERE c.assigned_to IN ${IN_LIST} AND c.state IN ('assigned','in_progress')${cw}${lw}`, ida, ...ca, ...la)).map((x) => x.id));
+      (await all(env, `SELECT DISTINCT nt.user_id AS id FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.user_id IN ${IN_LIST} AND nt.created_at > ?${cw}${lw}`, ida, since, ...ca, ...la)).forEach((x) => touched.add(x.id));
       people = people.filter((u) => touched.has(u.id) || f.teamIds.has(u.id));
     }
     if (!people.length) return { rows: [], totals: { people: 0 }, leads: f.leads, can_pick_lead: f.canPickLead };
-    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const ids = people.map((u) => u.id), ida = listArg(ids);
     const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, c.tier, c.balance, c.follow_up_on, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
-      WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN (${qs})${cw}${lw}`, ...ids, ...ca, ...la);
+      WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN ${IN_LIST}${cw}${lw}`, ida, ...ca, ...la);
     // a person's entries on every client (the target is theirs, not the picked client's); "here" marks the picked client's
     const notes = await all(env, `SELECT nt.user_id, nt.kind, nt.created_at, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here FROM notes nt JOIN claims c ON c.id = nt.claim_id
-      WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN (${qs})`, ...ca, ...la, since, ...ids);
-    const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
-    const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
+      WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN ${IN_LIST}`, ...ca, ...la, since, ida);
+    const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN ${IN_LIST}${cw}${lw}`, since, ida, ...ca, ...la);
+    const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN ${IN_LIST}`, today, ida)).map((r) => [r.user_id, r]));
     const live = await shastraLive(env);
     const weekdayToday = isWorkDay(today);   // Monday to Friday, not a Shastra holiday
     // a Shastra holiday on a weekday: nobody is expected in, and the page says which holiday (the weekend says weekend)
@@ -4759,17 +4777,17 @@ const OPS = {
     const off = Math.round(num(payload.tz_offset_min, IST_MIN));
     const start = Date.parse(from + "T00:00:00Z") - off * 60000, end = Date.parse(to + "T00:00:00Z") - off * 60000 + 86400000 - 1;
     const f = await dashTeamFilter(env, user, payload);
-    const cw = f.clientIds ? ` AND c.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "", ca = f.clientIds || [];
+    const cw = f.clientIds ? ` AND c.client_id IN ${IN_LIST}` : "", ca = f.clientIds ? [listArg(f.clientIds)] : [];
     const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
     let people = f.people;
     if (!people.length) return { rows: [], totals: {}, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: 0 };
-    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const ids = people.map((u) => u.id), ida = listArg(ids);
     const work = await all(env, `SELECT nt.user_id, COUNT(*) AS worked, COUNT(DISTINCT nt.claim_id) AS claims, SUM(nt.call_min IS NOT NULL) AS calls, COALESCE(SUM(nt.call_min), 0) AS call_min,
         COUNT(DISTINCT date((nt.created_at / 1000) + ?, 'unixepoch')) AS days_worked
-      FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN (${qs})${cw}${lw} GROUP BY nt.user_id`, off * 60, start, end, ...ids, ...ca, ...la);
+      FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN ${IN_LIST}${cw}${lw} GROUP BY nt.user_id`, off * 60, start, end, ida, ...ca, ...la);
     const closed = await all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?
-      AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la);
-    const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN (${qs})`, from, to, ...ids);
+      AND c.last_worked_by IN ${IN_LIST}${cw}${lw} GROUP BY c.last_worked_by`, start, end, ida, ...ca, ...la);
+    const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}`, from, to, ida);
     const weekday = isWorkDay;   // Monday to Friday, not a Shastra holiday
     let workdays = 0; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) workdays++;
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x]));
@@ -4800,46 +4818,46 @@ const OPS = {
     const off = Math.round(num(payload.tz_offset_min, IST_MIN)), now = Date.now();
     const start = Date.parse(from + "T00:00:00Z") - off * 60000, end = Date.parse(to + "T00:00:00Z") - off * 60000 + 86400000 - 1;
     const f = await dashTeamFilter(env, user, payload);
-    const cw = f.clientIds ? ` AND c.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "", ca = f.clientIds || [];
+    const cw = f.clientIds ? ` AND c.client_id IN ${IN_LIST}` : "", ca = f.clientIds ? [listArg(f.clientIds)] : [];
     const lw = f.locationId ? " AND c.location_id = ?" : "", la = f.locationId ? [f.locationId] : [];
     let people = f.people;
     const weekday = isWorkDay;   // Monday to Friday, not a Shastra holiday
     const days = [], span = []; for (let d = from; d <= to; d = addDays(d, 1)) { span.push(d); if (weekday(d)) days.push(d); }
     if (!people.length) return { rows: [], leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals: { people: 0 }, by_status: [], checks: [], suggestions: { today: [], week: [], good: [] }, floor_source: "pending" };
-    const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
+    const ids = people.map((u) => u.id), ida = listArg(ids);
     // A night shift's hours and entries belong to the day it began (to its end and a little after: dayRollMin); while it is
     // still under way after midnight, that day is the person's today and is not finished yet (workDayOf).
     const wdOf = new Map(people.map((u) => [u.id, workDayOf(u.shift, now, today, off)])), dayOf = (u) => wdOf.get(u.id).day;
     const rolls = new Map(); for (const u of people) { const r = wdOf.get(u.id).roll; if (r) rolls.set(r, [...(rolls.get(r) || []), u.id]); }
-    const maxRollMs = Math.max(0, ...rolls.keys()) * 60000, rollArgs = [...rolls.values()].flat();
-    const rollSql = (col) => rolls.size ? `CASE ${[...rolls.keys()].map((r) => `WHEN ${col} IN (${rolls.get(r).map(() => "?").join(",")}) THEN ${r * 60}`).join(" ")} ELSE 0 END` : "0";
+    const maxRollMs = Math.max(0, ...rolls.keys()) * 60000, rollArgs = [...rolls.values()].map(listArg);
+    const rollSql = (col) => rolls.size ? `CASE ${[...rolls.keys()].map((r) => `WHEN ${col} IN ${IN_LIST} THEN ${r * 60}`).join(" ")} ELSE 0 END` : "0";
     const late = people.filter((u) => dayOf(u) < today).map((u) => u.id);
-    const doneSql = late.length ? `CASE WHEN user_id IN (${late.map(() => "?").join(",")}) THEN ? ELSE ? END` : "?", doneArgs = late.length ? [...late, addDays(today, -1), today] : [today];
+    const doneSql = late.length ? `CASE WHEN user_id IN ${IN_LIST} THEN ? ELSE ? END` : "?", doneArgs = late.length ? [listArg(late), addDays(today, -1), today] : [today];
     // escalations where the person is named as who made the error (our error), received in these dates
-    const ew = f.clientIds ? ` AND e.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "";
+    const ew = f.clientIds ? ` AND e.client_id IN ${IN_LIST}` : "";
     const [work, closed, att, notes, desk, outNow, escs, tasksDone, tasksClosed] = await Promise.all([
       // a person's entries on every client: picking a client or a team lead shows who is on it, never cuts their own attainment
       // (the entries on the picked client are counted beside); a night shift's entries after midnight go to the day it began
       all(env, `SELECT user_id, COUNT(*) AS worked, SUM(bday < ${doneSql}) AS worked_done, COUNT(DISTINCT bday) AS days_worked, SUM(here) AS worked_here FROM (
           SELECT nt.user_id, date((nt.created_at / 1000) + ? - ${rollSql("nt.user_id")}, 'unixepoch') AS bday, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here
-          FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN (${qs}))
-        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, ...ca, ...la, start, end + maxRollMs, ...ids, from, to),
-      all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ? AND c.last_worked_by IN (${qs})${cw}${lw} GROUP BY c.last_worked_by`, start, end, ...ids, ...ca, ...la),
-      all(env, `SELECT user_id, day, reason FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN (${qs})`, from, to, ...ids),
-      all(env, `SELECT * FROM team_notes WHERE user_id IN (${qs})`, ...ids),
+          FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN ${IN_LIST})
+        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, ...ca, ...la, start, end + maxRollMs, ida, from, to),
+      all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ? AND c.last_worked_by IN ${IN_LIST}${cw}${lw} GROUP BY c.last_worked_by`, start, end, ida, ...ca, ...la),
+      all(env, `SELECT user_id, day, reason FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}`, from, to, ida),
+      all(env, `SELECT * FROM team_notes WHERE user_id IN ${IN_LIST}`, ida),
       // left over: allocated before the person's working day began (a night shift's: the day it began) and not started
-      all(env, `SELECT c.assigned_to, c.tier, c.assigned_at FROM claims c WHERE c.state = 'assigned' AND c.assigned_at < ? AND (c.follow_up_on IS NULL OR c.follow_up_on = '' OR c.follow_up_on <= ?) AND c.assigned_to IN (${qs})${cw}${lw}`,
-        Math.max(...people.map((u) => wdOf.get(u.id).from)), today, ...ids, ...ca, ...la),
-      all(env, `SELECT user_id, reason FROM attendance WHERE status = 'out' AND day = ? AND user_id IN (${qs})`, today, ...ids),
+      all(env, `SELECT c.assigned_to, c.tier, c.assigned_at FROM claims c WHERE c.state = 'assigned' AND c.assigned_at < ? AND (c.follow_up_on IS NULL OR c.follow_up_on = '' OR c.follow_up_on <= ?) AND c.assigned_to IN ${IN_LIST}${cw}${lw}`,
+        Math.max(...people.map((u) => wdOf.get(u.id).from)), today, ida, ...ca, ...la),
+      all(env, `SELECT user_id, reason FROM attendance WHERE status = 'out' AND day = ? AND user_id IN ${IN_LIST}`, today, ida),
       all(env, `SELECT e.id, e.error_by_id AS user_id, e.sr, e.client_id, cl.name AS client_name, e.kind, e.dept, e.day, e.error_dow, e.status FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
-        WHERE e.is_error = 'Y' AND e.error_by_id IN (${qs}) AND e.day BETWEEN ? AND ?${ew} ORDER BY e.day DESC, e.sr DESC`, ...ids, from, to, ...ca),
+        WHERE e.is_error = 'Y' AND e.error_by_id IN ${IN_LIST} AND e.day BETWEEN ? AND ?${ew} ORDER BY e.day DESC, e.sr DESC`, ida, from, to, ...ca),
       // team tasks: the items each person marked done in these dates (what each update added), on the day the update was made
       // (a night shift's after midnight to the day it began); they count toward the person's count beside the claims
       all(env, `SELECT user_id, SUM(delta) AS items, SUM(CASE WHEN bday < ${doneSql} THEN delta ELSE 0 END) AS items_done, COUNT(DISTINCT task_id) AS tasks FROM (
           SELECT u.user_id, u.delta, u.task_id, date((u.at / 1000) + ? - ${rollSql("u.user_id")}, 'unixepoch') AS bday
-          FROM team_task_updates u WHERE u.kind = 'update' AND u.at BETWEEN ? AND ? AND u.user_id IN (${qs}))
-        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, start, end + maxRollMs, ...ids, from, to),
-      all(env, `SELECT user_id, COUNT(*) AS n FROM team_task_people WHERE status = 'completed' AND completed_at BETWEEN ? AND ? AND user_id IN (${qs}) GROUP BY user_id`, start, end, ...ids),
+          FROM team_task_updates u WHERE u.kind = 'update' AND u.at BETWEEN ? AND ? AND u.user_id IN ${IN_LIST})
+        WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, start, end + maxRollMs, ida, from, to),
+      all(env, `SELECT user_id, COUNT(*) AS n FROM team_task_people WHERE status = 'completed' AND completed_at BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id`, start, end, ida),
     ]);
     const tkd = new Map(tasksDone.map((x) => [x.user_id, x])), tkc = new Map(tasksClosed.map((x) => [x.user_id, x.n]));
     const escBy = new Map(); for (const e of escs) { if (!escBy.has(e.user_id)) escBy.set(e.user_id, []); escBy.get(e.user_id).push({ id: e.id, sr: e.sr, client_id: e.client_id, client_name: e.client_name || "",
@@ -5092,8 +5110,8 @@ const OPS = {
     const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
     const lc = await leadClientIds(env, user, payload.lead_id);
     const where = [], args = [];
-    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); args.push(...user.scope); }
-    if (lc) { where.push(`c.client_id IN (${lc.length ? lc.map(() => "?").join(",") : "NULL"})`); args.push(...lc); }
+    if (user.scope) { where.push(`c.client_id IN ${IN_LIST}`); args.push(listArg(user.scope)); }
+    if (lc) { where.push(`c.client_id IN ${IN_LIST}`); args.push(listArg(lc)); }
     if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
     if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
     const w = where.length ? " AND " + where.join(" AND ") : "";
@@ -5245,16 +5263,16 @@ const OPS = {
   "search.global": async ({ env, user, payload }) => {
     const q = str(payload.q, 80).trim().replace(/[%_\\]/g, "");
     if (q.length < 2) return { claims: [] };
-    const like = "%" + q + "%", sup = user.role === "supervisor";
+    const like = likeAny(q), sup = user.role === "supervisor";
     // A biller or desk person finds what they may open: their list, what they worked, the claims on their desk (hand-offs they
     // lead, back up or were given) and the claims of a client they are responsible for.
     const rc = sup ? [] : [...(user.resp_clients || [])];
-    const mine = "c.assigned_to = ? OR c.last_worked_by = ? OR c.id IN (SELECT claim_id FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?)" + (rc.length ? ` OR c.client_id IN (${rc.map(() => "?").join(",")})` : "");
+    const mine = "c.assigned_to = ? OR c.last_worked_by = ? OR c.id IN (SELECT claim_id FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?)" + (rc.length ? ` OR c.client_id IN ${IN_LIST}` : "");
     const rows = await all(env, `SELECT c.id, c.client_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.assigned_to, c.last_worked_by, c.handoff_status,
         cl.name AS client_name, u.name AS assigned_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.assigned_to
       WHERE (c.claim_no LIKE ? OR c.account_no LIKE ? OR c.patient LIKE ?) AND (${sup ? "1 = 1" + scopeSql(user, "c.client_id") : mine} OR ${POSTED_CLOSED_SQL})
       ORDER BY CASE WHEN c.claim_no = ? OR c.account_no = ? THEN 0 ELSE 1 END, CASE WHEN c.state IN ('open','assigned','in_progress') THEN 0 ELSE 1 END, c.balance DESC LIMIT 40`,
-      like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id, user.id, user.id, user.id, ...rc]), q, q);
+      like, like, like, ...(sup ? scopeArgs(user) : [user.id, user.id, user.id, user.id, user.id, ...(rc.length ? [listArg(rc)] : [])]), q, q);
     // A desk person (and a desk team lead) gets only what they may see (D-08); a team lead gets their span; a biller's
     // rows are already only theirs (the query's own rule, which also finds the claims on their desk: E-14).
     const ok = [];
@@ -5400,7 +5418,7 @@ const OPS = {
       const outIds = new Set((await all(env, "SELECT user_id FROM attendance WHERE day = ? AND status = 'out'", today)).map((r) => r.user_id));
       const absent = team.filter((u) => outIds.has(u.id));
       if (absent.length) {
-        const r = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE state = 'assigned' AND assigned_to IN (${absent.map(() => "?").join(",")})`, ...absent.map((u) => u.id));
+        const r = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE state = 'assigned' AND assigned_to IN ${IN_LIST}`, listArg(absent.map((u) => u.id)));
         add("absent", "amber", (r && r.n) || 0, plural((r && r.n) || 0, "claim sits", "claims sit") + " on the desks of people out today", "teamtoday");
       }
       const miss = await missingAlerts(env, user);
@@ -5628,7 +5646,7 @@ const OPS = {
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const pf = await OPS["portfolio.overview"]({ env, user, payload: { client_id: payload.client_id, lead_id: payload.lead_id, today } });
     const ids = pf.rows.map((r) => r.client_id);
-    const inIds = ids.length ? `(${ids.map(() => "?").join(",")})` : "(NULL)";
+    const inIds = IN_LIST, idsArg = listArg(ids);
     const ageSql = "CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(c.dos, 1, 10)), c.age_days) ELSE c.age_days END";
     const d7 = istISO(Date.parse(today + "T12:00:00Z") - 7 * 86400000);
     const monthStart = Date.parse(today.slice(0, 7) + "-01T00:00:00Z") - IST_MIN * 60000;
@@ -5643,24 +5661,24 @@ const OPS = {
         MIN(CASE WHEN c.state = 'open' THEN c.created_at END) AS first_open, MIN(CASE WHEN c.follow_up_on > ? THEN c.follow_up_on END) AS next_fu, COUNT(DISTINCT c.assigned_to) AS people
       FROM claims c LEFT JOIN ${ho} h ON h.claim_id = c.id
       WHERE c.client_id IN ${inIds} AND (c.state IN ${WORKABLE} OR (c.state = 'in_process' AND h.claim_id IS NOT NULL)) GROUP BY 1, 2`,
-      today, today, d7, now - 10 * 86400000, now, today, today, ...ids);
+      today, today, d7, now - 10 * 86400000, now, today, today, idsArg);
     const ages = await all(env, `SELECT client_id, CASE WHEN age > 90 THEN 4 WHEN age > 60 THEN 3 WHEN age > 30 THEN 2 ELSE 1 END AS b, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal, COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS pbal
-      FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE}) GROUP BY 1, 2`, today, ...ids);
+      FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE}) GROUP BY 1, 2`, today, idsArg);
     // turning 90 soon: claims that cross into over 90 in the next 7 / 14 days (91 days old is over 90)
     const t90 = await all(env, `SELECT client_id, SUM(CASE WHEN age BETWEEN 84 AND 90 THEN 1 ELSE 0 END) AS n7, COALESCE(SUM(CASE WHEN age BETWEEN 84 AND 90 THEN balance END), 0) AS bal7,
         SUM(CASE WHEN age BETWEEN 77 AND 90 THEN 1 ELSE 0 END) AS n14, COALESCE(SUM(CASE WHEN age BETWEEN 77 AND 90 THEN balance END), 0) AS bal14
-      FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE} AND c.balance > 0) GROUP BY client_id`, today, ...ids);
+      FROM (SELECT c.client_id, c.balance, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE} AND c.balance > 0) GROUP BY client_id`, today, idsArg);
     const big = await all(env, `SELECT client_id, balance, payer FROM (SELECT client_id, balance, payer, ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY balance DESC) AS rn
         FROM (SELECT c.client_id, c.balance, c.payer, ${ageSql} AS age FROM claims c WHERE c.client_id IN ${inIds} AND c.state IN ${WORKABLE}) WHERE age > 90 AND balance > 0)
-      WHERE rn <= 3000 ORDER BY balance DESC`, today, ...ids);
+      WHERE rn <= 3000 ORDER BY balance DESC`, today, idsArg);
     const holders = await all(env, `SELECT c.client_id, c.assigned_to, u.name, COUNT(*) AS n FROM claims c LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL AND ${INV_NO_OPEN_HO} GROUP BY 1, 2`, ...ids, today);
+      WHERE c.client_id IN ${inIds} AND c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND c.assigned_to IS NOT NULL AND ${INV_NO_OPEN_HO} GROUP BY 1, 2`, idsArg, today);
     // closed this month: by when it was closed (a note added later does not count it again)
-    const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND COALESCE(closed_at, updated_at) >= ? GROUP BY 1`, ...ids, monthStart);
+    const closed = await all(env, `SELECT client_id, COUNT(*) AS n, COALESCE(SUM(balance), 0) AS bal FROM claims WHERE client_id IN ${inIds} AND state = 'closed' AND COALESCE(closed_at, updated_at) >= ? GROUP BY 1`, idsArg, monthStart);
     // the desk tasks the scorecard's TAT counts (Payment posting, Submission, Rejections), past the client's TAT and not on hold;
     // waiting on the client too (the clock keeps running). The recheck after submitting is not one: it has its own reminders.
-    const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.dept IN ('posting','submission','rejection') AND h.status IN ('pending','assigned','client') AND h.due_at < ? AND NOT ${heldSql("h")} GROUP BY 1, 2`, ...ids, now, today);
-    const escOpen = await all(env, `SELECT client_id, SUM(CASE WHEN kind = 'internal' THEN 0 ELSE 1 END) AS n, SUM(CASE WHEN kind = 'internal' THEN 1 ELSE 0 END) AS ni FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, ...ids);
+    const deskLate = await all(env, `SELECT h.client_id, h.dept, COUNT(*) AS n FROM handoffs h WHERE h.client_id IN ${inIds} AND h.dept IN ('posting','submission','rejection') AND h.status IN ('pending','assigned','client') AND h.due_at < ? AND NOT ${heldSql("h")} GROUP BY 1, 2`, idsArg, now, today);
+    const escOpen = await all(env, `SELECT client_id, SUM(CASE WHEN kind = 'internal' THEN 0 ELSE 1 END) AS n, SUM(CASE WHEN kind = 'internal' THEN 1 ELSE 0 END) AS ni FROM escalations WHERE client_id IN ${inIds} AND status <> 'resolved' GROUP BY 1`, idsArg);
     // working days left in the month, today included (Monday to Friday)
     let wdLeft = 0; { const [y, m] = today.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
       for (let dd = Number(today.slice(8, 10)); dd <= last; dd++) if (isWorkDay(`${y}-${String(m).padStart(2, "0")}-${String(dd).padStart(2, "0")}`)) wdLeft++; }
@@ -5733,7 +5751,7 @@ const OPS = {
     };
     // one person on several clients counts once in the all-clients view
     const distinct = ids.length > 1 ? await one(env, `SELECT (SELECT COUNT(DISTINCT assigned_to) FROM claims WHERE client_id IN ${inIds} AND state IN ('assigned','in_progress') AND assigned_to IS NOT NULL) AS list_people,
-        (SELECT COUNT(DISTINCT n.user_id) FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND n.created_at > ? AND c.client_id IN ${inIds}) AS pace_people`, ...ids, now - 14 * 86400000, ...ids) : null;
+        (SELECT COUNT(DISTINCT n.user_id) FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND n.created_at > ? AND c.client_id IN ${inIds}) AS pace_people`, idsArg, now - 14 * 86400000, idsArg) : null;
     if (distinct) tot.list_people = distinct.list_people || 0;
     const pace = (rows) => { const tw = rows.reduce((t, r) => t + (r.to_work || 0), 0), pd = rows.reduce((t, r) => t + (r.per_day || 0), 0);
       return { to_work: tw, per_day: Math.round(pd * 10) / 10, people: rows.length > 1 && distinct ? distinct.pace_people || 0 : rows.reduce((t, r) => t + (r.people || 0), 0), days_to_clear: pd ? Math.ceil(tw / pd) : null, wd_left: wdLeft }; };
@@ -5804,7 +5822,7 @@ const OPS = {
     if (!user.is_admin && !user.access_all) throw denied("The audit trail is for admins and the VP.");
     const where = [], args = [];
     if (payload.client_id) { where.push("a.client_id = ?"); args.push(str(payload.client_id, 60)); }
-    if (payload.action) { where.push("a.action LIKE ?"); args.push(str(payload.action, 40) + "%"); }
+    if (payload.action) { where.push("a.action LIKE ?"); args.push(likeCut(str(payload.action, 40), 49) + "%"); }
     if (payload.from_ms) { where.push("a.at >= ?"); args.push(num(payload.from_ms, 0)); }
     const rows = await all(env, `SELECT a.*, c.name AS client_name FROM audit_log a LEFT JOIN clients c ON c.id = a.client_id${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY a.at DESC LIMIT 500`, ...args);
     return { rows };
@@ -6627,10 +6645,11 @@ const OPS = {
     for (const e of evs) {
       const d = jsonObj(e.data_json), st = d.changes && d.changes.state;
       if (d.batch !== b.id || !Array.isArray(st) || e.state !== st[1] || !["open", "assigned", "completed", "closed", "excluded"].includes(st[0])) continue;
-      back.push(env.DB.prepare("UPDATE claims SET state = ?, state_reason = 'Upload undone', updated_at = ? WHERE id = ? AND state = ?").bind(st[0], now, e.claim_id, st[1]));
+      back.push(env.DB.prepare("UPDATE claims SET state = ?, state_reason = 'Upload undone', updated_at = ? WHERE id = ? AND state = ? RETURNING id").bind(st[0], now, e.claim_id, st[1]));
       back.push(claimEvent(env, e.claim_id, user, "state", "Upload undone", { changes: { state: [st[1], st[0]] } }));
     }
-    if (back.length) { const res = await batchAll(env, back, 40); reverted = res.filter((_, i) => i % 2 === 0).reduce((n, x) => n + changesOf(x), 0); }
+    // the claims put back (RETURNING), not D1's changes: one put back to closed would count twice (the closed_at trigger)
+    if (back.length) { const res = await batchAll(env, back, 40); reverted = res.filter((_, i) => i % 2 === 0).reduce((n, x) => n + ((x && x.results) || []).length, 0); }
     const refreshed = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE batch_id = ? AND first_batch_id <> ?", b.id, b.id);
     await run(env, "UPDATE batches SET undone_at = ? WHERE id = ?", now, b.id);
     // Month-end "inventory loaded" was ticked by itself: it goes when no other file with claims is left for that month.
@@ -6645,8 +6664,8 @@ const OPS = {
     if (payload.stage && !INV_STAGE_SQL[payload.stage]) throw bad("Unknown stage.");
     const where = [], params = [];
     const ro = respOnly(user);
-    if (ro) { where.push(`c.client_id IN (${ro.map(() => "?").join(",")})`); params.push(...ro); }
-    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
+    if (ro) { where.push(`c.client_id IN ${IN_LIST}`); params.push(listArg(ro)); }
+    if (user.scope) { where.push(`c.client_id IN ${IN_LIST}`); params.push(listArg(user.scope)); }
     if (payload.client_id) { where.push("c.client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(payload.location_id); }
     if (payload.state === "workable") where.push(`c.state IN ${WORKABLE}`);
@@ -6662,10 +6681,10 @@ const OPS = {
     if (payload.handoff_status) { where.push("c.handoff_status = ?"); params.push(str(payload.handoff_status, 30)); }
     // Posting / submission people see what is handed to their desk, and every claim of a client they are responsible for.
     { const dk = deskSql(user, "c.id"); const rc = [...(user.resp_clients || [])];
-      if (dk && !ro) { if (rc.length) { where.push(`(${dk.replace(/^ AND /, "")} OR c.client_id IN (${rc.map(() => "?").join(",")}))`); params.push(...rc); } else where.push(dk.replace(/^ AND /, "")); } }
-    if (payload.provider) { where.push("c.provider LIKE ?"); params.push("%" + str(payload.provider, 80).trim() + "%"); }
-    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
-    if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
+      if (dk && !ro) { if (rc.length) { where.push(`(${dk.replace(/^ AND /, "")} OR c.client_id IN ${IN_LIST})`); params.push(listArg(rc)); } else where.push(dk.replace(/^ AND /, "")); } }
+    if (payload.provider) { where.push("c.provider LIKE ?"); params.push(likeAny(str(payload.provider, 80).trim())); }
+    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push(likeAny(str(payload.cpt, 40).trim())); }
+    if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push(likeAny(str(payload.payer_like, 80).trim())); }
     if (payload.min_balance != null && payload.min_balance !== "") { where.push("c.balance >= ?"); params.push(num(payload.min_balance, 0)); }
     // Turning 90 within N days: 91 - N to 90 days old today
     if (payload.turning90 != null && payload.turning90 !== "") { const n = Math.max(1, Math.min(30, Math.round(num(payload.turning90, 7)))); where.push(`${AGE_SQL("c.")} BETWEEN ? AND 90 AND c.balance > 0`); params.push(isoDate(payload.today) || isoToday(), 91 - n); }
@@ -6681,7 +6700,7 @@ const OPS = {
     if (payload.overdue) { where.push(`c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND ${INV_NO_OPEN_HO}`); params.push(isoDate(payload.today) || isoToday()); }
     // stage: exactly one of Inventory status's stages, so a stage button opens the claims it counts
     if (payload.stage && INV_STAGE_SQL[payload.stage]) { where.push(INV_STAGE_SQL[payload.stage]); const t = isoDate(payload.today) || isoToday(); params.push(...(payload.stage === "overdue" || payload.stage === "due" ? [t] : payload.stage === "later" ? [t, t] : [])); }
-    if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
+    if (payload.q) { const q = likeAny(str(payload.q, 80).trim()); where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
     const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday('now') - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END)", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on",
       claim_no: "c.claim_no", tier: "c.tier", status_class: "c.status_class", inventory_kind: "c.inventory_kind", provider: "c.provider", cpt: "c.cpt" };
     const sort = SORTS[payload.sort] || "c.priority";
@@ -6703,14 +6722,14 @@ const OPS = {
   "claims.suggest": async ({ env, user, payload }) => {
     const q = str(payload.q, 80).trim();
     const where = ["state <> 'excluded'"], params = [];
-    if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
+    if (user.scope) { where.push(`client_id IN ${IN_LIST}`); params.push(listArg(user.scope)); }
     if (user.role !== "supervisor") { where.push("(assigned_to = ? OR last_worked_by = ?)"); params.push(user.id, user.id); }
     // desk people: values from the claims sent to their desk (and the clients they are responsible for), as Claims lists them
-    if (deskOf(user)) { const rc = [...(user.resp_clients || [])]; where.push(`(${deskSql(user, "id").replace(/^ AND /, "")}${rc.length ? ` OR client_id IN (${rc.map(() => "?").join(",")})` : ""})`); params.push(...rc); }
+    if (deskOf(user)) { const rc = [...(user.resp_clients || [])]; where.push(`(${deskSql(user, "id").replace(/^ AND /, "")}${rc.length ? ` OR client_id IN ${IN_LIST}` : ""})`); params.push(...(rc.length ? [listArg(rc)] : [])); }
     if (payload.client_id) { where.push("client_id = ?"); params.push(str(payload.client_id, 60)); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(str(payload.location_id, 60)); }
     const w = where.join(" AND ");
-    const like = "%" + q.replace(/[%_]/g, " ") + "%";
+    const like = likeAny(q.replace(/[%_]/g, " "));
     const col = { payer: "payer", provider: "provider", cpt: "cpt" }[String(payload.field || "")];
     if (col) {
       const rows = await all(env, `SELECT ${col} AS v, COUNT(*) AS n FROM claims WHERE ${w} AND ${col} <> ''${q ? ` AND ${col} LIKE ?` : ""} GROUP BY ${col} ORDER BY n DESC LIMIT 12`, ...params, ...(q ? [like] : []));
@@ -6727,18 +6746,18 @@ const OPS = {
   "claims.stats": async ({ env, user, payload }) => {
     const where = [], params = [];
     const ro = respOnly(user);
-    if (ro) { where.push(`client_id IN (${ro.map(() => "?").join(",")})`); params.push(...ro); }
-    if (user.scope) { where.push(`client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
+    if (ro) { where.push(`client_id IN ${IN_LIST}`); params.push(listArg(ro)); }
+    if (user.scope) { where.push(`client_id IN ${IN_LIST}`); params.push(listArg(user.scope)); }
     // desk people: the claims sent to their desk (and the clients they are responsible for), as Claims lists them (one "id IN" clause,
     // as the queries below put "c." in front of each clause)
     if (deskOf(user) && !ro) { const rc = [...(user.resp_clients || [])], dd = deskDepts(user);
-      where.push(`id IN (SELECT h.claim_id FROM handoffs h WHERE h.dept IN (${dd.map(() => "?").join(",")})${rc.length ? ` UNION SELECT k.id FROM claims k WHERE k.client_id IN (${rc.map(() => "?").join(",")})` : ""})`); params.push(...dd, ...rc); }
+      where.push(`id IN (SELECT h.claim_id FROM handoffs h WHERE h.dept IN (${dd.map(() => "?").join(",")})${rc.length ? ` UNION SELECT k.id FROM claims k WHERE k.client_id IN ${IN_LIST}` : ""})`); params.push(...dd, ...(rc.length ? [listArg(rc)] : [])); }
     // Dashboard date range: only claims with activity in the window (loaded, refreshed, worked or closed then).
     if (payload.from_ms != null || payload.to_ms != null) { where.push("updated_at BETWEEN ? AND ?"); params.push(num(payload.from_ms, 0), num(payload.to_ms, Date.now())); }
     if (payload.client_id) { where.push("client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(payload.location_id); }
     // A manager who picked a team lead on the Dashboard: that team lead's clients.
-    if (payload.lead_id) { const lc = await leadClientIds(env, user, payload.lead_id); if (lc) { where.push(`client_id IN (${lc.length ? lc.map(() => "?").join(",") : "NULL"})`); params.push(...lc); } }
+    if (payload.lead_id) { const lc = await leadClientIds(env, user, payload.lead_id); if (lc) { where.push(`client_id IN ${IN_LIST}`); params.push(listArg(lc)); } }
     // Dashboard cross-filters: click a bar and every other number is recomputed for that slice.
     const today = isoDate(payload.today) || isoToday();
     for (const f of ["tier", "status_class", "payer", "inventory_kind", "assigned_to"]) if (payload[f]) { where.push(`${f} = ?`); params.push(str(payload[f], 200)); }
@@ -6918,10 +6937,11 @@ const OPS = {
         : `These ${atDesk.size + posted.size} claims stay as they are: ${atDesk.size} with Payment Posting, Submission or Rejections now${posted.size ? `, ${posted.size} closed by Posting (read only)` : ""}.`); }
     for (const part of chunks(todo, 80)) { const rows = await all(env, `SELECT id, state FROM claims WHERE id IN (${part.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, ...part, ...editScopeArgs(user));
       const evs = rows.filter((r) => r.state !== state).map((r) => claimEvent(env, r.id, user, "state", reason, { changes: { state: [r.state, state] } })); if (evs.length) await batchAll(env, evs, 50); }
+    // the claims are counted (RETURNING), not D1's changes: D1 also counts the trigger that stamps closed_at, so 3 closed read 6
     for (const chunk of chunks(todo, 60)) {
-      const r = await run(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
-        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")}`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
-      changed += changesOf(r);
+      const r = await all(env, `UPDATE claims SET state = ?, state_reason = ?, assigned_to = CASE WHEN ? = 'open' THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 'open' THEN NULL ELSE assigned_at END,
+        skipped_at = NULL, escalated = CASE WHEN ? = 'open' THEN escalated ELSE 0 END, updated_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})${editScopeSql(user, "client_id")} RETURNING id`, state, reason, state, state, state, now, ...chunk, ...editScopeArgs(user));
+      changed += r.length;
     }
     // at_desk / posted: how many of the claims picked were left as they are because a desk has them, or Posting closed them
     return { changed, at_desk: atDesk.size, posted: posted.size };
@@ -6939,11 +6959,11 @@ const OPS = {
     if (!ok.size) throw bad("Pick active billers on this client. Team leads, and billers whose projects do not include this client, cannot be given its claims.");
     const today = isoDate(payload.today) || isoToday();
     const now = Date.now();
-    const names = new Map((await all(env, `SELECT id, name FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`, ...userIds)).map((u) => [u.id, u.name]));
+    const names = new Map((await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(userIds))).map((u) => [u.id, u.name]));
     const before = new Map();
     for (const part of chunks(items.map((a) => str(a.id, 60)), 80)) (await all(env, `SELECT id, assigned_to, state, follow_up_on FROM claims WHERE id IN (${part.map(() => "?").join(",")}) AND client_id = ?`, ...part, client_id)).forEach((r) => before.set(r.id, r));
     const eligible = (a) => { const b = before.get(str(a.id, 60)); return b && (b.state === "open" || (b.state === "completed" && b.follow_up_on && b.follow_up_on <= today)); };
-    const prevNames = new Map((await all(env, `SELECT id, name FROM users WHERE id IN (${[...new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean)), ""].map(() => "?").join(",")})`, ...[...new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean)), ""])).map((u) => [u.id, u.name]));
+    const prevNames = new Map((await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean))))).map((u) => [u.id, u.name]));
     const evs = items.filter((a) => ok.has(str(a.user_id, 60)) && eligible(a)).map((a) => { const b = before.get(str(a.id, 60)); return claimEvent(env, b.id, user, "assigned", names.get(str(a.user_id, 60)) || "", { from: b.assigned_to ? prevNames.get(b.assigned_to) || "" : "", via: str(strategy, 40) || "allocate" }); });
     const stmts = items.filter((a) => ok.has(str(a.user_id, 60))).map((a) =>
       env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = ?, state = 'assigned', state_reason = '', priority = ${PRIO_SQL}, priority_base = ?, priority_reason = ${PRIO_REASON_SQL}, tier = CASE WHEN ? <> '' THEN ? ELSE tier END,
@@ -7140,10 +7160,10 @@ const OPS = {
     const from = num(payload.day_from_ms, 0);
     const where = ["c.assigned_to = ?", "(c.state IN ('assigned','in_progress') OR (c.state IN ('completed','closed','in_process') AND c.completed_at >= ?))"];
     const params = [user.id, from];
-    if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ?)"); params.push(q, q, q); }
-    if (payload.payer) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer, 80).trim() + "%"); }
-    if (payload.provider) { where.push("c.provider LIKE ?"); params.push("%" + str(payload.provider, 80).trim() + "%"); }
-    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
+    if (payload.q) { const q = likeAny(str(payload.q, 80).trim()); where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ?)"); params.push(q, q, q); }
+    if (payload.payer) { where.push("c.payer LIKE ?"); params.push(likeAny(str(payload.payer, 80).trim())); }
+    if (payload.provider) { where.push("c.provider LIKE ?"); params.push(likeAny(str(payload.provider, 80).trim())); }
+    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push(likeAny(str(payload.cpt, 40).trim())); }
     if (payload.min_balance != null && payload.min_balance !== "") { where.push("c.balance >= ?"); params.push(num(payload.min_balance, 0)); }
     if (payload.max_balance != null && payload.max_balance !== "") { where.push("c.balance <= ?"); params.push(num(payload.max_balance, 0)); }
     if (payload.saag_status) { where.push("c.last_status_code = ?"); params.push(str(payload.saag_status, 60)); }
@@ -7309,7 +7329,7 @@ const OPS = {
   /* ---- reports ---- */
   "reports.work": async ({ env, user, payload }) => {
     const where = ["nt.created_at BETWEEN ? AND ?"], params = [num(payload.from_ms, 0), num(payload.to_ms, Date.now())];
-    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); params.push(...user.scope); }
+    if (user.scope) { where.push(`c.client_id IN ${IN_LIST}`); params.push(listArg(user.scope)); }
     if (payload.client_id) { where.push("c.client_id = ?"); params.push(payload.client_id); }
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(payload.location_id); }
     if (payload.user_id) { where.push("nt.user_id = ?"); params.push(payload.user_id); }
@@ -7325,7 +7345,7 @@ const OPS = {
   "reports.desk": async ({ env, user, payload }) => {
     const from = num(payload.from_ms, 0), to = num(payload.to_ms, Date.now());
     const where = [], args = [from, to];
-    if (user.scope) { where.push(`c.client_id IN (${user.scope.length ? user.scope.map(() => "?").join(",") : "NULL"})`); args.push(...user.scope); }
+    if (user.scope) { where.push(`c.client_id IN ${IN_LIST}`); args.push(listArg(user.scope)); }
     if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
     if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
     if (payload.user_id) { where.push("(c.assigned_to = ? OR nt.user_id = ?)"); args.push(str(payload.user_id, 60), str(payload.user_id, 60)); }
@@ -7358,23 +7378,36 @@ const OPS = {
     if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
     if (payload.user_id && scope === "ar") { where.push("nt.user_id = ?"); args.push(str(payload.user_id, 60)); }
     const extra = where.length ? " AND " + where.join(" AND ") : "";
+    // A page of entries when the page asks for one (page, page_size up to 5,000, total), so no single answer holds a whole month: a
+    // month of 60,000 entries in one answer came close to a Worker's 128 MB. Without page: every entry (up to 60,000) at once, as before.
+    const paged = payload.page != null, size = paged ? Math.max(1, Math.min(5000, Math.round(num(payload.page_size, 5000)))) : 60000;
+    const page = paged ? Math.max(1, Math.round(num(payload.page, 1))) : 1, skip = (page - 1) * size, lim = Math.max(0, Math.min(size, 60000 - skip));
+    const pageInfo = async (sql, ...a) => (paged ? { page, page_size: size, total: Math.min(60000, ((await one(env, sql, ...a)) || {}).n || 0) } : {});
     if (scope === "ar") {
-      const notes = await all(env, `SELECT c.*, cl.name AS client_name, l.name AS location_name, nt.user_id, nt.user_name, nt.created_at AS worked_at, nt.comment, nt.status, nt.sub_status, nt.action,
+      // only the claim fields a Production row uses: c.* (73 columns, the file's own row among them) took a month's entries past a
+      // Worker's 128 MB on Cloudflare
+      const notes = await all(env, `SELECT c.claim_no, c.patient, c.payer, c.cpt, c.dos, c.age_days, c.billed, c.balance, cl.name AS client_name, l.name AS location_name,
+          nt.user_id, nt.user_name, nt.created_at AS worked_at, nt.comment, nt.status, nt.sub_status, nt.action,
           nt.bucket AS work_bucket, nt.fields_json FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
-        WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY nt.created_at LIMIT 60000`, from, to, ...args, ...scopeArgs(user));
+        WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY nt.created_at${paged ? ", nt.id LIMIT ? OFFSET ?" : " LIMIT 60000"}`,
+        from, to, ...args, ...scopeArgs(user), ...(paged ? [lim, skip] : []));
+      const info = await pageInfo(`SELECT COUNT(*) AS n FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")}`, from, to, ...args, ...scopeArgs(user));
       const iDos = WORKBOOK_HEADER.indexOf("DOS"), iWorked = WORKBOOK_HEADER.indexOf("Date Worked");
       const rows = notes.map((n, i) => {
         const row = productionRow({ ...n, last_note: n.comment, last_status_code: n.status, last_sub_status: n.sub_status, last_action_code: n.action, last_bucket: n.work_bucket },
           person(n.user_id, n.user_name), { ended_at: n.worked_at, fields: noteFields(n) });
-        row[0] = i + 1; row[iDos] = n.dos || ""; row[iWorked] = istISO(n.worked_at);
+        row[0] = skip + i + 1; row[iDos] = n.dos || ""; row[iWorked] = istISO(n.worked_at);
         return row;
       });
-      return { scope, header: WORKBOOK_HEADER, rows };
+      return { scope, header: WORKBOOK_HEADER, rows, ...info };
     }
     const dept = scope === "pp" ? "posting" : "submission";
     const hs = await all(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.billed, c.balance${scope === "sub" ? ", c.raw_json" : ""}, cl.name AS client_name, l.name AS location_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
-      WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY h.done_at LIMIT 60000`, dept, from, to, ...args, ...scopeArgs(user));
+      WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY h.done_at${paged ? ", h.id LIMIT ? OFFSET ?" : " LIMIT 60000"}`,
+      dept, from, to, ...args, ...scopeArgs(user), ...(paged ? [lim, skip] : []));
+    const info = await pageInfo(`SELECT COUNT(*) AS n FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")}`,
+      dept, from, to, ...args, ...scopeArgs(user));
     // what the desk person entered goes along, under the column names Third Eye reads (an amount not entered stays empty)
     const header = scope === "pp"
       ? ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "DOS", "Billed Amount", "Check Number", "Check Date",
@@ -7393,7 +7426,7 @@ const OPS = {
       return [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "",
         proof.type || rawPick(jsonObj(h.raw_json), "Type"), proof.claim_type || claimTypeOf(h.saag_action), [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
     });
-    return { scope, header, rows };
+    return { scope, header, rows, ...info };
   },
   /* Portfolio & SLA: every client in scope with Drishti's latest score (the Portfolio's SLA column). */
   "sla.summary": async ({ env, user, payload }) => {
@@ -7618,7 +7651,7 @@ const OPS = {
     let vis = "1 = 1"; const vargs = [];
     if (!(user.is_admin || (user.role === "supervisor" && !user.scope))) {
       const or = ["h.lead_id = ?", "h.backup_id = ?", "h.assigned_to = ?"]; vargs.push(user.id, user.id, user.id);
-      if (user.role === "supervisor" && user.scope && user.scope.length) { or.push(`h.client_id IN (${user.scope.map(() => "?").join(",")})`); vargs.push(...user.scope); }
+      if (user.role === "supervisor" && user.scope && user.scope.length) { or.push(`h.client_id IN ${IN_LIST}`); vargs.push(listArg(user.scope)); }
       vis = "(" + or.join(" OR ") + ")";
     }
     const desk = user.is_admin ? null : userDesk(user);
@@ -7700,7 +7733,7 @@ const OPS = {
     const w = [`h.dept IN (${depts.map(() => "?").join(",")})`], a = [...depts];
     if (!(user.is_admin || (user.role === "supervisor" && !user.scope))) {
       const or = ["h.lead_id = ?", "h.backup_id = ?", "h.assigned_to = ?"]; a.push(user.id, user.id, user.id);
-      if (user.role === "supervisor" && user.scope && user.scope.length) { or.push(`h.client_id IN (${user.scope.map(() => "?").join(",")})`); a.push(...user.scope); }
+      if (user.role === "supervisor" && user.scope && user.scope.length) { or.push(`h.client_id IN ${IN_LIST}`); a.push(listArg(user.scope)); }
       w.push("(" + or.join(" OR ") + ")");
     }
     if (payload.client_id) { w.push("h.client_id = ?"); a.push(str(payload.client_id, 60)); }
@@ -8854,7 +8887,7 @@ const OPS = {
     const day = isoDate(payload.day) || isoToday();
     const loc = payload.location_id ? await one(env, "SELECT team_json FROM locations WHERE id = ? AND client_id = ?", str(payload.location_id, 60), c.id) : null;
     const ids = loc && parseTeam(loc.team_json).length ? parseTeam(loc.team_json) : parseTeam(c.team_json);
-    const users = ids.length ? await all(env, `SELECT * FROM users WHERE active = 1 AND id IN (${ids.map(() => "?").join(",")}) ORDER BY name`, ...ids) : [];
+    const users = ids.length ? await all(env, `SELECT * FROM users WHERE active = 1 AND id IN ${IN_LIST} ORDER BY name`, listArg(ids)) : [];
     const caps = jsonObj(c.caps_json);
     const saved = await one(env, "SELECT a.on_json, a.at, u.name AS by_name FROM availability a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? AND a.day = ?", c.id, day);
     const on = saved ? jsonList(saved.on_json) : null;
@@ -8863,7 +8896,7 @@ const OPS = {
       return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
         cap: caps[u.id] != null ? caps[u.id] : u.capacity, cap_set: caps[u.id] != null, on: on ? on.includes(u.id) : true }; });
     // on_ids: everyone ticked for the day (Allocate can tick people outside the project team too); caps: numbers set per person.
-    const out = new Set(ids.length ? (await all(env, `SELECT user_id FROM attendance WHERE day = ? AND status = 'out' AND user_id IN (${ids.map(() => "?").join(",")})`, day, ...ids)).map((r) => r.user_id) : []);
+    const out = new Set(ids.length ? (await all(env, `SELECT user_id FROM attendance WHERE day = ? AND status = 'out' AND user_id IN ${IN_LIST}`, day, listArg(ids))).map((r) => r.user_id) : []);
     members.forEach((m) => { m.out = out.has(m.id); m.cap = m.cap || 35; });
     return { client: { id: c.id, name: c.name }, day, members, on_ids: on, caps, saved: saved ? { at: saved.at, by_name: saved.by_name || "" } : null };
   },
@@ -8886,7 +8919,7 @@ const OPS = {
   "team.pending": async ({ env, user, payload }) => {
     if (user.roster_kind !== "lead" || !isAR(user) || !user.scope || !user.scope.length) return { clients: [] };
     const day = isoDate(payload.day) || isoToday();
-    const rows = await all(env, `SELECT c.id, c.name, c.team_json FROM clients c LEFT JOIN availability a ON a.client_id = c.id AND a.day = ? WHERE c.active = 1 AND a.client_id IS NULL AND c.id IN (${user.scope.map(() => "?").join(",")}) ORDER BY c.name`, day, ...user.scope);
+    const rows = await all(env, `SELECT c.id, c.name, c.team_json FROM clients c LEFT JOIN availability a ON a.client_id = c.id AND a.day = ? WHERE c.active = 1 AND a.client_id IS NULL AND c.id IN ${IN_LIST} ORDER BY c.name`, day, listArg(user.scope));
     return { clients: rows.filter((r) => parseTeam(r.team_json).length).map((r) => ({ id: r.id, name: r.name })) };
   },
 

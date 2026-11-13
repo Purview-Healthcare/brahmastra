@@ -200,9 +200,9 @@ function productionCSV(header, rows) {
   return arrayCSV(header, rows.map((r) => { const x = r.slice(); at.forEach((i) => { x[i] = mdy(x[i]); }); return x; }));
 }
 /* Every row of a list the server sends in pages of 500 (claims.list, reports.claimsProduction), however many there are. */
-async function rpcAllPages(op, payload) {
+async function rpcAllPages(op, payload, pageSize = 500) {
   const rows = []; let r = null;
-  for (let page = 1; page <= 10000; page++) { r = await rpc(op, { ...payload, page, page_size: 500 }); rows.push(...r.rows); if (rows.length >= r.total || !r.rows.length) break; }
+  for (let page = 1; page <= 10000; page++) { r = await rpc(op, { ...payload, page, page_size: pageSize }); rows.push(...r.rows); if (rows.length >= r.total || !r.rows.length) break; }
   return { ...r, rows };
 }
 /* a CSV from a header row and array rows (the Production layout the server builds) */
@@ -7637,7 +7637,8 @@ function QualityPage({ ctx, me, onHow, lockScope }) {
     if (!ready) { if (!auto) toast("The report is still opening. Wait a moment, then click Load production again.", "err"); return; }
     setBusy("Collecting Brahmastra's production…"); setDone(null);
     try {
-      const r = await rpc("reports.production", { scope, client_id: f.client_id || undefined, location_id: f.location_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] });
+      // in pages of 5,000 entries: a whole month in one answer comes close to the server's memory limit
+      const r = await rpcAllPages("reports.production", { scope, client_id: f.client_id || undefined, location_id: f.location_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] }, 5000);
       if (run !== runRef.current) return;
       if (!r.rows.length) { if (auto) setDone({ n: 0, people: 0, at: timeNow(), auto }); else toast("Nothing was worked in Brahmastra for these dates" + (client ? " and this client." : "."), "err"); setBusy(null); return; }
       setBusy("Loading the report…");
@@ -9545,7 +9546,7 @@ function ReportsView({ ctx, from, to, embedded }) {
   return (
     <div className="stack">
       <div className="row between"><div>{!embedded && <h1>Reports</h1>}<div className="sub">Every note the team wrote, with the claim it belongs to. Download as CSV for the client or for QA.</div></div>
-        <div className="row" style={{ gap: 8 }}><button className="btn" disabled={!rows.length} title="One row per entry, in the Production Conso columns" onClick={async () => { try { const r = await rpc("reports.production", { scope: "ar", client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] }); downloadText(productionCSV(r.header, r.rows), `Production - entries - ${f.from} to ${f.to}.csv`); } catch (e) { toast(e.message, "err"); } }}>Download CSV</button>
+        <div className="row" style={{ gap: 8 }}><button className="btn" disabled={!rows.length} title="One row per entry, in the Production Conso columns" onClick={async () => { try { const r = await rpcAllPages("reports.production", { scope: "ar", client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] }, 5000); downloadText(productionCSV(r.header, r.rows), `Production - entries - ${f.from} to ${f.to}.csv`); } catch (e) { toast(e.message, "err"); } }}>Download CSV</button>
           <button className="btn link sm" disabled={!rows.length} title="Brahmastra's own columns, the note fields apart" onClick={() => downloadText(toCSV(rows.map(reportRow), REPORT_COLS), `brahmastra-work-${f.from}-to-${f.to}.csv`)}>Brahmastra columns</button></div></div>
       <div className="card tight grid g5">
         <ClientPicker ctx={ctx} clientId={f.client_id} setClientId={(v) => setF({ ...f, client_id: v, location_id: "" })} locId={f.location_id} setLocId={(v) => setF({ ...f, location_id: v })} allowAll />
