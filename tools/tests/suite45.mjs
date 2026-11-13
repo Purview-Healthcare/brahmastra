@@ -27,8 +27,9 @@ const FEED = () => [
   B("A1", "Arun Agent"), B("A2", "Otto Over"), B("A3", "Pat Present"), B("A4", "Sana Sunday"), B("A5", "Hana Holiday"), B("A6", "Walt Weekday"), B("A7", "Ned Nomark"),
   P({ emp_id: "PA", name: "Pavan Poster", department: "Posting", project: SUN, reports_to: "Tina Lead", email: "pavan" + D }),
   P({ emp_id: "SB", name: "Sahil Submitter", department: "Submission", project: SUN, reports_to: "Tina Lead", email: "sahil" + D }),
-  // a team lead the roster has no email for
+  // two team leads the roster has no email for
   P({ emp_id: "N1", name: "Nil Nomail", position: "Team Lead", project: LAKE, reports_to: "Mona Manager", email: "" }),
+  P({ emp_id: "N2", name: "Noor Nomail", position: "Team Lead", project: LAKE, reports_to: "Mona Manager", email: "" }),
 ];
 // Shastra's holidays: Diwali (Monday 9 Nov 2026) and New Year's Day 2027 (a Friday)
 const HOLIDAYS = [{ date: "2026-11-09", name: "Diwali" }, { date: "2027-01-01", name: "New Year" }];
@@ -321,6 +322,76 @@ async function makeWorld({ feed = FEED(), envExtra = {} } = {}) {
   const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
   ok("N-02: Clients & locations opens the profile of the client in the link when the bell line asks for it (focus: profile), for whoever may edit it",
     /if \(profAsked\.current \|\| ro \|\| !params \|\| params\.focus !== "profile" \|\| !params\.client_id\) return;/.test(src) && /if \(c && c\.can_edit !== false\) \{ profAsked\.current = true; setProf\(\{ client: c \}\); \}/.test(src));
+}
+
+/* ================= D-04: Drishti opens with the Brahmastra sign-in once a code emailed to the address proved it ================= */
+// sign-in codes go out by email here (a stand-in mail hook that keeps them), as live
+const MAIL = { EMAIL_PROVIDER: "webhook", EMAIL_WEBHOOK_URL: "https://mail-hook.test/send", EMAIL_API_KEY: "x".repeat(40) };
+{
+  const w = await makeWorld({ envExtra: MAIL });
+  const { A, T, anon, id, st } = w;
+  let t = Date.now();
+  const later = (fn) => w.at((t += 60000), fn);   // a minute on each time: past the 45 seconds between emailed codes
+  const codeFor = (to) => { const m = [...st.mails].reverse().find((x) => x.to === to); return m ? (m.subject.match(/(\d{6})/) || [])[1] : null; };
+  const typed = async () => (await w.U("Nil Nomail")).email_typed;
+  const setEmail = (who, email) => later(() => who("users.save", { id: id["Nil Nomail"], first_name: "Nil", last_name: "Nomail", role: "supervisor", email }));
+  const drishti = (tok) => later(() => T(() => w.as(tok)("reports.drishtiSession", {})));
+  const tokenOf = (r) => r.r.token;
+  const NIL = "nil.typed" + D;
+  let NN = await w.c("Nil Nomail");
+
+  S("D-04: an email typed in Brahmastra still does not open Drishti");
+  await setEmail(NN, NIL);
+  let r = await later(() => T(() => NN("reports.drishtiSession", {})));
+  ok("D-04: a typed email does not open Drishti, and the SLA tab says how to fix it: sign in once with Email code, using that address and the code sent to it",
+    (await typed()) === 1 && !r.ok && r.status === 403 && r.e === `Your email address (${NIL}) was added in Brahmastra, not in Purview Shastra, so it does not open Drishti until you show it is yours: sign out, then sign in once with Email code, using ${NIL} and the code sent to it. The SLA tab then opens as you. (Or ask for it to be added in Purview Shastra.)`, r);
+
+  S("D-04: a code a team lead hands over, or one shown on screen, proves nothing");
+  const lead = await later(() => A("users.loginCode", { id: id["Nil Nomail"] }));
+  r = await later(() => T(() => anon("auth.verifyOtp", { email: NIL, code: lead.code })));
+  ok("D-04: signed in with a code the team lead handed over (Email code): still typed, Drishti still refused", r.ok && (await typed()) === 1 && !(await drishti(tokenOf(r))).ok, r);
+  const lead2 = await later(() => A("users.loginCode", { id: id["Nil Nomail"] }));
+  r = await later(() => T(() => anon("auth.completeSetup", { user_id: id["Nil Nomail"], code: lead2.code, passHash: "a".repeat(64) })));
+  ok("D-04: nor by name with a team lead's code (first time here)", r.ok && (await typed()) === 1 && !(await drishti(tokenOf(r))).ok, r);
+  delete w.rig.liveEnv.EMAIL_PROVIDER;   // the demo: no email, the code is shown on screen
+  const shown = await later(() => anon("auth.sendOtp", { email: NIL }));
+  r = await later(() => T(() => anon("auth.verifyOtp", { email: NIL, code: shown.demo_code })));
+  Object.assign(w.rig.liveEnv, MAIL);
+  ok("D-04: nor a code shown on screen (demo, no email sent)", /^\d{6}$/.test(shown.demo_code || "") && r.ok && (await typed()) === 1, r);
+
+  S("D-04: a sign-in with a code emailed to the address proves it, and Drishti opens");
+  await later(() => anon("auth.sendOtp", { email: NIL }));
+  r = await later(() => T(() => anon("auth.verifyOtp", { email: NIL, code: codeFor(NIL) })));
+  ok("D-04: signed in with the code emailed to the typed address: the address is proved", r.ok && r.r.user.id === id["Nil Nomail"] && (await typed()) === 3, [r, await typed()]);
+  NN = w.as(tokenOf(r));
+  r = await later(() => T(() => NN("reports.drishtiSession", {})));
+  const made = st.dr.users.find((u) => u.email === NIL), who = r.ok ? st.dr.verify(r.r.token) : null;
+  ok("D-04: Drishti now opens with the Brahmastra sign-in, as a Drishti account of their own (made under their manager), never its Admin", r.ok && made && who && who[0] === made.id && who[1] !== "admin" && r.r.role !== "admin", [r, who]);
+  await w.sync();
+  ok("D-04: a roster sync keeps it proved while the email stays the same", (await w.U("Nil Nomail")).email === NIL && (await typed()) === 3 && (await later(() => T(() => NN("reports.drishtiSession", {})))).ok);
+  // only the admin changes an email that is there; a person types one only where it is missing (as when the roster frees an address)
+  await w.sql("UPDATE users SET email_missing = 1 WHERE id = ?", id["Nil Nomail"]);
+  await setEmail(NN, "nil.other" + D);
+  r = await later(() => T(() => NN("reports.drishtiSession", {})));
+  ok("D-04: typing a different email makes it typed again: Drishti refused until that one is proved too", (await typed()) === 1 && !r.ok && /added in Brahmastra, not in Purview Shastra/.test(r.e), [await typed(), r]);
+  const su = await later(() => anon("auth.setupCode", { user_id: id["Nil Nomail"] }));
+  r = await later(() => T(() => anon("auth.completeSetup", { user_id: id["Nil Nomail"], code: codeFor("nil.other" + D), passHash: "b".repeat(64) })));
+  ok("D-04: signing in by name with the code emailed to it (Forgot it?) proves it as well", su.via === "email" && r.ok && (await typed()) === 3 && (await drishti(tokenOf(r))).ok, [su.via, r, await typed()]);
+
+  S("D-04: the safety stays: an address that is not theirs never picks a Drishti account");
+  const NO = await w.c("Noor Nomail"), noor = async () => (await w.U("Noor Nomail")).email_typed;
+  await later(() => NO("users.save", { id: id["Noor Nomail"], first_name: "Noor", last_name: "Nomail", role: "supervisor", email: DR_ADMIN_EMAIL }));
+  const lead3 = await later(() => A("users.loginCode", { id: id["Noor Nomail"] }));
+  r = await later(() => T(() => anon("auth.verifyOtp", { email: DR_ADMIN_EMAIL, code: lead3.code })));
+  const r4 = await drishti(tokenOf(r));
+  ok("D-04: Drishti's Admin address typed in Brahmastra: a team lead's code does not prove it, and Drishti is refused", (await noor()) === 1 && !r4.ok && /added in Brahmastra/.test(r4.e), [await noor(), r4]);
+  await later(() => anon("auth.sendOtp", { email: DR_ADMIN_EMAIL }));   // (the code goes to that mailbox: here the stand-in hook, as if it were theirs)
+  r = await later(() => T(() => anon("auth.verifyOtp", { email: DR_ADMIN_EMAIL, code: codeFor(DR_ADMIN_EMAIL) })));
+  const r5 = await drishti(tokenOf(r));
+  ok("D-04: even proved, only Brahmastra's admin opens Drishti as its Admin", (await noor()) === 3 && !r5.ok && /belongs to Drishti's Admin/.test(r5.e), [await noor(), r5]);
+  const TI = await w.c("Tina Lead"), rt = await later(() => T(() => TI("reports.drishtiSession", {}))), ra = await later(() => T(() => A("reports.drishtiSession", {})));
+  ok("D-04: an email from Shastra opens Drishti as before (its own account), and Brahmastra's admin opens it as its Admin",
+    (await w.U("Tina Lead")).email_typed === 0 && rt.ok && st.dr.verify(rt.r.token)[1] !== "admin" && ra.ok && ra.r.role === "admin" && st.dr.verify(ra.r.token)[0] === "admin", [rt, ra]);
 }
 
 const fails = results.filter((x) => !x.pass);

@@ -187,6 +187,8 @@ const SCHEMA = [
 /* Columns added after the first release. ensureReady() adds any that an
    existing database is missing, so upgrades need no manual migration. */
 const EXTRA_COLUMNS = {
+  // how a sign-in code reached the person: email (sent to the address), lead (a team lead handed it over), screen (demo, no email)
+  otps: [["via", "TEXT NOT NULL DEFAULT ''"]],
   // kind 'alloc': "N new claims were allocated to you"; seen_at once the biller has closed the banner
   user_notices: [["kind", "TEXT NOT NULL DEFAULT ''"], ["seen_at", "INTEGER"]],
   notes: [["status", "TEXT NOT NULL DEFAULT ''"], ["sub_status", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT NOT NULL DEFAULT ''"], ["bucket", "TEXT NOT NULL DEFAULT ''"],
@@ -246,7 +248,8 @@ const EXTRA_COLUMNS = {
     ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"],
     // Where the email came from: 0 Purview Shastra (or an account made by hand), 1 typed in Brahmastra by the person or a team lead
-    // where Shastra had none, 2 set by the admin. A typed one signs the person in here but never picks their Drishti account.
+    // where Shastra had none, 2 set by the admin, 3 typed in Brahmastra and then proved: the person signed in with a code emailed to
+    // it. A typed one (1) signs the person in here but never picks their Drishti account; a proved one (3) does.
     ["email_typed", "INTEGER NOT NULL DEFAULT 0"]],
   sessions: [["via", "TEXT NOT NULL DEFAULT 'password'"]],
   handoffs: [["available_at", "INTEGER"], ["paused_at", "INTEGER"], ["client_answered_at", "INTEGER"],
@@ -1490,8 +1493,11 @@ async function issueOtp(env, email, purpose, data, { byTeamLead = false } = {}) 
     if (recent.tries > 0) throw new ApiError(429, "Too many codes requested for this email in the last hour. Try again later.");
   }
   const code = otpCode();
+  // how it reaches the person: a team lead hands it over, the demo (no email) shows it on screen, otherwise it is emailed to the
+  // address (a sign-in with an emailed code proves the address is the person's: see emailProved)
+  const via = byTeamLead ? "lead" : env.DEMO && !env.EMAIL_PROVIDER ? "screen" : "email";
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO otps (id, email, code_hash, purpose, data_json, created_at, expires_at) VALUES (?,?,?,?,?,?,?)").bind(uuid(), email, await otpHash(env, email, code), purpose, JSON.stringify(data || {}), now, now + OTP_TTL_MS),
+    env.DB.prepare("INSERT INTO otps (id, email, code_hash, purpose, data_json, created_at, expires_at, via) VALUES (?,?,?,?,?,?,?,?)").bind(uuid(), email, await otpHash(env, email, code), purpose, JSON.stringify(data || {}), now, now + OTP_TTL_MS, via),
     env.DB.prepare("DELETE FROM otps WHERE expires_at < ?").bind(now - 86400000),
   ]);
   return code;
@@ -1519,7 +1525,13 @@ async function checkOtp(env, email, code) {
   // one sign-in uses up every code still valid for this email
   await run(env, "UPDATE otps SET consumed = 1 WHERE email = ? AND consumed = 0", email);
   let data = {}; try { data = JSON.parse(row.data_json || "{}"); } catch {}
-  return { purpose: row.purpose, data };
+  return { purpose: row.purpose, data, via: row.via || "" };
+}
+/* A sign-in with a code that was emailed to the address proves the address is the person's: an email typed in Brahmastra (1)
+   becomes proved (3) and then opens their Drishti account. A code a team lead handed over, or one shown on screen, proves nothing.
+   Typing another email makes it typed again (users.save); a roster sync keeps the proof while the email stays the same. */
+async function emailProved(env, u, via) {
+  if (via === "email" && u && u.email_typed === 1) await run(env, "UPDATE users SET email_typed = 3 WHERE id = ? AND email = ? AND email_typed = 1", u.id, u.email);
 }
 async function openSession(env, u, via) {
   const now = Date.now();
@@ -2089,8 +2101,10 @@ async function importRoster(env, user, payload) {
       role: match && match.role === "admin" ? "admin" : role, roster_kind: cls.kind, designation: cls.designation, position: row.position, department: row.department, departments_also: row.departments_also,
       roster_status: row.status, exit_date: row.exit_date, doj: row.doj, reports_to_name: row.reports_to, projects_json: JSON.stringify(cls.projects), access_all: cls.kind === "all" ? 1 : 0, shift: row.shift, city: row.city, active: gone ? 0 : 1 };
     // An email Shastra sends is Shastra's (0). One kept from before, that Shastra does not send, counts as typed in Brahmastra (1)
-    // unless the admin set it (2) or the account was made by hand and is matched now (2).
-    next.email_typed = emailOk && next.email === row.email ? 0 : !match || match.email_missing ? 0 : match.email_typed === 2 || (match.source !== "roster" && match.email_typed !== 1) ? 2 : 1;
+    // unless the admin set it (2), the account was made by hand and is matched now (2), or the person proved it with a code
+    // emailed to it (3, kept while the email stays the same).
+    next.email_typed = emailOk && next.email === row.email ? 0 : !match || match.email_missing ? 0 : match.email_typed === 3 && next.email === match.email ? 3
+      : match.email_typed === 2 || (match.source !== "roster" && match.email_typed !== 1 && match.email_typed !== 3) ? 2 : 1;
     // Last check: an email another row (or another account) already has is never written twice.
     const holderNow = byEmail.get(next.email);
     if (planMail.has(next.email) || (holderNow && (!match || holderNow.id !== match.id) && !next.free_email_from)) {
@@ -3881,7 +3895,7 @@ const OPS = {
   "auth.verifyOtp": async ({ env, payload }) => {
     const email = mailClean(payload.email);
     if (!mailOk(email) || !String(payload.code || "").trim()) throw bad("Enter the email and the code.");
-    const { purpose, data } = await checkOtp(env, email, payload.code);
+    const { purpose, data, via } = await checkOtp(env, email, payload.code);
     let u = await one(env, "SELECT * FROM users WHERE email = ?", email);
     if (purpose === "signup") {
       if (u) throw bad("That email already has an account. Sign in instead.");
@@ -3894,6 +3908,7 @@ const OPS = {
     if (!u || !u.active) throw new ApiError(403, "This account is not active. Ask your team lead.");
     const block = await signInBlock(env, u); if (block) throw new ApiError(403, block);
     if (u.must_change && !u.pass_hash) await run(env, "UPDATE users SET must_change = 0 WHERE id = ?", u.id);
+    await emailProved(env, u, via);
     return openSession(env, u, "otp");
   },
 
@@ -3940,8 +3955,10 @@ const OPS = {
     if (!u || u.role === "admin") throw bad("Pick your name from the list first.");
     if (!isHash(payload.passHash)) throw bad("Set a password.");
     await nameSignInOk(env, u);
-    const { purpose } = await checkOtp(env, u.email, payload.code);
+    const { purpose, via } = await checkOtp(env, u.email, payload.code);
     if (purpose !== "setup" && purpose !== "login") throw bad("That code is not valid here. Ask for a new one.");
+    // (an emailed code proves the address here too; a code the team lead handed over does not)
+    await emailProved(env, u, via);
     const salt = randomHex(16);
     const hash = await makeHash(env, salt, payload.passHash);
     await env.DB.batch([
@@ -7121,7 +7138,7 @@ const OPS = {
     const me = await one(env, "SELECT email, email_missing, email_typed FROM users WHERE id = ?", user.id);
     const email = me && !me.email_missing ? String(me.email || "").toLowerCase() : "";
     if (!email) throw bad("Your account has no email address yet. Ask for it to be added in Purview Shastra.");
-    if (me.email_typed === 1) throw denied("Your email address was added in Brahmastra, not in Purview Shastra, so it does not pick your Drishti account. Ask for it to be added in Purview Shastra.");
+    if (me.email_typed === 1) throw denied(`Your email address (${email}) was added in Brahmastra, not in Purview Shastra, so it does not open Drishti until you show it is yours: sign out, then sign in once with Email code, using ${email} and the code sent to it. The SLA tab then opens as you. (Or ask for it to be added in Purview Shastra.)`);
     if (email === adminEmail) throw denied("That email address belongs to Drishti's Admin. Only Brahmastra's admin opens Drishti as its Admin.");
     const find = async () => ((await call({ a: "users.list", t: admin })).users || []).find((u) => String(u.email || "").toLowerCase() === email);
     let du = await find(), created = false;
