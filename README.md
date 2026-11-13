@@ -336,7 +336,7 @@ roster, grouped by team lead (no Emp ID):
   **below the mark**; Training and OJT are **in ramp-up** and not judged against it. Claims worked, **team task
   items** done (Needs attention › Team tasks, below) and **extra production** (work done outside Brahmastra, from a
   team lead's file in OneDrive: *Dashboard › Stack report*, below) all count toward it: the line under it says how
-  many of each ("250 claims · incl. 40 extra").
+  many of each ("250 claims + 40 extra").
 - **Tasks**: the team task items each person marked done in the dates (by the day of the update, the night shift's early
   hours counting to the day before, as for claims), with how many tasks they worked and completed. The CSV has
   **Task items**, **Extra production** and **Tasks completed**, and its count for the attainment is claims plus task
@@ -497,7 +497,7 @@ counts it as the person's work done on that day, the same way a claim worked cou
 - **The month's files** are listed at the bottom of the Stack report, each with its link, who uploaded it, its rows in
   the month, its people and dates, and **Remove** (it takes the file's counts off for the remover's people, outside
   a locked month).
-- **Where it counts.** On its DOW, as work done: on Team status (attainment, its line "250 claims · incl. 40
+- **Where it counts.** On its DOW, as work done: on Team status (attainment, its line "250 claims + 40
   extra", the KPI, Performance by status and the CSV's **Extra production** column), and so in the Stack report's
   Productivity ("incl. 40 extra" under Achieved; a person's *how it was worked out* names the files; *How it is
   worked out* lists the month's files) and its Excel. The target does not change. The Monday digest counts each

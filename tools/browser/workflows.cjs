@@ -676,7 +676,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await p.locator('.drange button:has-text("Custom")').first().click(); await t(500);
     await p.locator(".drange-c input").nth(0).fill(DOW); await p.locator(".drange-c input").nth(1).fill(DOW); await t(3000);
     const tsRow = await p.locator('.main table.ts tr:has-text("Arun Agent")').first().innerText();
-    ok("Team status shows the extra part beside the claims", /incl\. 3 extra/.test(tsRow), tsRow);
+    ok("Team status shows the extra part beside the claims (N claims + 3 extra)", /claims? \+ 3 extra/.test(tsRow), tsRow);
     await open("#/dashboard?tab=stack&month=" + XM); await t(500); await p.reload(); await t(4500);
     await p.locator('.stk-extra button:has-text("Remove")').first().click(); await t(800);
     await p.locator('.overlay .modal button.danger:has-text("Remove")').first().click(); await t(3500);
