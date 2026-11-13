@@ -277,7 +277,7 @@ entries before the shift time too, as Team status and My day do (a night shift's
 - **Shastra**: each person's attendance in Purview Shastra now, read every 2 minutes with Shastra's own rules
   (the day rolls at 05:00 IST, late is 10 minutes past the shift start, Saturday and Sunday are the week off unless
   Shastra says otherwise): **Present** or **Late** with the time in, **On break**, **Logged out**, **Not in yet**,
-  **On leave** (or week off, holiday) and **Not logged in** in red once someone has no punch in an hour after their
+  **On leave** (or week off, holiday, comp off) and **Not logged in** in red once someone has no punch in an hour after their
   shift began. Needs `dev/shastra-live-feed.sql` run once in Shastra's Supabase (the same key as the roster feed).
 - **Not logged in** alert: the person's team lead (and the team leads of their clients) get a pop-up on whatever page
   they have open, a red line on Live status, an entry in the bell and, once they allow it, a notification on their

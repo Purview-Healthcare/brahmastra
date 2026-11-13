@@ -2339,7 +2339,7 @@ function shastraDay(status) {
    IST, late is 10 minutes past the shift start, Saturday and Sunday are the week off unless the roster says otherwise,
    and someone with no punch an hour after their shift began has not logged in (the team lead is told). ---- */
 const LIVE_FRESH_MS = 2 * 60000, SH_GRACE_MS = 10 * 60000, SH_MISSING_MS = 60 * 60000;
-const SH_PRESENT = new Set(["present", "late", "half_day", "half-day", "half_day_lwp", "comp_off", "overtime"]);
+const SH_PRESENT = new Set(["present", "late", "half_day", "half-day", "half_day_lwp", "overtime"]);
 const SH_OFF = new Set(["approved_leave", "sick_leave", "maternity_leave", "lwp", "leave", "attrite", "sabbatical"]);
 async function fetchLive(env) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
@@ -2385,6 +2385,8 @@ function liveState(x, u, now) {
   if (x.in && x.out) return L("out", "Logged out", "at " + hhmmIST(x.out), { in_at: x.in });
   if (x.in) { const late = !!(win && !x.lok && x.in > win.start + SH_GRACE_MS && x.in < win.end); return L(late ? "late" : "present", late ? "Late" : "Present", "in " + hhmmIST(x.in), { in_at: x.in }); }
   if (SH_PRESENT.has(x.st)) return L("present", "Present", "marked in Shastra");
+  // a comp off is a day off (planned like a leave; Team status counts it with week off and holiday): never in, never given claims
+  if (x.st === "comp_off") return L("leave", "Comp off", "a day off in Shastra");
   if (SH_OFF.has(x.st) || x.lv) return L("leave", "On leave", String(x.lv || x.st).replace(/_/g, " "));
   if (x.hol) return L("leave", "Holiday", "");
   if (x.wo) return L("leave", "Week off", "");

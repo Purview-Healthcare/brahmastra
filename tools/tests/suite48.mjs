@@ -282,6 +282,25 @@ S("K-07: Team status picks up a past day Shastra corrected, and people linked to
   } finally { Date.now = realNow; }
 }
 
+S("K-04: a comp off in Shastra is a day off on Live status, and sharing out a desk skips it");
+{
+  const now = Date.now(), day = new Date(now + 330 * 60000 - 5 * 3600000).toISOString().slice(0, 10);   // Shastra's day rolls at 05:00 IST
+  const lr = (emp, o) => ({ emp_id: emp, email: "", shift: "09:00-18:00", no_punch: false, auto_present: false, week_off: false, holiday: false, leave: null, status: "", in_at: null, out_at: null, late_ok: false, break_since: null, ...o });
+  LIVE.day = day; LIVE.rows = [lr("RA1", { status: "comp_off" }), lr("RA2", { status: "present", in_at: new Date(now - 2 * 3600000).toISOString() }), lr("RA7", { status: "absent" })];
+  await A("clients.saveTeam", { client_id: sun.id, team: [U("Biller Rk One"), U("Biller Rk Two"), (await A("users.list")).users.find((u) => u.name === "Biller Rk Seven").id] });
+  const seven = (await A("users.list")).users.find((u) => u.name === "Biller Rk Seven").id;
+  const six = (await q("SELECT id FROM claims WHERE client_id = ? AND state = 'open' AND assigned_to IS NULL LIMIT 6", sun.id)).map((x) => x.id);
+  await A("alloc.reassign", { ids: six, user_id: seven });
+  const hud = await A("team.huddle", { today: day });
+  const sh = (hud.rows.find((r) => r.id === U("Biller Rk One")) || {}).shastra || {};
+  ok("K-04: Live status shows a biller on comp off as a day off (Comp off), not Present", sh.state === "leave" && sh.label === "Comp off", sh);
+  const rb = await A("team.rebalance", { user_id: seven, today: day });
+  const got = (n) => (rb.to.find((x) => x.name === n) || {}).count || 0;
+  ok("K-04: sharing out an absent biller's desk gives the biller on comp off nothing; the one punched in gets them", rb.moved === 6 && got("Biller Rk One") === 0 && got("Biller Rk Two") === 6, rb);
+  const pr = (hud.rows.find((r) => r.id === U("Biller Rk Two")) || {}).shastra || {};
+  ok("K-04: someone punched in still shows as in (Present or Late)", pr.state === "present" || pr.state === "late", pr);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
