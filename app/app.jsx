@@ -2142,6 +2142,8 @@ const stkN = (v, dec = 2) => (v == null || !isFinite(v) ? "–" : Number(v).toLo
 const stkDay = (iso) => { const [y, m, d] = String(iso).split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString(LOC, { month: "short", day: "numeric" }); };
 const stkDays = (list) => list.map((x) => (Array.isArray(x) ? stkDay(x[0]) + (x[1] === 0.5 ? " (half day)" : "") : stkDay(x))).join(", ");
 const stkTyped = (t) => (t ? t.by + ", " + stkDay(istISOOf(t.at)) : "");
+// the files a person's extra production came from, with the rows each counted
+const stkExtraFiles = (r) => (r.extra_files || []).map((f) => f.name + " (" + plural(f.n, "row") + ")").join(", ");
 // what is still empty, in words: the associate stack's typed cells, or the team lead stack's ticks and attrition counts
 const stkEnterParts = (te, tl) => (tl ? [te.ticks && plural(te.ticks, "tick") + " to confirm", te.attrition && plural(te.attrition, "attrition count") + " to type"]
   : [te.pkt && plural(te.pkt, "PKT score"), te.quality && plural(te.quality, "quality score"), te.prod && plural(te.prod, "person's work numbers", "people's work numbers")]).filter(Boolean);
@@ -2157,12 +2159,143 @@ function StkTyped({ text, empty, typed, can, onEdit, hint }) {
   if (!can) return <span className={"typed ro" + (empty ? " need" : "")} title={tip}>{empty ? "–" : text}</span>;
   return <button type="button" className={"typed" + (empty ? " need" : "")} title={tip} onClick={(e) => { e.stopPropagation(); onEdit(); }}>{empty ? "enter" : text}</button>;
 }
+/* ---------- Stack report › Extra production: a team lead's file of work done outside Brahmastra, opened from OneDrive ----------
+   Read here in the browser: every sheet (hidden ones left out) whose header row has a DOW column (or Date of Work, Work Date,
+   Date Worked) and a User Name column (or Username, User, Worked By, Employee Name, Associate Name), in any case and spacing,
+   with an Emp ID column (or ECN, Employee ID) when there is one. Each row is one piece of work. A date may be an Excel date,
+   mm/dd/yyyy or yyyy-mm-dd; a text column that could be day first or month first is read one way for the whole column, as Third
+   Eye does: day first when more of its dates can only be day first (31/10/2026) than only month first (10/31/2026), else month
+   first (a date that is no date either way, 31/31/2026, says nothing about the column). A row with no
+   date that can be read, or no name, is left out and counted. The rows go to the server grouped by name and day; it matches the
+   people (stack.extraPreview). Up to 50,000 rows and 10 MB a file. */
+const EXTRA_COLS = { dow: ["dow", "dateofwork", "workdate", "dateworked", "workeddate"], user: ["username", "workedby", "employeename", "associatename", "user"], emp: ["empid", "employeeid", "empcode", "employeecode", "empno", "ecn"] };
+const EXTRA_MAX_ROWS = 50000, EXTRA_MAX_MB = 10;
+const extraHead = (h) => String(h == null ? "" : h).replace(/^﻿/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const extraCell = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+// only a real day counts as a sign: 31/10/2026 is day first, 10/31/2026 month first; 31/31/2026 is no date either way
+function extraOrderOf(values) {
+  let dmy = 0, mdy = 0;
+  for (const v of values) {
+    const m = typeof v === "string" ? v.trim().match(DMY_RE) : null; if (!m) continue;
+    const a = +m[1], b = +m[2], y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    if (a > 12 && isRealDay(y, b, a)) dmy++; else if (b > 12 && isRealDay(y, a, b)) mdy++;
+  }
+  return dmy > mdy ? "dmy" : "mdy";
+}
+function extraRead(bytes, name) {
+  const csv = /\.csv$/i.test(name || "");
+  if (!csv && !/\.xlsx$/i.test(name || "")) throw new Error("Pick an Excel (.xlsx) or CSV file.");
+  const size = (bytes && (bytes.byteLength || bytes.length)) || 0;
+  if (size > EXTRA_MAX_MB * 1048576) throw new Error(name + " is " + fmtBytes(size) + ": Brahmastra reads files up to " + EXTRA_MAX_MB + " MB. Split it, for example a file a month.");
+  let wb;
+  try { wb = csv ? XLSX.read(new TextDecoder("utf-8").decode(bytes), { type: "string", cellDates: false, raw: true }) : XLSX.read(bytes, { type: "array", cellDates: false }); }
+  catch (e) { throw new Error(name + " could not be opened as " + (csv ? "a CSV" : "an Excel") + " file."); }
+  const hidden = new Set(((wb.Workbook && wb.Workbook.Sheets) || []).filter((s) => s && s.Hidden).map((s) => s.name));
+  const sheets = [];
+  for (const sn of wb.SheetNames) {
+    if (hidden.has(sn)) continue;
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: "" });
+    for (let i = 0; i < Math.min(rows.length, 40); i++) {
+      const keys = (rows[i] || []).map(extraHead), col = (k) => { for (const w of EXTRA_COLS[k]) { const j = keys.indexOf(w); if (j >= 0) return j; } return -1; };
+      const dow = col("dow"), user = col("user");
+      if (dow < 0 || user < 0) continue;
+      sheets.push({ name: sn, head: rows[i], dow, user, emp: col("emp"), data: rows.slice(i + 1).filter((r) => r && r.some((c) => String(c).trim() !== "")) });
+      break;
+    }
+  }
+  if (!sheets.length) throw new Error("No sheet of " + name + " has a DOW column and a User Name column. Brahmastra looks for DOW (or Date of Work, Work Date) and User Name (or Username, User, Worked By, Employee Name), in any case and spacing.");
+  const total = sheets.reduce((t, s) => t + s.data.length, 0);
+  if (total > EXTRA_MAX_ROWS) throw new Error(name + " has " + plural(total, "row") + ": Brahmastra reads up to " + plural(EXTRA_MAX_ROWS, "row") + " a file. Split it, for example a file a month.");
+  const groups = new Map(), skipped = { no_date: 0, bad_date: 0, no_name: 0, bad_examples: [] };
+  for (const s of sheets) {
+    s.order = extraOrderOf(s.data.map((r) => r[s.dow]));
+    for (const r of s.data) {
+      const raw = r[s.dow], v = typeof raw === "string" ? raw.trim() : raw;
+      if (v == null || v === "") { skipped.no_date++; continue; }
+      const d = parseDateAny(v, { order: s.order });
+      if (!d) { skipped.bad_date++; if (skipped.bad_examples.length < 3) skipped.bad_examples.push(String(raw).slice(0, 30)); continue; }
+      const u = extraCell(r[s.user]).slice(0, 120);
+      if (!u) { skipped.no_name++; continue; }
+      const e = s.emp >= 0 ? extraCell(r[s.emp]).slice(0, 40) : "", k = e.toLowerCase() + "\u0001" + u.toLowerCase() + "\u0001" + d;
+      const g = groups.get(k); if (g) g.n++; else groups.set(k, { e, u, d, n: 1 });
+    }
+  }
+  return { file: name, rows: total, groups: [...groups.values()], skipped,
+    sheets: sheets.map((s) => ({ name: s.name, rows: s.data.length, dow: extraCell(s.head[s.dow]), user: extraCell(s.head[s.user]), emp: s.emp >= 0 ? extraCell(s.head[s.emp]) : "", order: s.order })) };
+}
+const extraSpan = (a, b) => (!a ? "–" : a === b ? fmtDate(a) : fmtDate(a) + " to " + fmtDate(b));
+/* What the file would count, before anything is saved: the rows, rows per person, the dates, what is left out and why, the
+   months already locked, and what the same file counted before. Then the person confirms. */
+function ExtraPreviewModal({ x, label, onClose, onSaved }) {
+  const p = x.p, L = p.left_out, [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try { const r = await rpc("stack.extraSave", x.body); toast("Counted " + plural(r.counted, "row") + " of extra production for " + plural(r.people, "person", "people") + (r.replaced ? ", in place of what the file counted before" : "") + "."); onSaved(r); }
+    catch (e) { toast(e.message, "err"); setBusy(false); }
+  };
+  const names = (list, sub) => list.slice(0, 40).map((n, i) => <span key={i} className="xp-name">{n.name}{n.emp_id ? <span className="muted"> ({n.emp_id})</span> : null}: {plural(n.rows, "row")}{sub ? <span className="muted">; {sub(n)}</span> : null}</span>);
+  const more = (list) => (list.length > 40 ? <span className="tiny muted">and {list.length - 40} more</span> : null);
+  const reasons = [
+    L.no_date ? [plural(L.no_date, "row") + " with no DOW"] : null,
+    L.bad_date ? [plural(L.bad_date, "row") + " whose DOW is not a date Brahmastra can read" + (L.bad_examples.length ? " (for example " + L.bad_examples.map((v) => '"' + v + '"').join(", ") + ")" : "")] : null,
+    L.no_name ? [plural(L.no_name, "row") + " with no user name"] : null,
+    L.future ? [plural(L.future, "row") + " dated after today"] : null,
+    L.not_found.length ? ["Not found among the active people you see", L.not_found] : null,
+    L.same_name.length ? ["More than one person you see has this name, so Brahmastra does not guess (an Emp ID column tells them apart)", L.same_name, (n) => n.people + " people"] : null,
+    L.not_counted.length ? ["Not on Team status, so not counted", L.not_counted, (n) => n.why] : null,
+  ].filter(Boolean);
+  return (
+    <Modal wide title="Extra production" sub={"Check what this file from OneDrive would count, for " + label + " and any other month it has rows for, then count it."} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !p.counted} onClick={save}>{busy ? "Counting…" : p.counted ? "Count " + plural(p.counted, "row") : "Nothing to count"}</button></>}>
+      <div className="stack xp">
+        <div className="small">{p.file.web_url ? <a href={p.file.web_url} target="_blank" rel="noopener noreferrer"><b>{p.file.name}</b></a> : <b>{p.file.name}</b>}
+          {p.sheets.map((s) => <div key={s.name} className="tiny muted">Sheet <b>{s.name}</b>: {plural(s.rows, "row")} · DOW from "{s.dow}" (dates read {s.order === "dmy" ? "day first, 13/11/2026 style" : "month first, 11/13/2026 style"}) · User Name from "{s.user}"{s.emp ? <> · Emp ID from "{s.emp}" (matched first)</> : null}</div>)}</div>
+        {p.earlier && <div className="alert info small"><b>This file was counted before</b> ({p.earlier.uploads.map((u) => "uploaded " + fmtWhen(u.at) + " by " + u.by + ", " + plural(u.rows, "row")).join("; ")}). Counting it again replaces those counts; it never adds to them.{p.earlier.keeps ? " " + plural(p.earlier.keeps, "row") + " of them stay: a locked month's, or for people you do not see." : ""}</div>}
+        <div className="grid xp-kpis">
+          <Kpi label="Rows read" value={fmtInt(p.rows)} sub="one row is one piece of work" />
+          <Kpi label="To count" value={<span className="teal-ink">{fmtInt(p.counted)}</span>} sub={plural(p.people.length, "person", "people")} tone="accent" />
+          <Kpi label="Left out" value={<span className={L.rows ? "amber-ink" : ""}>{fmtInt(L.rows)}</span>} sub={L.rows ? "see why below" : "nothing left out"} />
+          <Kpi label="Dates" value={<span className="xp-dates">{extraSpan(p.from, p.to)}</span>} sub="DOW of the rows counted" />
+        </div>
+        {(p.months.length > 0 || L.locked.length > 0) && <div className="row xp-months">{p.months.map((m) => <span key={m.month} className={"badge " + (m.rows ? "green" : "gray")}>{m.label}: {plural(m.rows, "row")}{m.locked_rows ? " · " + fmtInt(m.locked_rows) + " locked, not counted" : ""}</span>)}</div>}
+        {L.locked.length > 0 && <div className="alert warn small"><b>Already locked:</b> {L.locked.map((m) => m.label + " (" + plural(m.rows, "row") + " for " + plural(m.people, "person", "people") + ")").join(", ")}. Rows dated in a locked month are not counted, and what was counted there before stays. The admin can unlock a month.</div>}
+        {p.people.length > 0 && <div className="table-wrap" style={{ maxHeight: 300 }}><table className="t"><thead><tr><th>Person</th><th>Emp ID</th><th>Team lead</th><th className="r">Rows</th><th className="r">Days</th><th>DOW</th></tr></thead>
+          <tbody>{p.people.map((x) => <tr key={x.id}><td><b>{x.name}</b></td><td className="small">{x.emp_id || "–"}</td><td className="small">{x.lead_name || "–"}</td><td className="num">{fmtInt(x.rows)}</td><td className="num">{x.days}</td><td className="small nowrap">{extraSpan(x.from, x.to)}</td></tr>)}</tbody></table></div>}
+        {reasons.length > 0 && <div className="xp-out"><div className="b small">Left out, and why</div>
+          <ul>{reasons.map(([t, list, sub], i) => <li key={i} className="small">{t}{list ? <>: <span className="xp-names">{names(list, sub)}{more(list)}</span></> : "."}</li>)}</ul></div>}
+        <div className="tiny muted">Each row counts as one piece of work done by that person on its DOW: on Team status and in the Stack report's Productivity, the same way a claim worked does; the target does not change. Brahmastra reads .xlsx and .csv files up to {EXTRA_MAX_MB} MB and {plural(EXTRA_MAX_ROWS, "row")}. Nothing is written back to OneDrive.</div>
+      </div>
+    </Modal>
+  );
+}
+/* The files counted for the month on screen, for the people the viewer sees, each with Remove. */
+function ExtraFilesCard({ d, onRemove }) {
+  const x = d.extra;
+  if (!x) return null;
+  const mon = d.label.split(" ")[0];
+  return (
+    <div className="stk-extra">
+      <div className="b">Extra production · {d.label}</div>
+      <div className="tiny muted">Work done outside Brahmastra, counted from the team leads' files in OneDrive: each row is one piece of work done on its DOW, on Team status and in Productivity. <b>Extra production</b> above adds a file; the same file again replaces what it counted.</div>
+      {x.files.length ? <div className="table-wrap mt8"><table className="t"><thead><tr><th>File</th><th>Uploaded by</th><th className="r">Rows in {mon}</th><th className="r">People</th><th>DOW</th><th /></tr></thead>
+        <tbody>{x.files.map((f) => <tr key={f.id}>
+          <td>{f.web_url ? <a href={f.web_url} target="_blank" rel="noopener noreferrer"><b>{f.name}</b></a> : <b>{f.name}</b>}{f.other_rows ? <div className="tiny muted">and {plural(f.other_rows, "row")} in other months</div> : null}</td>
+          <td className="small">{f.by}<div className="tiny muted">{fmtWhen(f.at)}</div></td>
+          <td className="num">{fmtInt(f.rows)}{f.locked_rows ? <div className="tiny muted">{fmtInt(f.locked_rows)} in a locked team</div> : null}</td>
+          <td className="num">{f.people}</td><td className="small nowrap">{extraSpan(f.from, f.to)}</td>
+          <td className="r">{f.can_remove && <button className="btn sm" onClick={() => onRemove(f)}>Remove</button>}</td></tr>)}</tbody></table></div>
+        : <div className="small muted mt8">No extra production file is counted for {d.label}.</div>}
+    </div>
+  );
+}
 function StackReportTab({ me, params }) {
   const [month, setMonth] = useState(() => (params && /^\d{4}-\d{2}$/.test(String(params.month || "")) ? params.month : ""));
   const q = useRpc("stack.month", month ? { month } : {}, [month]);
   const d = q.data;
   const [view, setView] = useState("assoc"), [leadF, setLeadF] = useState(""), [clientF, setClientF] = useState("");
   const [person, setPerson] = useState(null), [lead, setLead] = useState(null), [edit, setEdit] = useState(null), [tick, setTick] = useState(null), [crit, setCrit] = useState(false), [ask, setAsk] = useState("");
+  // extra production: the OneDrive picker, what the picked file would count (before it is saved), a file to remove
+  const [xPick, setXPick] = useState(false), [xPrev, setXPrev] = useState(null), [xDel, setXDel] = useState(null), [xBusy, setXBusy] = useState(false);
   useEffect(() => { if (d && d.month) navKeep({ month: d.month }); }, [d && d.month]);
   // a link to another month while the report is open (Back, or a pasted link) opens that month
   useEffect(() => { const m = params && String(params.month || ""); if (/^\d{4}-\d{2}$/.test(m) && m !== month) setMonth(m); }, [params && params.month]);
@@ -2191,6 +2324,20 @@ function StackReportTab({ me, params }) {
   const empty = !d.rows.length && !d.tls.length;
   const download = () => { try { XLSX.writeFile(stackWorkbook(d, rows, tls), safeName("Stack report - " + d.label + (leadF || clientF ? " - " + [leadF && (leads.find((x) => x[0] === leadF) || [])[1], clientF].filter(Boolean).join(", ") : "")) + ".xlsx"); }
     catch (e) { toast("Could not make the file: " + e.message, "err"); } };
+  // extra production: the file picked in OneDrive is read here, then the server says what it would count; an error shows in the
+  // picker, so another file can be picked straight away
+  const pickExtra = async (f) => {
+    let draft; try { draft = extraRead(f.bytes, f.name); } catch (e) { throw msError("file", e.message); }
+    const body = { month: d.month, drive_id: f.driveId || "", item_id: f.id || "", file_name: f.name, web_url: f.webUrl || "", groups: draft.groups, skipped: draft.skipped, sheets: draft.sheets };
+    let p; try { p = await rpc("stack.extraPreview", body); } catch (e) { throw msError("server", e.message); }
+    setXPick(false); setXPrev({ body, p });
+  };
+  const removeExtra = async () => {
+    setXBusy(true);
+    try { const r = await rpc("stack.extraRemove", { upload_id: xDel.id }); toast(xDel.name + " removed: " + plural(r.removed, "row") + " taken off" + (r.kept ? "; " + plural(r.kept, "row") + " stay in a locked month" : "") + "."); setXDel(null); again(); }
+    catch (e) { toast(e.message, "err"); }
+    setXBusy(false);
+  };
   return (
     <div className="card stack stk-card">
       <div className="stk-bar">
@@ -2205,6 +2352,8 @@ function StackReportTab({ me, params }) {
           {!empty && chip}
           <button className="btn sm" onClick={() => setCrit(true)}>How it is worked out</button>
           <button className="btn sm" disabled={empty} onClick={download}>Download Excel</button>
+          {d.extra && d.extra.can_upload && <button className="btn sm stk-xbtn" disabled={!msSupported()} onClick={() => setXPick(true)}
+            title={msSupported() ? "Count work done outside Brahmastra from a production file in OneDrive" : "Microsoft sign in only works when the app is opened from " + MS_CFG.redirectUri}>Extra production</button>}
           {d.can_lock && <button className="btn sm primary" onClick={() => setAsk("lock")}>Lock {mon}</button>}
           {d.can_unlock && <button className="btn sm danger" onClick={() => setAsk("unlock")}>Unlock {mon}</button>}
         </div>
@@ -2242,11 +2391,16 @@ function StackReportTab({ me, params }) {
           <div className="tiny muted">Team handling: {d.ticks.filter(([k]) => k[0] === "t").map((x) => x[1]).join(" · ")}. Client forefront: {d.ticks.filter(([k]) => k[0] === "c").map((x) => x[1]).join(" · ")}.</div>
         </>}
       </>}
+      <ExtraFilesCard d={d} onRemove={setXDel} />
+      {xPick && <OneDrivePicker onClose={() => setXPick(false)} onPick={pickExtra} accept={(n) => /\.(xlsx|csv)$/i.test(n || "")} what="Excel (.xlsx) or CSV" />}
+      {xPrev && <ExtraPreviewModal x={xPrev} label={d.label} onClose={() => setXPrev(null)} onSaved={() => { setXPrev(null); again(); }} />}
+      {xDel && <Confirm title={"Remove " + xDel.name + "?"} danger busy={xBusy} confirmLabel="Remove" onNo={() => setXDel(null)} onYes={removeExtra}
+        text={"Its counts come off Team status and the Stack report for the people you see: " + plural(xDel.rows - xDel.locked_rows, "row") + " in " + d.label + (xDel.other_rows ? ", and its rows in other months" : "") + ". A locked month keeps what it counted. The file in OneDrive stays as it is."} />}
       {cur && <StackPersonModal r={cur} label={d.label} lines={d.lines} trend={[...(d.history[cur.id] || []), { month: d.month, stack: cur.s.stack, pct: cur.s.pct, draft: !cur.locked }]} onEdit={(field) => setEdit({ r: cur, field })} onClose={() => setPerson(null)} />}
       {curLead && <StackLeadModal t={curLead} label={d.label} lines={d.lines} ticks={d.ticks} onTick={() => setTick(curLead)} onClose={() => setLead(null)} />}
       {edit && <StackEditModal month={d.month} label={d.label} r={edit.r} field={edit.field} onClose={() => setEdit(null)} onSaved={reload} />}
       {tick && <StackTicksModal month={d.month} label={d.label} t={tick} ticks={d.ticks} onClose={() => setTick(null)} onSaved={reload} />}
-      {crit && <StackCriteriaModal criteria={d.criteria} onClose={() => setCrit(false)} />}
+      {crit && <StackCriteriaModal criteria={d.criteria} label={d.label} files={d.extra ? d.extra.files : null} onClose={() => setCrit(false)} />}
       {ask === "lock" && <StackLockModal d={d} onClose={() => setAsk("")} onDone={() => { setAsk(""); again(); }} />}
       {ask === "unlock" && <StackUnlockModal d={d} onClose={() => setAsk("")} onDone={() => { setAsk(""); again(); }} />}
     </div>
@@ -2258,7 +2412,7 @@ function StackAssocRow({ r, onOpen, onEdit }) {
     <tr className="click" onClick={onOpen}>
       <td className="muted">{r.rank}</td>
       <td className="who"><b>{r.name}</b><div className="tiny muted">{[r.emp_id, r.title].filter(Boolean).join(" · ")}</div>{r.shastra === "none" && <div className="tiny amber-ink">no attendance in Shastra</div>}</td>
-      <td className="num">{r.tracked ? <>{stkN(r.achieved, 1)} / {stkN(r.expected, 1)}<div className="b">{stkPct(r.pct)}</div></>
+      <td className="num">{r.tracked ? <>{stkN(r.achieved, 1)} / {stkN(r.expected, 1)}{r.extra ? <div className="tiny muted" title={stkExtraFiles(r) || undefined}>incl. {fmtInt(r.extra)} extra</div> : null}<div className="b">{stkPct(r.pct)}</div></>
         : <StkTyped can={can} empty={r.achieved == null || r.expected == null} typed={r.achieved_typed || r.expected_typed} text={<>{stkN(r.achieved, 1)} / {stkN(r.expected, 1)}<br /><b>{stkPct(r.pct)}</b></>}
           hint="Brahmastra has no work numbers for this role: the team lead types them" onEdit={() => onEdit("prod")} />}</td>
       <td className="num"><StkSc v={s.prod} max={10} /></td>
@@ -2308,7 +2462,8 @@ function StackPersonModal({ r, label, lines, trend, onEdit, onClose }) {
   const shastra = r.shastra === "ok" ? SRC.s : <span className="src s" title="No attendance in Purview Shastra for this month">Shastra · none</span>;
   const next = s.stack < 5 ? lines.assoc[4 - s.stack] : null, need = next != null ? stkNeed(next, lines.of, true) : 0, short = Math.round((need - s.total) * 100) / 100;
   const L = (name, found, applied, sc, max, from) => <tr><td><b>{name}</b></td><td>{found}</td><td>{applied}</td><td className="num nowrap"><StkSc v={sc} max={max} /> <span className="muted">/ {max}</span></td><td>{from}</td></tr>;
-  const prodFound = r.tracked ? (r.expected > 0 ? <>{stkN(r.achieved, 1)} claims and task items done against {stkN(r.expected, 1)} expected = <b>{stkPct(r.pct)}</b><div className="tiny muted">the same numbers as Team status{r.avr_prod != null ? " · " + stkN(r.avr_prod, 1) + " a day done, " + stkN(r.avr_target, 1) + " a day expected" : ""}</div></> : "No target on the days counted")
+  const prodFound = r.tracked ? (r.expected > 0 ? <>{stkN(r.achieved, 1)} {r.extra ? <>done (claims, team task items and <b>{fmtInt(r.extra)} extra production</b>)</> : "claims and task items done"} against {stkN(r.expected, 1)} expected = <b>{stkPct(r.pct)}</b><div className="tiny muted">the same numbers as Team status{r.avr_prod != null ? " · " + stkN(r.avr_prod, 1) + " a day done, " + stkN(r.avr_target, 1) + " a day expected" : ""}</div>
+      {r.extra_files && r.extra_files.length ? <div className="tiny muted">Extra production from {stkExtraFiles(r)}</div> : null}</> : "No target on the days counted")
     : <><StkTyped can={can} empty={r.achieved == null || r.expected == null} typed={r.achieved_typed || r.expected_typed} text={<>{stkN(r.achieved, 1)} done against {stkN(r.expected, 1)} expected = {stkPct(r.pct)}</>} onEdit={() => onEdit("prod")} /><div className="tiny muted">Brahmastra has no work numbers for this role: typed by the team lead</div></>;
   return (
     <Modal wide title={r.name + " · " + label} sub={[r.emp_id, r.title, r.lead_name ? "team lead " + r.lead_name : "", stkN(r.present, 1) + " of " + plural(r.working, "working day") + " present"].filter(Boolean).join(" · ")} onClose={onClose}>
@@ -2415,7 +2570,7 @@ function StackTicksModal({ month, label, t, ticks, onClose, onSaved }) {
   );
 }
 /* "How it is worked out": the bands in plain words, read-only (there is no criteria editing). */
-function StackCriteriaModal({ criteria, onClose }) {
+function StackCriteriaModal({ criteria, label, files, onClose }) {
   const part = (title, list) => <><h3 className="mt">{title}</h3><div className="table-wrap"><table className="t stk-crit"><thead><tr><th>Parameter</th><th className="r">Out of</th><th>How</th><th>Score</th></tr></thead>
     <tbody>{list.map((c) => <tr key={c.name}><td className="b nowrap">{c.name}{c.group ? <div className="tiny muted">{c.group}</div> : null}</td><td className="num">{c.max}</td><td className="small">{c.how}</td>
       <td className="small nowrap">{c.list && c.list.length ? <div className="bands">{c.list.map((b) => <div key={b.text}>{b.text} → <b>{stkN(b.score)}</b></div>)}</div> : c.bands || "added as it is"}</td></tr>)}</tbody></table></div></>;
@@ -2423,6 +2578,10 @@ function StackCriteriaModal({ criteria, onClose }) {
     <Modal wide title="How it is worked out" sub="The owner's rules, as her April sheet works them out. They are the same for the whole floor and cannot be changed here." onClose={onClose}>
       {part("Associate stack: Productivity 10, Quality 10, Attendance 10, Others 5, Time on system 5; total of 40", criteria.assoc)}
       {part("Team lead stack: total out of 50", criteria.tl)}
+      {files && <><h3 className="mt">Extra production counted for {label}</h3>
+        <div className="small muted">Work done outside Brahmastra, from the team leads' files in OneDrive. Each row is one piece of work on its DOW, in Achieved as a claim worked is; Expected does not change.</div>
+        {files.length ? <ul className="small stk-xfiles">{files.map((f) => <li key={f.id}><b>{f.name}</b>: {plural(f.rows, "row")} for {plural(f.people, "person", "people")}, {extraSpan(f.from, f.to)} · uploaded by {f.by}, {fmtWhen(f.at)}</li>)}</ul>
+          : <div className="small mt8">No file is counted for {label}.</div>}</>}
     </Modal>
   );
 }
@@ -2494,6 +2653,15 @@ function stackWorkbook(d, rows, tls) {
     return done(sh, [18, 8, 80, 28, 8]); };
   XLSX.utils.book_append_sheet(wb, bands("Associate stack: total of 40; Percentage = Total Score / 40", d.criteria.assoc), "Associate Stack");
   XLSX.utils.book_append_sheet(wb, bands("TL stack: Percentage = Total Score / 50", d.criteria.tl), "TL Stack");
+  // the extra production in Achieved (work done outside Brahmastra, from the team leads' files in OneDrive): who, how much, which files
+  const xs = ordered.filter((r) => r.extra > 0);
+  if (xs.length) {
+    const sh = sheet();
+    put(sh, 0, 0, "Extra production in Achieved: work done outside Brahmastra, counted from the team leads' files in OneDrive (one row of a file is one piece of work on its DOW)");
+    ["Month", "ECN", "Name", "Achieved", "Of it extra production", "Files"].forEach((h, i) => put(sh, 1, i, h));
+    xs.forEach((r, i) => [[month, MON], [r.emp_id], [r.name], [r.achieved], [r.extra], [(r.extra_files || []).map((f) => f.name + " (" + f.n + ")").join("; ")]].forEach(([v, z], col) => put(sh, 2 + i, col, v, z)));
+    XLSX.utils.book_append_sheet(wb, done(sh, [10, 12, 22, 10, 12, 70]), "Extra production");
+  }
   return wb;
 }
 /* My day: an associate's own stack, locked months only (stack.mine): the last one's Stack, total and percentage, opening how it was
@@ -2576,13 +2744,13 @@ function TeamStatusTab({ ctx, me, go }) {
     try { await navigator.clipboard.writeText(text); toast("Copied: paste it into your 1:1 notes."); } catch (e) { toast("Could not copy here; select the text instead.", "err"); }
   };
   const csv = () => {
-    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Count for attainment (claims + task items)", "Target counted", "Entries", "Task items", "Tasks completed", "Target", "Performance", "Floor time needed (h)", "On floor (h)", "Floor time met", "Idle (h)", "Of it screen locked (h)", "Breaks (h)", "Days over 1 h of breaks", "Left over", "Of them high priority", "Escalations external (our error)", "Escalations internal (our error)", "Escalation SR numbers", "Start", "Due in production / plan end", "Comment"];
+    const head = ["Team lead", "Associate", "DOJ", "Status", "Ramp-up / plan", "Attainment %", "Attainment counted on", "Count for attainment (claims + task items + extra production)", "Target counted", "Entries", "Task items", "Extra production", "Tasks completed", "Target", "Performance", "Floor time needed (h)", "On floor (h)", "Floor time met", "Idle (h)", "Of it screen locked (h)", "Breaks (h)", "Days over 1 h of breaks", "Left over", "Of them high priority", "Escalations external (our error)", "Escalations internal (our error)", "Escalation SR numbers", "Start", "Due in production / plan end", "Comment"];
     const rampTxt = (x) => x.kind === "prod" ? "In production" : x.kind !== "ramp" ? "" : !x.due ? "No start date" : (x.flag === "over" ? "Overdue, was due " : "Due ") + x.due + (x.extended ? " (date agreed)" : "");
-    // Attainment % = Count for attainment (claims worked + team task items done) / Target counted, on the days up to yesterday when
-    // there are any; Entries, Task items and Target include today
+    // Attainment % = Count for attainment (claims worked + team task items done + extra production) / Target counted, on the days up
+    // to yesterday when there are any; Entries, Task items, Extra production and Target include today
     const line = (r) => [r.lead_name, r.name, r.doj, r.status, rampTxt(r.ramp) || r.status, r.attain == null ? "" : r.attain, r.attain == null ? "" : r.attain_basis === "done" ? "days up to yesterday" : "today",
       r.attain == null ? "" : r.attain_basis === "done" ? r.count_done : r.count_today, r.attain == null ? "" : r.attain_basis === "done" ? r.target_done : r.target_today,
-      r.worked, r.task_items || 0, r.tasks_completed || 0, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10,
+      r.worked, r.task_items || 0, r.extra || 0, r.tasks_completed || 0, r.target, (PERF_BADGE[r.perf] || ["", ""])[1], Math.round(r.floor_needed_min / 6) / 10,
       r.on_floor_min == null ? "" : Math.round(r.on_floor_min / 6) / 10, (r.floor === "met" ? "Met" : r.floor === "short" ? "Short " + Math.round(r.floor_short_min / 6) / 10 + " h" : r.floor === "pending" ? "Day under way" : r.floor === "no_attendance" ? "No attendance in Shastra" : r.floor === "unknown" ? "Not known" : "")
         + ((r.floor === "met" || r.floor === "short") && r.floor_unknown_days ? " (" + plural(r.floor_unknown_days, "day") + " not known)" : ""),
       r.idle_min == null ? "" : Math.round(r.idle_min / 6) / 10, r.locked_min == null ? "" : Math.round(r.locked_min / 6) / 10, r.break_min == null ? "" : Math.round(r.break_min / 6) / 10, r.break_min == null ? "" : r.break_over_days, r.left, r.left_high, r.esc_ext || 0, r.esc_int || 0, (r.escalations || []).map((e) => "SR" + e.sr + " " + e.client_name + " (" + e.kind + ")").join("; "), r.start_date, r.end_date, r.comment];
@@ -2628,8 +2796,9 @@ function TeamStatusTab({ ctx, me, go }) {
               sub={<>{t.idle_min != null ? "idle " + fmtHM(t.idle_min) + " · " : ""}{t.break_min != null ? "breaks " + fmtHM(t.break_min) + (t.break_over_days ? " (" + plural(t.break_over_days, "day") + " over 1 h)" : "") + " · " : ""}{t.floor_judged ? t.floor_met + " of " + t.floor_judged + " met the floor time" : "from Purview Shastra"}</>} tone={t.floor_judged && t.floor_met < t.floor_judged ? "" : "good"} />
             : <Kpi label="On floor · idle · breaks" value={<span className="muted">–</span>} sub={d.floor_source === "ok" ? "no attendance in Purview Shastra for these dates" : FLOOR_SRC[d.floor_source] || "from Purview Shastra"} />}
           <Kpi label="Attainment" value={t.attain == null ? "–" : t.attain + "%"} sub={(() => { // the task items on the same days as the attainment
-            const ti = rows.reduce((a, r) => a + ((t.attain_basis === "done" ? r.task_items_done : r.task_items_today) || 0), 0);
-            return (t.attain_basis === "done" ? fmtInt(t.count_done) + " of " + fmtInt(Math.round(t.target_done)) + (ti ? "" : " claims") + " up to yesterday" : fmtInt(t.count_today) + " of " + fmtInt(Math.round(t.target_today)) + (ti ? "" : " claims") + " today") + (ti ? " · claims + " + plural(ti, "task item") : ""); })()} />
+            const ti = rows.reduce((a, r) => a + ((t.attain_basis === "done" ? r.task_items_done : r.task_items_today) || 0), 0), ex = rows.reduce((a, r) => a + ((t.attain_basis === "done" ? r.extra_done : r.extra_today) || 0), 0);
+            const more = [ti ? plural(ti, "task item") : "", ex ? fmtInt(ex) + " extra" : ""].filter(Boolean);
+            return (t.attain_basis === "done" ? fmtInt(t.count_done) + " of " + fmtInt(Math.round(t.target_done)) + (more.length ? "" : " claims") + " up to yesterday" : fmtInt(t.count_today) + " of " + fmtInt(Math.round(t.target_today)) + (more.length ? "" : " claims") + " today") + (more.length ? " · claims + " + more.join(" + ") : ""); })()} />
         </div>
         <div className="card">
           <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}><div className="cv-sec" style={{ margin: 0 }}>Team status by team lead</div>
@@ -2656,7 +2825,10 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td><span className={"badge " + (TS_STATUS_TONE[r.status] || "gray")}>{r.status}</span></td>
                   <td>{rampCell(r)}</td>
                   <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.count_done + " of " + Math.round(r.target_done) + " to yesterday" : r.count_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.count_today ? " · " + r.count_today + " today" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div>
-                    {(r.attain_basis === "done" ? r.task_items_done : r.task_items_today) > 0 && r.attain != null && <div className="tiny muted">{r.attain_basis === "done" ? plural(r.worked_done, "claim") + " + " + plural(r.task_items_done, "task item") : plural(r.worked_today, "claim") + " + " + plural(r.task_items_today, "task item")}</div>}</td>
+                    {r.attain != null && (() => { const done = r.attain_basis === "done", ti = (done ? r.task_items_done : r.task_items_today) || 0, ex = (done ? r.extra_done : r.extra_today) || 0;
+                      if (!ti && !ex) return null;
+                      const tip = ex && r.extra_files && r.extra_files.length ? "Extra production (work done outside Brahmastra) from " + r.extra_files.map((f) => f.name + " (" + plural(done ? f.n_done : f.n - f.n_done, "row") + ")").join(", ") : undefined;
+                      return <div className="tiny muted" title={tip}>{[plural(done ? r.worked_done : r.worked_today, "claim"), ti ? plural(ti, "task item") : "", ex ? "incl. " + fmtInt(ex) + " extra" : ""].filter(Boolean).join(" + ").replace(" + incl.", " · incl.")}</div>; })()}</td>
                   <td className="num">{r.task_items ? <><b>{fmtInt(r.task_items)}</b> <span className="tiny muted">items</span><div className="tiny muted">{plural(r.tasks_worked || 0, "task")}{r.tasks_completed ? " · " + r.tasks_completed + " completed" : ""}</div></> : <span className="muted">0</span>}</td>
                   <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
                   <td className="num">{floorCell(r, d.floor_source)}</td><td className="num">{idleCell(r)}</td><td className="num">{breakCell(r)}</td>
@@ -2666,7 +2838,7 @@ function TeamStatusTab({ ctx, me, go }) {
                     : <button type="button" className="btn sm note-btn" title={r.comment || "Add a start, end or comment"} onClick={() => setEdit({ r, start: r.start_date, end: r.end_date, comment: r.comment })}>{r.comment ? <span className="clamp3">{r.comment}</span> : <span className="muted">+ Add note</span>}</button>}</td>
                 </tr>)}
               </React.Fragment>; })}</tbody></table></div>
-          <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> comes from Purview Shastra (finished shifts, breaks taken out; a shift still open counts up to now) and is met or short on the finished days; Shastra's attendance also decides half days, leave and week offs. <b>Idle</b> is what Shastra Guard saw while they were punched in, breaks left out: no movement plus screen locked. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. Claims worked and <b>team task items</b> done both count toward it. <b>Tasks:</b> items from Needs attention › Team tasks marked done in these dates (the night shift's early hours count to the day before, as for claims). <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
+          <div className="tiny muted mt8"><b>Floor time needed:</b> 8 h for each working day in the dates, 4 h for a half day (Out today · Half day), none on leave. <b>On floor</b> comes from Purview Shastra (finished shifts, breaks taken out; a shift still open counts up to now) and is met or short on the finished days; Shastra's attendance also decides half days, leave and week offs. <b>Idle</b> is what Shastra Guard saw while they were punched in, breaks left out: no movement plus screen locked. <b>Ramp-up:</b> Training and OJT are due in production {d.ramp_weeks} weeks from their start (the start date kept here, otherwise the date of joining). <b>Attainment</b> counts the days already finished (up to yesterday), so a day still under way does not count against anyone; with only today picked, it is today's. Claims worked, <b>team task items</b> done and <b>extra production</b> (work done outside Brahmastra, counted from a team lead's file in OneDrive on Stack report › Extra production) all count toward it. <b>Tasks:</b> items from Needs attention › Team tasks marked done in these dates (the night shift's early hours count to the day before, as for claims). <b>Performance:</b> attainment under {d.perf_mark}% is below the production mark. Status and date of joining come from Purview Shastra.</div>
         </div>
         <div className="card">
           <div className="row between"><div className="cv-sec" style={{ margin: 0 }}>Suggestions · {word}</div><button className="btn sm" onClick={copy}>⬇ Copy for my 1:1s</button></div>
@@ -2675,8 +2847,8 @@ function TeamStatusTab({ ctx, me, go }) {
         </div>
         <div className="grid ts-foot">
           <div className="card"><div className="cv-sec">Performance by status · {word}{t.attain_basis === "done" ? " · counted up to yesterday" : ""}</div>
-            <div className="table-wrap"><table className="t"><thead><tr><th>Status</th><th className="num">People</th><th className="num" title={t.task_items ? "Claims worked plus team task items done, on the same days as the attainment" : undefined}>{t.task_items ? "Claims + tasks" : "Claims"}</th><th className="num">Target</th><th className="num">Attainment</th>{t.task_items ? <th className="num" title="Team task items done in all the dates picked">Task items</th> : null}<th className="num">Claims a day</th></tr></thead>
-              <tbody>{d.by_status.map((x) => <tr key={x.status}><td className="b">{x.status}</td><td className="num">{x.people}</td><td className="num">{fmtInt(x.worked)}</td><td className="num">{fmtInt(x.target)}</td><td className="num">{attainStamp(x.attain)}</td>{t.task_items ? <td className="num">{fmtInt(x.task_items || 0)}</td> : null}<td className="num">{x.per_day == null ? "–" : x.per_day}</td></tr>)}</tbody></table></div></div>
+            <div className="table-wrap"><table className="t"><thead><tr><th>Status</th><th className="num">People</th><th className="num" title={t.task_items || t.extra ? "Claims worked plus team task items done and extra production, on the same days as the attainment" : undefined}>{["Claims", t.task_items ? "tasks" : "", t.extra ? "extra" : ""].filter(Boolean).join(" + ")}</th><th className="num">Target</th><th className="num">Attainment</th>{t.task_items ? <th className="num" title="Team task items done in all the dates picked">Task items</th> : null}{t.extra ? <th className="num" title="Extra production (work done outside Brahmastra, from a team lead's file in OneDrive) in all the dates picked">Extra</th> : null}<th className="num">Claims a day</th></tr></thead>
+              <tbody>{d.by_status.map((x) => <tr key={x.status}><td className="b">{x.status}</td><td className="num">{x.people}</td><td className="num">{fmtInt(x.worked)}</td><td className="num">{fmtInt(x.target)}</td><td className="num">{attainStamp(x.attain)}</td>{t.task_items ? <td className="num">{fmtInt(x.task_items || 0)}</td> : null}{t.extra ? <td className="num">{fmtInt(x.extra || 0)}</td> : null}<td className="num">{x.per_day == null ? "–" : x.per_day}</td></tr>)}</tbody></table></div></div>
           <div className="card"><div className="cv-sec">Roster checks</div>
             <div className="stack" style={{ gap: 8 }}>{d.checks.map((c, i) => <div key={i} className="row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "flex-start" }}><span className={"badge " + (c.n ? "amber" : "green")}>{c.n}</span><span className="small">{c.text}</span></div>)}
               <div className="tiny muted">Fix these in Purview Shastra; Brahmastra picks them up on the next roster sync.</div></div></div>
@@ -3209,7 +3381,7 @@ const msx = {
 function shareIdOf(link) { const b64 = btoa(unescape(encodeURIComponent(String(link).trim()))); return "u!" + b64.replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-"); }
 function itemSummary(it) {
   const who = it && it.lastModifiedBy && (it.lastModifiedBy.user || it.lastModifiedBy.application);
-  return { name: (it && it.name) || "", webUrl: (it && it.webUrl) || "", size: (it && it.size) || 0, modifiedAt: it && it.lastModifiedDateTime ? Date.parse(it.lastModifiedDateTime) : null, modifiedBy: (who && (who.displayName || who.email)) || "" };
+  return { id: (it && it.id) || "", driveId: driveIdOf(it), name: (it && it.name) || "", webUrl: (it && it.webUrl) || "", size: (it && it.size) || 0, modifiedAt: it && it.lastModifiedDateTime ? Date.parse(it.lastModifiedDateTime) : null, modifiedBy: (who && (who.displayName || who.email)) || "" };
 }
 const isSheetFile = (name) => /\.(xlsx|xlsm|xls|csv|tsv|txt)$/i.test(name || "");
 const ITEM_FIELDS = "id,name,size,folder,file,lastModifiedDateTime,lastModifiedBy,webUrl,parentReference,remoteItem";
@@ -3248,7 +3420,7 @@ function OneDrivePicker({ folderLink, onPick, onClose, accept = isSheetFile, wha
   const openNode = async (node, replace) => { setStack((s) => (replace ? [node] : [...s, node])); await load(node); };
   const pickFile = async (it) => {
     setBusy("Downloading " + it.name + "…"); setErr(null);
-    try { const d = await msDownloadItem(driveIdOf(it), it.id); await onPick({ bytes: d.bytes, name: d.info.name || it.name, webUrl: d.info.webUrl || it.webUrl, modifiedAt: d.info.modifiedAt, modifiedBy: d.info.modifiedBy }); }
+    try { const d = await msDownloadItem(driveIdOf(it), it.id); await onPick({ bytes: d.bytes, name: d.info.name || it.name, webUrl: d.info.webUrl || it.webUrl, modifiedAt: d.info.modifiedAt, modifiedBy: d.info.modifiedBy, id: d.info.id || it.id, driveId: d.info.driveId || driveIdOf(it) }); }
     catch (e) { setErr(msalMessage(e)); setBusy(null); }
   };
   const start = async () => {

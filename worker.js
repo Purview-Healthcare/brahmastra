@@ -192,6 +192,17 @@ const SCHEMA = [
      by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, PRIMARY KEY (subject_id, month, field))`,
   `CREATE TABLE IF NOT EXISTS stack_locks (month TEXT NOT NULL, scope TEXT NOT NULL, rows_json TEXT NOT NULL DEFAULT '{}', by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
      PRIMARY KEY (month, scope))`,
+  /* Extra production (Dashboard › Stack report): work a team does outside Brahmastra, kept by the team lead in a production file
+     in OneDrive. Each upload keeps the OneDrive file (its drive and item id, name and link), who uploaded it and when, what was
+     read and left out, and its counts: one row a person a day of work (DOW), added to their work done on Team status. Uploading
+     the same file again replaces its earlier counts (state 'replaced' once none are left); Remove takes them out ('removed'). */
+  `CREATE TABLE IF NOT EXISTS extra_uploads (id TEXT PRIMARY KEY, file_key TEXT NOT NULL, drive_id TEXT NOT NULL DEFAULT '', item_id TEXT NOT NULL DEFAULT '',
+     file_name TEXT NOT NULL DEFAULT '', web_url TEXT NOT NULL DEFAULT '', month TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
+     rows_read INTEGER NOT NULL DEFAULT 0, rows_counted INTEGER NOT NULL DEFAULT 0, summary_json TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL DEFAULT 'counted',
+     replaced_by TEXT, ended_by_name TEXT NOT NULL DEFAULT '', ended_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_extra_uploads_file ON extra_uploads (file_key, at)`,
+  `CREATE TABLE IF NOT EXISTS extra_work (upload_id TEXT NOT NULL, user_id TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (upload_id, user_id, day))`,
+  `CREATE INDEX IF NOT EXISTS idx_extra_work_user ON extra_work (user_id, day)`,
 ];
 
 /* Columns added after the first release. ensureReady() adds any that an
@@ -4153,8 +4164,10 @@ async function stackLive(env, month, today) {
     const tT = T(u.id, "tp"), tp = !(tT && tT.v === "no"), tos = tosN ? tosSum / tosN : null;
     const s = stackAssocScore({ pct, quality, al, lwp, late: lateDays.length, brk: brkDays.length, tp, pkt, tos });
     const l = u.reports_to ? byId.get(u.reports_to) : null;
+    // the extra production in Achieved (Team status's own part of it, on the same days), with the files it came from
+    const extra = tracked ? t.extra_done || 0 : 0, extraFiles = tracked ? (t.extra_files || []).filter((x) => x.n_done > 0).map((x) => ({ id: x.id, name: x.name, n: x.n_done })) : [];
     return { id: u.id, name: u.name, emp_id: u.emp_id || "", doj: u.doj || "", title: titleOf(u), lead_id: l ? l.id : "", lead_name: l ? l.name : "", scope: l ? l.id : "p:" + u.id,
-      tracked, achieved, expected, pct, achieved_typed: aT, expected_typed: eT, present, avr_prod: present > 0 && achieved != null ? achieved / present : null,
+      tracked, achieved, expected, pct, extra, extra_files: extraFiles, achieved_typed: aT, expected_typed: eT, present, avr_prod: present > 0 && achieved != null ? achieved / present : null,
       avr_target: present > 0 && expected != null ? expected / present : null, quality, quality_from: qT ? "typed" : "", quality_typed: qT,
       working, al, lwp, al_days: alDays, lwp_days: lwpDays, shrink: working > 0 ? 1 - present / working : null,
       late: lateDays.length, late_days: lateDays, brk: brkDays.length, brk_days: brkDays, adherence: lateDays.length + brkDays.length,
@@ -4237,7 +4250,7 @@ function stackCriteria() {
   const th = STACK_TICKS.filter(([k]) => k[0] === "t").map((x) => x[1]).join("; "), cf = STACK_TICKS.filter(([k]) => k[0] === "c").map((x) => x[1]).join("; ");
   return {
     assoc: [
-      { name: "Productivity", max: 10, how: "Achieved / Expected for the month: the numbers Team status shows (claims worked and team task items done, against the daily target on the days in; a half day counts half; no target before the date of joining). Typed by the team lead for someone Brahmastra has no work numbers for.", bands: W("prod"), list: L("prod") },
+      { name: "Productivity", max: 10, how: "Achieved / Expected for the month: the numbers Team status shows (claims worked, team task items done and extra production counted from the team leads' files in OneDrive, against the daily target on the days in; a half day counts half; no target before the date of joining). Typed by the team lead for someone Brahmastra has no work numbers for.", bands: W("prod"), list: L("prod") },
       { name: "Quality", max: 10, how: "The month's quality %, typed by the team lead.", bands: W("qual"), list: L("qual") },
       { name: "Attendance", max: 10, how: "From Purview Shastra, on the working days (Monday to Friday, holidays left out, from the date of joining): approved and sick leave are AL (Shastra's maternity leave and sabbatical too; an approved half day 0.5), leave without pay and absent are LWP (a half day without pay 0.5); week off, holiday and comp off are neither. LWP of half a day or more scores 0; otherwise by AL + LWP.", bands: W("leave"), list: L("leave") },
       { name: "Late login", max: 1, group: "Others", how: "The days Purview Shastra marks the person late.", bands: W("count"), list: L("count") },
@@ -4259,6 +4272,137 @@ function stackCriteria() {
       { name: "Stack", max: 5, how: "The total out of 50 as a percentage.", bands: W("tlStack"), list: L("tlStack") },
     ],
   };
+}
+
+/* ---- Extra production (Dashboard › Stack report › Extra production) ----
+   Work a team does outside Brahmastra, kept by the team lead in a production file in OneDrive. The page opens the file from
+   OneDrive (never from the computer), reads one row a piece of work with its DOW and User Name (and its Emp ID when the file has
+   that column) and sends the rows grouped by name and day. Here each is matched to an active person of the uploader's span: by
+   Emp ID first, then by name in any case and spacing; two people with the same name are never guessed between. A person Team
+   status counts (an AR biller) gets the rows as work done on that day, as a claim worked is: on Team status, and so in the Stack
+   report's Productivity; the target does not change. Rows dated after today, or in a month locked for the person's team, are
+   not counted, and a locked month keeps what it counted. The same OneDrive file again replaces its earlier counts. Team leads
+   for their own team; managers, the VP and the admin for their span; never an SME, a biller or a desk person. */
+const EXTRA_MAX_ROWS = 50000, EXTRA_MAX_GROUPS = 20000, EXTRA_NAME_MAX = 120;
+const mayExtra = (u) => isStackLead(u) && !deskOf(u);
+const extraKey = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim().toLowerCase();
+// the file's OneDrive link, kept and shown as a link: OneDrive's own addresses only (OneDrive for work is on sharepoint.com)
+const EXTRA_LINK = /^https:\/\/([a-z0-9-]+\.)*(sharepoint\.com|onedrive\.live\.com|1drv\.ms)(\/|$)/i;
+const extraCount = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 0 && n <= EXTRA_MAX_ROWS ? n : 0; };
+const extraDay = (iso) => stackShort(iso) + ", " + iso.slice(0, 4);
+const extraDays = (a, b) => (a === b ? extraDay(a) : a.slice(0, 4) === b.slice(0, 4) ? stackShort(a) + " to " + extraDay(b) : extraDay(a) + " to " + extraDay(b));
+// the months' locks: a month is locked for a person when their team's snapshot is kept, or any snapshot of it has them (as stack.save)
+async function extraLocks(env, months) {
+  const by = new Map();
+  if (months.length) for (const x of await all(env, `SELECT month, scope, rows_json FROM stack_locks WHERE month IN ${IN_LIST}`, listArg(months))) {
+    const L = by.get(x.month) || { scopes: new Set(), ids: new Set() };
+    L.scopes.add(x.scope); for (const r of jsonObj(x.rows_json).rows || []) L.ids.add(r.id);
+    by.set(x.month, L);
+  }
+  return { of: (u, month) => { const L = by.get(month); return !!(L && u && (L.scopes.has(u.reports_to || "p:" + u.id) || L.ids.has(u.id))); } };
+}
+/* The file's rows as the page sent them, matched: what would be counted (person by person, day by day), what is left out and
+   why, and what this OneDrive file counted before. Preview and save both work it out afresh. */
+async function extraPlan(env, user, payload) {
+  if (!mayExtra(user)) throw denied("Extra production is for team leads and above (not SMEs or desk people).");
+  const itemId = str(payload.item_id, 300).trim(), driveId = str(payload.drive_id, 300).trim();
+  if (!itemId) throw bad("Open the file from OneDrive: extra production is counted only from a file in OneDrive.");
+  const name = keepEnding(String(payload.file_name == null || typeof payload.file_name === "object" ? "" : payload.file_name).replace(/\s+/g, " ").trim(), 200);
+  if (!/\.(xlsx|csv)$/i.test(name)) throw bad("Pick an Excel (.xlsx) or CSV file from OneDrive.");
+  const webUrl = str(payload.web_url, 2001).trim();
+  if (webUrl && (webUrl.length > 2000 || !EXTRA_LINK.test(webUrl))) throw bad("That is not a OneDrive link. Open the file from OneDrive.");
+  if (!Array.isArray(payload.groups)) throw bad("Pick the file again: no rows came from it.");
+  if (payload.groups.length > EXTRA_MAX_GROUPS) throw bad("This file has more than " + EXTRA_MAX_GROUPS.toLocaleString("en-US") + " different people and days. Split it, for example a file a month.");
+  const G = []; let inRows = 0;
+  for (const g of payload.groups) {
+    const ok = !!g && typeof g === "object" && !Array.isArray(g);
+    const d = ok ? isoDate(g.d) : "", n = ok ? Number(g.n) : NaN, u = ok && typeof g.u !== "object" ? str(g.u, 400).replace(/\s+/g, " ").trim().slice(0, EXTRA_NAME_MAX) : "";
+    if (!d || !u || !Number.isInteger(n) || n < 1 || n > EXTRA_MAX_ROWS) throw bad("Pick the file again: Brahmastra could not read its rows.");
+    G.push({ d, n, u, e: typeof g.e === "object" ? "" : str(g.e, 60).trim() }); inRows += n;
+  }
+  const sk = payload.skipped && typeof payload.skipped === "object" && !Array.isArray(payload.skipped) ? payload.skipped : {};
+  const noDate = extraCount(sk.no_date), badDate = extraCount(sk.bad_date), noName = extraCount(sk.no_name);
+  const badEx = Array.isArray(sk.bad_examples) ? sk.bad_examples.slice(0, 3).filter((x) => typeof x !== "object").map((x) => str(x, 40)) : [];
+  const rowsRead = inRows + noDate + badDate + noName;
+  if (rowsRead > EXTRA_MAX_ROWS) throw bad("This file has " + rowsRead.toLocaleString("en-US") + " rows: Brahmastra reads up to " + EXTRA_MAX_ROWS.toLocaleString("en-US") + " rows a file. Split it, for example a file a month.");
+  if (!rowsRead) throw bad("There are no rows to read in " + name + ".");
+  const sheets = (Array.isArray(payload.sheets) ? payload.sheets : []).slice(0, 20).filter((s) => s && typeof s === "object" && !Array.isArray(s))
+    .map((s) => ({ name: str(s.name, 100), rows: extraCount(s.rows), dow: str(s.dow, 80), user: str(s.user, 80), emp: str(s.emp, 80), order: s.order === "dmy" ? "dmy" : "mdy" }));
+  const today = istISO(Date.now()), fileKey = (driveId ? driveId + "!" : "") + itemId;
+  // who: the active people of the uploader's span (the Emp ID first, then the name, any case and spacing)
+  const span = await visibleUsers(env, user, "span"), act = span.filter((u) => u.active);
+  const byEmp = new Map(), byName = new Map(), put = (m, k, u) => { if (k) m.set(k, [...(m.get(k) || []), u]); };
+  for (const u of act) { put(byEmp, extraKey(u.emp_id), u); put(byName, extraKey(u.name), u); }
+  // what this OneDrive file counted before: those counts of the uploader's people go, outside a locked month
+  const before = await all(env, "SELECT x.id, x.by_name, x.at, w.user_id, w.day, w.n FROM extra_uploads x JOIN extra_work w ON w.upload_id = x.id WHERE x.file_key = ?", fileKey);
+  const months = [...new Set([...G.map((g) => g.d.slice(0, 7)), ...before.map((r) => r.day.slice(0, 7))])];
+  const lk = await extraLocks(env, months);
+  const counted = new Map(), none = new Map(), same = new Map(), notOn = new Map(), locked = new Map(); let future = 0;
+  const add = (m, k, o, n) => { const x = m.get(k) || { ...o, rows: 0 }; x.rows += n; m.set(k, x); return x; };
+  for (const g of G) {
+    if (g.d > today) { future += g.n; continue; }
+    const e = extraKey(g.e), k = extraKey(g.u);
+    let hit = e ? byEmp.get(e) || [] : [];
+    if (!hit.length) hit = byName.get(k) || [];
+    if (!hit.length) { add(none, k + "|" + e, { name: g.u, emp_id: g.e }, g.n); continue; }
+    if (hit.length > 1) { add(same, k + "|" + e, { name: g.u, emp_id: g.e, people: hit.length }, g.n); continue; }
+    const p = hit[0], mon = g.d.slice(0, 7);
+    if (!isArBiller(p)) { add(notOn, p.id, { name: p.name, why: p.role === "user" ? (p.department || "another department") + ", not AR" : "a team lead, SME or manager" }, g.n); continue; }
+    if (lk.of(p, mon)) { add(locked, mon, { month: mon, label: stackMonthLabel(mon), people: new Set() }, g.n).people.add(p.id); continue; }
+    const c = counted.get(p.id) || { p, rows: 0, days: new Map() };
+    c.rows += g.n; c.days.set(g.d, (c.days.get(g.d) || 0) + g.n); counted.set(p.id, c);
+  }
+  const spanById = new Map(span.map((u) => [u.id, u])), ups = new Map(); let replaces = 0, keeps = 0;
+  for (const r of before) {
+    const u = spanById.get(r.user_id);
+    if (u && !lk.of(u, r.day.slice(0, 7))) replaces += r.n; else keeps += r.n;
+    add(ups, r.id, { id: r.id, by: r.by_name, at: r.at }, r.n);
+  }
+  return { today, name, webUrl, driveId, itemId, fileKey, sheets, rowsRead, G, span, months, lk, counted, none, same, notOn, locked, future, noDate, badDate, noName, badEx,
+    before: [...ups.values()].sort((a, b) => b.at - a.at), replaces, keeps };
+}
+/* What the page shows before anything is saved (and the save's summary): rows, rows per person, the dates, what is left out and why,
+   the months already locked and what this file counted before. */
+async function extraSummary(env, P) {
+  const leadIds = [...new Set([...P.counted.values()].map((c) => c.p.reports_to).filter(Boolean))];
+  const leads = new Map(leadIds.length ? (await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(leadIds))).map((x) => [x.id, x.name]) : []);
+  const people = [...P.counted.values()].map((c) => { const days = [...c.days.keys()].sort();
+    return { id: c.p.id, name: c.p.name, emp_id: c.p.emp_id || "", lead_name: leads.get(c.p.reports_to) || "", rows: c.rows, days: days.length, from: days[0], to: days[days.length - 1] }; })
+    .sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.name.localeCompare(b.name));
+  const counted = people.reduce((t, x) => t + x.rows, 0);
+  let from = "", to = ""; for (const x of people) { if (!from || x.from < from) from = x.from; if (!to || x.to > to) to = x.to; }
+  const byMonth = new Map(), mo = (m) => { if (!byMonth.has(m)) byMonth.set(m, { month: m, label: stackMonthLabel(m), rows: 0, locked_rows: 0 }); return byMonth.get(m); };
+  for (const c of P.counted.values()) for (const [d, n] of c.days) mo(d.slice(0, 7)).rows += n;
+  for (const L of P.locked.values()) mo(L.month).locked_rows += L.rows;
+  const list = (m) => [...m.values()].sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
+  const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: list(P.none), same_name: list(P.same), not_counted: list(P.notOn),
+    locked: [...P.locked.values()].sort((a, b) => a.month.localeCompare(b.month)).map((L) => ({ month: L.month, label: L.label, rows: L.rows, people: L.people.size })) };
+  const sumRows = (xs) => xs.reduce((t, x) => t + x.rows, 0);
+  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + sumRows(left.locked);
+  return { file: { name: P.name, web_url: P.webUrl }, sheets: P.sheets, rows: P.rowsRead, counted, people, from, to,
+    months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)), left_out: left,
+    earlier: P.before.length ? { uploads: P.before.map((b) => ({ by: b.by, at: b.at, rows: b.rows })), replaces: P.replaces, keeps: P.keeps } : null };
+}
+/* The files counted for a month, for the people the viewer sees: each with its rows there, its people and days, and whether the
+   viewer may take it out (it counts something there outside a locked month). */
+async function extraFiles(env, user, span, month) {
+  const first = month + "-01", last = stackMonthEnd(month), ids = listArg(span);
+  const per = await all(env, `SELECT upload_id, user_id, SUM(n) AS n, MIN(day) AS d0, MAX(day) AS d1 FROM extra_work WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY upload_id, user_id`, first, last, ids);
+  if (!per.length) return [];
+  const upIds = listArg(new Set(per.map((x) => x.upload_id)));
+  const ups = new Map((await all(env, `SELECT id, file_name, web_url, by_name, at FROM extra_uploads WHERE id IN ${IN_LIST}`, upIds)).map((x) => [x.id, x]));
+  const other = new Map((await all(env, `SELECT upload_id, SUM(n) AS n FROM extra_work WHERE upload_id IN ${IN_LIST} AND user_id IN ${IN_LIST} AND (day < ? OR day > ?) GROUP BY upload_id`, upIds, ids, first, last)).map((x) => [x.upload_id, x.n || 0]));
+  const who = new Map((await all(env, `SELECT id, reports_to FROM users WHERE id IN ${IN_LIST}`, listArg(new Set(per.map((x) => x.user_id))))).map((u) => [u.id, u]));
+  const lk = await extraLocks(env, [month]), files = new Map();
+  for (const x of per) {
+    const u = ups.get(x.upload_id); if (!u) continue;
+    const f = files.get(u.id) || { id: u.id, name: u.file_name, web_url: u.web_url, by: u.by_name, at: u.at, rows: 0, people: 0, from: x.d0, to: x.d1, locked_rows: 0, other_rows: other.get(u.id) || 0 };
+    f.rows += x.n; f.people++; if (x.d0 < f.from) f.from = x.d0; if (x.d1 > f.to) f.to = x.d1;
+    if (lk.of(who.get(x.user_id) || { id: x.user_id }, month)) f.locked_rows += x.n;
+    files.set(u.id, f);
+  }
+  const can = mayExtra(user);
+  return [...files.values()].map((f) => ({ ...f, can_remove: can && f.rows > f.locked_rows })).sort((a, b) => b.at - a.at);
 }
 
 const OPS = {
@@ -4946,6 +5090,8 @@ const OPS = {
     const closed = await all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?
       AND c.last_worked_by IN ${IN_LIST}${cw}${lw} GROUP BY c.last_worked_by`, start, end, ida, ...ca, ...la);
     const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}`, from, to, ida);
+    // extra production (Stack report › Extra production) on its day of work: work done, as on Team status
+    const extra = new Map((await all(env, `SELECT user_id, SUM(n) AS n FROM extra_work WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id`, from, to, ida)).map((x) => [x.user_id, x.n || 0]));
     const weekday = isWorkDay;   // Monday to Friday, not a Shastra holiday
     let workdays = 0; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) workdays++;
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x]));
@@ -4953,13 +5099,13 @@ const OPS = {
     const rows = people.map((u) => {
       const w = wk.get(u.id) || {}, c = cl.get(u.id) || {};
       const out = outs.filter((o) => o.user_id === u.id && weekday(o.day)).length, daysIn = Math.max(0, workdays - out);
-      const cap = Math.max(1, u.capacity || 35), target = daysIn * cap;
+      const cap = Math.max(1, u.capacity || 35), target = daysIn * cap, x = extra.get(u.id) || 0, done = (w.worked || 0) + x;
       return { id: u.id, name: u.name, capacity: cap, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, days_in: daysIn, days_out: out, days_worked: w.days_worked || 0,
-        worked: w.worked || 0, claims: w.claims || 0, closed: c.n || 0, closed_amt: c.amt || 0, calls: w.calls || 0, call_min: w.call_min || 0, target, pct: target ? Math.round((w.worked || 0) / target * 100) : null };
+        worked: w.worked || 0, extra: x, done, claims: w.claims || 0, closed: c.n || 0, closed_amt: c.amt || 0, calls: w.calls || 0, call_min: w.call_min || 0, target, pct: target ? Math.round(done / target * 100) : null };
     }).sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct) || a.name.localeCompare(b.name));
     const add = (k) => rows.reduce((t, r) => t + (r[k] || 0), 0);
     return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays,
-      totals: { people: rows.length, worked: add("worked"), closed: add("closed"), closed_amt: add("closed_amt"), calls: add("calls"), call_min: add("call_min"), target: add("target") } };
+      totals: { people: rows.length, worked: add("worked"), extra: add("extra"), done: add("done"), closed: add("closed"), closed_amt: add("closed_amt"), calls: add("calls"), call_min: add("call_min"), target: add("target") } };
   },
   /* The team leads a manager can pick on the Dashboard (empty for a team lead). */
   "team.leads": async ({ env, user }) => { const f = await dashTeamFilter(env, user, {}); return { can_pick_lead: f.canPickLead, leads: f.leads }; },
@@ -4993,7 +5139,7 @@ const OPS = {
     const doneSql = late.length ? `CASE WHEN user_id IN ${IN_LIST} THEN ? ELSE ? END` : "?", doneArgs = late.length ? [listArg(late), addDays(today, -1), today] : [today];
     // escalations where the person is named as who made the error (our error), received in these dates
     const ew = f.clientIds ? ` AND e.client_id IN ${IN_LIST}` : "";
-    const [work, closed, att, notes, desk, outNow, escs, tasksDone, tasksClosed] = await Promise.all([
+    const [work, closed, att, notes, desk, outNow, escs, tasksDone, tasksClosed, extraDone] = await Promise.all([
       // a person's entries on every client: picking a client or a team lead shows who is on it, never cuts their own attainment
       // (the entries on the picked client are counted beside); a night shift's entries after midnight go to the day it began
       all(env, `SELECT user_id, COUNT(*) AS worked, SUM(bday < ${doneSql}) AS worked_done, COUNT(DISTINCT bday) AS days_worked, SUM(here) AS worked_here FROM (
@@ -5016,8 +5162,14 @@ const OPS = {
           FROM team_task_updates u WHERE u.kind = 'update' AND u.at BETWEEN ? AND ? AND u.user_id IN ${IN_LIST})
         WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, start, end + maxRollMs, ida, from, to),
       all(env, `SELECT user_id, COUNT(*) AS n FROM team_task_people WHERE status = 'completed' AND completed_at BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id`, start, end, ida),
+      // extra production: work done outside Brahmastra, counted from a team lead's file in OneDrive (Stack report › Extra
+      // production), on its DOW and file by file; it counts toward the person's count like a claim worked on that day
+      all(env, `SELECT user_id, upload_id, SUM(n) AS n, SUM(CASE WHEN day < ${doneSql} THEN n ELSE 0 END) AS n_done FROM extra_work
+        WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id, upload_id`, ...doneArgs, from, to, ida),
     ]);
     const tkd = new Map(tasksDone.map((x) => [x.user_id, x])), tkc = new Map(tasksClosed.map((x) => [x.user_id, x.n]));
+    const exNames = extraDone.length ? new Map((await all(env, `SELECT id, file_name FROM extra_uploads WHERE id IN ${IN_LIST}`, listArg(new Set(extraDone.map((x) => x.upload_id))))).map((x) => [x.id, x.file_name])) : new Map();
+    const exBy = new Map(); for (const x of extraDone) { if (!exBy.has(x.user_id)) exBy.set(x.user_id, []); exBy.get(x.user_id).push({ id: x.upload_id, name: exNames.get(x.upload_id) || "", n: x.n || 0, n_done: x.n_done || 0 }); }
     const escBy = new Map(); for (const e of escs) { if (!escBy.has(e.user_id)) escBy.set(e.user_id, []); escBy.get(e.user_id).push({ id: e.id, sr: e.sr, client_id: e.client_id, client_name: e.client_name || "",
       kind: escKind(e), dept: e.dept, day: e.day, dow: e.error_dow || "", status: e.status === "resolved" ? "Closed" : "Open" }); }
     const outToday = new Map(outNow.map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
@@ -5059,7 +5211,9 @@ const OPS = {
       const worked = w.worked || 0, workedDone = w.worked_done || 0, workedToday = worked - workedDone;
       // team task items count toward the person's count (and so their attainment), next to the claims they worked
       const tk = tkd.get(u.id) || {}, taskItems = Math.max(0, tk.items || 0), taskDone = Math.max(0, Math.min(taskItems, tk.items_done || 0)), taskToday = taskItems - taskDone;
-      const countDone = workedDone + taskDone, countToday = workedToday + taskToday;
+      // extra production counts the same way, on its day of work (the target does not change)
+      const exFiles = exBy.get(u.id) || [], extra = exFiles.reduce((t, x) => t + x.n, 0), extraDone = Math.min(extra, exFiles.reduce((t, x) => t + x.n_done, 0)), extraToday = extra - extraDone;
+      const countDone = workedDone + taskDone + extraDone, countToday = workedToday + taskToday + extraToday;
       // Attainment on the days already finished (up to yesterday), so a day still under way does not make everyone look behind;
       // with only today in the dates, today against today's target.
       const basis = tDone > 0 ? "done" : "today";
@@ -5084,7 +5238,9 @@ const OPS = {
         worked_here: f.narrow ? w.worked_here || 0 : null,
         worked_done: workedDone, target_done: Math.round(tDone * 10) / 10, worked_today: workedToday, target_today: tToday,
         task_items: taskItems, task_items_done: taskDone, task_items_today: taskToday, tasks_worked: tk.tasks || 0, tasks_completed: tkc.get(u.id) || 0,
-        count: worked + taskItems, count_done: countDone, count_today: countToday,
+        // the files it came from: for whoever may upload them (team leads and above, not SMEs or desk people)
+        extra, extra_done: extraDone, extra_today: extraToday, extra_files: mayExtra(user) ? exFiles : [],
+        count: worked + taskItems + extra, count_done: countDone, count_today: countToday,
         // floor time: 8 h a working day, 4 h a half day; met or short on the finished days (a day under way is not judged)
         floor_needed_min: needAll, floor_needed_done_min: needDone,
         on_floor_min: inShastra ? onAll : null, on_floor_done_min: inShastra ? onDone : null,
@@ -5095,7 +5251,7 @@ const OPS = {
         floor_short_min: inShastra && needDone > onDone ? needDone - onDone : 0,
         left: mine.length, left_high: leftHigh, left_other: mine.length - leftHigh, ramp,
         // judged against the production mark: production only, on finished days; Training and OJT are in ramp-up
-        perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? (worked + taskItems > 0 ? "notarget" : "none") : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
+        perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? (worked + taskItems + extra > 0 ? "notarget" : "none") : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
         out_today: outToday.get(u.id) || "",
         escalations: escBy.get(u.id) || [], esc_n: (escBy.get(u.id) || []).length,
         esc_ext: (escBy.get(u.id) || []).filter((e) => e.kind === "external").length, esc_int: (escBy.get(u.id) || []).filter((e) => e.kind === "internal").length,
@@ -5105,7 +5261,7 @@ const OPS = {
     const byStatus = [...new Set(rows.map((r) => r.status))].map((st) => { const rs = rows.filter((r) => r.status === st), wkd = sum("worked", rs), tg = sum("target", rs), dw = sum("days_worked", rs);
       const wd = sum("count_done", rs), td = sum("target_done", rs), wt = sum("count_today", rs), tt = sum("target_today", rs);
       // claims and target on the same days as the attainment: the finished days, or today when only today is picked
-      return { status: st, people: rs.length, worked: td > 0 ? wd : wt, target: td > 0 ? Math.round(td) : tt, all_worked: wkd, all_target: tg, task_items: sum("task_items", rs),
+      return { status: st, people: rs.length, worked: td > 0 ? wd : wt, target: td > 0 ? Math.round(td) : tt, all_worked: wkd, all_target: tg, task_items: sum("task_items", rs), extra: sum("extra", rs),
         attain: td > 0 ? Math.round(wd / td * 1000) / 10 : tt ? Math.round(wt / tt * 1000) / 10 : null, per_day: dw ? Math.round(wkd / dw * 10) / 10 : null }; })
       .sort((a, b) => b.people - a.people);
     // roster checks: what would make these figures wrong
@@ -5128,7 +5284,8 @@ const OPS = {
       break_min: rows.some((r) => r.break_min != null) ? sum("break_min") : null, break_over_days: sum("break_over_days"),
       floor_judged: rows.filter((r) => r.floor === "met" || r.floor === "short").length, floor_met: rows.filter((r) => r.floor === "met").length,
       esc: sum("esc_n"), esc_ext: sum("esc_ext"), esc_int: sum("esc_int"), esc_people: rows.filter((r) => r.esc_n).length,
-      task_items: sum("task_items"), tasks_completed: sum("tasks_completed"), count_done: sum("count_done"), count_today: sum("count_today") };
+      task_items: sum("task_items"), tasks_completed: sum("tasks_completed"), extra: sum("extra"), extra_done: sum("extra_done"), extra_today: sum("extra_today"),
+      count_done: sum("count_done"), count_today: sum("count_today") };
     totals.attain_basis = totals.target_done > 0 ? "done" : "today";
     totals.attain = totals.attain_basis === "done" ? Math.round(totals.count_done / totals.target_done * 1000) / 10 : totals.target_today ? Math.round(totals.count_today / totals.target_today * 1000) / 10 : null;
     return { rows, leads: f.leads, can_pick_lead: f.canPickLead, from, to, workdays: days.length, totals, by_status: byStatus, checks, perf_mark: PERF_MARK, ramp_weeks: RAMP_WEEKS,
@@ -5166,6 +5323,9 @@ const OPS = {
     const v = await stackView(env, user, span, month, today);
     const lockedMonths = new Map((await all(env, "SELECT month, COUNT(*) AS n FROM stack_locks GROUP BY month")).map((x) => [x.month, x.n]));
     v.months = Array.from({ length: 13 }, (_, i) => stackMonthAdd(cur, -i)).map((m) => ({ month: m, label: stackMonthLabel(m), locked: lockedMonths.get(m) || 0 }));
+    // extra production: the files counted for the month (team leads and above, not desk people, who alone see the files)
+    if (mayExtra(user)) v.extra = { can_upload: true, files: await extraFiles(env, user, span, v.month), max_rows: EXTRA_MAX_ROWS };
+    else { v.extra = null; for (const r of v.rows) r.extra_files = []; }
     return v;
   },
   /* A value typed on the Stack report: PKT, Team player (with a reason) and, where Brahmastra has nothing, Achieved and
@@ -5259,9 +5419,59 @@ const OPS = {
     for (const x of await all(env, "SELECT month, rows_json, by_name, at FROM stack_locks WHERE instr(rows_json, ?) > 0 ORDER BY month DESC LIMIT 40", JSON.stringify({ id: user.id }).slice(1, -1))) {
       if (months.some((m) => m.month === x.month)) continue;
       const row = (jsonObj(x.rows_json).rows || []).find((r) => r.id === user.id);
-      if (row) months.push({ month: x.month, label: stackMonthLabel(x.month), row: { ...row, locked: true }, locked_by: x.by_name, locked_at: x.at });
+      // the extra production in their Achieved shows; the team lead's files it came from do not (an associate sees no one's files)
+      if (row) months.push({ month: x.month, label: stackMonthLabel(x.month), row: { ...row, extra_files: [], locked: true }, locked_by: x.by_name, locked_at: x.at });
     }
     return { months: months.slice(0, 12), criteria: months.length ? stackCriteria() : null, lines: stackLines() };
+  },
+  /* ---- Stack report › Extra production (see extraPlan) ----
+     extraPreview: what the file would count, before anything is saved. extraSave: counts it (the same rows, matched again), in
+     place of what the same OneDrive file counted before. extraRemove: takes a file's counts out for the viewer's people. */
+  "stack.extraPreview": async ({ env, user, payload }) => extraSummary(env, await extraPlan(env, user, payload)),
+  "stack.extraSave": async ({ env, user, payload }) => {
+    const P = await extraPlan(env, user, payload), S = await extraSummary(env, P);
+    if (!S.counted) throw bad("Nothing in " + P.name + " can be counted" + (S.left_out.locked.length ? ": " + S.left_out.locked.map((L) => L.label).join(" and ") + " locked" : "") + ". The preview says why for each row.");
+    const id = uuid(), at = Date.now(), month = stackMonthOk(payload.month) ? String(payload.month) : P.today.slice(0, 7);
+    const ins = []; for (const c of P.counted.values()) for (const [d, n] of c.days) ins.push([c.p.id, d, n]);
+    // the earlier counts of this file that stay: a locked month's, and those of people the uploader does not see
+    const keep = []; for (const u of P.span) for (const m of P.months) if (P.lk.of(u, m)) keep.push(u.id + "|" + m);
+    const summary = { sheets: P.sheets, rows: P.rowsRead, counted: S.counted, people: S.people.length, from: S.from, to: S.to, left_out: S.left_out.rows,
+      no_date: P.noDate, bad_date: P.badDate, no_name: P.noName, future: P.future, not_found: S.left_out.not_found.slice(0, 50), same_name: S.left_out.same_name.slice(0, 50),
+      not_counted: S.left_out.not_counted.slice(0, 50), locked: S.left_out.locked, replaced: P.before.map((b) => b.id) };
+    // one batch (one transaction): the upload, the earlier counts out, the new counts in
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO extra_uploads (id, file_key, drive_id, item_id, file_name, web_url, month, by_id, by_name, at, rows_read, rows_counted, summary_json, state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'counted')`)
+        .bind(id, P.fileKey, P.driveId, P.itemId, P.name, P.webUrl, month, user.id, user.name || "", at, P.rowsRead, S.counted, JSON.stringify(summary)),
+      env.DB.prepare(`DELETE FROM extra_work WHERE upload_id IN (SELECT id FROM extra_uploads WHERE file_key = ? AND id != ?) AND user_id IN ${IN_LIST} AND (user_id || '|' || substr(day, 1, 7)) NOT IN ${IN_LIST}`)
+        .bind(P.fileKey, id, listArg(P.span.map((u) => u.id)), listArg(keep)),
+      ...chunks(ins, 1000).map((part) => env.DB.prepare("INSERT INTO extra_work (upload_id, user_id, day, n) SELECT ?, json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)").bind(id, JSON.stringify(part))),
+      env.DB.prepare("UPDATE extra_uploads SET state = 'replaced', replaced_by = ?, ended_by_name = ?, ended_at = ? WHERE file_key = ? AND id != ? AND state = 'counted' AND NOT EXISTS (SELECT 1 FROM extra_work w WHERE w.upload_id = extra_uploads.id)")
+        .bind(id, user.name || "", at, P.fileKey, id),
+    ]);
+    await audit(env, user, "stack.extra", null, "Extra production counted from OneDrive, " + P.name + ": " + stackCount(S.counted, "row") + " for " + stackCount(S.people.length, "person", "people") + ", " + extraDays(S.from, S.to)
+      + (S.left_out.rows ? "; " + stackCount(S.left_out.rows, "row") + " left out" : "") + (P.before.length ? "; in place of what the same file counted before (" + P.before.map((b) => "uploaded " + extraDay(istISO(b.at)) + " by " + b.by).join(", ") + ")" : ""));
+    return { ok: true, id, counted: S.counted, people: S.people.length, from: S.from, to: S.to, left_out: S.left_out.rows, replaced: P.before.length ? P.replaces : 0, kept: P.before.length ? P.keeps : 0 };
+  },
+  "stack.extraRemove": async ({ env, user, payload }) => {
+    if (!mayExtra(user)) throw denied("Extra production is for team leads and above (not SMEs or desk people).");
+    const id = str(payload.upload_id, 60), x = id ? await one(env, "SELECT * FROM extra_uploads WHERE id = ?", id) : null;
+    const all0 = x ? await all(env, "SELECT user_id, day, n FROM extra_work WHERE upload_id = ?", id) : [];
+    if (!x || !all0.length) throw bad("That file does not count anything now.");
+    const span = await visibleUsers(env, user, "span"), byId = new Map(span.map((u) => [u.id, u]));
+    const mine = all0.filter((r) => byId.has(r.user_id));
+    if (!mine.length) throw denied("What " + x.file_name + " counts is not for your people.");
+    const lk = await extraLocks(env, [...new Set(mine.map((r) => r.day.slice(0, 7)))]);
+    const go = [], stay = []; for (const r of mine) (lk.of(byId.get(r.user_id), r.day.slice(0, 7)) ? stay : go).push(r);
+    const lockedLabels = [...new Set(stay.map((r) => stackMonthLabel(r.day.slice(0, 7))))];
+    if (!go.length) throw bad(lockedLabels.join(" and ") + (lockedLabels.length > 1 ? " are" : " is") + " locked: what " + x.file_name + " counts there stays until the admin unlocks it.");
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM extra_work WHERE upload_id = ? AND (user_id || '|' || day) IN ${IN_LIST}`).bind(id, listArg(go.map((r) => r.user_id + "|" + r.day))),
+      env.DB.prepare("UPDATE extra_uploads SET state = 'removed', ended_by_name = ?, ended_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM extra_work w WHERE w.upload_id = extra_uploads.id)").bind(user.name || "", Date.now(), id),
+    ]);
+    const n = go.reduce((t, r) => t + r.n, 0), kept = stay.reduce((t, r) => t + r.n, 0), people = new Set(go.map((r) => r.user_id)).size;
+    await audit(env, user, "stack.extraRemove", null, "Extra production removed, " + x.file_name + " (uploaded " + extraDay(istISO(x.at)) + " by " + x.by_name + "): " + stackCount(n, "row") + " for " + stackCount(people, "person", "people") + " taken off"
+      + (kept ? "; " + stackCount(kept, "row") + " stay in " + lockedLabels.join(" and ") + " (locked)" : ""));
+    return { ok: true, removed: n, people, kept };
   },
   /* The claims activity for the Dashboard's dates (the inventory figures themselves are always as of now). */
   "team.activity": async ({ env, user, payload }) => {

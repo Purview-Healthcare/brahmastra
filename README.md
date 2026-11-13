@@ -333,11 +333,14 @@ roster, grouped by team lead (no Emp ID):
   way does not count against anyone; with only today picked, it is today's. A night shift (one that crosses midnight)
   counts to the day it began, its hours and entries, until an hour and a half after it ends (05:00 IST at the earliest),
   so that day is not finished while the shift is still running. Production people under 90% are
-  **below the mark**; Training and OJT are **in ramp-up** and not judged against it. Claims worked and **team task
-  items** done (Needs attention › Team tasks, below) both count toward it: the line under it says how many of each.
+  **below the mark**; Training and OJT are **in ramp-up** and not judged against it. Claims worked, **team task
+  items** done (Needs attention › Team tasks, below) and **extra production** (work done outside Brahmastra, from a
+  team lead's file in OneDrive: *Dashboard › Stack report*, below) all count toward it: the line under it says how
+  many of each ("250 claims · incl. 40 extra").
 - **Tasks**: the team task items each person marked done in the dates (by the day of the update, the night shift's early
   hours counting to the day before, as for claims), with how many tasks they worked and completed. The CSV has
-  **Task items** and **Tasks completed**, and its count for the attainment is claims plus task items.
+  **Task items**, **Extra production** and **Tasks completed**, and its count for the attainment is claims plus task
+  items plus extra production.
 - **Floor time needed**: 8 hours a working day, 4 for a half day. **On floor** comes from Purview Shastra (finished
   shifts with breaks taken out; a shift still open counts up to now) and shows **met** or **short** on the finished
   days. A day Shastra has not answered for (it was down) is not judged: it shows as **not known**, never as 0 hours,
@@ -385,8 +388,9 @@ bar to narrow the charts), then:
 - **Audit trail** (admins and the VP): who shared a client or took it back, changed the RACI, who gets feedback, a
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
   with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
-  address or an Emp ID, added or deleted an account, changed the extra sign-in emails, or matched a roster project
-  to a client. A code or a password is never written there: only who did it, for whom and when.
+  address or an Emp ID, added or deleted an account, changed the extra sign-in emails, matched a roster project
+  to a client, or counted or removed an extra production file. A code or a password is never written there: only
+  who did it, for whom and when.
 
 #### Dashboard › Stack report
 
@@ -398,8 +402,8 @@ leads and above (not SMEs); an associate sees only their own, on My day.
 **Associate stack**: every active associate the viewer sees (team leads and above are on the team lead stack),
 grouped by team lead as on Team status, ranked by percentage (a tie: the higher productivity first).
 
-- **Productivity (10)**: Achieved / Expected, the same numbers Team status shows for the month (claims and team task
-  items done, against the daily target on the days in; a half day counts half; no target before the date of
+- **Productivity (10)**: Achieved / Expected, the same numbers Team status shows for the month (claims, team task
+  items and extra production done, against the daily target on the days in; a half day counts half; no target before the date of
   joining). 110.51% and above: 10; 99.51%: 8; 95.51%: 6; 90.51%: 4; 84.51%: 2; less: 0. Someone Team status does not
   count (a desk role) has Achieved and Expected typed by the team lead. AVR Production and Avr Target are the two
   divided by the days present.
@@ -458,8 +462,48 @@ month (Stack, total, percentage), their earlier locked months as a small trend, 
 **Download Excel** (team leads and above, what they see): the owner's layout. **Stack Sheet** has the Team Member
 Stack under her group headers (Month, Productivity 10, Quality 10, Attendance 10, Others 5, TOS 5, Total Score 40,
 Attriation) in her column order, and the **TL STACK** under it; **Associate Stack** and **TL Stack** state the
-bands. Values, not formulas: dates are dates, percentages percentages, and a name or typed text starting with
+bands; **Extra production** (when the month has some) lists who has extra production in Achieved, how much and from
+which files. Values, not formulas: dates are dates, percentages percentages, and a name or typed text starting with
 = + - @ stays text.
+
+#### Dashboard › Stack report › Extra production
+
+Some work a team is given is not done in Brahmastra (an eligibility check, a form, a payer portal job), so no claim
+entry shows it. The team lead keeps it in a **production file in OneDrive**, one row a piece of work, and Brahmastra
+counts it as the person's work done on that day, the same way a claim worked counts.
+
+- **Upload.** On the Stack report, team leads and above (not SMEs, billers or desk people) have **Extra production**
+  for the month on screen. It opens OneDrive (the same picker as the inventory upload): pick an Excel (.xlsx) or CSV
+  file. Files come from OneDrive only, never from the computer; nothing is written back.
+- **Reading.** Every sheet whose header row has a **DOW** column (or Date of Work, Work Date, Date Worked) and a
+  **User Name** column (or Username, User, Worked By, Employee Name, Associate Name), any case and spacing; hidden
+  sheets are left out. An **Emp ID** column (or Employee ID, ECN), when there is one, matches people first. Each row
+  is one piece of work. DOW can be an Excel date, 11/13/2026 or 2026-11-13; text dates are read one way for the whole
+  column, as Third Eye does: day first when more of them can only be day first (31/10/2026) than only month first
+  (10/31/2026), else month first (05/06/2026 is May 6; 31/31/2026 is no date either way and says nothing). A row with
+  no DOW, a DOW that is no date or no user name is left out and counted.
+- **People.** Each name is matched to an active person of the uploader's span (a team lead's team, a manager's,
+  the VP's and the admin's span): the Emp ID first, then the name in any case, extra spaces ignored. Brahmastra never
+  guesses between two people with the same name: those rows are left out, and an Emp ID column tells them apart. A
+  name not found, and someone Team status does not count (a team lead, an SME, a desk person), are named with how many
+  rows each, and not counted.
+- **Before anything is saved**, the preview shows the rows read and to count, the rows per person (Emp ID, team lead,
+  days, from and to), the dates, the months, what is left out and why, the months already locked, and what the same
+  file counted before. **Count** saves it.
+- **Kept.** Each upload keeps the OneDrive file (its id, name and link), who uploaded it and when, and the counts per
+  person per day. The same OneDrive file uploaded again **replaces** what it counted before, never adds to it. Rows
+  dated after today, or in a month that is locked for the person's team, are not counted, and a locked month keeps
+  what it counted until the admin unlocks it. Uploads and removals are in the audit trail.
+- **The month's files** are listed at the bottom of the Stack report, each with its link, who uploaded it, its rows in
+  the month, its people and dates, and **Remove** (it takes the file's counts off for the remover's people, outside
+  a locked month).
+- **Where it counts.** On its DOW, as work done: on Team status (attainment, its line "250 claims · incl. 40
+  extra", the KPI, Performance by status and the CSV's **Extra production** column), and so in the Stack report's
+  Productivity ("incl. 40 extra" under Achieved; a person's *how it was worked out* names the files; *How it is
+  worked out* lists the month's files) and its Excel. The target does not change. The Monday digest counts each
+  client's claim entries, and a file of extra production has no client, so it is not there (as team task items are
+  not).
+- **Size.** Up to 10 MB and 50,000 rows a file; split a bigger one, for example a file a month.
 
 #### SLA
 

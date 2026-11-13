@@ -623,6 +623,68 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     await as("tina");
   });
 
+  // last, as it fakes OneDrive for the rest of the run
+  S("Stack report: extra production from a file in OneDrive (OneDrive faked)");
+  await step("extra-production", async () => {
+    const XLSX = require("xlsx");
+    // the day of work: the last weekday before today in India (a finished day); its month is the Stack report's month on screen
+    const ist = new Date(Date.now() + 330 * 60000); let dd = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - 1));
+    while (dd.getUTCDay() === 0 || dd.getUTCDay() === 6) dd = new Date(dd.getTime() - 86400000);
+    const DOW = dd.toISOString().slice(0, 10), XM = DOW.slice(0, 7), serial = Math.round((Date.parse(DOW + "T00:00:00Z") - Date.UTC(1899, 11, 30)) / 86400000);
+    // the team lead's made-up production file: 3 rows for Arun (by Emp ID), 2 for Cara (her name in another case), 2 names not found
+    // (one written as markup, which must show as text) and a row with no DOW
+    const NAME = "Extra production - Tina Lead.xlsx";
+    const aoa = [["DOW", "Emp ID", "User Name", "Task"], ...Array(3).fill([serial, "A1", "Arun Agent", "Eligibility check"]), ...Array(2).fill([serial, "", "cara  AGENT", "Portal follow-up"]),
+      [serial, "", "Sona Sample", "Form"], [serial, "", "<b>Bold</b> Sample", "Form"], ["", "A1", "Arun Agent", "Form"]];
+    const wbx = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wbx, XLSX.utils.aoa_to_sheet(aoa), "Extra work");
+    const FILE = Buffer.from(XLSX.write(wbx, { type: "buffer", bookType: "xlsx" })).toString("base64");
+    // OneDrive faked through the page's own hook (window.__BRAHMASTRA_MS_MOCK): the team lead's OneDrive, one folder, the file
+    await p.addInitScript(({ FILE, NAME }) => {
+      const J = (o) => new Response(JSON.stringify(o), { status: 200, headers: { "Content-Type": "application/json" } });
+      const item = (id, name, file) => ({ id, name, size: file ? 9000 : 0, file: file ? { mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } : undefined, folder: file ? undefined : { childCount: 1 },
+        lastModifiedDateTime: "2026-11-12T10:00:00Z", lastModifiedBy: { user: { displayName: "Tina Lead" } }, parentReference: { driveId: "b!wfDrive" },
+        webUrl: "https://purviewhealthcare-my.sharepoint.com/personal/tina_lead/Documents/" + encodeURIComponent(name) });
+      window.__BRAHMASTRA_MS_MOCK = { account: async () => ({ username: "tina@purview-healthcare.com" }), signIn: async () => ({ username: "tina@purview-healthcare.com" }), token: async () => "stand-in-token", forget: async () => {},
+        fetch: async (url) => { const u = String(url);
+          if (/\/me\/drive\/root\?/.test(u)) return J(item("root", "root"));
+          if (/\/items\/root\/children/.test(u)) return J({ value: [item("fold1", "Production files")] });
+          if (/\/items\/fold1\/children/.test(u)) return J({ value: [item("xp1", NAME, true)] });
+          if (/\/items\/xp1\?/.test(u)) return J({ ...item("xp1", NAME, true), "@microsoft.graph.downloadUrl": "https://download.invalid/xp1" });
+          if (/download\.invalid\/xp1/.test(u)) return new Response(Uint8Array.from(atob(FILE), (c) => c.charCodeAt(0)), { status: 200 });
+          return new Response("{}", { status: 404 }); } };
+    }, { FILE, NAME });
+    const pickIt = async () => { await p.locator(".stk-xbtn").first().click(); await t(1500); await p.locator('.overlay tr:has-text("Production files")').first().click(); await t(1500);
+      await p.locator(`.overlay tr:has-text("${NAME}")`).first().click(); await t(3000); };
+    await as("tina"); await open("#/dashboard?tab=stack&month=" + XM); await t(500); await p.reload(); await t(4500);
+    ok("the team lead's Stack report has Extra production, and no way to pick a file from the computer", (await p.locator(".stk-xbtn").count()) === 1 && !(await p.locator('.main input[type="file"]').count()));
+    await pickIt();
+    const pv = await p.locator(".overlay .modal").first().innerText();
+    ok("OneDrive opens, the file is read, and the preview shows what it would count before anything is saved: 8 rows, 5 to count, 3 left out",
+      /Rows read\s*8\b/i.test(pv) && /To count\s*5\b/i.test(pv) && /Left out\s*3\b/i.test(pv) && /Arun Agent/.test(pv) && /Cara Agent/.test(pv) && /1 row with no DOW/.test(pv), pv.slice(0, 600));
+    ok("a name from the file is shown as text, never as markup", /<b>Bold<\/b> Sample: 1 row/.test(pv) && (await p.locator(".overlay .xp-names b").count()) === 0, pv.slice(-500));
+    ok("nothing is saved by the preview", (await rpc("team.status", { from: DOW, to: DOW })).rows.every((x) => !x.extra));
+    await p.locator('.overlay button:has-text("Count 5 rows")').first().click(); await t(4000);
+    const lst = await p.locator(".stk-extra").first().innerText();
+    ok("counted: the month's files list it, with Remove", lst.includes(NAME) && /Tina Lead/.test(lst) && (await p.locator('.stk-extra button:has-text("Remove")').count()) === 1, lst);
+    const ts = await rpc("team.status", { from: DOW, to: DOW });
+    ok("the work reaches Team status on its DOW: Arun 3, Cara 2", ts.rows.find((x) => x.name === "Arun Agent").extra === 3 && ts.rows.find((x) => x.name === "Cara Agent").extra === 2, ts.rows.map((x) => [x.name, x.extra]));
+    ok("and the Stack report's Productivity shows its extra part", /incl\. 3 extra/.test(await p.locator('.main table.stk-t tr:has-text("Arun Agent")').first().innerText()), await p.locator('.main table.stk-t tr:has-text("Arun Agent")').first().innerText());
+    await pickIt();
+    ok("the same OneDrive file again says it replaces what it counted, never adds", /This file was counted before/.test(await p.locator(".overlay .modal").first().innerText()));
+    await p.locator('.overlay button:has-text("Cancel")').first().click(); await t(600);
+    await p.locator('.dash-subtabs button:has-text("Team status")').first().click(); await t(3000);
+    await p.locator('.drange button:has-text("Custom")').first().click(); await t(500);
+    await p.locator(".drange-c input").nth(0).fill(DOW); await p.locator(".drange-c input").nth(1).fill(DOW); await t(3000);
+    const tsRow = await p.locator('.main table.ts tr:has-text("Arun Agent")').first().innerText();
+    ok("Team status shows the extra part beside the claims", /incl\. 3 extra/.test(tsRow), tsRow);
+    await open("#/dashboard?tab=stack&month=" + XM); await t(500); await p.reload(); await t(4500);
+    await p.locator('.stk-extra button:has-text("Remove")').first().click(); await t(800);
+    await p.locator('.overlay .modal button.danger:has-text("Remove")').first().click(); await t(3500);
+    ok("Remove takes the file's counts off", /No extra production file is counted/.test(await p.locator(".stk-extra").first().innerText()) && (await rpc("team.status", { from: DOW, to: DOW })).rows.every((x) => !x.extra));
+    const au = await p.evaluate(async () => (await (await getLocalBackend()).env.DB.prepare("SELECT action FROM audit_log WHERE action LIKE 'stack.extra%' ORDER BY at").all()).results.map((x) => x.action));
+    ok("the upload and the removal are in the audit trail", au.join() === "stack.extra,stack.extraRemove", au);
+  });
+
   ok("no script errors on any page", !errs.length, errs);
   await b.close(); srv.close();
   const failed = results.filter((x) => !x.pass);
