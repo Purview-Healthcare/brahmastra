@@ -758,14 +758,17 @@ function maskPhi(doc) {
 }
 function signedOut() { setToken(null); try { localStorage.removeItem("drishti:token:v1"); } catch (e) {} try { window.dispatchEvent(new CustomEvent("brahmastra:signedout")); } catch (e) {} }
 
-/* Upload mapped claims in chunks; the first chunk opens the batch. */
+/* Upload mapped claims in chunks; the first chunk opens the batch. A part the server refuses (or a lost connection) stops the
+   upload: the error carries how many claims the parts before it loaded (they stay loaded). */
 async function uploadClaims({ client_id, location_id, kind, file_name, claims, summary, rows_read, source, web_url, onProgress }) {
   const totals = { inserted: 0, updated: 0, reopened: 0, closed: 0, excluded: 0, skipped: 0 };
   const parts = chunk(claims, 250);
   let batch_id = null;
   if (!parts.length) parts.push([]);
   for (let i = 0; i < parts.length; i++) {
-    const r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, source: source || "file", web_url: web_url || "", claims: parts[i], final: i === parts.length - 1, summary });
+    let r;
+    try { r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, source: source || "file", web_url: web_url || "", claims: parts[i], final: i === parts.length - 1, summary }); }
+    catch (e) { e.loaded = totals.inserted + totals.updated + totals.reopened + totals.closed + totals.excluded; throw e; }
     batch_id = r.batch_id;
     for (const k in totals) totals[k] += r[k] || 0;
     if (onProgress) onProgress((i + 1) / parts.length);
@@ -803,7 +806,8 @@ const Spinner = ({ label }) => <span className="muted small"><span className="sp
    Only the top one (the last in the page) answers Escape and Tab, so a box opened on a box closes on its own; Escape in an
    open dropdown closes only the dropdown (Combo takes it first). Focus starts inside the top pop-up, Tab and Shift+Tab stay
    inside it, and focus goes back where it was when it closes. When something was typed in it, Escape, a click on the shade
-   or its Close button first asks "Discard what you typed?" (Keep editing / Discard): typed text is never lost silently. */
+   or its Close button first asks "Discard what you typed?" (Keep editing / Discard), and so do the browser's Back and Forward
+   (the page stays until Discard) and a reload (the browser's own "Leave site?"): typed text is never lost silently. */
 const topLayer = () => { const all = document.querySelectorAll("[data-layer]"); return all.length ? all[all.length - 1] : null; };
 const TYPED_SEL = 'textarea, input:not([type]), input[type="text"], input[type="number"], input[type="email"], input[type="date"], input[type="month"], input[type="time"], input[type="tel"], input[type="url"], input[type="password"]';
 const FOCUS_SEL = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
@@ -819,10 +823,20 @@ function tabStop(list, active, back) {
 }
 /* Typed text that closing would lose: a box still in the pop-up whose text changed since it was first touched. */
 const typedIn = (seen, root) => [...seen].some(([el, was]) => el.isConnected && root.contains(el) && el.value !== was);
+/* The open pop-ups that ask before typed text is thrown away, so the browser's Back and Forward (App) and a reload (the
+   browser's own "Leave site?") ask first too: { typed(), ask(then) }, the last opened on top. */
+const LAYER_GUARDS = new Set();
+/* Back, Forward or a new address (from cur to h): the top pop-up holding typed text, which asks before the page moves; none when
+   nothing would be lost or the page stays where it is. */
+function typedLayerFor(cur, h) {
+  if (!cur || !cur.view || !h || (cur.view === h.view && JSON.stringify(cur.params) === JSON.stringify(h.params))) return null;
+  return [...LAYER_GUARDS].reverse().find((x) => x.typed()) || null;
+}
 function useLayer(onClose, guard = true) {
   const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose);
   closeFn.current = onClose;
   const [asking, setAsking] = useState(false);
+  const after = useRef(null);   // what follows a Discard asked for by Back or Forward: going where the person was going
   const [opener] = useState(() => document.activeElement);
   const close = () => { const f = closeFn.current; if (!f) return; if (guard && ref.current && typedIn(seen.current, ref.current)) setAsking(true); else f(); };
   const closeRef = useRef(close);
@@ -843,7 +857,11 @@ function useLayer(onClose, guard = true) {
       if (to) { e.preventDefault(); (to === "box" ? box.current || el : to).focus(); }
     };
     window.addEventListener("keydown", key);
+    const g = { typed: () => !!(guard && closeFn.current && el.isConnected && typedIn(seen.current, el)), ask: (then) => { after.current = then; setAsking(true); } };
+    const unload = (e) => { if (g.typed()) { e.preventDefault(); e.returnValue = ""; } };
+    LAYER_GUARDS.add(g); window.addEventListener("beforeunload", unload);
     return () => {
+      LAYER_GUARDS.delete(g); window.removeEventListener("beforeunload", unload);
       el.removeEventListener("focusin", note); el.removeEventListener("beforeinput", note, true); window.removeEventListener("keydown", key);
       if (opener && opener !== document.body && opener.isConnected && opener.focus) { try { opener.focus({ preventScroll: true }); } catch (e) {} }
     };
@@ -854,7 +872,7 @@ function useLayer(onClose, guard = true) {
     if (e.target !== s || e.clientX >= r.left + s.clientWidth || e.clientY >= r.top + s.clientHeight) return;
     e.preventDefault(); close();
   };
-  const ask = asking ? <DiscardAsk onKeep={() => setAsking(false)} onDiscard={() => { setAsking(false); if (closeFn.current) closeFn.current(); }} /> : null;
+  const ask = asking ? <DiscardAsk onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
   return { ref, box, close, shade, ask };
 }
 function DiscardAsk({ onKeep, onDiscard }) {
@@ -911,6 +929,9 @@ function Confirm({ title, text, confirmLabel = "Confirm", danger, onYes, onNo, b
 const Field = ({ label, children, hint, style }) => (
   <label className="field" style={style}><span>{label}</span>{children}{hint && <span className="tiny muted" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{hint}</span>}</label>
 );
+/* How much of a box's limit is used, shown once the text nears it and in red over it (the server refuses longer text with a
+   message naming the box; it never cuts it). */
+const TextLimit = ({ v, max }) => { const n = String(v == null ? "" : v).length; return n > max * 0.9 ? <span className={"tiny " + (n > max ? "red-ink" : "muted")} style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{fmtInt(n)} of {fmtInt(max)} characters{n > max ? ": too long, shorten it" : ""}</span> : null; };
 const Kpi = ({ label, value, sub, tone, onClick, on, title }) => (
   <div className={"kpi" + (tone ? " " + tone : "") + (on ? " on" : "")} onClick={onClick} title={title} role={onClick ? "button" : undefined} style={onClick ? { cursor: "pointer" } : undefined}>
     <div className="l">{label}</div><div className="v">{value}</div>{sub && <div className="s">{sub}</div>}
@@ -2666,7 +2687,7 @@ function TeamStatusTab({ ctx, me, go }) {
         <div className="stack">
           <div className="grid g2"><Field label="Start (training, OJT or a plan)" hint="Empty: the date of joining"><input className="input" type="date" value={edit.start || ""} onChange={(e) => setEdit({ ...edit, start: e.target.value })} /></Field>
             <Field label="Due in production (or plan end)" hint={"Empty: " + d.ramp_weeks + " weeks from the start"}><input className="input" type="date" value={edit.end || ""} onChange={(e) => setEdit({ ...edit, end: e.target.value })} /></Field></div>
-          <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={edit.comment || ""} onChange={(e) => setEdit({ ...edit, comment: e.target.value })} placeholder="What was agreed, what to check next" /></Field>
+          <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={edit.comment || ""} onChange={(e) => setEdit({ ...edit, comment: e.target.value })} placeholder="What was agreed, what to check next" /><TextLimit v={edit.comment} max={500} /></Field>
           {edit.r.comment_by && <div className="tiny muted">Last saved by {edit.r.comment_by}{edit.r.comment_at ? " · " + fmtWhen(edit.r.comment_at) : ""}</div>}
         </div></Modal>}
     </div>
@@ -3683,6 +3704,11 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
   const [leftOut, setLeftOut] = useState([]);   // rows for a switched-off location: left out, never loaded
+  const [stopped, setStopped] = useState(null);   // a load that stopped half way: the server's message and the claims loaded before it
+  // this person's uploads that did not finish (the page was closed, reloaded or cut off while it loaded) and were not loaded again since
+  const mineQ = useRpc("inventory.batches", {}, []);
+  const mineOpen = ((mineQ.data && mineQ.data.batches) || []).filter((b, _, all) => me && b.uploaded_by === me.id && b.unfinished && !b.undone_at
+    && !all.some((x) => x.client_id === b.client_id && x.file_name === b.file_name && x.uploaded_at > b.uploaded_at && !x.unfinished && !x.undone_at));
   const inputRef = useRef();
   const client = ctx.clients.find((c) => c.id === clientId);
   const today = todayISO();
@@ -3721,12 +3747,13 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const built = useMemo(() => (table ? buildClaims({ rows: table.rows, mapping, kind, today }) : null), [table, mapping, kind]);
   const [autoGo, setAutoGo] = useState(false);
   useEffect(() => { if (autoGo && built && file) { setAutoGo(false); load(); } }, [autoGo, built, file]);
-  const backToStart = () => { setStep(0); setFile(null); setTable(null); setMapping({}); };
+  const backToStart = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setStopped(null); };
   const mappingOk = !!(mapping.claim_no || (mapping.patient && mapping.dos));
   const samples = (h) => { if (!h || !table) return ""; const vals = []; for (const r of table.rows) { const v = r[h]; if (v !== "" && v != null) vals.push(String(v).slice(0, 28)); if (vals.length >= 3) break; } return vals.join(" · "); };
   const load = async () => {
     if (!built) return;
     setBusy(true); setStep(4); setProgress(0);
+    let loaded = 0;   // claims loaded by the groups already done (a file split across locations loads one group after another)
     try {
       const groups = [];
       // the client's locations as they are now (one may have been switched off since this page loaded)
@@ -3759,15 +3786,16 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           try { row.assigned = await autoAllocate({ ctx, client, loc: g.loc }); } catch (e) { row.assignError = e.message; }
         }
         results.push(row);
+        loaded += r.inserted + r.updated + r.reopened + r.closed + r.excluded;
         done++;
       }
       setResult(results); setLeftOut(off); setProgress(1);
       toast(!live.length ? "Nothing was loaded: the location is switched off." : off.length ? "Inventory loaded. Some rows were left out: see below." : "Inventory loaded.", live.length ? "ok" : "err");
       reload();
-    } catch (e) { toast(e.message, "err"); setStep(3); }
+    } catch (e) { toast(e.message, "err"); setStopped({ msg: e.message, loaded: loaded + (e.loaded || 0) }); setProgress(null); if (loaded + (e.loaded || 0)) reload(); }
     setBusy(false);
   };
-  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setLeftOut([]); setProgress(null); };
+  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setLeftOut([]); setProgress(null); setStopped(null); mineQ.reload(); };
   const downloadSample = (k) => {
     const rows = makeSampleRows({ kind: k, seed: k === "worked" ? 5 : 3, count: 120, today });
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -3779,6 +3807,10 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       {step === 0 && refreshing && <Spinner label={"Fetching " + (refreshBatch.file_name || "the file") + " again from OneDrive…"} />}
       {step === 0 && !refreshing && (
         <div className="stack">
+          {mineOpen.map((b) => { const where = [b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name, b.location_name].filter(Boolean).join(" · "), n = b.inserted + b.updated + b.reopened + b.closed + b.excluded;
+            return <div key={b.id} className={"alert " + (b.stopped ? "err" : "info")}>{b.stopped
+              ? <><b>Your upload of {b.file_name} stopped part way</b> ({where}, {fmtWhen(b.uploaded_at)}): only {plural(n, "claim")} of it loaded, before the page was closed, reloaded or lost its connection. Upload the file again: claims already loaded are refreshed, not added twice.</>
+              : <><b>Your upload of {b.file_name} is still loading</b> ({where}, started {fmtWhen(b.uploaded_at)}): {plural(n, "claim")} so far. Upload history shows it when it is done.</>}</div>; })}
           <div className="card tight stack" style={{ borderColor: "var(--teal)", alignItems: "flex-start" }}>
             <div className="b">Open OneDrive</div>
             <div className="small muted">{msSupported() ? "Your OneDrive opens here. Click the inventory file and it is read on the spot." : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}.`}</div>
@@ -3854,6 +3886,12 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       {step === 4 && (
         <div className="stack">
           {progress != null && progress < 1 && <div><div className="bar"><i style={{ width: Math.round(progress * 100) + "%" }} /></div><div className="small muted mt8"><span className="spin" /> Loading claims… {Math.round(progress * 100)}%</div></div>}
+          {stopped && (
+            <>
+              <div className="alert err"><b>The upload stopped: {stopped.msg}</b> {stopped.loaded ? `${plural(stopped.loaded, "claim")} of ${file ? file.name : "the file"} loaded before it stopped and stay loaded.` : `Nothing of ${file ? file.name : "the file"} was loaded.`} Load it again: claims already loaded are refreshed, not added twice.</div>
+              <div className="row"><button className="btn primary" disabled={busy || !built} onClick={() => { setStopped(null); load(); }}>Load the file again</button><button className="btn" disabled={busy} onClick={() => { setStopped(null); setStep(table ? 2 : 0); }}>Back</button><button className="btn" disabled={busy} onClick={resetAll}>Upload another file</button></div>
+            </>
+          )}
           {result && (
             <>
               {result.length > 0 && <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>}
@@ -3896,6 +3934,8 @@ function ReviewStep({ built, kind, onBack, onLoad, busy }) {
 function BatchesTable({ ctx, onRefresh }) {
   const [clientId, setClientId] = useState("");
   const q = useRpc("inventory.batches", { client_id: clientId || undefined }, [clientId]);
+  // an upload that stopped part way, then the same file of the same client loaded in full later
+  const loadedAgain = (b) => ((q.data && q.data.batches) || []).some((x) => x.client_id === b.client_id && x.file_name === b.file_name && x.uploaded_at > b.uploaded_at && !x.unfinished && !x.undone_at);
   const [undo, setUndo] = useState(null);
   const [busy, setBusy] = useState(false);
   const doUndo = async () => { setBusy(true); try { const r = await rpc("inventory.undoBatch", { batch_id: undo.id }); const cl = (n) => fmtInt(n) + (n === 1 ? " claim" : " claims");
@@ -3912,7 +3952,9 @@ function BatchesTable({ ctx, onRefresh }) {
       )}
       <ErrorBox error={q.error} />
       <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client · location</th><th>Kind</th><th>File</th><th>By</th><th className="r">Rows</th><th className="r">New</th><th className="r">Refreshed</th><th className="r">Reopened</th><th className="r">Closed</th><th className="r">Excluded</th><th></th></tr></thead>
-        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td style={{ whiteSpace: "nowrap" }}>{b.undone_at ? <span className="tiny muted">undone</span> : <>{b.source === "onedrive" && b.web_url && msSupported() && <button className="btn sm" title="Read the same OneDrive file again and refresh the claims from it" onClick={() => onRefresh(b)}>Refresh</button>} <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button></>}</td></tr>)}
+        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}{b.unfinished && !b.undone_at && (b.stopped
+            ? <span className="badge red" style={{ marginLeft: 6 }} title="Only the claims counted here loaded: the page was closed, reloaded or lost its connection before the last part. Upload the file again: claims already loaded are refreshed, not added twice.">{loadedAgain(b) ? "stopped part way (loaded again later)" : "stopped part way: upload it again"}</span>
+            : <span className="badge blue" style={{ marginLeft: 6 }} title="Its parts are still coming in.">still loading</span>)}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td style={{ whiteSpace: "nowrap" }}>{b.undone_at ? <span className="tiny muted">undone</span> : <>{b.source === "onedrive" && b.web_url && msSupported() && <button className="btn sm" title="Read the same OneDrive file again and refresh the claims from it" onClick={() => onRefresh(b)}>Refresh</button>} <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button></>}</td></tr>)}
           {q.data && !q.data.batches.length && <tr><td colSpan={12} className="muted">No uploads yet.</td></tr>}</tbody></table></div>
       {undo && <Confirm title="Undo this upload?" text="Claims this upload added that nobody has opened or worked yet will be deleted, also from the lists of the billers they were handed to (they are told). Claims it refreshed keep their refreshed values." confirmLabel="Undo upload" danger onYes={doUndo} onNo={() => setUndo(null)} busy={busy} />}
     </div>
@@ -4108,7 +4150,7 @@ function PriorityModal({ ids, rows, onClose, onDone }) {
           <div className="stack mt8" style={{ gap: 6 }}>{LEVELS.map(([k, l, d]) => (
             <label key={k || "auto"} className="check" style={{ alignItems: "flex-start" }}><input type="radio" name="prio-level" checked={level === k} onChange={() => setLevel(k)} /> <span><b>{l}</b> <span className="tiny muted">· {d}{one && base(one) != null && k ? " (score " + applyLevelUI(one.priority, k) + ")" : ""}</span></span></label>))}</div></div>
         <Field label="Why are you changing it?"><Combo value={category} onChange={setCategory} placeholder="Pick the reason…" options={PRIORITY_WHY.map((x) => ({ id: x, label: x }))} /></Field>
-        <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="e.g. Client escalated these on today's call; TFL ends next week for this payer." /></Field>
+        <Field label="Comment"><textarea className="textarea" style={{ minHeight: 70 }} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="e.g. Client escalated these on today's call; TFL ends next week for this payer." /><TextLimit v={comment} max={600} /></Field>
         <div className="alert info" style={{ fontSize: 12.5 }}><b>Why we ask:</b> every change and its reason is kept on the claim's history and in <b>Priority changes</b>. Reviewing them shows what the automatic score misses (a payer, a client request, deadlines), so the allocation rules can be improved and fewer claims need moving by hand.</div>
         <ErrorBox error={err} />
       </div>
@@ -4228,7 +4270,7 @@ function HoldModal({ row, reasons, maxDays, onClose, onDone }) {
     <Modal title={"Can't close yet · " + (row.claim_no || row.type)} sub={[row.client_name, row.type, row.over_h ? row.over_h + " h over the TAT" : row.late ? "past the TAT" : "within the TAT"].filter(Boolean).join(" · ")} onClose={onClose} narrow>
       <div className="stack" style={{ gap: 10 }}>
         <Field label="Why it cannot be closed yet"><select className="input" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}><option value="">Pick a reason…</option>{reasons.map((x) => <option key={x} value={x}>{x}</option>)}</select></Field>
-        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 60 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. Payer said the reprocessing takes 5 working days; call back on the date" /></Field>
+        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 60 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. Payer said the reprocessing takes 5 working days; call back on the date" /><TextLimit v={f.note} max={500} /></Field>
         <Field label="Expected close date" hint={"Up to " + (maxDays || 30) + " days ahead"}><input className="input" type="date" min={today} max={max} value={f.until} onChange={(e) => setF({ ...f, until: e.target.value })} /></Field>
         <div className="tiny muted">It turns amber and leaves the reminders until that date. If it is still open after the date, it comes back as past the expected date. The reason goes on the claim's timeline.</div>
         <ErrorBox error={err} />
@@ -4491,7 +4533,7 @@ function TaskHoldModal({ task, reasons, onClose, onDone }) {
     <Modal title={"Can't close yet · " + clip(task.title, 60)} sub="Why it can't be closed yet, and the date you expect it to close (up to 30 days ahead). No past-TAT reminders until then." narrow onClose={onClose}>
       <div className="stack">
         <Field label="Why it cannot be closed yet"><select className="input" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}><option value="">Pick a reason…</option>{(reasons || []).map((x) => <option key={x} value={x}>{x}</option>)}</select></Field>
-        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 56 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
+        <Field label={f.reason === "Other" ? "The reason" : "Note (optional)"}><textarea className="textarea" style={{ minHeight: 56 }} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /><TextLimit v={f.note} max={500} /></Field>
         <Field label="Expected close date"><input className="input" type="date" min={todayISO()} max={max} value={f.until} onChange={(e) => setF({ ...f, until: e.target.value })} style={{ width: 180 }} /></Field>
         <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!ok || busy} onClick={save}>{busy ? "Saving…" : "Put on hold"}</button></div>
       </div>
@@ -4873,8 +4915,8 @@ function EscalationTrackerView({ ctx, me, params }) {
               <Field label="Channels used"><div className="seg2">{(d.channels || ["Email", "Teams", "Call"]).map((k) => { const on = (form.channels || []).includes(k); return <button key={k} type="button" className={on ? "on" : ""} onClick={() => set("channels", on ? (form.channels || []).filter((x) => x !== k) : [...(form.channels || []), k])}>{k}</button>; })}</div></Field>
               <Field label="Email subject (or a short title)"><input className="input" value={form.email_subject} onChange={(e) => set("email_subject", e.target.value)} placeholder={form.kind === "internal" ? "The email's subject, or a short title if it was not by email" : "The client's email subject, or a short title if it came by call or Teams"} /></Field>
             </div>
-            <Field label="Error description"><textarea className="textarea" style={{ minHeight: 64 }} value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What went wrong, in plain words. No patient names." /></Field>
-            <Field label="Comment"><textarea className="textarea" style={{ minHeight: 44 }} value={form.comment} onChange={(e) => set("comment", e.target.value)} placeholder="What has been done so far, or anything else to know" /></Field>
+            <Field label="Error description"><textarea className="textarea" style={{ minHeight: 64 }} value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What went wrong, in plain words. No patient names." /><TextLimit v={form.description} max={2000} /></Field>
+            <Field label="Comment"><textarea className="textarea" style={{ minHeight: 44 }} value={form.comment} onChange={(e) => set("comment", e.target.value)} placeholder="What has been done so far, or anything else to know" /><TextLimit v={form.comment} max={2000} /></Field>
             <div className="grid g2">
               <Field label="Status"><div className="seg2">{[["open", "Open"], ["resolved", "Closed"]].map(([k, l]) => <button key={k} type="button" className={form.status === k ? "on" : ""} onClick={() => setForm((f) => ({ ...f, status: k, close_on: k === "resolved" ? (f.close_on || todayISO()) : "" }))}>{l}</button>)}</div></Field>
               <Field label={"Error (Y/N)" + (form.status === "resolved" ? "" : " (needed to close)")}><div className="seg2">{[["Y", "Y · our error"], ["N", "N · not our error"]].map(([k, l]) => <button key={k} type="button" className={form.is_error === k ? "on" : ""} onClick={() => set("is_error", k)}>{l}</button>)}</div></Field>
@@ -4888,10 +4930,10 @@ function EscalationTrackerView({ ctx, me, params }) {
               <Field label="DOW of the error" hint="Date of work: the day the work with the error was done"><input className="input" type="date" value={form.error_dow} max={form.day || todayISO()} onChange={(e) => set("error_dow", e.target.value)} /></Field>
             </div>}
             {form.status === "resolved" && <div className="tiny muted">To close: Error (Y/N), with who made it and the DOW when it is our error, the review date, rework completed, root cause, corrective action, preventive action and the close date.</div>}
-            <Field label={"Root cause" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.rca} onChange={(e) => set("rca", e.target.value)} placeholder="Why it happened" /></Field>
+            <Field label={"Root cause" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.rca} onChange={(e) => set("rca", e.target.value)} placeholder="Why it happened" /><TextLimit v={form.rca} max={2000} /></Field>
             <div className="grid g2">
-              <Field label={"Corrective action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.corrective} onChange={(e) => set("corrective", e.target.value)} placeholder="What was done to fix this one" /></Field>
-              <Field label={"Preventive action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.preventive} onChange={(e) => set("preventive", e.target.value)} placeholder="What stops it happening again" /></Field>
+              <Field label={"Corrective action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.corrective} onChange={(e) => set("corrective", e.target.value)} placeholder="What was done to fix this one" /><TextLimit v={form.corrective} max={2000} /></Field>
+              <Field label={"Preventive action" + (form.status === "resolved" ? "" : " (needed to close)")}><textarea className="textarea" style={{ minHeight: 44 }} value={form.preventive} onChange={(e) => set("preventive", e.target.value)} placeholder="What stops it happening again" /><TextLimit v={form.preventive} max={2000} /></Field>
             </div>
             {form.status === "resolved" && <Field label="Close date"><input className="input" type="date" value={form.close_on} min={form.day} max={todayISO()} onChange={(e) => set("close_on", e.target.value)} /></Field>}
           </div>}
@@ -4901,7 +4943,7 @@ function EscalationTrackerView({ ctx, me, params }) {
         <Modal title={"SR" + why.row.sr + " is open over 24 working hours"} sub={why.row.client_name + " · " + why.row.dept + ": " + why.row.description} onClose={() => setWhy(null)} narrow
           footer={<><button className="btn" onClick={() => setWhy(null)} disabled={busy}>Cancel</button><button className="btn primary" onClick={saveWhy} disabled={busy}>{busy ? "Saving…" : "Save"}</button></>}>
           <div className="stack">
-            <Field label="Why it is still open"><textarea className="textarea" style={{ minHeight: 70 }} value={why.reason} onChange={(e) => setWhy({ ...why, reason: e.target.value })} placeholder="e.g. Waiting on the client's corrected charge template" /></Field>
+            <Field label="Why it is still open"><textarea className="textarea" style={{ minHeight: 70 }} value={why.reason} onChange={(e) => setWhy({ ...why, reason: e.target.value })} placeholder="e.g. Waiting on the client's corrected charge template" /><TextLimit v={why.reason} max={1000} /></Field>
             <Field label="Expected close date (TAT)"><input className="input" type="date" min={todayISO()} value={why.expected_on} onChange={(e) => setWhy({ ...why, expected_on: e.target.value })} /></Field>
             <div className="tiny muted">Both go to the client's OneDrive file. If the date passes with the escalation still open, it turns red again and asks for a new date.</div>
           </div>
@@ -4919,6 +4961,8 @@ function hashNav() {
 }
 /* The Monday digest as a landscape dashboard: one card per client, worst first, with its SLA score, Billable and Assign FTE,
    AR, escalations and what pulls it down. Download it as a landscape PDF. */
+/* Money on the digest page: $1.23M, $456K, $9,876. From $999,500 the K figure would round to 1000K, so it is written in M. */
+function digestMoney(n) { return n == null ? "–" : Math.abs(n) >= 999500 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString(LOC); }
 function DigestDashboard({ params, go }) {
   const [span, setSpan] = useState((params && params.span) || "");
   const [week, setWeek] = useState((params && params.week) || "");
@@ -4933,7 +4977,7 @@ function DigestDashboard({ params, go }) {
   if (q.error) return <ErrorBox error={q.error} />;
   if (!d) return <Spinner label="Building the digest…" />;
   if (d.empty) return <div className="card"><h2>Monday digest</h2><Empty>No digests yet: add clients and their managers first, then each manager's clients get a Monday digest.</Empty></div>;
-  const R = d.rollup, money = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + Math.round(n / 1e4) / 100 + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : "$" + Math.round(n).toLocaleString(LOC));
+  const R = d.rollup, money = digestMoney;
   const f1 = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
   const dd = (iso) => fmtDate(iso).replace(/, \d{4}$/, "");
   const bandWord = { ok: "Green", warn: "Amber", miss: "Red" };
@@ -5069,7 +5113,7 @@ function ClientRequestsView({ ctx, me, onChanged, clientId, pick, tat, onHold, o
           <div className="stack">
             {sent.row.note && <div className="cell small">{sent.row.note}</div>}
             <Field label="How it was sent"><div className="seg2">{SENT_HOW_UI.map((h) => <button key={h} type="button" className={sent.how === h ? "on" : ""} onClick={() => setSent({ ...sent, how: h })}>{h}</button>)}</div></Field>
-            <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={sent.note} onChange={(e) => setSent({ ...sent, note: e.target.value })} placeholder="e.g. Emailed Dr Vontella's office manager, asked for the ERA by Friday" /></Field>
+            <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={sent.note} onChange={(e) => setSent({ ...sent, note: e.target.value })} placeholder="e.g. Emailed Dr Vontella's office manager, asked for the ERA by Friday" /><TextLimit v={sent.note} max={600} /></Field>
             <div className="tiny muted">The department sees who sent it and when. If the client has not answered in 3 working days, it comes back to them as Chase the client.</div>
           </div>
         </Modal>
@@ -5105,10 +5149,10 @@ function ReviewModal({ row, people, onClose, onDone }) {
       <div className="stack">
         {row.review_context && <div className="cell small">{row.review_context}</div>}
         <div className="grid g2">
-          <Field label="1. Why it came to you"><textarea className="textarea" style={{ minHeight: 56 }} value={f.why} onChange={(e) => set("why", e.target.value)} placeholder="e.g. Escalated by the biller: payer says the claim was never received" /></Field>
-          <Field label="2. What you reviewed"><textarea className="textarea" style={{ minHeight: 56 }} value={f.reviewed} onChange={(e) => set("reviewed", e.target.value)} placeholder="e.g. Claim history, the payer portal and the clearinghouse report" autoFocus /></Field>
-          <Field label="3. Findings"><textarea className="textarea" style={{ minHeight: 56 }} value={f.findings} onChange={(e) => set("findings", e.target.value)} placeholder="e.g. Submitted to the wrong payer ID" /></Field>
-          <Field label="4. Next action"><textarea className="textarea" style={{ minHeight: 56 }} value={f.next} onChange={(e) => set("next", e.target.value)} placeholder="e.g. Correct the payer ID and resubmit today" /></Field>
+          <Field label="1. Why it came to you"><textarea className="textarea" style={{ minHeight: 56 }} value={f.why} onChange={(e) => set("why", e.target.value)} placeholder="e.g. Escalated by the biller: payer says the claim was never received" /><TextLimit v={f.why} max={1000} /></Field>
+          <Field label="2. What you reviewed"><textarea className="textarea" style={{ minHeight: 56 }} value={f.reviewed} onChange={(e) => set("reviewed", e.target.value)} placeholder="e.g. Claim history, the payer portal and the clearinghouse report" autoFocus /><TextLimit v={f.reviewed} max={1000} /></Field>
+          <Field label="3. Findings"><textarea className="textarea" style={{ minHeight: 56 }} value={f.findings} onChange={(e) => set("findings", e.target.value)} placeholder="e.g. Submitted to the wrong payer ID" /><TextLimit v={f.findings} max={2000} /></Field>
+          <Field label="4. Next action"><textarea className="textarea" style={{ minHeight: 56 }} value={f.next} onChange={(e) => set("next", e.target.value)} placeholder="e.g. Correct the payer ID and resubmit today" /><TextLimit v={f.next} max={2000} /></Field>
         </div>
         <Field label="Send it to">
           <div className="stack" style={{ gap: 8 }}>
@@ -5165,7 +5209,7 @@ function EscalationsView({ ctx, me, refreshAttention, clientId, pick, tat, onHol
           footer={<><button className="btn" onClick={() => setAnswer(null)} disabled={busy}>Cancel</button><button className="btn primary" onClick={send} disabled={busy || answer.text.trim().length < 8}>{busy ? "Saving…" : "Send answer"}</button></>}>
           <div className="stack">
             {answer.row.last_note && <div className="cell small">{answer.row.last_note}</div>}
-            <Field label="Your answer"><textarea className="textarea" value={answer.text} onChange={(e) => setAnswer({ ...answer, text: e.target.value })} placeholder="What the biller should do next…" autoFocus /></Field>
+            <Field label="Your answer"><textarea className="textarea" value={answer.text} onChange={(e) => setAnswer({ ...answer, text: e.target.value })} placeholder="What the biller should do next…" autoFocus /><TextLimit v={answer.text} max={4000} /></Field>
             {answer.row.assigned_to && <label className="check"><input type="checkbox" checked={answer.back} onChange={(e) => setAnswer({ ...answer, back: e.target.checked })} /> Put it back on {answer.row.assigned_name || "the biller"}'s list today</label>}
           </div>
         </Modal>
@@ -5709,7 +5753,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
           {outcome === "other" && <Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Waiting for the clearinghouse to come back up" autoFocus /></Field>}
           {outcome !== "resume" && outcome !== "pending" && outcome !== "inprocess" && outcome !== "other" && <Field label={outcome === "back" ? "What is needed from AR" : "What is needed from the client"}><Combo value={reason} onChange={setReason} placeholder="Pick…" options={reasons.map((x) => ({ id: x, label: x }))} /></Field>}
           <Field label={outcome === "resume" || outcome === "inprocess" ? "Comment (optional)" : "Comment"} hint={outcome === "resume" || outcome === "inprocess" ? "" : "At least a few words"}><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} autoFocus={outcome !== "other"}
-            placeholder={outcome === "back" ? "What AR should do or fix before sending it again." : outcome === "client" ? "What is needed from the client, so the team lead can send it." : outcome === "pending" || outcome === "other" ? "Where it stands, e.g. posted 2 of 3 lines, waiting for the batch to close." : outcome === "inprocess" ? "Optional: what you are doing now." : "What the client sent or said."} /></Field>
+            placeholder={outcome === "back" ? "What AR should do or fix before sending it again." : outcome === "client" ? "What is needed from the client, so the team lead can send it." : outcome === "pending" || outcome === "other" ? "Where it stands, e.g. posted 2 of 3 lines, waiting for the batch to close." : outcome === "inprocess" ? "Optional: what you are doing now." : "What the client sent or said."} /><TextLimit v={note} max={2000} /></Field>
           <div className="tiny muted">{help}</div>
           <ErrorBox error={err} />
         </div>
@@ -5724,7 +5768,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
           <Field label="Accepted on"><input className="input" type="date" value={p.date} max={todayISO()} onChange={(e) => setP({ ...p, date: e.target.value })} /></Field>
           <Field label="Payer claim # / reference (optional)"><input className="input mono" value={p.ref} onChange={(e) => setP({ ...p, ref: e.target.value })} autoFocus /></Field>
         </div> : <Field label="Rejection code (what was wrong)"><Combo value={reason} onChange={setReason} placeholder="Pick the code…" options={REJECT_REASONS_UI.map((x) => ({ id: x, label: x }))} /></Field>}
-        <Field label={outcome === "complete" ? "Note (optional)" : "What was rejected"}><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder={outcome === "complete" ? "" : "Rejection message, what must be corrected before resubmitting."} /></Field>
+        <Field label={outcome === "complete" ? "Note (optional)" : "What was rejected"}><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder={outcome === "complete" ? "" : "Rejection message, what must be corrected before resubmitting."} /><TextLimit v={note} max={2000} /></Field>
         {outcome === "complete" && <ProofFiles files={files} setFiles={setFiles} why={PROOF_WHY.subcheck} />}
         <div className="tiny muted">{outcome === "complete" ? "The claim shows Submission accepted; the biller still follows up on payment after 15 days." : "The claim goes straight back to the Submission team's queue to correct and resubmit, within the client's TAT."}</div>
         <ErrorBox error={err} />
@@ -5746,7 +5790,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
           </div>
           {posting && <PostingAmounts h={h} p={p} setP={setP} />}
           {h.dept === "submission" && <SubmissionFileFields p={p} setP={setP} />}
-          <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything AR or QA should know about this one." /></Field>
+          <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything AR or QA should know about this one." /><TextLimit v={note} max={2000} /></Field>
           <ProofFiles files={files} setFiles={setFiles} why={PROOF_WHY[h.dept] || PROOF_WHY.submission} />
           <div className="tiny muted">{posting ? "The claim shows Payment posted and closes for AR; posting QA audits it later." : "The claim goes back to the biller with a 15-day follow-up, and a recheck (accepted or rejected?) opens 48 working hours from now."}</div>
         </>
@@ -6833,7 +6877,7 @@ function FeedbackModal({ page, onClose }) {
       footer={<><button className="btn" onClick={onClose} disabled={!!busy}>Cancel</button><button className="btn primary" onClick={send} disabled={!ok}>{busy === "Sending…" ? "Sending…" : "Send feedback"}</button></>}>
       <div className="stack">
         <div className="seg2" role="radiogroup">{FB_KINDS.map(([k, l]) => <button key={k} type="button" className={kind === k ? "on" : ""} onClick={() => setKind(k)}>{l}</button>)}</div>
-        <Field label="What is it about" hint={"At least a few words · page: " + page}><textarea className="textarea" style={{ minHeight: 110 }} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder={FB_HINT[kind]} autoFocus /></Field>
+        <Field label="What is it about" hint={"At least a few words · page: " + page}><textarea className="textarea" style={{ minHeight: 110 }} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder={FB_HINT[kind]} autoFocus /><TextLimit v={msg} max={4000} /></Field>
         <div className={"fb-drop" + (drag ? " on" : "")} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); add([...e.dataTransfer.files]); }}>
           <button type="button" className="btn sm" disabled={!!busy || files.length >= 4} onClick={capture}>{busy === "Taking the screenshot…" ? busy : "📷 Capture this screen"}</button>
           <button type="button" className="btn sm" disabled={!!busy || files.length >= 4} onClick={() => pickRef.current && pickRef.current.click()}>📎 Attach pictures or a PDF</button>
@@ -7057,6 +7101,7 @@ function CoachDrawer({ userId, onClose }) {
           <div className="row mt8" style={{ gap: 6, flexWrap: "wrap" }}><div className="seg2">{COACH_KIND.map(([k, l]) => <button key={k} className={n.kind === k ? "on" : ""} onClick={() => setN({ ...n, kind: k })}>{l}</button>)}</div></div>
           <div className="row mt8" style={{ gap: 6 }}><textarea className="textarea" style={{ minHeight: 54, flex: 1 }} value={n.text} onChange={(e) => setN({ ...n, text: e.target.value })} placeholder="What was discussed, agreed or worth keeping in mind" />
             <button className="btn primary" disabled={busy || n.text.trim().length < 8} onClick={add}>Add</button></div>
+          <TextLimit v={n.text} max={2000} />
           {d.notes.map((x) => <div key={x.id} className="c3-log mt8"><b>{(COACH_KIND.find(([k]) => k === x.kind) || ["", x.kind])[1]} · {fmtWhen(x.at)} · {x.by_name}{x.mine && <button className="btn link sm" style={{ padding: "0 4px" }} disabled={busy} onClick={() => del(x)}>remove</button>}</b><div>{x.text}</div></div>)}
           {!d.notes.length && <div className="tiny muted mt8">No notes yet.</div>}</div>
       </div>}
@@ -7083,7 +7128,7 @@ function TemplatesView({ ctx, me }) {
       {edit && <Modal title={edit.id ? "Edit template" : "New template"} narrow onClose={() => setEdit(null)} footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || edit.title.trim().length < 3 || edit.text.trim().length < 8} onClick={save}>Save</button></>}>
         <div className="stack">
           <Field label="Title" hint="What billers see in the list"><input className="input" value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="e.g. Claim in process, call back in 15 days" autoFocus /></Field>
-          <Field label="Text" hint="Inserted into RCA / findings; leave blanks like [ref] to fill in"><textarea className="textarea" style={{ minHeight: 110 }} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} placeholder="Called the payer, claim is in process since [date], expected to finalize in [n] days. Ref [ref]." /></Field>
+          <Field label="Text" hint="Inserted into RCA / findings; leave blanks like [ref] to fill in"><textarea className="textarea" style={{ minHeight: 110 }} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} placeholder="Called the payer, claim is in process since [date], expected to finalize in [n] days. Ref [ref]." /><TextLimit v={edit.text} max={1500} /></Field>
           <Field label="Client"><Combo value={edit.client_id} onChange={(v) => setEdit({ ...edit, client_id: v })} placeholder="Every client" options={ctx.clients.filter((c) => c.active && c.can_edit !== false).map((c) => ({ id: c.id, label: c.name }))} /></Field>
         </div></Modal>}
     </div>
@@ -7105,7 +7150,7 @@ function drPerNote(dr) { const l = dr && dr.kind && dr.kind !== "month" ? String
 const INV_STAGES = [["open", "Unassigned", "#9AA5B1"], ["list", "On a biller's list", "#22CAE4"], ["later", "Worked, follow-up later", "#30C48D"], ["due", "Follow-up due today", "#F5A623"],
   ["overdue", "Follow-up overdue", "#E5484D"], ["waiting", "Waiting on the client", "#7C5CFF"], ["desk", "At Posting / Submission", "#2563EB"]];
 // a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none (the same rule as the server's cards)
-const fmtK = (v) => { const a = Math.abs(Number(v) || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((Number(v) || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
+const fmtK = (v) => { const a = Math.abs(Number(v) || 0), n = String(a >= 999500 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((Number(v) || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
 function InvStrip({ stages, mini }) {
   const tot = INV_STAGES.reduce((t, [k]) => t + (stages[k] ? stages[k].n : 0), 0);
   if (!tot) return <div className={mini ? "inv-mini" : "inv-strip"} style={{ background: "var(--soft)" }} />;
@@ -7475,6 +7520,9 @@ function ClientView({ ctx, me, go, params }) {
   );
 }
 /* ---------- SAAG reference ---------- */
+/* Where a SAAG action lands, as the work form and the server apply it: the four desk actions follow Purview's workflow
+   (ROUTED_EFFECTIVE), every other action the workbook's effective matrix. */
+function saagLanding(a) { const routed = ROUTED_EFFECTIVE(a.action), eff = routed || a.effective || ""; return { effective: eff, bucket: EFFECTIVE_BUCKET[eff] || "", routed: !!routed }; }
 function SaagView() {
   const [status, setStatus] = useState(SAAG.statuses[0] || "");
   const [sub, setSub] = useState("");
@@ -7491,7 +7539,7 @@ function SaagView() {
       <div className="grid g2-1">
         <div className="card tight"><div className="b small mb">Sub-statuses of {status}</div><div className="pill-list">{subs.map((u) => <button key={u} className={"chip " + (sub === u ? "on" : "")} onClick={() => setSub(u)}>{u}</button>)}</div></div>
         <div className="card tight"><div className="b small mb">{sub ? `Actions for ${status} › ${sub}` : "Pick a sub-status to see its actions"}</div>
-          {sub && <div className="table-wrap"><table className="t"><thead><tr><th>Action</th><th>Effective matrix</th><th>Bucket</th></tr></thead><tbody>{acts.map((a) => <tr key={a.action}><td>{a.action}</td><td className="small">{a.effective || "–"}</td><td><span className={"badge " + (EFFECTIVE_BUCKET[a.effective] === "Closed" ? "green" : "teal")}>{EFFECTIVE_BUCKET[a.effective] || "–"}</span></td></tr>)}</tbody></table></div>}</div>
+          {sub && <div className="table-wrap"><table className="t"><thead><tr><th>Action</th><th>Effective matrix</th><th>Bucket</th></tr></thead><tbody>{acts.map((a) => { const l = saagLanding(a); return <tr key={a.action}><td>{a.action}</td><td className="small">{l.effective || "–"}{l.routed ? <span className="badge gray" style={{ marginLeft: 6 }} title={"Purview's workflow for the desks; the workbook says " + (a.effective || "nothing")}>workflow</span> : null}</td><td><span className={"badge " + (l.bucket === "Closed" ? "green" : "teal")}>{l.bucket || "–"}</span></td></tr>; })}</tbody></table></div>}</div>
       </div>
       <div className="card tight small muted">Bucket mapping: Pending-Collectible Insurance → Payer · Pending-Client Assistance and Pending-Collectible Patient → Client · Pending-Purview internal review → Purview · Processing-Closed and Payment-Cash In Bank → Closed. Purview's workflow for the desks: Need to Post/Posting Correction → AR Closed-Pending Posting (Closed; Posting Closed once posted) · Need to Resubmit, Need to Submit Paper Claim and Correction, Resubmission &amp; Reprocessing → Pending-Submission (Purview; with the payer for AR's follow-up once submitted). A biller can change the bucket on other entries. When the workbook changes, regenerate <span className="mono">lib/saag.js</span> (see README) and the whole team gets the new matrix on the next refresh.</div>
     </div>
@@ -7759,7 +7807,7 @@ const crF = {
   int: (n) => (n == null || isNaN(n)) ? "–" : Math.round(n).toLocaleString("en-US"),
   // no sign on an amount that rounds to zero at the decimals shown (a total a hair below zero is $0.00, as fmtMoney writes it)
   money: (n, d) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n), dd = d == null ? (v < 1000 ? 2 : 0) : d, s = v.toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
-  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
+  moneyK: (n) => { if (n == null || isNaN(n)) return "–"; const neg = n < 0, v = Math.abs(n); const s = v >= 999500 ? (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e4 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + "K" : v.toLocaleString("en-US", { maximumFractionDigits: 0 }); return (neg && /[1-9]/.test(s) ? "-$" : "$") + s; },
   num: (n) => (n == null || isNaN(n)) ? "–" : (Math.abs(n) >= 1e4 ? (n / 1e3).toFixed(1) + "K" : Math.round(n).toLocaleString("en-US")),
   pct: (n, d = 0) => (n == null || isNaN(n) || !isFinite(n)) ? "–" : (n * 100).toFixed(d) + "%",
   date: (d) => d ? `${String(d.getDate()).padStart(2, "0")} ${CRM_S[d.getMonth()]} ${d.getFullYear()}` : "–",
@@ -9913,6 +9961,7 @@ function navKeep(patch) {
 function App() {
   const [me, setMe] = useState(undefined);
   const [nav, setNav] = useState(() => navFromHistory() || { view: null, params: null });
+  const navRef = useRef(nav); navRef.current = nav;
   const [ctx, setCtx] = useState({ clients: [], codes: [], users: [], loaded: false });
   const [pwOpen, setPwOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
@@ -9925,7 +9974,11 @@ function App() {
   useEffect(() => {
     (async () => { if (!TOKEN) { setMe(null); return; } try { const r = await rpc("auth.me"); if (Array.isArray(r.holidays)) APP_HOLIDAYS = new Set(r.holidays); setMe(r.user); } catch (e) { setMe(null); } })();
     const h = () => setMe(null);
-    const hh = () => { const h = navFromHistory(); if (h) setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
+    const hh = () => { const h = navFromHistory(); if (!h) return;
+      // Back, Forward or a new address while a pop-up holds typed text: stay on the page and ask first, as Escape does
+      const cur = navRef.current, g = typedLayerFor(cur, h);
+      if (g) { try { history.pushState({ bnav: cur }, "", navHash(cur.view, cur.params)); } catch (e) {} g.ask(() => go(h.view, h.params)); return; }
+      setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
     window.addEventListener("brahmastra:signedout", h);
     window.addEventListener("hashchange", hh);
     window.addEventListener("popstate", hh);

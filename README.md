@@ -287,7 +287,7 @@ entries before the shift time too, as Team status and My day do (a night shift's
 - **Shastra**: each person's attendance in Purview Shastra now, read every 2 minutes with Shastra's own rules
   (the day rolls at 05:00 IST, late is 10 minutes past the shift start, Saturday and Sunday are the week off unless
   Shastra says otherwise): **Present** or **Late** with the time in, **On break**, **Logged out**, **Not in yet**,
-  **On leave** (or week off, holiday) and **Not logged in** in red once someone has no punch in an hour after their
+  **On leave** (or week off, holiday, comp off) and **Not logged in** in red once someone has no punch in an hour after their
   shift began. Needs `dev/shastra-live-feed.sql` run once in Shastra's Supabase (the same key as the roster feed).
 - **Not logged in** alert: the person's team lead (and the team leads of their clients) get a pop-up on whatever page
   they have open, a red line on Live status, an entry in the bell and, once they allow it, a notification on their
@@ -531,7 +531,8 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
   and on every page change; the number counts what is new since you last opened it.
 - **Pop-ups**: Esc or a click on the shaded area closes only the top pop-up (Esc in an open dropdown closes just the
   dropdown). If something was typed in it, it first asks **Discard what you typed?** (Keep editing / Discard), so typed
-  text is never lost by accident. Tab stays inside the open pop-up.
+  text is never lost by accident; the browser's Back and Forward ask the same (the page stays until Discard), and a
+  reload or closing the tab gets the browser's own "Leave site?" question. Tab stays inside the open pop-up.
 - **Phones**: every page fits a phone screen; the menu sits under the logo (on a tablet or a narrow window too, whenever
   it does not fit beside it) and wide tables scroll sideways.
 - **Signing out when idle**: after 24 hours without a key, click, scroll or touch in any Brahmastra tab (working
@@ -556,7 +557,7 @@ its **team leads and SMEs**, a dot per scope and what pulls it down (value again
 client, three otherwise), and a button to the SLA scorecards. Clients Drishti has no month for are named below it.
 
 It covers last week (Monday to Sunday): how many clients are at risk, on watch and on track; span totals for AR
-(against a week before), over 90 (against the 15% target), collected and entries; what needs attention, client by
+(as it stood at the end of that Sunday, against a week before, whenever the digest is sent or opened), over 90 (against the 15% target), collected and entries; what needs attention, client by
 client (the Client 360 health rules, month-end steps past due, missed tasks) with one piece of good news; a row
 per client (health, AR and its change, over 90, collected, entries, SLA, month-end, escalations over 24 hours,
 requests waiting on the client); who worked how much; and the denials worked. Clients, staff and figures only:
@@ -874,10 +875,14 @@ export's columns and nothing else, and only for the right key. Shastra stores on
 Time on the floor and idle time for Team status come from a second read-only function, `brahmastra_floor(p_key,
 p_from, p_to)` (`dev/shastra-floor-feed.sql`, run once the same way). It uses the same key (no new secret) and
 returns, for each person and day, the attendance status, time on the floor, time logged in, breaks, and the minutes
-Shastra Guard saw no movement or a locked screen while they were punched in; people are matched by Emp ID, then
+Shastra Guard saw no movement or a locked screen while they were punched in (outside their breaks; two breaks that
+overlap count once). Each Guard event counts for whoever was signed in on the computer when it happened, so a computer
+shared or moved to someone else keeps everyone's own idle time. People are matched by Emp ID, then
 email. Brahmastra keeps the days it fetched, settles a day once it was fetched 12 hours after it ended, and asks
-again for newer days after 10 minutes. The function answers at most 93 days a call, so longer dates are asked for
-in parts and joined. Until the function is added, Team status shows – for on floor and idle.
+again for newer days after 10 minutes. Shastra corrects days afterwards (a missed punch-out, a day regularised at
+month close), so a settled day of this month or last month is asked for again after 3 hours, and every kept day
+after a roster sync that brought in or changed someone (their rows may have matched nobody). The function answers
+at most 93 days a call, so longer dates are asked for in parts and joined. Until the function is added, Team status shows – for on floor and idle.
 
 | Name | Type | Value |
 |---|---|---|
@@ -1024,6 +1029,10 @@ Brahmastra Clients / <Client> /
       Submission        submissions and the 48-hour rechecks, in the team's Production Format Conso layout
       Rejections        rejected claims worked by the Rejections person
 ```
+
+OneDrive names leave out / \ : * ? " < > | # % and a final dot, and keep the first 80 characters. A file name too long
+for that keeps its month and cuts the client's name instead, so each month still has its own file. Two clients whose
+names would be the same in OneDrive would share one folder, so such a name is refused when a client is added or renamed.
 
 Dates are written as Excel dates shown as mm/dd/yyyy and amounts as money, so the files read the same whatever OneDrive's language.
 Each desk's rows go to a tab of its own (**Payment posting**, **Submission**, **Rejections**) under that tab's header; a new
@@ -1197,6 +1206,14 @@ opened or worked yet (no entry, never opened, no note, attachment or hand-off), 
 handed them to a biller, who is told in the bell; claims already opened or worked stay, so no work is lost. An
 upload is undone once.
 
+A big file loads in parts of 250 claims. An upload that stops part way (the page was closed or reloaded, or the
+connection dropped, before its last part) keeps the claims that arrived and says so: Upload history marks it
+"stopped part way: upload it again", and the upload screen tells the person who uploaded it. An error half way
+shows on the upload screen with how many claims loaded before it stopped, and **Load the file again**. Loading the
+file again refreshes the claims already loaded (none is added twice) and adds the rest. Two loads of the same file at
+the same moment (two team leads, or the same file picked again while it still loads) also add each claim once: the
+second refreshes what the first added.
+
 ### Prioritisation (the Revenue Doctor's rules)
 
 Every claim gets a priority score when it is loaded and again when it is
@@ -1291,7 +1308,10 @@ again when that entry is edited into a follow-up.
 ### SAAG reference and updates
 
 **SAAG** shows the matrix: pick a status, a sub-status, and see the actions
-with their Effective Matrix and bucket. When the workbook changes, run
+with their Effective Matrix and bucket. The four desk actions show where the work form puts them, Purview's workflow
+(tagged "workflow"): Need to Post/Posting Correction lands in AR Closed-Pending Posting (Closed); Need to Resubmit,
+Need to Submit Paper Claim and Correction, Resubmission & Reprocessing land in Pending-Submission (Purview). When the
+workbook changes, run
 
 ```
 powershell -ExecutionPolicy Bypass -File dev\build-saag.ps1 -Workbook "C:\path\SAAG_Claim_Entry_Tool.xlsx"
@@ -1321,6 +1341,11 @@ any other filter, selected and assigned, or downloaded.
   strong passwords. Put the Worker behind Cloudflare Access if you want SSO.
 - Uploads go to the server in chunks of 250 claims; very large files just take
   a little longer.
+- Typed text is never cut without a word. Each box takes up to a set length (an escalation's description, comment,
+  root cause and actions 2,000 characters; a claim note or feedback 4,000; a desk comment 2,000; a Team status
+  comment 500; names 120 to 160). The longer boxes count the characters as the text nears the limit, and text over
+  it is refused with a message naming the box, so nothing is saved until it is shortened. A file name over its limit
+  (200 characters) is shortened before its ending, so a .pdf stays a .pdf.
 - Timely filing is modelled with the common 90-day window; the appeal filing
   limit prompt starts at 360 days. Both live in `index.html` (`urgencyOf`).
 - Not carried over from the previous Brahmastra: the departmental TAT boards,

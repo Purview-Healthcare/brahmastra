@@ -250,7 +250,9 @@ const EXTRA_COLUMNS = {
     ["logo", "TEXT NOT NULL DEFAULT ''"],
     // Payment posting and Submission TAT for this client, in working hours (set on the client profile; 24 when not set).
     ["posting_tat_hours", "INTEGER"], ["submission_tat_hours", "INTEGER"], ["subcheck_hours", "INTEGER"]],
-  batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
+  batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"],
+    // finished is 0 from an upload's first part until its last part is in (an upload stopped half way stays 0); part_at: its latest part
+    ["finished", "INTEGER NOT NULL DEFAULT 1"], ["part_at", "INTEGER"]],
   users: [["failed_logins", "INTEGER NOT NULL DEFAULT 0"], ["locked_at", "INTEGER"], ["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
@@ -284,6 +286,8 @@ const OTP_CALLER_TRIES = 5, OTP_MAX_TRIES = 10;
 /* Files attached to a claim are kept in D1 as base64, split into parts that stay well under D1's row size limit. */
 const ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 const ATTACH_PART_CHARS = 512 * 1024;
+/* An inventory upload's parts come one after another, each in a few seconds: one with no part for this long has stopped half way. */
+const UPLOAD_STOPPED_MS = 3 * 60 * 1000;
 
 /* ---- email: one-time codes go out through whichever provider the Worker is configured with ----
    EMAIL_PROVIDER = resend | brevo | sendgrid | graph | webhook, with EMAIL_API_KEY and EMAIL_FROM ("Brahmastra <no-reply@purview-healthcare.com>").
@@ -426,7 +430,16 @@ const REPORTS_OWNER_DEFAULT = "Purviewautomate@purview-healthcare.com";
 const PROD_TEMPLATE_B64 = "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";
 const MONTHS_LONG = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // OneDrive does not allow these in file or folder names.
-const odName = (s) => String(s || "").replace(/["*:<>?/\\|#%]+/g, " ").replace(/\s+/g, " ").trim().replace(/\.+$/, "").slice(0, 80) || "Unnamed";
+const odClean = (s) => String(s || "").replace(/["*:<>?/\\|#%]+/g, " ").replace(/\s+/g, " ").trim().replace(/\.+$/, "");
+const odName = (s) => odClean(s).slice(0, 80) || "Unnamed";
+/* A file name with a client's name and a month (or anything after the name): exactly as odName makes it when it fits in 80
+   characters, so the files made so far keep being used; a longer one cuts the client's name, never what comes after it, so
+   each month keeps its own file. */
+const odFileName = (head, client, tail) => { const whole = odClean(head + " " + client + " " + tail);
+  return whole.length <= 80 ? whole || "Unnamed" : odClean(head + " " + odClean(client).slice(0, Math.max(1, 78 - head.length - tail.length)) + " " + tail); };
+// Two clients whose names are the same in OneDrive would share one folder (and its files): a client's name may not do that.
+const odKey = (s) => odName(s).toLowerCase();
+const odClashMsg = (other) => `This name would share one OneDrive folder with ${other}: OneDrive leaves out / \\ : * ? " < > | # % and a final dot, and keeps only the first 80 characters. Change the name so the two still differ after that.`;
 /* The team lead(s) of a client: roster team leads whose projects are matched to it. Nobody matched: the lead most of its billers report to. */
 async function clientTeamLeads(env, clientId, byUserId) {
   const c = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", clientId);
@@ -598,7 +611,7 @@ async function clientProductionFile(env, tok, clientId, ms, scope = "ar") {
   const folderId = (jsonObj(c.od_prod_json)[scope] || {}).id;
   if (!folderId) throw new ApiError(502, "The " + SCOPE_FOLDER[scope] + " production folder is missing.");
   const d = istDate(ms), month = MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear();
-  const name = odName(SCOPE_FOLDER[scope] + " Production - " + c.name + " - " + month) + ".xlsx";
+  const name = odFileName(SCOPE_FOLDER[scope] + " Production -", c.name, "- " + month) + ".xlsx";
   const key = "cp:" + folderId + ":" + (await sha256Hex(name.toLowerCase())).slice(0, 16);
   const cached = await one(env, "SELECT value_json FROM settings WHERE key = ?", key);
   if (cached) { try { const loc = JSON.parse(cached.value_json); if (loc.driveId) return loc; } catch {} }
@@ -749,7 +762,7 @@ async function escalationSlaFiles(env, tok, clientId, months) {
   for (const ym of months) {
     // the client's own escalations only: internal ones are not in the client's SLA
     const rows = (await all(env, "SELECT * FROM escalations WHERE client_id = ? AND substr(day, 1, 7) = ? AND kind <> 'internal' ORDER BY sr", c.id, ym)).map((e) => escRow(e, c.name));
-    const name = odName("Escalation Tracker - " + c.name + " - " + monthLabel(ym)) + ".xlsx";
+    const name = odFileName("Escalation Tracker -", c.name, "- " + monthLabel(ym)) + ".xlsx";
     for (const lead of leads) {
       const path = [REPORTS_ROOT, odName(lead), odName(c.name), "SLA & KPI", name];
       const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
@@ -803,7 +816,7 @@ async function tatReportRows(env, clientId, ym) {
 }
 async function tatSlaFiles(env, tok, clientId, ym) {
   const { cl, rows } = await tatReportRows(env, clientId, ym); if (!cl) return [];
-  const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT), saved = [], name = odName("TAT Report - " + cl.name + " - " + monthLabel(ym)) + ".xlsx";
+  const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT), saved = [], name = odFileName("TAT Report -", cl.name, "- " + monthLabel(ym)) + ".xlsx";
   for (const lead of await clientTeamLeads(env, cl.id, null)) {
     const path = [REPORTS_ROOT, odName(lead), odName(cl.name), "SLA & KPI", name];
     const at = "/users/" + owner + "/drive/root:/" + path.map(encodeURIComponent).join("/") + ":";
@@ -1953,6 +1966,53 @@ function sameHash(a, b) { // constant time
 const mailClean = (e) => String(e || "").trim().toLowerCase();
 const mailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 const str = (v, max = 4000) => (v == null ? "" : String(v)).slice(0, max);
+/* The boxes people type in, and how much each op keeps of them (op: { field: [most characters, the box's name] }). Longer
+   text is refused before the op runs, with a message naming the box and its limit (the page counts the characters near
+   it), so typed text is never cut without a word. A list (a new client's locations) is checked item by item. */
+const TYPED_MAX = {
+  "escalations.save": { raised_who: [120, "Raised by"], reported_to: [120, "Reported to"], email_subject: [300, "Email subject"], description: [2000, "Error description"],
+    comment: [2000, "Comment"], rca: [2000, "Root cause"], corrective: [2000, "Corrective action"], preventive: [2000, "Preventive action"] },
+  "escalations.reason": { reason: [1000, "Why it is still open"] },
+  "handoffs.close": { note: [2000, "The comment"], reason: [120, "The reason"] },
+  "notes.add": { comment: [4000, "The note"] },
+  "attention.review": { why: [1000, "Why it came to you"], reviewed: [1000, "What you reviewed"], findings: [2000, "Findings"], next: [2000, "Next action"] },
+  "attention.answer": { comment: [4000, "Your answer"] },
+  "attention.clientSent": { note: [600, "The comment"] },
+  "queue.skip": { reason: [500, "The reason"] },
+  "coach.noteAdd": { text: [2000, "The note"] },
+  "claims.setPriority": { comment: [600, "The comment"] },
+  "templates.save": { title: [80, "The title"], text: [1500, "The text"] },
+  "payers.saveLimit": { note: [300, "The note"] },
+  "monthend.set": { note: [300, "The note"] },
+  "team.setOut": { reason: [120, "The reason"] },
+  "team.saveNote": { comment: [500, "The comment"] },
+  "feedback.send": { message: [4000, "Your message"] },
+  "clients.save": { name: [160, "The client's name"], locations: [160, "A location's name"] },
+  "locations.save": { name: [160, "The location's name"] },
+  "tat.hold": { note: [500, "The note"] },
+  "tasks.hold": { note: [500, "The note"] },
+  "stack.save": { note: [200, "The note"] },
+  "inventory.enrich": { note: [500, "The note"] },
+  "users.save": { name: [120, "The name"] },
+};
+function typedTooLong(op, payload) {
+  const t = Object.prototype.hasOwnProperty.call(TYPED_MAX, op) ? TYPED_MAX[op] : null; if (!t) return;
+  for (const [k, [max, label]] of Object.entries(t)) for (const v of Array.isArray(payload[k]) ? payload[k] : [payload[k]]) {
+    const n = v == null || typeof v === "object" ? 0 : String(v).length;
+    if (n > max) throw bad(`${label} is too long: ${n.toLocaleString("en-US")} characters, and it takes up to ${max.toLocaleString("en-US")}. Shorten it.`);
+  }
+}
+/* A file's name kept to max characters: a longer one is cut before its ending, so a ".pdf" stays a PDF when it is opened. The
+   names of files added to a claim, a team task or feedback (op: [where the names are, most characters]). */
+const keepEnding = (v, max) => { const s = v == null ? "" : String(v); if (s.length <= max) return s; const m = /\.[A-Za-z0-9]{1,10}$/.exec(s), end = m ? m[0] : "";
+  return s.slice(0, max - end.length).replace(/[\s.]+$/, "") + end; };
+const FILE_NAMES = { "attachments.add": ["name", 200], "tasks.create": ["files", 200], "tasks.update": ["files", 200], "feedback.send": ["files", 120] };
+function fileNamesKept(op, payload) {
+  const f = Object.prototype.hasOwnProperty.call(FILE_NAMES, op) ? FILE_NAMES[op] : null; if (!f) return;
+  const [k, max] = f;
+  if (k === "name") { if (typeof payload.name === "string") payload.name = keepEnding(payload.name, max); }
+  else if (Array.isArray(payload[k])) payload[k] = payload[k].map((x) => (x && typeof x === "object" && typeof x.name === "string" ? { ...x, name: keepEnding(x.name, max) } : x));
+}
 /* Typed text in a LIKE pattern: D1 refuses a LIKE or GLOB pattern over 50 bytes ("LIKE or GLOB pattern too complex", a 500), so
    the text is cut to its first 48 bytes (whole characters) inside the two % signs: a longer search finds what its first 48
    characters find. likeCut(s, n) cuts to n bytes for other patterns. */
@@ -2270,6 +2330,8 @@ async function syncShastra(env, by) {
   }
   await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings, removed,
     emails: res.warnings.slice(0, 200), no_access: res.excluded.length });
+  // someone new, or with a changed Emp ID or email, may have floor days in Shastra that matched nobody: Team status asks again
+  if (sm.new + sm.updated) { const fl = await getSetting(env, "floor_sync", null); if (fl && fl.days && Object.keys(fl.days).length) await setSetting(env, "floor_sync", { ...fl, days: {} }); }
   try { await syncWfm(env); } catch (e) {}
   try { await syncHolidays(env); } catch (e) {}
   return { ...res, removed, synced: true };
@@ -2278,8 +2340,10 @@ async function syncShastra(env, by) {
    returns each person's days: the attendance status, time on the floor (finished shifts, breaks taken out; a shift still
    open counts up to now), time logged in, breaks, and the minutes Shastra Guard saw no movement or a locked screen while
    they were punched in (breaks left out). Team status asks for its dates; the days are kept in floor_days, a day is
-   settled once fetched 12 hours after it ended, and anything newer is asked again after 10 minutes. */
-const FLOOR_FRESH_MS = 10 * 60000, SH_BREAK_ALLOW_MIN = 60;
+   settled once fetched 12 hours after it ended, and anything newer is asked again after 10 minutes. Shastra corrects days
+   afterwards (a missed punch-out, a day regularised at month close), so a settled day of this month or last month is asked
+   again after 3 hours, and every kept day after a roster sync that brought in or changed people (their rows matched nobody). */
+const FLOOR_FRESH_MS = 10 * 60000, FLOOR_RECHECK_MS = 3 * 3600000, SH_BREAK_ALLOW_MIN = 60;
 async function fetchFloor(env, from, to) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
   let r = null, data = null;
@@ -2293,8 +2357,8 @@ async function shastraFloor(env, from, to, today, off) {
   const st = (await getSetting(env, "floor_sync", null)) || {};
   st.days = st.days || {};
   const now = Date.now(), last = to > today ? today : to, dayEnd = (d) => Date.parse(d + "T00:00:00Z") - off * 60000 + 86400000;
-  const stale = [];
-  for (let d = from; d <= last; d = addDays(d, 1)) { const at = st.days[d] || 0; if (!(at > dayEnd(d) + 12 * 3600000 || now - at < FLOOR_FRESH_MS)) stale.push(d); }
+  const stale = [], recheckFrom = prevMonthISO(today.slice(0, 7)) + "-01";
+  for (let d = from; d <= last; d = addDays(d, 1)) { const at = st.days[d] || 0; if (!(at > dayEnd(d) + 12 * 3600000 ? d < recheckFrom || now - at < FLOOR_RECHECK_MS : now - at < FLOOR_FRESH_MS)) stale.push(d); }
   if (stale.length && !(st.fail_at && now - st.fail_at < FLOOR_FRESH_MS)) {
     // Shastra answers at most 93 days a call (dev/shastra-floor-feed.sql): longer dates are asked in parts and the answers joined
     const a = stale[0], b = stale[stale.length - 1];
@@ -2358,7 +2422,7 @@ function shastraDay(status) {
    IST, late is 10 minutes past the shift start, Saturday and Sunday are the week off unless the roster says otherwise,
    and someone with no punch an hour after their shift began has not logged in (the team lead is told). ---- */
 const LIVE_FRESH_MS = 2 * 60000, SH_GRACE_MS = 10 * 60000, SH_MISSING_MS = 60 * 60000;
-const SH_PRESENT = new Set(["present", "late", "half_day", "half-day", "half_day_lwp", "comp_off", "overtime"]);
+const SH_PRESENT = new Set(["present", "late", "half_day", "half-day", "half_day_lwp", "overtime"]);
 const SH_OFF = new Set(["approved_leave", "sick_leave", "maternity_leave", "lwp", "leave", "attrite", "sabbatical"]);
 async function fetchLive(env) {
   const base = String(env.SHASTRA_URL || SHASTRA_URL_DEFAULT).replace(/\/+$/, ""), pub = env.SHASTRA_PUBLIC_KEY || SHASTRA_PUBLIC_KEY_DEFAULT;
@@ -2404,6 +2468,8 @@ function liveState(x, u, now) {
   if (x.in && x.out) return L("out", "Logged out", "at " + hhmmIST(x.out), { in_at: x.in });
   if (x.in) { const late = !!(win && !x.lok && x.in > win.start + SH_GRACE_MS && x.in < win.end); return L(late ? "late" : "present", late ? "Late" : "Present", "in " + hhmmIST(x.in), { in_at: x.in }); }
   if (SH_PRESENT.has(x.st)) return L("present", "Present", "marked in Shastra");
+  // a comp off is a day off (planned like a leave; Team status counts it with week off and holiday): never in, never given claims
+  if (x.st === "comp_off") return L("leave", "Comp off", "a day off in Shastra");
   if (SH_OFF.has(x.st) || x.lv) return L("leave", "On leave", String(x.lv || x.st).replace(/_/g, " "));
   if (x.hol) return L("leave", "Holiday", "");
   if (x.wo) return L("leave", "Week off", "");
@@ -2450,12 +2516,15 @@ async function shareEqually(env, user, src, o) {
   const res = { n: claims.length, high: claims.filter((x) => x.tier === "High").length, moved: moves.length, left, to: [...given.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
     skipped: [...skipped.values()], clients: perClient };
   if (o.dry || !moves.length) return res;
-  const stmts = [];
-  for (const m of moves) {
-    stmts.push(env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned' AND assigned_to = ?").bind(m.to.id, now, now, m.claim, src.id));
-    stmts.push(claimEvent(env, m.claim, user, "assigned", m.to.name, { from: src.name, via: o.via || "rebalance" }));
+  // a claim moves only while it is still untouched on the desk (its biller may open it this moment): the history, the bell and
+  // the counts say what really moved
+  const ran = await batchAll(env, moves.map((m) => env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned' AND assigned_to = ? RETURNING id").bind(m.to.id, now, now, m.claim, src.id)), 50);
+  const made = moves.filter((m, i) => ((ran[i] && ran[i].results) || []).length);
+  if (made.length) await batchAll(env, made.map((m) => claimEvent(env, m.claim, user, "assigned", m.to.name, { from: src.name, via: o.via || "rebalance" })), 50);
+  if (made.length < moves.length) {
+    const got = new Map(); for (const m of made) got.set(m.to.id, (got.get(m.to.id) || 0) + 1);
+    res.to = res.to.map((x) => ({ ...x, count: got.get(x.id) || 0 })).filter((x) => x.count); res.left += moves.length - made.length; res.moved = made.length;
   }
-  await batchAll(env, stmts, 50);
   await noticeAlloc(env, res.to.map((x) => [x.id, x.count]), (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you: from ${src.name}'s desk (${o.reason || "not in today"}), shared equally by ${user.name || "your team lead"}.`);
   return res;
 }
@@ -2718,9 +2787,10 @@ async function digestData(env, clientId, wk) {
   const o = await OPS["client.overview"]({ env, user: DIGEST_SYSTEM, payload: { client_id: clientId, from_ms: wk.from, to_ms: wk.to, today, tz_offset_min: IST_MIN } });
   // a week before: AR at the end of the Sunday before the digest week (so the week's own Monday counts in the change)
   const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.from - 1));
-  // a past week's digest: AR as it stood at that week's end (the day's snapshot), not today's
-  const endSnap = digestWeek(Date.now()).week === wk.week ? null
-    : await one(env, "SELECT day, ar_balance, over90_balance, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
+  // AR as it stood at the week's end (the reading of its Sunday, which the hourly job keeps), whenever the digest is sent or
+  // opened, this week's too: so a week reads the same on its Monday and later, and the next week's change starts from it.
+  // Live AR only for a client with no reading by then.
+  const endSnap = await one(env, "SELECT day, ar_balance, over90_balance, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
   const prevWorked = await one(env, "SELECT COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, wk.from - 7 * 86400000, wk.from);
   const people = await all(env, `SELECT n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
     WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 12`, clientId, wk.from, wk.to);
@@ -2796,7 +2866,8 @@ const tatLine = (t) => t ? t.parts.map((x) => `${x.label} ${x.pct}% (${x.met} of
 // worst first: red SLA, then amber, green, then clients Drishti has not scored, by health
 const digestOrder = (ds) => [...ds].sort((a, b) => (a.card ? a.card.score : 999) - (b.card ? b.card.score : 999) || ({ risk: 0, watch: 1, good: 2 }[a.health] - { risk: 0, watch: 1, good: 2 }[b.health]));
 const BAND_LOOK = { ok: ["Green", "#127A4D", "#E3F5EC", "#1A9E6A"], warn: ["Amber", "#935300", "#FDF0D7", "#E8A13C"], miss: ["Red", "#BA2340", "#FDE7EB", "#C94F4F"] };
-const dShort = (n) => (n == null ? "–" : Math.abs(n) >= 1e6 ? "$" + (Math.round(n / 1e4) / 100) + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : dMoney(n));
+// from $999,500 the K figure would round to 1000K: it is written in M
+const dShort = (n) => (n == null ? "–" : Math.abs(n) >= 999500 ? "$" + (Math.round(n / 1e4) / 100) + "M" : Math.abs(n) >= 1e4 ? "$" + Math.round(n / 1e3) + "K" : dMoney(n));
 /* The Monday email: short, in plain tables that hold up in Outlook and on a phone, with a button to the full digest dashboard
    in Brahmastra (landscape, every detail). Clients, staff and figures only: no patient names, claim or account numbers. */
 function spanEmail(span, wk, ds, appUrl, extra = {}) {
@@ -5790,7 +5861,7 @@ const OPS = {
     const pfBy = new Map(pf.rows.map((r) => [r.client_id, r]));
     const T = OVER90_TARGET;
     // a credit (a negative total) keeps its minus sign; an amount that rounds to $0 shows none
-    const money = (v) => { const a = Math.abs(v || 0), n = String(a >= 1e6 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((v || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
+    const money = (v) => { const a = Math.abs(v || 0), n = String(a >= 999500 ? (Math.round(a / 1e4) / 100) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "k" : a >= 1e3 ? (Math.round(a / 100) / 10) + "k" : Math.round(a)); return ((v || 0) < 0 && n !== "0" ? "-" : "") + "$" + n; };
     const pl = (n, w) => n + " " + w + (n === 1 ? "" : "s");
     const deptName = { posting: "Posting", submission: "Submission", subcheck: "Submission", rejection: "Rejections" };
     // What to do first, most SLA-damaging first. Each card: the number, why it matters, and the one action.
@@ -6358,6 +6429,7 @@ const OPS = {
       editableOr(user, ex.id);
       if (payload.seen != null && String(payload.seen) !== clientStamp(ex)) throw new ApiError(409, "Someone else changed this client after you opened it, so nothing was saved. Close this, open the client again and make your change.");
       if (plainName(ex.name) !== plainName(name) && (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
+      if (odKey(ex.name) !== odKey(name)) { const twin = (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).find((c) => odKey(c.name) === odKey(name)); if (twin) throw bad(odClashMsg(twin.name)); }
       const fu = fuOr(Number(ex.follow_up_days) || 30);
       // Every check comes before the first write (the profile check included), so a save that is refused changes nothing (N-08).
       let p = null;
@@ -6394,6 +6466,7 @@ const OPS = {
     const locNames = (Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter((x, i, a) => x && a.findIndex((y) => plainName(y) === plainName(x)) === i).slice(0, 50);
     const p = await checkProfile(env, payload.profile, { isNew: true, locations: locNames.length });
     if ((await all(env, "SELECT name FROM clients")).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
+    { const twin = (await all(env, "SELECT name FROM clients")).find((c) => odKey(c.name) === odKey(name)); if (twin) throw bad(odClashMsg(twin.name)); }
     const id = uuid(), now = Date.now();
     const sets = Object.keys(p.cols);
     await env.DB.batch([
@@ -6510,8 +6583,8 @@ const OPS = {
     let bid = batch_id;
     if (!bid) {
       bid = uuid();
-      await run(env, "INSERT INTO batches (id, client_id, location_id, kind, file_name, uploaded_by, uploaded_at, rows_read, source, web_url) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        bid, client.id, location_id || null, kind, str(file_name, 200), user.id, now, Math.round(num(rows_read, 0)), payload.source === "onedrive" ? "onedrive" : "file", str(payload.web_url, 1000));
+      await run(env, "INSERT INTO batches (id, client_id, location_id, kind, file_name, uploaded_by, uploaded_at, rows_read, source, web_url, finished, part_at) VALUES (?,?,?,?,?,?,?,?,?,?,0,?)",
+        bid, client.id, location_id || null, kind, str(file_name, 200), user.id, now, Math.round(num(rows_read, 0)), payload.source === "onedrive" ? "onedrive" : "file", str(payload.web_url, 1000), now);
     } else {
       const b = await one(env, "SELECT id, client_id FROM batches WHERE id = ?", bid);
       if (!b || b.client_id !== client.id) throw bad("Unknown batch.");
@@ -6532,7 +6605,7 @@ const OPS = {
     for (const chunk of chunks(rows.map((c) => str(c.match_key, 300)), 80)) (await all(env, SEL + `match_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => byMatch.set(r.match_key, r));
     for (const chunk of chunks([...new Set(rows.map((c) => c._num).filter(Boolean))], 80)) (await all(env, SEL + `alt_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!isGeneratedNo(r) && !byAlt.has(r.alt_key)) byAlt.set(r.alt_key, r); });
     for (const chunk of chunks([...new Set(rows.map((c) => c._fp).filter(Boolean))], 80)) (await all(env, SEL + `fp_key IN (${chunk.map(() => "?").join(",")}) ORDER BY created_at`, client.id, ...chunk)).forEach((r) => { if (!byFp.has(r.fp_key)) byFp.set(r.fp_key, []); byFp.get(r.fp_key).push(r); });
-    const stmts = [];
+    const stmts = [], added = [];   // added: the new claims' INSERTs (their place in stmts), to find any another load added first
     const taken = new Set(), altSeen = new Set();
     // A previously worked claim whose follow-up date is still to come is worked and waiting, like a claim worked in Brahmastra:
     // it is not in the pool, and comes back into it on that date.
@@ -6571,13 +6644,15 @@ const OPS = {
         const waits = !exclude && !!followUp && followUp > today;
         const state = waits ? "completed" : !exclude ? "open" : closedInFile ? "closed" : "excluded";
         const reason = waits ? WAITS : !exclude ? "" : closedInFile ? "Closed in " + kind + " file" + (vals.file_status ? ": " + vals.file_status : "") : exclude;
-        if (state === "open" || state === "completed") counts.inserted++; else if (state === "closed") counts.closed++; else counts.excluded++;
+        const counted = state === "open" || state === "completed" ? "inserted" : state === "closed" ? "closed" : "excluded";
+        counts[counted]++;
         const nid = uuid();
         const fw = fileWork(nid); if (fw) stmts.push(fw);
+        added.push({ at: stmts.length, id: nid, c, counted });
         stmts.push(env.DB.prepare(`INSERT INTO claims (id, client_id, location_id, batch_id, first_batch_id, match_key, claim_no, account_no, patient, payer, dos, cpt, provider,
             billed, balance, lines, lines_json, age_days, bucket, tier, status_class, file_status, file_sub_status, file_action, file_comments, file_bucket,
             inventory_kind, worked_before, last_worked_on, follow_up_on, priority, priority_reason, state, state_reason, raw_json, created_at, updated_at, alt_key, fp_key)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (client_id, match_key) DO NOTHING RETURNING id`).bind(
           nid, client.id, location_id || null, bid, bid, key, vals.claim_no, vals.account_no, vals.patient, vals.payer, vals.dos, vals.cpt, vals.provider,
           vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class, vals.file_status, vals.file_sub_status,
           vals.file_action, vals.file_comments, vals.file_bucket, kind, kind === "worked" ? 1 : 0, lastWorked, followUp, vals.priority, vals.priority_reason,
@@ -6598,7 +6673,12 @@ const OPS = {
         if (fu && fu > today) { newState = "completed"; reason = reason || WAITS; }
       }
       { const fw = fileWork(ex.id); if (fw) stmts.push(fw); }
-      stmts.push(claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), { kind, batch: bid, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance, ...(newState !== ex.state ? { changes: { state: [ex.state, newState] } } : {}) }));
+      // The state (and the biller on it) changes only while the claim still has the state this part read: a team lead who allocates
+      // it, or a biller who saves it, between this part's read and its write keeps their change, and the history names no change.
+      const refreshed = { kind, batch: bid, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance };
+      stmts.push(newState === ex.state ? claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), refreshed)
+        : env.DB.prepare("INSERT INTO claim_events (id, claim_id, at, user_id, user_name, kind, text, data_json) SELECT ?, id, ?, ?, ?, 'refreshed', ?, CASE WHEN state = ? THEN ? ELSE ? END FROM claims WHERE id = ?")
+          .bind(uuid(), Date.now(), user.id, user.name || "", str(file_name, 200), ex.state, JSON.stringify({ ...refreshed, changes: { state: [ex.state, newState] } }), JSON.stringify(refreshed), ex.id));
       stmts.push(env.DB.prepare(`UPDATE claims SET location_id = COALESCE(?, location_id), batch_id = ?, claim_no = CASE WHEN ? <> '' THEN ? ELSE claim_no END,
           account_no = CASE WHEN ? <> '' THEN ? ELSE account_no END, patient = CASE WHEN ? <> '' THEN ? ELSE patient END, payer = CASE WHEN ? <> '' THEN ? ELSE payer END,
           dos = CASE WHEN ? <> '' THEN ? ELSE dos END, cpt = CASE WHEN ? <> '' THEN ? ELSE cpt END, provider = CASE WHEN ? <> '' THEN ? ELSE provider END,
@@ -6609,24 +6689,39 @@ const OPS = {
           follow_up_on = CASE WHEN ? <> '' AND (COALESCE(last_worked_on, '') = '' OR (? <> '' AND ? >= last_worked_on)) THEN ? ELSE follow_up_on END,
           priority = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority ELSE ${PRIO_SQL} END,
           priority_base = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority_base ELSE ? END,
-          priority_reason = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority_reason ELSE ${PRIO_REASON_SQL} END, state = ?, state_reason = COALESCE(?, state_reason),
-          assigned_to = CASE WHEN ? = 1 THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 1 THEN NULL ELSE assigned_at END,
-          skipped_at = CASE WHEN ? = 1 THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ?,
+          priority_reason = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority_reason ELSE ${PRIO_REASON_SQL} END,
+          state = CASE WHEN state = ? THEN ? ELSE state END, state_reason = CASE WHEN state = ? THEN COALESCE(?, state_reason) ELSE state_reason END,
+          assigned_to = CASE WHEN ? = 1 AND state = ? THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 1 AND state = ? THEN NULL ELSE assigned_at END,
+          skipped_at = CASE WHEN ? = 1 AND state = ? THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ?,
           alt_key = CASE WHEN alt_key = '' OR ? = 1 THEN ? ELSE alt_key END, fp_key = CASE WHEN fp_key = '' THEN ? ELSE fp_key END WHERE id = ?`).bind(
           location_id || null, bid, keepNo ? "" : vals.claim_no, keepNo ? "" : vals.claim_no, vals.account_no, vals.account_no, vals.patient, vals.patient, vals.payer, vals.payer,
           vals.dos, vals.dos, vals.cpt, vals.cpt, vals.provider, vals.provider, vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class,
           vals.file_status, vals.file_sub_status, vals.file_action, vals.file_comments, vals.file_comments, vals.file_bucket,
-          kind, kind, lastWorked, lastWorked, lastWorked, followUp, lastWorked, lastWorked, followUp, ...prioArgs(vals.priority), vals.priority, vals.priority_reason, vals.priority_reason, newState, reason,
-          clearAssign, clearAssign, clearAssign, vals.raw_json, now, gotNo, keepNo ? "" : c._alt, c._fp, ex.id));
+          kind, kind, lastWorked, lastWorked, lastWorked, followUp, lastWorked, lastWorked, followUp, ...prioArgs(vals.priority), vals.priority, vals.priority_reason, vals.priority_reason, ex.state, newState, ex.state, reason,
+          clearAssign, ex.state, clearAssign, ex.state, clearAssign, ex.state, vals.raw_json, now, gotNo, keepNo ? "" : c._alt, c._fp, ex.id));
     }
-    if (stmts.length) await batchAll(env, stmts, 40);
+    // Two loads of the same new claims at the same moment (two team leads, or the same file picked again while it still loads): a
+    // claim the other load added after this part read the claims is not added twice; this part refreshes it from its own file.
+    let again = null;
+    if (stmts.length) {
+      const res = await batchAll(env, stmts, 40);
+      const lost = added.filter((x) => !((res[x.at] && res[x.at].results) || []).length);
+      if (lost.length) {
+        await run(env, `DELETE FROM claim_events WHERE claim_id IN ${IN_LIST}`, listArg(lost.map((x) => x.id)));
+        lost.forEach((x) => counts[x.counted]--);
+        if (payload.again) counts.skipped += lost.length;
+        else again = await OPS["inventory.upload"]({ env, user, payload: { ...payload, batch_id: bid, final: false, again: true, claims: lost.map((x) => ({ ...x.c, claim_no: x.c._gen ? "" : x.c.claim_no })) } });
+      }
+    }
+    // the last part marks the upload finished: one stopped half way (the page closed, reloaded or cut off) says so in Upload history
     await run(env, `UPDATE batches SET inserted = inserted + ?, updated = updated + ?, reopened = reopened + ?, closed = closed + ?, excluded = excluded + ?, skipped = skipped + ?,
-        rows_read = CASE WHEN ? > 0 THEN ? ELSE rows_read END, summary_json = CASE WHEN ? = 1 THEN ? ELSE summary_json END WHERE id = ?`,
+        rows_read = CASE WHEN ? > 0 THEN ? ELSE rows_read END, summary_json = CASE WHEN ? = 1 THEN ? ELSE summary_json END, finished = CASE WHEN ? = 1 THEN 1 ELSE finished END, part_at = ? WHERE id = ?`,
       counts.inserted, counts.updated, counts.reopened, counts.closed, counts.excluded, counts.skipped,
-      Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), bid);
+      Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), final ? 1 : 0, Date.now(), bid);
     // An empty file (headers only, or every row skipped) does not count as the month's inventory.
     const loaded = final ? await one(env, "SELECT inserted + updated + reopened + closed + excluded AS n FROM batches WHERE id = ?", bid) : null;
     if (final && loaded && loaded.n > 0) { try { await monthendAuto(env, client.id, istISO(Date.now()).slice(0, 7), "inventory", user.name); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) {} }
+    if (again) for (const k in counts) counts[k] += again[k] || 0;
     return { batch_id: bid, ...counts };
   },
   "inventory.batches": async ({ env, user, payload }) => {
@@ -6635,7 +6730,10 @@ const OPS = {
     const rows = payload.client_id
       ? await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id WHERE b.client_id = ?" + tail + " ORDER BY b.uploaded_at DESC LIMIT 100", payload.client_id, ...range)
       : await all(env, `SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id WHERE 1 = 1${scopeSql(user, "b.client_id")}${tail} ORDER BY b.uploaded_at DESC LIMIT 100`, ...scopeArgs(user), ...range);
-    return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} return { ...b, summary: s, summary_json: undefined }; }) };
+    // an upload whose last part has not come: still loading while its parts keep coming, stopped once none has come for a few minutes
+    const now = Date.now();
+    return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} const open = !b.finished;
+      return { ...b, summary: s, summary_json: undefined, unfinished: open, stopped: open && now - (b.part_at || b.uploaded_at) > UPLOAD_STOPPED_MS }; }) };
   },
   /* Merge claims that are really the same claim (same normalised claim number, or same patient + DOS and payer with no
      conflicting claim number; a made-up BR-... number is no claim number). The oldest row is kept; notes, work history and
@@ -7060,20 +7158,23 @@ const OPS = {
     const names = new Map((await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(userIds))).map((u) => [u.id, u.name]));
     const before = new Map();
     for (const part of chunks(items.map((a) => str(a.id, 60)), 80)) (await all(env, `SELECT id, assigned_to, state, follow_up_on FROM claims WHERE id IN (${part.map(() => "?").join(",")}) AND client_id = ?`, ...part, client_id)).forEach((r) => before.set(r.id, r));
-    const eligible = (a) => { const b = before.get(str(a.id, 60)); return b && (b.state === "open" || (b.state === "completed" && b.follow_up_on && b.follow_up_on <= today)); };
     const prevNames = new Map((await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean))))).map((u) => [u.id, u.name]));
-    const evs = items.filter((a) => ok.has(str(a.user_id, 60)) && eligible(a)).map((a) => { const b = before.get(str(a.id, 60)); return claimEvent(env, b.id, user, "assigned", names.get(str(a.user_id, 60)) || "", { from: b.assigned_to ? prevNames.get(b.assigned_to) || "" : "", via: str(strategy, 40) || "allocate" }); });
-    const stmts = items.filter((a) => ok.has(str(a.user_id, 60))).map((a) =>
+    const sent = items.filter((a) => ok.has(str(a.user_id, 60)));
+    const stmts = sent.map((a) =>
       env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = ?, state = 'assigned', state_reason = '', priority = ${PRIO_SQL}, priority_base = ?, priority_reason = ${PRIO_REASON_SQL}, tier = CASE WHEN ? <> '' THEN ? ELSE tier END,
           age_days = COALESCE(?, age_days), bucket = CASE WHEN ? <> '' THEN ? ELSE bucket END, skipped_at = NULL, skips = 0, first_up = 0, updated_at = ?
-        WHERE id = ? AND client_id = ? AND (state = 'open' OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?))`)
+        WHERE id = ? AND client_id = ? AND (state = 'open' OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?)) RETURNING id`)
         .bind(str(a.user_id, 60), now, ...prioArgs(num(a.priority, 0)), num(a.priority, 0), str(a.priority_reason, 300), str(a.priority_reason, 300), str(a.tier, 10), str(a.tier, 10), a.age_days == null ? null : Math.round(num(a.age_days, 0)),
           str(a.bucket, 20), str(a.bucket, 20), now, str(a.id, 60), client_id, today));
     const results = await batchAll(env, stmts, 50);
-    const applied = results.reduce((s, r) => s + changesOf(r), 0);
+    // the claims this allocation really took (another team lead may have taken some of them a moment before): the claim's
+    // history and the biller's bell name only these
+    const done = sent.filter((a, i) => ((results[i] && results[i].results) || []).length);
+    const applied = done.length;
+    const evs = done.map((a) => { const b = before.get(str(a.id, 60)) || {}; return claimEvent(env, str(a.id, 60), user, "assigned", names.get(str(a.user_id, 60)) || "", { from: b.assigned_to ? prevNames.get(b.assigned_to) || "" : "", via: str(strategy, 40) || "allocate" }); });
     if (evs.length) await batchAll(env, evs, 50);
     if (applied) {
-      const per = new Map(); for (const a of items) if (ok.has(str(a.user_id, 60)) && eligible(a)) per.set(str(a.user_id, 60), (per.get(str(a.user_id, 60)) || 0) + 1);
+      const per = new Map(); for (const a of done) per.set(str(a.user_id, 60), (per.get(str(a.user_id, 60)) || 0) + 1);
       const cname = ((await one(env, "SELECT name FROM clients WHERE id = ?", client_id)) || {}).name || "";
       await noticeAlloc(env, [...per.entries()], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}${cname ? " (" + cname + ")" : ""}.`);
     }
@@ -7094,15 +7195,17 @@ const OPS = {
     }
     const now = Date.now();
     let changed = 0;
-    const evs = [];
-    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user)))
-      evs.push(claimEvent(env, r.id, user, "assigned", u.name, { from: r.prev || "", via: "reassign" }));
+    const evs = [], evIds = [];
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user))) {
+      evs.push(claimEvent(env, r.id, user, "assigned", u.name, { from: r.prev || "", via: "reassign" })); evIds.push(r.id); }
+    const moved = new Set();   // the claims the UPDATE changed: the history names only these
     for (const chunk of chunks(ids, 60)) {
-      const r = await run(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
-        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${editScopeSql(user, "client_id")}`, u.id, now, now, ...chunk, ...editScopeArgs(user));
-      changed += changesOf(r);
+      const r = await all(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
+        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${editScopeSql(user, "client_id")} RETURNING id`, u.id, now, now, ...chunk, ...editScopeArgs(user));
+      r.forEach((x) => moved.add(x.id)); changed += r.length;
     }
-    if (evs.length) await batchAll(env, evs, 50);
+    const evsMoved = evs.filter((e, i) => moved.has(evIds[i]));
+    if (evsMoved.length) await batchAll(env, evsMoved, 50);
     if (changed && u.id !== user.id) await noticeAlloc(env, [[u.id, changed]], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}.`);
     return { changed };
   },
@@ -9167,6 +9270,8 @@ export default {
         // who is calling, for the sign-in code limits: the address Cloudflare gives (CF-Connecting-IP); the demo and the tests have
         // none, and count as one stand-in caller
         const caller = String(request.headers.get("CF-Connecting-IP") || "").trim().slice(0, 64) || "local";
+        // typed text over a box's limit is refused with a message (never cut); a long file name keeps its ending (.pdf)
+        typedTooLong(op, payload); fileNamesKept(op, payload);
         const result = await handler({ env, user, token, payload, ctx, caller });
         return json(result || { ok: true });
       }
