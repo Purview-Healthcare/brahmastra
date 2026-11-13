@@ -2480,12 +2480,15 @@ async function shareEqually(env, user, src, o) {
   const res = { n: claims.length, high: claims.filter((x) => x.tier === "High").length, moved: moves.length, left, to: [...given.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
     skipped: [...skipped.values()], clients: perClient };
   if (o.dry || !moves.length) return res;
-  const stmts = [];
-  for (const m of moves) {
-    stmts.push(env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned' AND assigned_to = ?").bind(m.to.id, now, now, m.claim, src.id));
-    stmts.push(claimEvent(env, m.claim, user, "assigned", m.to.name, { from: src.name, via: o.via || "rebalance" }));
+  // a claim moves only while it is still untouched on the desk (its biller may open it this moment): the history, the bell and
+  // the counts say what really moved
+  const ran = await batchAll(env, moves.map((m) => env.DB.prepare("UPDATE claims SET assigned_to = ?, assigned_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned' AND assigned_to = ? RETURNING id").bind(m.to.id, now, now, m.claim, src.id)), 50);
+  const made = moves.filter((m, i) => ((ran[i] && ran[i].results) || []).length);
+  if (made.length) await batchAll(env, made.map((m) => claimEvent(env, m.claim, user, "assigned", m.to.name, { from: src.name, via: o.via || "rebalance" })), 50);
+  if (made.length < moves.length) {
+    const got = new Map(); for (const m of made) got.set(m.to.id, (got.get(m.to.id) || 0) + 1);
+    res.to = res.to.map((x) => ({ ...x, count: got.get(x.id) || 0 })).filter((x) => x.count); res.left += moves.length - made.length; res.moved = made.length;
   }
-  await batchAll(env, stmts, 50);
   await noticeAlloc(env, res.to.map((x) => [x.id, x.count]), (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you: from ${src.name}'s desk (${o.reason || "not in today"}), shared equally by ${user.name || "your team lead"}.`);
   return res;
 }
@@ -7056,20 +7059,23 @@ const OPS = {
     const names = new Map((await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(userIds))).map((u) => [u.id, u.name]));
     const before = new Map();
     for (const part of chunks(items.map((a) => str(a.id, 60)), 80)) (await all(env, `SELECT id, assigned_to, state, follow_up_on FROM claims WHERE id IN (${part.map(() => "?").join(",")}) AND client_id = ?`, ...part, client_id)).forEach((r) => before.set(r.id, r));
-    const eligible = (a) => { const b = before.get(str(a.id, 60)); return b && (b.state === "open" || (b.state === "completed" && b.follow_up_on && b.follow_up_on <= today)); };
     const prevNames = new Map((await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(new Set([...before.values()].map((b) => b.assigned_to).filter(Boolean))))).map((u) => [u.id, u.name]));
-    const evs = items.filter((a) => ok.has(str(a.user_id, 60)) && eligible(a)).map((a) => { const b = before.get(str(a.id, 60)); return claimEvent(env, b.id, user, "assigned", names.get(str(a.user_id, 60)) || "", { from: b.assigned_to ? prevNames.get(b.assigned_to) || "" : "", via: str(strategy, 40) || "allocate" }); });
-    const stmts = items.filter((a) => ok.has(str(a.user_id, 60))).map((a) =>
+    const sent = items.filter((a) => ok.has(str(a.user_id, 60)));
+    const stmts = sent.map((a) =>
       env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = ?, state = 'assigned', state_reason = '', priority = ${PRIO_SQL}, priority_base = ?, priority_reason = ${PRIO_REASON_SQL}, tier = CASE WHEN ? <> '' THEN ? ELSE tier END,
           age_days = COALESCE(?, age_days), bucket = CASE WHEN ? <> '' THEN ? ELSE bucket END, skipped_at = NULL, skips = 0, first_up = 0, updated_at = ?
-        WHERE id = ? AND client_id = ? AND (state = 'open' OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?))`)
+        WHERE id = ? AND client_id = ? AND (state = 'open' OR (state = 'completed' AND follow_up_on <> '' AND follow_up_on <= ?)) RETURNING id`)
         .bind(str(a.user_id, 60), now, ...prioArgs(num(a.priority, 0)), num(a.priority, 0), str(a.priority_reason, 300), str(a.priority_reason, 300), str(a.tier, 10), str(a.tier, 10), a.age_days == null ? null : Math.round(num(a.age_days, 0)),
           str(a.bucket, 20), str(a.bucket, 20), now, str(a.id, 60), client_id, today));
     const results = await batchAll(env, stmts, 50);
-    const applied = results.reduce((s, r) => s + changesOf(r), 0);
+    // the claims this allocation really took (another team lead may have taken some of them a moment before): the claim's
+    // history and the biller's bell name only these
+    const done = sent.filter((a, i) => ((results[i] && results[i].results) || []).length);
+    const applied = done.length;
+    const evs = done.map((a) => { const b = before.get(str(a.id, 60)) || {}; return claimEvent(env, str(a.id, 60), user, "assigned", names.get(str(a.user_id, 60)) || "", { from: b.assigned_to ? prevNames.get(b.assigned_to) || "" : "", via: str(strategy, 40) || "allocate" }); });
     if (evs.length) await batchAll(env, evs, 50);
     if (applied) {
-      const per = new Map(); for (const a of items) if (ok.has(str(a.user_id, 60)) && eligible(a)) per.set(str(a.user_id, 60), (per.get(str(a.user_id, 60)) || 0) + 1);
+      const per = new Map(); for (const a of done) per.set(str(a.user_id, 60), (per.get(str(a.user_id, 60)) || 0) + 1);
       const cname = ((await one(env, "SELECT name FROM clients WHERE id = ?", client_id)) || {}).name || "";
       await noticeAlloc(env, [...per.entries()], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}${cname ? " (" + cname + ")" : ""}.`);
     }
@@ -7090,15 +7096,17 @@ const OPS = {
     }
     const now = Date.now();
     let changed = 0;
-    const evs = [];
-    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user)))
-      evs.push(claimEvent(env, r.id, user, "assigned", u.name, { from: r.prev || "", via: "reassign" }));
+    const evs = [], evIds = [];
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user))) {
+      evs.push(claimEvent(env, r.id, user, "assigned", u.name, { from: r.prev || "", via: "reassign" })); evIds.push(r.id); }
+    const moved = new Set();   // the claims the UPDATE changed: the history names only these
     for (const chunk of chunks(ids, 60)) {
-      const r = await run(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
-        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${editScopeSql(user, "client_id")}`, u.id, now, now, ...chunk, ...editScopeArgs(user));
-      changed += changesOf(r);
+      const r = await all(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
+        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${editScopeSql(user, "client_id")} RETURNING id`, u.id, now, now, ...chunk, ...editScopeArgs(user));
+      r.forEach((x) => moved.add(x.id)); changed += r.length;
     }
-    if (evs.length) await batchAll(env, evs, 50);
+    const evsMoved = evs.filter((e, i) => moved.has(evIds[i]));
+    if (evsMoved.length) await batchAll(env, evsMoved, 50);
     if (changed && u.id !== user.id) await noticeAlloc(env, [[u.id, changed]], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}.`);
     return { changed };
   },

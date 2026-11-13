@@ -383,6 +383,47 @@ S("K-06: Back, Forward or a new address while a pop-up holds typed text asks fir
   ok("K-06: Back to another page with typed text in a pop-up is held for 'Discard what you typed?'; no move, or nothing typed, goes on", held && same && free, { held, same, free });
 }
 
+S("K-09: two team leads allocating the same claims at the same moment: history and bell say only what each really got");
+{
+  const pool = await poolOf(30), t0 = Date.now();
+  // lead 1's write waits until lead 2 has taken claims 11 to 30 (lead 1 picked 1 to 20)
+  const release = holdNext(/UPDATE claims SET assigned_to = \?, assigned_at = \?, state = 'assigned'/);
+  const p1 = L1("alloc.apply", { client_id: sun.id, strategy: "smart", assignments: pool.slice(0, 20).map((c) => ({ id: c.id, user_id: U("Biller Rk One"), priority: 50 })) });
+  await tick();
+  const r2 = await L2("alloc.apply", { client_id: sun.id, strategy: "smart", assignments: pool.slice(10, 30).map((c) => ({ id: c.id, user_id: U("Biller Rk Two"), priority: 50 })) });
+  release(); const r1 = await p1; unhold();
+  const both = pool.slice(10, 20).map((c) => c.id);
+  const ev = await q("SELECT claim_id, COUNT(*) AS n, MAX(text) AS who FROM claim_events WHERE kind = 'assigned' AND claim_id IN (SELECT value FROM json_each(?)) GROUP BY claim_id", JSON.stringify(both));
+  const own = await q("SELECT assigned_to FROM claims WHERE id IN (SELECT value FROM json_each(?))", JSON.stringify(both));
+  const bell1 = (await q("SELECT text FROM user_notices WHERE kind = 'alloc' AND user_id = ? AND at >= ? AND text LIKE '%Lead Rk One%' ORDER BY at DESC LIMIT 1", U("Biller Rk One"), t0))[0];
+  ok("K-09: the claims both leads picked went to one biller and their history names that one assignment only",
+    r2.applied === 20 && r1.applied === 10 && ev.length === 10 && ev.every((e) => e.n === 1 && e.who === "Biller Rk Two") && own.every((o) => o.assigned_to === U("Biller Rk Two")), { r1: r1.applied, r2: r2.applied, ev: ev.slice(0, 3) });
+  ok("K-09: the first lead's biller is told of the 10 claims they got, not 20", bell1 && /^10 new claims were allocated to you/.test(bell1.text), bell1);
+}
+{
+  // the same in Rebalance (share equally): a claim its biller opens while the desk is shared out stays with them, and the history,
+  // the bell and the counts say what really moved
+  const seven = (await A("users.list")).users.find((u) => u.name === "Biller Rk Seven").id;
+  await as(null)("auth.firstPassword", { user_id: seven, passHash: await sha("pw-rk-b7") });
+  const S7 = as((await login("rk-b7@purview-healthcare.com", "pw-rk-b7")).token), t0 = Date.now();
+  await sql("UPDATE claims SET assigned_to = NULL, state = 'open' WHERE assigned_to = ? AND state IN ('assigned','in_progress')", seven);
+  const four = (await poolOf(4)).map((c) => c.id);
+  await A("alloc.reassign", { ids: four, user_id: seven });
+  const before2 = (await q("SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state IN ('assigned','in_progress')", U("Biller Rk Two")))[0].n;
+  const release = holdNext(/WHERE id = \? AND state = 'assigned' AND assigned_to = \? RETURNING id|WHERE id = \? AND state = 'assigned' AND assigned_to = \?/);
+  const day = new Date(Date.now() + 330 * 60000 - 5 * 3600000).toISOString().slice(0, 10);
+  const pr = A("team.rebalance", { user_id: seven, today: day });
+  await tick();
+  const opened = await S7("queue.next", {});
+  release(); const rb = await pr; unhold();
+  const evs = (await q("SELECT COUNT(*) AS n FROM claim_events WHERE kind = 'assigned' AND claim_id IN (SELECT value FROM json_each(?)) AND data_json LIKE '%rebalance%'", JSON.stringify(four)))[0].n;
+  const after2 = (await q("SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state IN ('assigned','in_progress')", U("Biller Rk Two")))[0].n;
+  const bell2 = (await q("SELECT text FROM user_notices WHERE kind = 'alloc' AND user_id = ? AND at >= ? AND text LIKE '%shared equally%' ORDER BY at DESC LIMIT 1", U("Biller Rk Two"), t0))[0];
+  const stays = (await q("SELECT assigned_to, state FROM claims WHERE id = ?", opened.claim.id))[0];
+  ok("K-09 (same in Rebalance): the claim the biller opened meanwhile stays with them; 3 moved, 3 history lines, the bell says 3",
+    stays.assigned_to === seven && stays.state === "in_progress" && rb.moved === 3 && evs === 3 && after2 - before2 === 3 && bell2 && /^3 new claims were allocated to you/.test(bell2.text), { rb, evs, moved: after2 - before2, bell: bell2 && bell2.text, stays });
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
