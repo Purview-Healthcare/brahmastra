@@ -2659,7 +2659,7 @@ function stackWorkbook(d, rows, tls) {
     const sh = sheet();
     put(sh, 0, 0, "Extra production in Achieved: work done outside Brahmastra, counted from the team leads' files in OneDrive (one row of a file is one piece of work on its DOW)");
     ["Month", "ECN", "Name", "Achieved", "Of it extra production", "Files"].forEach((h, i) => put(sh, 1, i, h));
-    xs.forEach((r, i) => [[month, MON], [r.emp_id], [r.name], [r.achieved], [r.extra], [(r.extra_files || []).map((f) => f.name + " (" + f.n + ")").join("; ")]].forEach(([v, z], col) => put(sh, 2 + i, col, v, z)));
+    xs.forEach((r, i) => [[month, MON], [r.emp_id], [r.name], [r.achieved], [r.extra], [(r.extra_files || []).map((f) => f.name + " (" + f.n + (f.edited ? ", edited by hand: the file has " + f.file_n : "") + ")").join("; ")]].forEach(([v, z], col) => put(sh, 2 + i, col, v, z)));
     XLSX.utils.book_append_sheet(wb, done(sh, [10, 12, 22, 10, 12, 70]), "Extra production");
   }
   return wb;

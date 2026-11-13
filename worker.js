@@ -193,16 +193,22 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS stack_locks (month TEXT NOT NULL, scope TEXT NOT NULL, rows_json TEXT NOT NULL DEFAULT '{}', by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
      PRIMARY KEY (month, scope))`,
   /* Extra production (Dashboard › Stack report): work a team does outside Brahmastra, kept by the team lead in a production file
-     in OneDrive. Each upload keeps the OneDrive file (its drive and item id, name and link), who uploaded it and when, what was
-     read and left out, and its counts: one row a person a day of work (DOW), added to their work done on Team status. Uploading
-     the same file again replaces its earlier counts (state 'replaced' once none are left); Remove takes them out ('removed'). */
+     in OneDrive. Each upload keeps the OneDrive file (its drive and item id, name and link), who uploaded it and when, and what
+     was read and left out. Uploading the same file again replaces what it counted (state 'replaced' once nothing of it counts);
+     Remove takes it out ('removed').
+     extra_lines: one row for each name written in the file and each day of work (DOW): the file's own number (file_n), the number
+     counted (n: the same, unless edited by hand: n_by, n_at) and who it counts for (user_id: the person the name was matched to,
+     auto_id, or one picked by hand: pick_by, pick_at). user_id is empty for a name left out because nobody was found ('none') or
+     two people share it ('same'): kept so a person can be picked for it later. Team status adds up n by user_id and day. */
   `CREATE TABLE IF NOT EXISTS extra_uploads (id TEXT PRIMARY KEY, file_key TEXT NOT NULL, drive_id TEXT NOT NULL DEFAULT '', item_id TEXT NOT NULL DEFAULT '',
      file_name TEXT NOT NULL DEFAULT '', web_url TEXT NOT NULL DEFAULT '', month TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
      rows_read INTEGER NOT NULL DEFAULT 0, rows_counted INTEGER NOT NULL DEFAULT 0, summary_json TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL DEFAULT 'counted',
      replaced_by TEXT, ended_by_name TEXT NOT NULL DEFAULT '', ended_at INTEGER)`,
   `CREATE INDEX IF NOT EXISTS idx_extra_uploads_file ON extra_uploads (file_key, at)`,
-  `CREATE TABLE IF NOT EXISTS extra_work (upload_id TEXT NOT NULL, user_id TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (upload_id, user_id, day))`,
-  `CREATE INDEX IF NOT EXISTS idx_extra_work_user ON extra_work (user_id, day)`,
+  `CREATE TABLE IF NOT EXISTS extra_lines (upload_id TEXT NOT NULL, line TEXT NOT NULL, day TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', emp_id TEXT NOT NULL DEFAULT '',
+     user_id TEXT NOT NULL DEFAULT '', auto_id TEXT NOT NULL DEFAULT '', why TEXT NOT NULL DEFAULT '', file_n INTEGER NOT NULL DEFAULT 0, n INTEGER NOT NULL DEFAULT 0,
+     n_by TEXT NOT NULL DEFAULT '', n_at INTEGER, pick_by TEXT NOT NULL DEFAULT '', pick_at INTEGER, PRIMARY KEY (upload_id, line, day))`,
+  `CREATE INDEX IF NOT EXISTS idx_extra_lines_user ON extra_lines (user_id, day)`,
 ];
 
 /* Columns added after the first release. ensureReady() adds any that an
@@ -4165,7 +4171,8 @@ async function stackLive(env, month, today) {
     const s = stackAssocScore({ pct, quality, al, lwp, late: lateDays.length, brk: brkDays.length, tp, pkt, tos });
     const l = u.reports_to ? byId.get(u.reports_to) : null;
     // the extra production in Achieved (Team status's own part of it, on the same days), with the files it came from
-    const extra = tracked ? t.extra_done || 0 : 0, extraFiles = tracked ? (t.extra_files || []).filter((x) => x.n_done > 0).map((x) => ({ id: x.id, name: x.name, n: x.n_done })) : [];
+    const extra = tracked ? t.extra_done || 0 : 0, extraFiles = tracked ? (t.extra_files || []).filter((x) => x.n_done > 0 || x.edited)
+      .map((x) => ({ id: x.id, name: x.name, n: x.n_done, file_n: x.file_done, edited: !!x.edited, edit_by: x.edit_by || "", edit_at: x.edit_at || null })) : [];
     return { id: u.id, name: u.name, emp_id: u.emp_id || "", doj: u.doj || "", title: titleOf(u), lead_id: l ? l.id : "", lead_name: l ? l.name : "", scope: l ? l.id : "p:" + u.id,
       tracked, achieved, expected, pct, extra, extra_files: extraFiles, achieved_typed: aT, expected_typed: eT, present, avr_prod: present > 0 && achieved != null ? achieved / present : null,
       avr_target: present > 0 && expected != null ? expected / present : null, quality, quality_from: qT ? "typed" : "", quality_typed: qT,
@@ -4277,20 +4284,32 @@ function stackCriteria() {
 /* ---- Extra production (Dashboard › Stack report › Extra production) ----
    Work a team does outside Brahmastra, kept by the team lead in a production file in OneDrive. The page opens the file from
    OneDrive (never from the computer), reads one row a piece of work with its DOW and User Name (and its Emp ID when the file has
-   that column) and sends the rows grouped by name and day. Here each is matched to an active person of the uploader's span: by
-   Emp ID first, then by name in any case and spacing; two people with the same name are never guessed between. A person Team
+   that column) and sends the rows grouped by name and day. Here each name is matched to an active person of the uploader's span:
+   by Emp ID first, then by name in any case and spacing; two people with the same name are never guessed between. A person Team
    status counts (an AR biller) gets the rows as work done on that day, as a claim worked is: on Team status, and so in the Stack
    report's Productivity; the target does not change. Rows dated after today, or in a month locked for the person's team, are
-   not counted, and a locked month keeps what it counted. The same OneDrive file again replaces its earlier counts. Team leads
-   for their own team; managers, the VP and the admin for their span; never an SME, a biller or a desk person. */
-const EXTRA_MAX_ROWS = 50000, EXTRA_MAX_GROUPS = 20000, EXTRA_NAME_MAX = 120;
+   not counted, and a locked month keeps what it counted. The same OneDrive file again replaces what it counted before.
+   Edited by hand (by whoever may upload, for the same people, before saving or later on a file already counted): a day's count
+   (a whole number, 0 for a day that is not counted; the file's own number is kept beside it) and who a name counts for (another
+   person of the editor's span, or a person for a name left out as not found or shared by two people). Nothing the file does not
+   have can be added. When the same file is loaded again, a picked person is applied again, and an edited count is kept while the
+   file's own number for that name and day is the same: when it changed, the file's new number is used and the edit is listed
+   as dropped. Team leads for their own team; managers, the VP and the admin for their span; never an SME, a biller or a desk
+   person. */
+const EXTRA_MAX_ROWS = 50000, EXTRA_MAX_GROUPS = 20000, EXTRA_NAME_MAX = 120, EXTRA_MAX_EDITS = 5000;
 const mayExtra = (u) => isStackLead(u) && !deskOf(u);
+const EXTRA_DENIED = "Extra production is for team leads and above (not SMEs or desk people).";
+const EXTRA_ADD = "To add work, add it to the file in OneDrive and load it again.";
 const extraKey = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim().toLowerCase();
+const extraLine = (emp, name) => extraKey(emp) + "|" + extraKey(name);
 // the file's OneDrive link, kept and shown as a link: OneDrive's own addresses only (OneDrive for work is on sharepoint.com)
 const EXTRA_LINK = /^https:\/\/([a-z0-9-]+\.)*(sharepoint\.com|onedrive\.live\.com|1drv\.ms)(\/|$)/i;
 const extraCount = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 0 && n <= EXTRA_MAX_ROWS ? n : 0; };
+// a count typed by hand: a whole number from 0 (a day that is not counted) to what a file can hold; anything else is refused
+const extraTyped = (v) => { const t = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : ""; if (!/^\d{1,6}$/.test(t) || Number(t) > EXTRA_MAX_ROWS) throw bad("A day's count is a whole number from 0 to " + EXTRA_MAX_ROWS.toLocaleString("en-US") + "."); return Number(t); };
 const extraDay = (iso) => stackShort(iso) + ", " + iso.slice(0, 4);
 const extraDays = (a, b) => (a === b ? extraDay(a) : a.slice(0, 4) === b.slice(0, 4) ? stackShort(a) + " to " + extraDay(b) : extraDay(a) + " to " + extraDay(b));
+const EXTRA_WHY = { none: "left out: not found", same: "left out: two people share the name" };
 // the months' locks: a month is locked for a person when their team's snapshot is kept, or any snapshot of it has them (as stack.save)
 async function extraLocks(env, months) {
   const by = new Map();
@@ -4301,10 +4320,23 @@ async function extraLocks(env, months) {
   }
   return { of: (u, month) => { const L = by.get(month); return !!(L && u && (L.scopes.has(u.reports_to || "p:" + u.id) || L.ids.has(u.id))); } };
 }
-/* The file's rows as the page sent them, matched: what would be counted (person by person, day by day), what is left out and
-   why, and what this OneDrive file counted before. Preview and save both work it out afresh. */
+// several audit lines in one statement (one line for each hand edit)
+async function auditMany(env, user, action, details) {
+  if (!details.length) return;
+  try { await run(env, "INSERT INTO audit_log (id, at, user_id, user_name, action, client_id, detail) SELECT json_extract(value, '$[0]'), ?, ?, ?, ?, NULL, json_extract(value, '$[1]') FROM json_each(?)",
+    Date.now(), (user && user.id) || null, (user && user.name) || "", str(action, 60), JSON.stringify(details.map((d) => [uuid(), str(d, 400)]))); } catch (e) { /* the audit trail never stops the work */ }
+}
+/* The people an editor may count extra production for: the active people of their span whom Team status counts. */
+async function extraPeople(env, user) {
+  const span = await visibleUsers(env, user, "span"), act = span.filter((u) => u.active), byId = new Map(span.map((u) => [u.id, u]));
+  const ok = (id) => { const u = byId.get(id); return u && u.active && isArBiller(u) ? u : null; };
+  return { span, act, byId, ok };
+}
+/* The file's rows as the page sent them, matched and with the hand edits applied: what would be counted (name by name, day by
+   day), what is left out and why, what this OneDrive file counted before and which of its hand edits carry over. Preview and
+   save both work it out afresh. */
 async function extraPlan(env, user, payload) {
-  if (!mayExtra(user)) throw denied("Extra production is for team leads and above (not SMEs or desk people).");
+  if (!mayExtra(user)) throw denied(EXTRA_DENIED);
   const itemId = str(payload.item_id, 300).trim(), driveId = str(payload.drive_id, 300).trim();
   if (!itemId) throw bad("Open the file from OneDrive: extra production is counted only from a file in OneDrive.");
   const name = keepEnding(String(payload.file_name == null || typeof payload.file_name === "object" ? "" : payload.file_name).replace(/\s+/g, " ").trim(), 200);
@@ -4313,12 +4345,15 @@ async function extraPlan(env, user, payload) {
   if (webUrl && (webUrl.length > 2000 || !EXTRA_LINK.test(webUrl))) throw bad("That is not a OneDrive link. Open the file from OneDrive.");
   if (!Array.isArray(payload.groups)) throw bad("Pick the file again: no rows came from it.");
   if (payload.groups.length > EXTRA_MAX_GROUPS) throw bad("This file has more than " + EXTRA_MAX_GROUPS.toLocaleString("en-US") + " different people and days. Split it, for example a file a month.");
-  const G = []; let inRows = 0;
+  // the file's lines: each name as written (with its Emp ID), and its own number of rows for each day
+  const lines = new Map(); let inRows = 0;
   for (const g of payload.groups) {
     const ok = !!g && typeof g === "object" && !Array.isArray(g);
     const d = ok ? isoDate(g.d) : "", n = ok ? Number(g.n) : NaN, u = ok && typeof g.u !== "object" ? str(g.u, 400).replace(/\s+/g, " ").trim().slice(0, EXTRA_NAME_MAX) : "";
     if (!d || !u || !Number.isInteger(n) || n < 1 || n > EXTRA_MAX_ROWS) throw bad("Pick the file again: Brahmastra could not read its rows.");
-    G.push({ d, n, u, e: typeof g.e === "object" ? "" : str(g.e, 60).trim() }); inRows += n;
+    const e = typeof g.e === "object" ? "" : str(g.e, 60).replace(/\s+/g, " ").trim().slice(0, 40), k = extraLine(e, u);
+    if (!lines.has(k)) lines.set(k, { line: k, name: u, emp_id: e, file: new Map() });
+    const L = lines.get(k); L.file.set(d, (L.file.get(d) || 0) + n); inRows += n;
   }
   const sk = payload.skipped && typeof payload.skipped === "object" && !Array.isArray(payload.skipped) ? payload.skipped : {};
   const noDate = extraCount(sk.no_date), badDate = extraCount(sk.bad_date), noName = extraCount(sk.no_name);
@@ -4328,81 +4363,180 @@ async function extraPlan(env, user, payload) {
   if (!rowsRead) throw bad("There are no rows to read in " + name + ".");
   const sheets = (Array.isArray(payload.sheets) ? payload.sheets : []).slice(0, 20).filter((s) => s && typeof s === "object" && !Array.isArray(s))
     .map((s) => ({ name: str(s.name, 100), rows: extraCount(s.rows), dow: str(s.dow, 80), user: str(s.user, 80), emp: str(s.emp, 80), order: s.order === "dmy" ? "dmy" : "mdy" }));
+  // the hand edits made in the check before saving: who a name counts for, and a day's count
+  const ed = payload.edits && typeof payload.edits === "object" && !Array.isArray(payload.edits) ? payload.edits : {};
+  const picksIn = Array.isArray(ed.picks) ? ed.picks : [], countsIn = Array.isArray(ed.counts) ? ed.counts : [];
+  if (picksIn.length + countsIn.length > EXTRA_MAX_EDITS) throw bad("That is more than " + EXTRA_MAX_EDITS.toLocaleString("en-US") + " hand edits: correct the file in OneDrive and load it again.");
+  const picks = new Map(), counts = new Map(), gone = (what) => bad("The file has no " + what + ": a person or a day the file does not have cannot be added here. " + EXTRA_ADD);
+  for (const x of picksIn) { const k = x && typeof x === "object" && typeof x.line === "string" ? x.line : ""; if (!lines.has(k)) throw gone("rows under that name");
+    picks.set(k, x.user_id == null || typeof x.user_id === "object" ? "" : str(x.user_id, 60)); }
+  for (const x of countsIn) { const k = x && typeof x === "object" && typeof x.line === "string" ? x.line : "", d = k ? isoDate(x.day) : "";
+    if (!lines.has(k) || !lines.get(k).file.has(d)) throw gone("work under that name on that day"); counts.set(k + "|" + d, extraTyped(x.n)); }
   const today = istISO(Date.now()), fileKey = (driveId ? driveId + "!" : "") + itemId;
   // who: the active people of the uploader's span (the Emp ID first, then the name, any case and spacing)
-  const span = await visibleUsers(env, user, "span"), act = span.filter((u) => u.active);
+  const { span, act, byId: spanById, ok: countable } = await extraPeople(env, user);
   const byEmp = new Map(), byName = new Map(), put = (m, k, u) => { if (k) m.set(k, [...(m.get(k) || []), u]); };
   for (const u of act) { put(byEmp, extraKey(u.emp_id), u); put(byName, extraKey(u.name), u); }
-  // what this OneDrive file counted before: those counts of the uploader's people go, outside a locked month
-  const before = await all(env, "SELECT x.id, x.by_name, x.at, w.user_id, w.day, w.n FROM extra_uploads x JOIN extra_work w ON w.upload_id = x.id WHERE x.file_key = ?", fileKey);
-  const months = [...new Set([...G.map((g) => g.d.slice(0, 7)), ...before.map((r) => r.day.slice(0, 7))])];
+  // what this OneDrive file counts now: of it, the uploader's people's counts go (outside a locked month), with the hand edits
+  // on them carried over where the file still says the same; what counts for people the uploader does not see stays as it is
+  const before = await all(env, `SELECT x.id, x.by_name, x.at, w.line, w.day, w.name, w.user_id, w.file_n, w.n, w.n_by, w.n_at, w.pick_by, w.pick_at
+    FROM extra_uploads x JOIN extra_lines w ON w.upload_id = x.id WHERE x.file_key = ?`, fileKey);
+  const months = [...new Set([...[...lines.values()].flatMap((L) => [...L.file.keys()].map((d) => d.slice(0, 7))), ...before.map((r) => r.day.slice(0, 7))])];
   const lk = await extraLocks(env, months);
-  const counted = new Map(), none = new Map(), same = new Map(), notOn = new Map(), locked = new Map(); let future = 0;
-  const add = (m, k, o, n) => { const x = m.get(k) || { ...o, rows: 0 }; x.rows += n; m.set(k, x); return x; };
-  for (const g of G) {
-    if (g.d > today) { future += g.n; continue; }
-    const e = extraKey(g.e), k = extraKey(g.u);
-    let hit = e ? byEmp.get(e) || [] : [];
-    if (!hit.length) hit = byName.get(k) || [];
-    if (!hit.length) { add(none, k + "|" + e, { name: g.u, emp_id: g.e }, g.n); continue; }
-    if (hit.length > 1) { add(same, k + "|" + e, { name: g.u, emp_id: g.e, people: hit.length }, g.n); continue; }
-    const p = hit[0], mon = g.d.slice(0, 7);
-    if (!isArBiller(p)) { add(notOn, p.id, { name: p.name, why: p.role === "user" ? (p.department || "another department") + ", not AR" : "a team lead, SME or manager" }, g.n); continue; }
-    if (lk.of(p, mon)) { add(locked, mon, { month: mon, label: stackMonthLabel(mon), people: new Set() }, g.n).people.add(p.id); continue; }
-    const c = counted.get(p.id) || { p, rows: 0, days: new Map() };
-    c.rows += g.n; c.days.set(g.d, (c.days.get(g.d) || 0) + g.n); counted.set(p.id, c);
-  }
-  const spanById = new Map(span.map((u) => [u.id, u])), ups = new Map(); let replaces = 0, keeps = 0;
+  const elsewhere = new Set(), oldPick = new Map(), oldEdit = new Map(), ups = new Map(); let replaces = 0, keeps = 0;
   for (const r of before) {
-    const u = spanById.get(r.user_id);
-    if (u && !lk.of(u, r.day.slice(0, 7))) replaces += r.n; else keeps += r.n;
-    add(ups, r.id, { id: r.id, by: r.by_name, at: r.at }, r.n);
+    if (!r.user_id) continue;   // a name left out before counts nothing: it is read afresh
+    const u = spanById.get(r.user_id), goes = !!u && !lk.of(u, r.day.slice(0, 7));
+    if (!u) elsewhere.add(r.line);
+    if (goes) replaces += r.n; else keeps += r.n;
+    const up = ups.get(r.id) || { id: r.id, by: r.by_name, at: r.at, rows: 0 }; up.rows += r.n; ups.set(r.id, up);
+    if (r.pick_at != null && (!oldPick.has(r.line) || oldPick.get(r.line).at < r.pick_at)) oldPick.set(r.line, { user_id: r.user_id, by: r.pick_by, at: r.pick_at });
+    if (goes && r.n_at != null) oldEdit.set(r.line + "|" + r.day, { file_n: r.file_n, n: r.n, by: r.n_by, at: r.n_at, name: r.name, user_id: r.user_id });
   }
-  return { today, name, webUrl, driveId, itemId, fileKey, sheets, rowsRead, G, span, months, lk, counted, none, same, notOn, locked, future, noDate, badDate, noName, badEx,
+  const out = [], dropped = [], droppedPicks = [], made = []; let future = 0;
+  for (const L of lines.values()) {
+    const days = [...L.file.keys()].sort(), o = { line: L.line, name: L.name, emp_id: L.emp_id, p: null, auto: null, other: null, why: "", people: 0, picked: null, days: [] };
+    out.push(o);
+    const asked = picks.has(L.line) || days.some((d) => counts.has(L.line + "|" + d));
+    if (elsewhere.has(L.line)) {
+      if (asked) throw bad(L.name + " is already counted from an earlier upload of this file, for people you do not see: it cannot be counted twice.");
+      o.why = "elsewhere"; for (const d of days) { if (d > today) future += L.file.get(d); else o.days.push({ day: d, file_n: L.file.get(d), n: 0, state: "out" }); }
+      continue;
+    }
+    // the file's own match
+    const e = extraKey(L.emp_id); let hit = e ? byEmp.get(e) || [] : [];
+    if (!hit.length) hit = byName.get(extraKey(L.name)) || [];
+    if (!hit.length) o.why = "none"; else if (hit.length > 1) { o.why = "same"; o.people = hit.length; } else if (isArBiller(hit[0])) o.auto = hit[0]; else { o.why = "noton"; o.other = hit[0]; }
+    // who it counts for: a person picked now, else the one picked before for this name in this file (while they can still be
+    // counted), else the file's own match
+    const mem = oldPick.get(L.line), memP = mem ? countable(mem.user_id) : null, own = o.auto;
+    const want = picks.has(L.line) ? picks.get(L.line) : null;   // null: nothing asked; "": back to what the file says; an id: that person
+    const was = () => (memP ? memP.name : own ? own.name : EXTRA_WHY[o.why === "noton" ? "none" : o.why]);
+    if (want) {
+      if (o.why === "noton" && !memP) throw bad(o.other.name + " is not counted on Team status, so these rows are not counted: the fix is in the file.");
+      const p = countable(want); if (!p) throw bad("Pick one of the people you see who is counted on Team status.");
+      o.p = p;
+      if (own && own.id === p.id) { if (memP && memP.id !== p.id) made.push('"' + L.name + '" in the file counts for ' + p.name + " again (was " + memP.name + ")"); }
+      else if (mem && mem.user_id === p.id) o.picked = { by: mem.by, at: mem.at };
+      else { o.picked = { by: user.name || "", at: null, now: true }; made.push('"' + L.name + '" in the file counts for ' + p.name + " (was " + was() + ")"); }
+    } else if (want === null && memP && !(own && own.id === memP.id)) { o.p = memP; o.picked = { by: mem.by, at: mem.at }; }
+    else {
+      if (o.why === "noton" && asked && !memP) throw bad(o.other.name + " is not counted on Team status, so these rows are not counted: the fix is in the file.");
+      o.p = own;
+      if (want === "" && memP && !(own && own.id === memP.id)) made.push('"' + L.name + '" in the file counts for ' + (own ? own.name + " again" : "nobody again (" + EXTRA_WHY[o.why === "noton" ? "none" : o.why] + ")") + " (was " + memP.name + ")");
+      if (want === null && mem && !memP) { const gone0 = spanById.get(mem.user_id); droppedPicks.push({ name: L.name, emp_id: L.emp_id, person: gone0 ? gone0.name : "", by: mem.by, at: mem.at }); }
+    }
+    for (const d of days) {
+      const fn = L.file.get(d), k = L.line + "|" + d, mon = d.slice(0, 7), old = oldEdit.get(k);
+      if (d > today) { if (counts.has(k)) throw bad("A day after today is not counted, so its count cannot be edited."); future += fn; continue; }
+      if (!o.p) { if (counts.has(k)) throw bad("Pick the person for " + L.name + " first."); o.days.push({ day: d, file_n: fn, n: fn, state: "out" }); continue; }
+      if (lk.of(o.p, mon)) { if (counts.has(k)) throw bad(stackMonthLabel(mon) + " is locked for " + o.p.name + ": its counts cannot be edited. The admin can unlock the month."); o.days.push({ day: d, file_n: fn, n: 0, state: "locked" }); continue; }
+      const x = { day: d, file_n: fn, n: fn, state: "counted", edited: null };
+      if (counts.has(k)) { const n = counts.get(k), was = old && old.file_n === fn ? old.n : fn;
+        x.n = n; if (n !== fn) x.edited = old && old.file_n === fn && old.n === n ? { by: old.by, at: old.at } : { by: user.name || "", at: null, now: true };
+        if (n !== was) made.push(o.p.name + (extraKey(L.name) === extraKey(o.p.name) ? "" : ' (in the file: "' + L.name + '")') + ", " + extraDay(d) + ": " + was + " → " + n + (was === fn ? "" : " (the file has " + fn + ")")); }
+      else if (old && old.file_n === fn) { x.n = old.n; x.edited = { by: old.by, at: old.at }; }
+      if (old) oldEdit.delete(k);
+      if (old && old.file_n !== fn) dropped.push({ name: L.name, person: o.p.name, day: d, old_file: old.file_n, edit: old.n, new_file: fn, by: old.by, at: old.at, why: "changed" });
+      o.days.push(x);
+    }
+  }
+  // a hand edit on a day the file no longer has, or on a name that is left out now, cannot be kept either
+  for (const [k, old] of oldEdit) { const [line, d] = [k.slice(0, k.lastIndexOf("|")), k.slice(k.lastIndexOf("|") + 1)], L = lines.get(line), was = spanById.get(old.user_id);
+    dropped.push({ name: old.name, person: was ? was.name : "", day: d, old_file: old.file_n, edit: old.n, new_file: L && L.file.has(d) ? L.file.get(d) : 0, by: old.by, at: old.at, why: L && L.file.has(d) ? "left_out" : "gone" }); }
+  dropped.sort((a, b) => a.name.localeCompare(b.name) || a.day.localeCompare(b.day));
+  return { today, name, webUrl, driveId, itemId, fileKey, sheets, rowsRead, span, act, months, lk, lines: out, future, noDate, badDate, noName, badEx, dropped, droppedPicks, made,
     before: [...ups.values()].sort((a, b) => b.at - a.at), replaces, keeps };
 }
-/* What the page shows before anything is saved (and the save's summary): rows, rows per person, the dates, what is left out and why,
-   the months already locked and what this file counted before. */
-async function extraSummary(env, P) {
-  const leadIds = [...new Set([...P.counted.values()].map((c) => c.p.reports_to).filter(Boolean))];
-  const leads = new Map(leadIds.length ? (await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(leadIds))).map((x) => [x.id, x.name]) : []);
-  const people = [...P.counted.values()].map((c) => { const days = [...c.days.keys()].sort();
-    return { id: c.p.id, name: c.p.name, emp_id: c.p.emp_id || "", lead_name: leads.get(c.p.reports_to) || "", rows: c.rows, days: days.length, from: days[0], to: days[days.length - 1] }; })
-    .sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.name.localeCompare(b.name));
-  const counted = people.reduce((t, x) => t + x.rows, 0);
-  let from = "", to = ""; for (const x of people) { if (!from || x.from < from) from = x.from; if (!to || x.to > to) to = x.to; }
-  const byMonth = new Map(), mo = (m) => { if (!byMonth.has(m)) byMonth.set(m, { month: m, label: stackMonthLabel(m), rows: 0, locked_rows: 0 }); return byMonth.get(m); };
-  for (const c of P.counted.values()) for (const [d, n] of c.days) mo(d.slice(0, 7)).rows += n;
-  for (const L of P.locked.values()) mo(L.month).locked_rows += L.rows;
-  const list = (m) => [...m.values()].sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
-  const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: list(P.none), same_name: list(P.same), not_counted: list(P.notOn),
-    locked: [...P.locked.values()].sort((a, b) => a.month.localeCompare(b.month)).map((L) => ({ month: L.month, label: L.label, rows: L.rows, people: L.people.size })) };
-  const sumRows = (xs) => xs.reduce((t, x) => t + x.rows, 0);
-  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + sumRows(left.locked);
-  return { file: { name: P.name, web_url: P.webUrl }, sheets: P.sheets, rows: P.rowsRead, counted, people, from, to,
-    months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)), left_out: left,
-    earlier: P.before.length ? { uploads: P.before.map((b) => ({ by: b.by, at: b.at, rows: b.rows })), replaces: P.replaces, keeps: P.keeps } : null };
+/* One name of the file as the page shows it: who it counts for (and whether picked by hand), its days with the file's own number
+   and the number counted (and whether edited by hand, by whom and when), which days are in a locked month. */
+function extraLineOut(o, leads) {
+  const days = o.days.filter((d) => d.state === "counted" || d.state === "kept").map((d) => ({ day: d.day, file_n: d.file_n, n: d.n, edited: d.edited || null, locked: d.state === "kept" }));
+  const on = days.filter((d) => d.n > 0).map((d) => d.day);
+  return { line: o.line, name: o.name, emp_id: o.emp_id, id: o.p.id, person: o.p.name, person_emp: o.p.emp_id || "", lead_name: (leads && leads.get(o.p.reports_to)) || "",
+    auto_id: o.auto ? o.auto.id : "", auto_name: o.auto ? o.auto.name : "", why: o.why === "none" || o.why === "same" ? o.why : "", picked: o.picked || null,
+    rows: days.reduce((t, d) => t + d.n, 0), file_rows: days.reduce((t, d) => t + d.file_n, 0), edits: days.filter((d) => d.edited).length, n_days: on.length, from: on[0] || "", to: on[on.length - 1] || "", days };
 }
-/* The files counted for a month, for the people the viewer sees: each with its rows there, its people and days, and whether the
-   viewer may take it out (it counts something there outside a locked month). */
+const extraLeads = async (env, people) => { const ids = [...new Set(people.map((p) => p && p.reports_to).filter(Boolean))];
+  return new Map(ids.length ? (await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(ids))).map((x) => [x.id, x.name]) : []); };
+const extraPickable = (act, leads) => act.filter(isArBiller).map((u) => ({ id: u.id, name: u.name, emp_id: u.emp_id || "", lead_name: leads.get(u.reports_to) || "" })).sort((a, b) => a.name.localeCompare(b.name) || a.emp_id.localeCompare(b.emp_id));
+/* What the page shows before anything is saved (and the save's summary): rows, the names of the file with who each counts for,
+   rows per person, the dates, what is left out and why, the months already locked, what this file counted before, and the
+   hand edits that could not be kept. */
+async function extraSummary(env, P) {
+  const counted = P.lines.filter((o) => o.p), leads = await extraLeads(env, [...P.act.filter(isArBiller)]);
+  const lines = counted.map((o) => extraLineOut(o, leads)).filter((l) => l.days.length)
+    .sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.person.localeCompare(b.person) || a.person_emp.localeCompare(b.person_emp) || a.name.localeCompare(b.name));
+  // rows per person (a person may be written two ways in the file)
+  const per = new Map();
+  for (const l of lines) { const x = per.get(l.id) || { id: l.id, name: l.person, emp_id: l.person_emp, lead_name: l.lead_name, rows: 0, on: new Set() }; x.rows += l.rows; for (const d of l.days) if (d.n > 0) x.on.add(d.day); per.set(l.id, x); }
+  const people = [...per.values()].filter((x) => x.rows > 0).map((x) => { const on = [...x.on].sort(); return { id: x.id, name: x.name, emp_id: x.emp_id, lead_name: x.lead_name, rows: x.rows, days: on.length, from: on[0], to: on[on.length - 1] }; })
+    .sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.name.localeCompare(b.name));
+  const total = people.reduce((t, x) => t + x.rows, 0);
+  let from = "", to = ""; for (const x of people) { if (!from || x.from < from) from = x.from; if (!to || x.to > to) to = x.to; }
+  const byMonth = new Map(), mo = (m) => { if (!byMonth.has(m)) byMonth.set(m, { month: m, label: stackMonthLabel(m), rows: 0, locked_rows: 0, people: new Set() }); return byMonth.get(m); };
+  for (const o of counted) for (const d of o.days) { if (d.state === "counted") mo(d.day.slice(0, 7)).rows += d.n; else if (d.state === "locked") { const m = mo(d.day.slice(0, 7)); m.locked_rows += d.file_n; m.people.add(o.p.id); } }
+  const fileRows = (o) => o.days.reduce((t, d) => t + d.file_n, 0), names = (why) => P.lines.filter((o) => o.why === why && !o.p && fileRows(o) > 0)
+    .map((o) => ({ line: o.line, name: why === "noton" ? o.other.name : o.name, emp_id: o.emp_id, rows: fileRows(o), ...(why === "same" ? { people: o.people } : {}),
+      ...(why === "noton" ? { why: o.other.role === "user" ? (o.other.department || "another department") + ", not AR" : "a team lead, SME or manager" } : {}),
+      ...(why === "none" || why === "same" ? { days: o.days.map((d) => ({ day: d.day, file_n: d.file_n })) } : {}) }))
+    .sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
+  const locked = [...byMonth.values()].filter((m) => m.locked_rows).map((m) => ({ month: m.month, label: m.label, rows: m.locked_rows, people: m.people.size }));
+  const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: names("none"), same_name: names("same"), not_counted: names("noton"), elsewhere: names("elsewhere"), locked };
+  const sumRows = (xs) => xs.reduce((t, x) => t + x.rows, 0);
+  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + sumRows(left.elsewhere) + sumRows(left.locked);
+  return { file: { name: P.name, web_url: P.webUrl }, sheets: P.sheets, rows: P.rowsRead, counted: total, file_counted: lines.reduce((t, l) => t + l.file_rows, 0), people, lines, from, to,
+    months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)).map((m) => ({ month: m.month, label: m.label, rows: m.rows, locked_rows: m.locked_rows })), left_out: left,
+    pickable: extraPickable(P.act, leads), dropped: P.dropped, dropped_picks: P.droppedPicks, edits: { counts: lines.reduce((t, l) => t + l.edits, 0), picks: lines.filter((l) => l.picked).length },
+    earlier: P.before.length ? { uploads: P.before.map((b) => ({ by: b.by, at: b.at, rows: b.rows })), replaces: P.replaces, keeps: P.keeps } : null, add_note: EXTRA_ADD };
+}
+/* A file already counted, as one viewer sees it: the names counted for the people of their span (each with its days, the file's own
+   numbers, the hand edits and who made them), and the names left out as not found or shared, which can still be given a person. */
+async function extraFileView(env, user, id) {
+  const x = id ? await one(env, "SELECT * FROM extra_uploads WHERE id = ?", id) : null;
+  const rows = x ? await all(env, "SELECT * FROM extra_lines WHERE upload_id = ? ORDER BY line, day", id) : [];
+  if (!x || !rows.some((r) => r.user_id)) throw bad("That file does not count anything now.");
+  const { span, act, byId } = await extraPeople(env, user);
+  if (!rows.some((r) => r.user_id && byId.has(r.user_id)) && x.by_id !== user.id) throw denied("What " + x.file_name + " counts is not for your people.");
+  const lk = await extraLocks(env, [...new Set(rows.map((r) => r.day.slice(0, 7)))]), leads = await extraLeads(env, span), by = new Map();
+  for (const r of rows) { if (r.user_id && !byId.has(r.user_id)) continue;
+    if (!by.has(r.line)) by.set(r.line, { line: r.line, name: r.name, emp_id: r.emp_id, p: r.user_id ? byId.get(r.user_id) : null, auto: r.auto_id ? byId.get(r.auto_id) || { id: r.auto_id, name: "" } : null, why: r.why,
+      picked: r.pick_at != null ? { by: r.pick_by, at: r.pick_at } : null, days: [] });
+    const o = by.get(r.line);
+    o.days.push({ day: r.day, file_n: r.file_n, n: r.n, edited: r.n_at != null ? { by: r.n_by, at: r.n_at } : null, state: !o.p ? "out" : lk.of(o.p, r.day.slice(0, 7)) ? "kept" : "counted" }); }
+  const all0 = [...by.values()], lines = all0.filter((o) => o.p).map((o) => extraLineOut(o, leads))
+    .sort((a, b) => (a.lead_name || "~").localeCompare(b.lead_name || "~") || a.person.localeCompare(b.person) || a.person_emp.localeCompare(b.person_emp) || a.name.localeCompare(b.name));
+  const out = (why) => all0.filter((o) => !o.p && o.why === why).map((o) => ({ line: o.line, name: o.name, emp_id: o.emp_id, rows: o.days.reduce((t, d) => t + d.file_n, 0), days: o.days.map((d) => ({ day: d.day, file_n: d.file_n })) }))
+    .sort((a, b) => b.rows - a.rows || a.name.localeCompare(b.name));
+  const lockedMonths = [...new Set(lines.flatMap((l) => l.days.filter((d) => d.locked).map((d) => stackMonthLabel(d.day.slice(0, 7)))))];
+  return { file: { id: x.id, name: x.file_name, web_url: x.web_url, by: x.by_name, at: x.at }, lines, left_out: { not_found: out("none"), same_name: out("same") }, pickable: extraPickable(act, leads),
+    counted: lines.reduce((t, l) => t + l.rows, 0), file_counted: lines.reduce((t, l) => t + l.file_rows, 0), locked_months: lockedMonths, add_note: EXTRA_ADD };
+}
+/* The files counted for a month, for the people the viewer sees: each with its rows there (and the file's own number when a count
+   was edited by hand), its people and days, the names still left out, and whether the viewer may take it out. */
 async function extraFiles(env, user, span, month) {
   const first = month + "-01", last = stackMonthEnd(month), ids = listArg(span);
-  const per = await all(env, `SELECT upload_id, user_id, SUM(n) AS n, MIN(day) AS d0, MAX(day) AS d1 FROM extra_work WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY upload_id, user_id`, first, last, ids);
+  const per = await all(env, `SELECT upload_id, user_id, SUM(n) AS n, SUM(file_n) AS file_n, MIN(CASE WHEN n > 0 THEN day END) AS d0, MAX(CASE WHEN n > 0 THEN day END) AS d1,
+      SUM(CASE WHEN n_at IS NOT NULL THEN 1 ELSE 0 END) AS edits, COUNT(DISTINCT CASE WHEN pick_at IS NOT NULL THEN line END) AS picks, MAX(COALESCE(n_at, 0)) AS n_at, MAX(COALESCE(pick_at, 0)) AS pick_at
+    FROM extra_lines WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY upload_id, user_id`, first, last, ids);
   if (!per.length) return [];
   const upIds = listArg(new Set(per.map((x) => x.upload_id)));
   const ups = new Map((await all(env, `SELECT id, file_name, web_url, by_name, at FROM extra_uploads WHERE id IN ${IN_LIST}`, upIds)).map((x) => [x.id, x]));
-  const other = new Map((await all(env, `SELECT upload_id, SUM(n) AS n FROM extra_work WHERE upload_id IN ${IN_LIST} AND user_id IN ${IN_LIST} AND (day < ? OR day > ?) GROUP BY upload_id`, upIds, ids, first, last)).map((x) => [x.upload_id, x.n || 0]));
+  const other = new Map((await all(env, `SELECT upload_id, SUM(n) AS n FROM extra_lines WHERE upload_id IN ${IN_LIST} AND user_id IN ${IN_LIST} AND (day < ? OR day > ?) GROUP BY upload_id`, upIds, ids, first, last)).map((x) => [x.upload_id, x.n || 0]));
+  const out0 = new Map((await all(env, `SELECT upload_id, COUNT(DISTINCT line) AS names, SUM(file_n) AS n FROM extra_lines WHERE upload_id IN ${IN_LIST} AND user_id = '' GROUP BY upload_id`, upIds)).map((x) => [x.upload_id, x]));
   const who = new Map((await all(env, `SELECT id, reports_to FROM users WHERE id IN ${IN_LIST}`, listArg(new Set(per.map((x) => x.user_id))))).map((u) => [u.id, u]));
   const lk = await extraLocks(env, [month]), files = new Map();
   for (const x of per) {
     const u = ups.get(x.upload_id); if (!u) continue;
-    const f = files.get(u.id) || { id: u.id, name: u.file_name, web_url: u.web_url, by: u.by_name, at: u.at, rows: 0, people: 0, from: x.d0, to: x.d1, locked_rows: 0, other_rows: other.get(u.id) || 0 };
-    f.rows += x.n; f.people++; if (x.d0 < f.from) f.from = x.d0; if (x.d1 > f.to) f.to = x.d1;
+    const f = files.get(u.id) || { id: u.id, name: u.file_name, web_url: u.web_url, by: u.by_name, at: u.at, rows: 0, file_rows: 0, people: 0, from: "", to: "", locked_rows: 0, other_rows: other.get(u.id) || 0, edits: 0, picks: 0, edited_at: 0,
+      left_names: (out0.get(u.id) || {}).names || 0, left_rows: (out0.get(u.id) || {}).n || 0 };
+    f.rows += x.n; f.file_rows += x.file_n; if (x.n > 0) f.people++; f.edits += x.edits; f.picks += x.picks; f.edited_at = Math.max(f.edited_at, x.n_at || 0, x.pick_at || 0);
+    if (x.d0 && (!f.from || x.d0 < f.from)) f.from = x.d0; if (x.d1 && (!f.to || x.d1 > f.to)) f.to = x.d1;
     if (lk.of(who.get(x.user_id) || { id: x.user_id }, month)) f.locked_rows += x.n;
     files.set(u.id, f);
   }
   const can = mayExtra(user);
-  return [...files.values()].map((f) => ({ ...f, can_remove: can && f.rows > f.locked_rows })).sort((a, b) => b.at - a.at);
+  return [...files.values()].map((f) => ({ ...f, edited_at: f.edited_at || null, can_remove: can && f.rows > f.locked_rows, can_edit: can })).sort((a, b) => b.at - a.at);
 }
 
 const OPS = {
@@ -5091,7 +5225,7 @@ const OPS = {
       AND c.last_worked_by IN ${IN_LIST}${cw}${lw} GROUP BY c.last_worked_by`, start, end, ida, ...ca, ...la);
     const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}`, from, to, ida);
     // extra production (Stack report › Extra production) on its day of work: work done, as on Team status
-    const extra = new Map((await all(env, `SELECT user_id, SUM(n) AS n FROM extra_work WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id`, from, to, ida)).map((x) => [x.user_id, x.n || 0]));
+    const extra = new Map((await all(env, `SELECT user_id, SUM(n) AS n FROM extra_lines WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id`, from, to, ida)).map((x) => [x.user_id, x.n || 0]));
     const weekday = isWorkDay;   // Monday to Friday, not a Shastra holiday
     let workdays = 0; for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d)) workdays++;
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x]));
@@ -5164,12 +5298,19 @@ const OPS = {
       all(env, `SELECT user_id, COUNT(*) AS n FROM team_task_people WHERE status = 'completed' AND completed_at BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id`, start, end, ida),
       // extra production: work done outside Brahmastra, counted from a team lead's file in OneDrive (Stack report › Extra
       // production), on its DOW and file by file; it counts toward the person's count like a claim worked on that day
-      all(env, `SELECT user_id, upload_id, SUM(n) AS n, SUM(CASE WHEN day < ${doneSql} THEN n ELSE 0 END) AS n_done FROM extra_work
-        WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id, upload_id`, ...doneArgs, from, to, ida),
+      all(env, `SELECT user_id, upload_id, SUM(n) AS n, SUM(CASE WHEN day < ${doneSql} THEN n ELSE 0 END) AS n_done, SUM(file_n) AS file_n, SUM(CASE WHEN day < ${doneSql} THEN file_n ELSE 0 END) AS file_done,
+          SUM(CASE WHEN n_at IS NOT NULL OR pick_at IS NOT NULL THEN 1 ELSE 0 END) AS edits FROM extra_lines
+        WHERE day BETWEEN ? AND ? AND user_id IN ${IN_LIST} GROUP BY user_id, upload_id`, ...doneArgs, ...doneArgs, from, to, ida),
     ]);
     const tkd = new Map(tasksDone.map((x) => [x.user_id, x])), tkc = new Map(tasksClosed.map((x) => [x.user_id, x.n]));
     const exNames = extraDone.length ? new Map((await all(env, `SELECT id, file_name FROM extra_uploads WHERE id IN ${IN_LIST}`, listArg(new Set(extraDone.map((x) => x.upload_id))))).map((x) => [x.id, x.file_name])) : new Map();
-    const exBy = new Map(); for (const x of extraDone) { if (!exBy.has(x.user_id)) exBy.set(x.user_id, []); exBy.get(x.user_id).push({ id: x.upload_id, name: exNames.get(x.upload_id) || "", n: x.n || 0, n_done: x.n_done || 0 }); }
+    // the hand edits on them (a day's count, or the person a name counts for): who made the last one, and when
+    const exMark = new Map();
+    if (extraDone.some((x) => x.edits)) for (const m of await all(env, `SELECT user_id, upload_id, n_by AS by_name, n_at AS at FROM extra_lines WHERE n_at IS NOT NULL AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}
+        UNION ALL SELECT user_id, upload_id, pick_by, pick_at FROM extra_lines WHERE pick_at IS NOT NULL AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}`, from, to, ida, from, to, ida)) {
+      const k = m.user_id + "|" + m.upload_id; if (!exMark.has(k) || exMark.get(k).at < m.at) exMark.set(k, { by: m.by_name, at: m.at }); }
+    const exBy = new Map(); for (const x of extraDone) { if (!x.n && !x.edits) continue; if (!exBy.has(x.user_id)) exBy.set(x.user_id, []); const mk = exMark.get(x.user_id + "|" + x.upload_id);
+      exBy.get(x.user_id).push({ id: x.upload_id, name: exNames.get(x.upload_id) || "", n: x.n || 0, n_done: x.n_done || 0, file_n: x.file_n || 0, file_done: x.file_done || 0, edited: !!x.edits, edit_by: mk ? mk.by : "", edit_at: mk ? mk.at : null }); }
     const escBy = new Map(); for (const e of escs) { if (!escBy.has(e.user_id)) escBy.set(e.user_id, []); escBy.get(e.user_id).push({ id: e.id, sr: e.sr, client_id: e.client_id, client_name: e.client_name || "",
       kind: escKind(e), dept: e.dept, day: e.day, dow: e.error_dow || "", status: e.status === "resolved" ? "Closed" : "Open" }); }
     const outToday = new Map(outNow.map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
@@ -5425,37 +5566,118 @@ const OPS = {
     return { months: months.slice(0, 12), criteria: months.length ? stackCriteria() : null, lines: stackLines() };
   },
   /* ---- Stack report › Extra production (see extraPlan) ----
-     extraPreview: what the file would count, before anything is saved. extraSave: counts it (the same rows, matched again), in
-     place of what the same OneDrive file counted before. extraRemove: takes a file's counts out for the viewer's people. */
+     extraPreview: what the file would count, with the hand edits made so far, before anything is saved. extraSave: counts it
+     (the same rows and edits, worked out again), in place of what the same OneDrive file counted before. extraFile: a file
+     already counted, opened to its people. extraEdit: one hand edit on it (who a name counts for, a day's count).
+     extraRemove: takes a file's counts out for the viewer's people. */
   "stack.extraPreview": async ({ env, user, payload }) => extraSummary(env, await extraPlan(env, user, payload)),
   "stack.extraSave": async ({ env, user, payload }) => {
     const P = await extraPlan(env, user, payload), S = await extraSummary(env, P);
     if (!S.counted) throw bad("Nothing in " + P.name + " can be counted" + (S.left_out.locked.length ? ": " + S.left_out.locked.map((L) => L.label).join(" and ") + " locked" : "") + ". The preview says why for each row.");
-    const id = uuid(), at = Date.now(), month = stackMonthOk(payload.month) ? String(payload.month) : P.today.slice(0, 7);
-    const ins = []; for (const c of P.counted.values()) for (const [d, n] of c.days) ins.push([c.p.id, d, n]);
+    const id = uuid(), at = Date.now(), month = stackMonthOk(payload.month) ? String(payload.month) : P.today.slice(0, 7), me = user.name || "";
+    // the rows kept: each name's counted days (with the file's own number, a hand edit and a picked person), and the names left
+    // out as not found or shared by two people, so a person can still be picked for them
+    const ins = [];
+    for (const o of P.lines) {
+      const why = o.why === "none" || o.why === "same" ? o.why : o.why === "noton" ? "none" : "";
+      if (o.p) { const pk = o.picked ? [o.picked.now ? me : o.picked.by, o.picked.now ? at : o.picked.at] : ["", null];
+        for (const d of o.days) if (d.state === "counted") ins.push([o.line, d.day, o.name, o.emp_id, o.p.id, o.auto ? o.auto.id : "", why, d.file_n, d.n, d.edited ? (d.edited.now ? me : d.edited.by) : "", d.edited ? (d.edited.now ? at : d.edited.at) : null, pk[0], pk[1]]); }
+      else if (o.why === "none" || o.why === "same") for (const d of o.days) ins.push([o.line, d.day, o.name, o.emp_id, "", "", why, d.file_n, d.file_n, "", null, "", null]);
+    }
     // the earlier counts of this file that stay: a locked month's, and those of people the uploader does not see
     const keep = []; for (const u of P.span) for (const m of P.months) if (P.lk.of(u, m)) keep.push(u.id + "|" + m);
     const summary = { sheets: P.sheets, rows: P.rowsRead, counted: S.counted, people: S.people.length, from: S.from, to: S.to, left_out: S.left_out.rows,
-      no_date: P.noDate, bad_date: P.badDate, no_name: P.noName, future: P.future, not_found: S.left_out.not_found.slice(0, 50), same_name: S.left_out.same_name.slice(0, 50),
-      not_counted: S.left_out.not_counted.slice(0, 50), locked: S.left_out.locked, replaced: P.before.map((b) => b.id) };
-    // one batch (one transaction): the upload, the earlier counts out, the new counts in
+      no_date: P.noDate, bad_date: P.badDate, no_name: P.noName, future: P.future, not_found: S.left_out.not_found.slice(0, 50).map((n) => ({ name: n.name, emp_id: n.emp_id, rows: n.rows })),
+      same_name: S.left_out.same_name.slice(0, 50).map((n) => ({ name: n.name, emp_id: n.emp_id, rows: n.rows, people: n.people })), not_counted: S.left_out.not_counted.slice(0, 50), locked: S.left_out.locked,
+      edits: S.edits, dropped: P.dropped.slice(0, 100), replaced: P.before.map((b) => b.id) };
+    const earlier = "upload_id IN (SELECT id FROM extra_uploads WHERE file_key = ? AND id != ?)";
+    // one batch (one transaction): the upload, the earlier counts out, the new rows in
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO extra_uploads (id, file_key, drive_id, item_id, file_name, web_url, month, by_id, by_name, at, rows_read, rows_counted, summary_json, state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'counted')`)
-        .bind(id, P.fileKey, P.driveId, P.itemId, P.name, P.webUrl, month, user.id, user.name || "", at, P.rowsRead, S.counted, JSON.stringify(summary)),
-      env.DB.prepare(`DELETE FROM extra_work WHERE upload_id IN (SELECT id FROM extra_uploads WHERE file_key = ? AND id != ?) AND user_id IN ${IN_LIST} AND (user_id || '|' || substr(day, 1, 7)) NOT IN ${IN_LIST}`)
-        .bind(P.fileKey, id, listArg(P.span.map((u) => u.id)), listArg(keep)),
-      ...chunks(ins, 1000).map((part) => env.DB.prepare("INSERT INTO extra_work (upload_id, user_id, day, n) SELECT ?, json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)").bind(id, JSON.stringify(part))),
-      env.DB.prepare("UPDATE extra_uploads SET state = 'replaced', replaced_by = ?, ended_by_name = ?, ended_at = ? WHERE file_key = ? AND id != ? AND state = 'counted' AND NOT EXISTS (SELECT 1 FROM extra_work w WHERE w.upload_id = extra_uploads.id)")
-        .bind(id, user.name || "", at, P.fileKey, id),
+        .bind(id, P.fileKey, P.driveId, P.itemId, P.name, P.webUrl, month, user.id, me, at, P.rowsRead, S.counted, JSON.stringify(summary)),
+      env.DB.prepare(`DELETE FROM extra_lines WHERE ${earlier} AND user_id = ''`).bind(P.fileKey, id),
+      env.DB.prepare(`DELETE FROM extra_lines WHERE ${earlier} AND user_id IN ${IN_LIST} AND (user_id || '|' || substr(day, 1, 7)) NOT IN ${IN_LIST}`).bind(P.fileKey, id, listArg(P.span.map((u) => u.id)), listArg(keep)),
+      ...chunks(ins, 500).map((part) => env.DB.prepare(`INSERT INTO extra_lines (upload_id, line, day, name, emp_id, user_id, auto_id, why, file_n, n, n_by, n_at, pick_by, pick_at)
+        SELECT ?, ${Array.from({ length: 13 }, (_, i) => `json_extract(value, '$[${i}]')`).join(", ")} FROM json_each(?)`).bind(id, JSON.stringify(part))),
+      env.DB.prepare("UPDATE extra_uploads SET state = 'replaced', replaced_by = ?, ended_by_name = ?, ended_at = ? WHERE file_key = ? AND id != ? AND state = 'counted' AND NOT EXISTS (SELECT 1 FROM extra_lines w WHERE w.upload_id = extra_uploads.id)")
+        .bind(id, me, at, P.fileKey, id),
     ]);
     await audit(env, user, "stack.extra", null, "Extra production counted from OneDrive, " + P.name + ": " + stackCount(S.counted, "row") + " for " + stackCount(S.people.length, "person", "people") + ", " + extraDays(S.from, S.to)
-      + (S.left_out.rows ? "; " + stackCount(S.left_out.rows, "row") + " left out" : "") + (P.before.length ? "; in place of what the same file counted before (" + P.before.map((b) => "uploaded " + extraDay(istISO(b.at)) + " by " + b.by).join(", ") + ")" : ""));
-    return { ok: true, id, counted: S.counted, people: S.people.length, from: S.from, to: S.to, left_out: S.left_out.rows, replaced: P.before.length ? P.replaces : 0, kept: P.before.length ? P.keeps : 0 };
+      + (S.left_out.rows ? "; " + stackCount(S.left_out.rows, "row") + " left out" : "") + (S.edits.counts || S.edits.picks ? "; edited by hand: " + [S.edits.counts ? stackCount(S.edits.counts, "count") : "", S.edits.picks ? stackCount(S.edits.picks, "name") + " given a person" : ""].filter(Boolean).join(", ") : "")
+      + (P.dropped.length ? "; " + stackCount(P.dropped.length, "earlier hand edit") + " dropped (the file changed)" : "")
+      + (P.before.length ? "; in place of what the same file counted before (" + P.before.map((b) => "uploaded " + extraDay(istISO(b.at)) + " by " + b.by).join(", ") + ")" : ""));
+    // every hand edit made in the check before saving, with the old and the new value
+    await auditMany(env, user, "stack.extraEdit", P.made.map((m) => "Extra production edited by hand, " + P.name + ": " + m));
+    return { ok: true, id, counted: S.counted, people: S.people.length, from: S.from, to: S.to, left_out: S.left_out.rows, replaced: P.before.length ? P.replaces : 0, kept: P.before.length ? P.keeps : 0,
+      edits: S.edits, dropped: P.dropped.length };
+  },
+  "stack.extraFile": async ({ env, user, payload }) => {
+    if (!mayExtra(user)) throw denied(EXTRA_DENIED);
+    return extraFileView(env, user, str(payload.upload_id, 60));
+  },
+  /* One hand edit on a file already counted, for one name of it: user_id (who the name counts for; empty for what the file itself
+     says) and / or counts ([{ day, n }]). Checked here every time: the editor's span, the person picked, that Team status counts
+     them, that the name and the day are in the file, and that the month is not locked. Each change is in the audit trail. */
+  "stack.extraEdit": async ({ env, user, payload }) => {
+    if (!mayExtra(user)) throw denied(EXTRA_DENIED);
+    const id = str(payload.upload_id, 60), line = typeof payload.line === "string" ? payload.line.slice(0, 200) : "";
+    const x = id ? await one(env, "SELECT * FROM extra_uploads WHERE id = ?", id) : null;
+    if (!x) throw bad("That file does not count anything now.");
+    const rows = line ? await all(env, "SELECT * FROM extra_lines WHERE upload_id = ? AND line = ? ORDER BY day", id, line) : [];
+    if (!rows.length) throw bad("The file has no rows under that name: a person the file does not have cannot be added here. " + EXTRA_ADD);
+    const { byId, ok: countable } = await extraPeople(env, user);
+    const curId = rows[0].user_id, cur = curId ? byId.get(curId) : null, fname = rows[0].name, wasOut = EXTRA_WHY[rows[0].why] || "left out";
+    if (curId && !cur) throw denied("What " + x.file_name + " counts under " + fname + " is not for your people.");
+    // a name that is left out belongs to nobody yet: whoever sees the file (it counts for their people, or they loaded it) may pick
+    if (!curId && x.by_id !== user.id && !(await one(env, `SELECT 1 AS ok FROM extra_lines WHERE upload_id = ? AND user_id IN ${IN_LIST} LIMIT 1`, id, listArg(byId.keys())))) throw denied("What " + x.file_name + " counts is not for your people.");
+    const lk = await extraLocks(env, [...new Set(rows.map((r) => r.day.slice(0, 7)))]);
+    const lockedFor = (u) => rows.filter((r) => lk.of(u, r.day.slice(0, 7))).map((r) => stackMonthLabel(r.day.slice(0, 7)))[0] || "";
+    const at = Date.now(), me = user.name || "", stmts = [], made = [];
+    let who = cur;   // who the name counts for once this edit is made
+    if (payload.user_id !== undefined) {
+      const want = payload.user_id == null || typeof payload.user_id === "object" ? "" : str(payload.user_id, 60);
+      const own = rows[0].auto_id ? countable(rows[0].auto_id) : null, target = want ? countable(want) : own;   // empty: back to what the file says
+      if (want && !target) throw bad("Pick one of the people you see who is counted on Team status.");
+      if (!want && rows[0].auto_id && !own) throw bad("The person the file names can no longer be counted on Team status. Pick someone else.");
+      if ((target ? target.id : "") !== curId) {
+        for (const u of [cur, target]) { const m = u ? lockedFor(u) : ""; if (m) throw bad(m + " is locked for " + u.name + ": what this name counts there cannot move. The admin can unlock the month."); }
+        if (!curId && (await one(env, "SELECT 1 AS dup FROM extra_lines w JOIN extra_uploads u ON u.id = w.upload_id WHERE u.file_key = ? AND w.upload_id != ? AND w.line = ? AND w.user_id != '' LIMIT 1", x.file_key, id, line)))
+          throw bad(fname + " is already counted from another upload of this file: it cannot be counted twice.");
+        const isOwn = !!target && target.id === rows[0].auto_id;
+        // back to left out: the name counts nothing again, and its counts go back to the file's own numbers
+        if (!target) stmts.push(env.DB.prepare("UPDATE extra_lines SET user_id = '', pick_by = '', pick_at = NULL, n = file_n, n_by = '', n_at = NULL WHERE upload_id = ? AND line = ?").bind(id, line));
+        else stmts.push(env.DB.prepare("UPDATE extra_lines SET user_id = ?, pick_by = ?, pick_at = ? WHERE upload_id = ? AND line = ?").bind(target.id, isOwn ? "" : me, isOwn ? null : at, id, line));
+        made.push('"' + fname + '" in the file counts for ' + (target ? target.name + (isOwn ? " again" : "") : "nobody again (" + wasOut + ")") + " (was " + (cur ? cur.name : wasOut) + ")");
+        who = target;
+      }
+    }
+    const cs = Array.isArray(payload.counts) ? payload.counts : [], byDay = new Map(rows.map((r) => [r.day, r]));
+    if (cs.length > 400) throw bad("That is too many days at once.");
+    for (const c of cs) {
+      const d = c && typeof c === "object" && !Array.isArray(c) ? isoDate(c.day) : "", r = byDay.get(d);
+      if (!r) throw bad("The file has no work under " + fname + " on that day: a day the file does not have cannot be added here. " + EXTRA_ADD);
+      const n = extraTyped(c.n);
+      if (n === r.n) continue;
+      if (!who) throw bad("Pick the person for " + fname + " first.");
+      if (!countable(who.id)) throw bad(who.name + " is not counted on Team status now, so their extra production cannot be edited.");
+      if (lk.of(who, d.slice(0, 7))) throw bad(stackMonthLabel(d.slice(0, 7)) + " is locked for " + who.name + ": its counts cannot be edited. The admin can unlock the month.");
+      stmts.push(env.DB.prepare("UPDATE extra_lines SET n = ?, n_by = ?, n_at = ? WHERE upload_id = ? AND line = ? AND day = ?").bind(n, n === r.file_n ? "" : me, n === r.file_n ? null : at, id, line, d));
+      made.push(who.name + (extraKey(fname) === extraKey(who.name) ? "" : ' (in the file: "' + fname + '")') + ", " + extraDay(d) + ": " + r.n + " → " + n + (n === r.file_n ? " (the file's own number again)" : r.n === r.file_n ? "" : " (the file has " + r.file_n + ")"));
+    }
+    if (stmts.length) {
+      // a file that counts nothing any more (its last name was left out again) is taken out, as Remove does
+      await env.DB.batch([...stmts,
+        env.DB.prepare("DELETE FROM extra_lines WHERE upload_id = ? AND user_id = '' AND NOT EXISTS (SELECT 1 FROM extra_lines w WHERE w.upload_id = ? AND w.user_id != '')").bind(id, id),
+        env.DB.prepare("UPDATE extra_uploads SET state = 'removed', ended_by_name = ?, ended_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM extra_lines w WHERE w.upload_id = extra_uploads.id)").bind(me, at, id)]);
+      await auditMany(env, user, "stack.extraEdit", made.map((m) => "Extra production edited by hand, " + x.file_name + ": " + m));
+    }
+    const left = await one(env, "SELECT 1 AS any FROM extra_lines WHERE upload_id = ? AND user_id != '' LIMIT 1", id);
+    return { ok: true, changed: made.length, view: left ? await extraFileView(env, user, id) : null };
   },
   "stack.extraRemove": async ({ env, user, payload }) => {
-    if (!mayExtra(user)) throw denied("Extra production is for team leads and above (not SMEs or desk people).");
+    if (!mayExtra(user)) throw denied(EXTRA_DENIED);
     const id = str(payload.upload_id, 60), x = id ? await one(env, "SELECT * FROM extra_uploads WHERE id = ?", id) : null;
-    const all0 = x ? await all(env, "SELECT user_id, day, n FROM extra_work WHERE upload_id = ?", id) : [];
+    const all0 = x ? await all(env, "SELECT user_id, day, SUM(n) AS n FROM extra_lines WHERE upload_id = ? AND user_id != '' GROUP BY user_id, day", id) : [];
     if (!x || !all0.length) throw bad("That file does not count anything now.");
     const span = await visibleUsers(env, user, "span"), byId = new Map(span.map((u) => [u.id, u]));
     const mine = all0.filter((r) => byId.has(r.user_id));
@@ -5465,8 +5687,10 @@ const OPS = {
     const lockedLabels = [...new Set(stay.map((r) => stackMonthLabel(r.day.slice(0, 7))))];
     if (!go.length) throw bad(lockedLabels.join(" and ") + (lockedLabels.length > 1 ? " are" : " is") + " locked: what " + x.file_name + " counts there stays until the admin unlocks it.");
     await env.DB.batch([
-      env.DB.prepare(`DELETE FROM extra_work WHERE upload_id = ? AND (user_id || '|' || day) IN ${IN_LIST}`).bind(id, listArg(go.map((r) => r.user_id + "|" + r.day))),
-      env.DB.prepare("UPDATE extra_uploads SET state = 'removed', ended_by_name = ?, ended_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM extra_work w WHERE w.upload_id = extra_uploads.id)").bind(user.name || "", Date.now(), id),
+      env.DB.prepare(`DELETE FROM extra_lines WHERE upload_id = ? AND (user_id || '|' || day) IN ${IN_LIST}`).bind(id, listArg(go.map((r) => r.user_id + "|" + r.day))),
+      // once nothing of it counts, its left-out names go too
+      env.DB.prepare("DELETE FROM extra_lines WHERE upload_id = ? AND user_id = '' AND NOT EXISTS (SELECT 1 FROM extra_lines w WHERE w.upload_id = ? AND w.user_id != '')").bind(id, id),
+      env.DB.prepare("UPDATE extra_uploads SET state = 'removed', ended_by_name = ?, ended_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM extra_lines w WHERE w.upload_id = extra_uploads.id)").bind(user.name || "", Date.now(), id),
     ]);
     const n = go.reduce((t, r) => t + r.n, 0), kept = stay.reduce((t, r) => t + r.n, 0), people = new Set(go.map((r) => r.user_id)).size;
     await audit(env, user, "stack.extraRemove", null, "Extra production removed, " + x.file_name + " (uploaded " + extraDay(istISO(x.at)) + " by " + x.by_name + "): " + stackCount(n, "row") + " for " + stackCount(people, "person", "people") + " taken off"
