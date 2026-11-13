@@ -319,8 +319,9 @@ roster, grouped by team lead (no Emp ID):
 - **Ramp-up**: Training and OJT are due in production 6 weeks from their start (the start date kept on Team status,
   otherwise the date of joining), or on the date the lead agreed. People past it show in a red banner.
 - **Attainment**: entries against the target (the daily target for each working day in the dates from the date of joining; a half day counts
-  half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a Saturday
-  worked, and Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
+  half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a day worked
+  on a Saturday, Sunday or holiday: marked Present or Overtime there, it gets the day's target and 8 hours of floor
+  time like any working day; Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
   way does not count against anyone; with only today picked, it is today's. A night shift (one that crosses midnight)
   counts to the day it began, its hours and entries, until an hour and a half after it ends (05:00 IST at the earliest),
   so that day is not finished while the shift is still running. Production people under 90% are

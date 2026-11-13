@@ -180,6 +180,39 @@ async function makeWorld({ feed = FEED(), envExtra = {} } = {}) {
   ok("E-18: the 10-day rule is gone from the server", !/closingMonth\(/.test(fs.readFileSync(REPO + "/worker.js", "utf8")));
 }
 
+/* ================= B-01: a Saturday, Sunday or holiday Shastra marks as Overtime is a day worked ================= */
+{
+  const w = await makeWorld();
+  const { A } = w;
+  const emp = Object.fromEntries(FEED().map((r) => [r.name, r.emp_id]));
+  const F = (name, n, status, tof = 480) => ({ emp_id: emp[name], email: "", date: N(n), status, open: false, tof_min: tof, logged_min: tof + 60, break_min: 60, guard: false, idle_min: 0, locked_min: 0 });
+  const week = (name) => [2, 3, 4, 5, 6].map((n) => F(name, n, "present"));
+  // Mon Nov 2 to Fri Nov 6 present for all; then Otto's Saturday is Overtime, Pat's Saturday Present, Sana's Sunday Overtime,
+  // Hana's Monday Nov 9 (Diwali, a Shastra holiday) Overtime; Walt works the week only; Ned works Saturday with no mark in Shastra
+  w.st.floorRows = [...week("Otto Over"), F("Otto Over", 7, "overtime"), ...week("Pat Present"), F("Pat Present", 7, "present"), ...week("Sana Sunday"), F("Sana Sunday", 8, "overtime"),
+    ...week("Hana Holiday"), F("Hana Holiday", 9, "overtime"), ...week("Walt Weekday"), ...week("Ned Nomark")];
+  const claims = (await w.rows("SELECT id FROM claims WHERE client_id = ? ORDER BY id LIMIT 60", w.sun.id)).map((r) => r.id);
+  let nn = 0;
+  const work = async (name, n) => { const u = await w.U(name); for (let i = 0; i < 35; i++) { nn++; await w.sql("INSERT INTO notes (id, claim_id, user_id, user_name, kind, created_at) VALUES (?,?,?,?,'work',?)", "s45n" + nn, claims[nn % claims.length], u.id, u.name, IST(2026, 11, n, 10) + i * 60000); } };
+  for (const [name, extra] of [["Otto Over", 7], ["Pat Present", 7], ["Sana Sunday", 8], ["Hana Holiday", 9], ["Walt Weekday", null], ["Ned Nomark", 7]]) { for (const n of [2, 3, 4, 5, 6]) await work(name, n); if (extra) await work(name, extra); }
+  const r = await w.at(IST(2026, 11, 10, 15), () => A("team.status", { from: N(2), to: N(9), today: N(10), tz_offset_min: 330 }));
+  const row = (n) => r.rows.find((x) => x.name === n) || {};
+  const ks = ["days_full", "target_done", "floor_needed_done_min", "count_done", "attain", "perf", "floor"];
+  const pick = (x) => Object.fromEntries(ks.map((k) => [k, x[k]]));
+  const sixDays = (x) => x.days_full === 6 && x.target_done === 210 && x.floor_needed_done_min === 48 * 60 && x.count_done === 210 && x.attain === 100 && x.perf === "ok";
+
+  S("B-01: Overtime on a day off gets the day's target and 8 hours of floor time");
+  ok("B-01: a Saturday marked Overtime is a day worked: 6 days, target 210, 48 h of floor time, 210 of 210 = 100% (not 120%)", sixDays(row("Otto Over")) && row("Otto Over").floor === "met", pick(row("Otto Over")));
+  ok("B-01: the same as a Saturday marked Present", JSON.stringify(pick(row("Otto Over"))) === JSON.stringify(pick(row("Pat Present"))), [pick(row("Otto Over")), pick(row("Pat Present"))]);
+  ok("B-01: a Sunday marked Overtime counts the same", sixDays(row("Sana Sunday")), pick(row("Sana Sunday")));
+  ok("B-01: and a Shastra holiday (Diwali) marked Overtime", sixDays(row("Hana Holiday")), pick(row("Hana Holiday")));
+  ok("B-01: the week alone stays 5 days, 175, 40 h", row("Walt Weekday").days_full === 5 && row("Walt Weekday").target_done === 175 && row("Walt Weekday").floor_needed_done_min === 40 * 60 && row("Walt Weekday").attain === 100, pick(row("Walt Weekday")));
+  ok("B-01: a Saturday with entries but no mark in Shastra still gets no target (its entries count): 210 of 175", row("Ned Nomark").days_full === 5 && row("Ned Nomark").target_done === 175 && row("Ned Nomark").count_done === 210 && row("Ned Nomark").attain === 120, pick(row("Ned Nomark")));
+  const prod = r.by_status.find((x) => x.status === "Production") || {};
+  // everyone else works the week only (5 days of 35)
+  ok("B-01: the team's totals and the Production line carry the four day-off days' targets", r.totals.target_done === 210 * 4 + 175 * (r.rows.length - 4) && prod.target === Math.round(r.totals.target_done), { totals: r.totals.target_done, people: r.rows.length, prod });
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
