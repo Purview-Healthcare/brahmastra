@@ -2701,9 +2701,10 @@ async function digestData(env, clientId, wk) {
   const o = await OPS["client.overview"]({ env, user: DIGEST_SYSTEM, payload: { client_id: clientId, from_ms: wk.from, to_ms: wk.to, today, tz_offset_min: IST_MIN } });
   // a week before: AR at the end of the Sunday before the digest week (so the week's own Monday counts in the change)
   const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.from - 1));
-  // a past week's digest: AR as it stood at that week's end (the day's snapshot), not today's
-  const endSnap = digestWeek(Date.now()).week === wk.week ? null
-    : await one(env, "SELECT day, ar_balance, over90_balance, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
+  // AR as it stood at the week's end (the reading of its Sunday, which the hourly job keeps), whenever the digest is sent or
+  // opened, this week's too: so a week reads the same on its Monday and later, and the next week's change starts from it.
+  // Live AR only for a client with no reading by then.
+  const endSnap = await one(env, "SELECT day, ar_balance, over90_balance, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
   const prevWorked = await one(env, "SELECT COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, wk.from - 7 * 86400000, wk.from);
   const people = await all(env, `SELECT n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
     WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 12`, clientId, wk.from, wk.to);

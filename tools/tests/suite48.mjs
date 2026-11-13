@@ -301,6 +301,35 @@ S("K-04: a comp off in Shastra is a day off on Live status, and sharing out a de
   ok("K-04: someone punched in still shows as in (Present or Late)", pr.state === "present" || pr.state === "late", pr);
 }
 
+S("K-13: the Monday digest's AR is the week's own (its Sunday's reading), whenever it is read");
+{
+  const snapAt = (cid, day, ar) => sql("INSERT OR REPLACE INTO client_snapshots (client_id, day, ar_balance, ar_claims, over90_balance, over90_claims, over120_balance, ar_owed, over90_owed, at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    cid, day, ar, 100, 0, 0, 0, ar, 0, Date.parse(day + "T18:00:00Z"));
+  const lake = (await A("clients.list")).clients.find((c) => /Lake/.test(c.name));
+  const realNow = Date.now;
+  try {
+    // Mon 9 Nov, 11:00 IST: live AR has Monday's upload in it; the readings: end of Sun 1 Nov and end of Sun 8 Nov (the week added 40,000)
+    Date.now = () => Date.parse("2026-11-09T05:30:00Z");
+    const live = (await A("client.overview", { client_id: sun.id })).ar.balance;
+    await sql("DELETE FROM client_snapshots WHERE client_id IN (?, ?)", sun.id, lake.id);
+    await snapAt(sun.id, "2026-11-01", live - 100000); await snapAt(sun.id, "2026-11-08", live - 60000);
+    const d1 = await A("digest.dashboard", {}), c1 = d1.clients.find((c) => c.id === sun.id);
+    let l1 = null; for (const sp of d1.spans || []) { const r = await A("digest.dashboard", { span: sp.key }); l1 = (r.clients || []).find((c) => c.id === lake.id) || l1; }
+    const liveLake = (await A("client.overview", { client_id: lake.id })).ar.balance;
+    ok("K-13: on its Monday the digest's week (Nov 2 to Nov 8) shows AR at the end of Sun 8 Nov, up 40,000, not live AR with Monday's upload",
+      d1.week.first === "2026-11-02" && Math.round(c1.ar.now) === Math.round(live - 60000) && Math.round(c1.ar.now - c1.ar.week_ago) === 40000, { week: d1.week, ar: c1.ar, live });
+    ok("K-13: a client with no reading by then still shows its live AR", l1 && Math.round(l1.ar.now) === Math.round(liveLake), l1 && { ar: l1.ar, liveLake });
+    // Mon 16 Nov: the same week picked again, and the new digest (Nov 9 to 15) starts from the week's end
+    Date.now = () => Date.parse("2026-11-16T05:30:00Z");
+    const A16 = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
+    await snapAt(sun.id, "2026-11-15", live);
+    const c2 = (await A16("digest.dashboard", { week: d1.week.week })).clients.find((c) => c.id === sun.id);
+    const c3 = (await A16("digest.dashboard", {})).clients.find((c) => c.id === sun.id);
+    ok("K-13: picked a week later the same week reads the same (up 40,000), and the next week's change (up 60,000) does not count Monday's upload twice",
+      Math.round(c2.ar.now - c2.ar.week_ago) === 40000 && Math.round(c3.ar.now - c3.ar.week_ago) === 60000, { c2: c2.ar, c3: c3.ar });
+  } finally { Date.now = realNow; await signInAgain(); }
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

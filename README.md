@@ -544,7 +544,7 @@ its **team leads and SMEs**, a dot per scope and what pulls it down (value again
 client, three otherwise), and a button to the SLA scorecards. Clients Drishti has no month for are named below it.
 
 It covers last week (Monday to Sunday): how many clients are at risk, on watch and on track; span totals for AR
-(against a week before), over 90 (against the 15% target), collected and entries; what needs attention, client by
+(as it stood at the end of that Sunday, against a week before, whenever the digest is sent or opened), over 90 (against the 15% target), collected and entries; what needs attention, client by
 client (the Client 360 health rules, month-end steps past due, missed tasks) with one piece of good news; a row
 per client (health, AR and its change, over 90, collected, entries, SLA, month-end, escalations over 24 hours,
 requests waiting on the client); who worked how much; and the denials worked. Clients, staff and figures only:
