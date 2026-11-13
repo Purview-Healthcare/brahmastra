@@ -13,11 +13,31 @@ const feed = [P({ emp_id: "RM1", name: "Manager Rk One", position: "Manager", pr
   P({ emp_id: "RA1", name: "Biller Rk One", reports_to: "Lead Rk One", email: "rk-b1@purview-healthcare.com" }),
   P({ emp_id: "RA2", name: "Biller Rk Two", reports_to: "Lead Rk Two", email: "rk-b2@purview-healthcare.com" })];
 const J = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "Content-Type": "application/json" } });
-const fetchMock = async (url) => {
+// ---- a small fake of Microsoft Graph (as suite13): folders, files, links, one worksheet per workbook ----
+const OD = { items: new Map(), seq: 0, rows: new Map() };
+const odMk = (name, parent, kind) => { const id = "it" + (++OD.seq); const it = { id, name, parent, kind, webUrl: "https://od.example/" + id }; OD.items.set(id, it); if (kind === "file") OD.rows.set(id, []); return it; };
+const odChildOf = (parent, name) => [...OD.items.values()].find((x) => x.parent === parent && x.name.toLowerCase() === name.toLowerCase());
+const odOut = (it) => ({ id: it.id, name: it.name, webUrl: it.webUrl, parentReference: { driveId: "d1" }, ...(it.kind === "folder" ? { folder: {} } : { file: {} }) });
+const graph = async (url, init) => {
+  const m = (init && init.method) || "GET"; const path = decodeURIComponent(new URL(url).pathname.replace(/^\/v1\.0/, "")); let r;
+  if (m === "POST" && (r = path.match(/^\/users\/[^/]+\/drive\/root\/children$/))) { const b = JSON.parse(init.body); if (odChildOf("root", b.name)) return J({}, 409); return J(odOut(odMk(b.name, "root", "folder")), 201); }
+  if (m === "GET" && (r = path.match(/^\/users\/[^/]+\/drive\/root:\/([^/]+)$/))) { const it = odChildOf("root", r[1]); return it ? J(odOut(it)) : J({}, 404); }
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/children$/))) { const b = JSON.parse(init.body); if (odChildOf(r[1], b.name)) return J({}, 409); return J(odOut(odMk(b.name, r[1], "folder")), 201); }
+  if (m === "POST" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/createLink$/))) return J({ link: { webUrl: "https://share.example/" + r[1] } });
+  if (m === "PUT" && (r = path.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+):\/content$/))) { if (odChildOf(r[1], r[2])) return J({}, 409); return J(odOut(odMk(r[2], r[1], "file")), 201); }
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+?):?$/))) { const it = odChildOf(r[1], r[2].replace(/:$/, "")); return it ? J(odOut(it)) : J({}, 404); }
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets$/))) return J({ value: [{ id: "s1", name: "Sheet1" }] });
+  if (m === "GET" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/s1\/usedRange/))) { const rows = OD.rows.get(r[1]) || []; return J({ rowCount: Math.max(1, rows.length), address: "Sheet1!A1:Z" + Math.max(1, rows.length), values: rows.length ? rows : [[""]] }); }
+  if (m === "PATCH" && (r = path.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets\/s1\/range/))) { const b = JSON.parse(init.body); if (b.values) (OD.rows.get(r[1]) || []).push(...b.values); return J({}); }
+  return J({ error: "fake graph: no route " + m + " " + path }, 404);
+};
+const fetchMock = async (url, init) => {
   if (url.includes("brahmastra_roster")) return J({ ok: true, rows: feed });
+  if (url.includes("login.microsoftonline.com")) return J({ access_token: "t" });
+  if (url.includes("graph.microsoft.com")) return graph(url, init);
   return new Response("nope", { status: 500 });
 };
-const rig = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48) }, fetchMock });
+const rig = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48), MS_TENANT_ID: "t", MS_CLIENT_ID: "c", MS_CLIENT_SECRET: "s" }, fetchMock });
 const { as, tryOp, sha } = rig; const T = (fn) => tryOp(fn);
 const DB = rig.backend.env.DB; const q = async (s, ...a) => (await DB.prepare(s).bind(...a).all()).results;
 const sql = (s, ...a) => DB.prepare(s).bind(...a).run();
@@ -169,6 +189,56 @@ S("K-14: two loads of the same new claims at the same moment");
   const fw = (await q("SELECT COUNT(*) AS n FROM claim_events e JOIN claims c ON c.id = e.claim_id WHERE c.match_key LIKE 'RKW%' AND e.kind = 'file_work' AND e.text = 'rk-worked-same.xlsx'"))[0].n;
   ok("K-14: a worked file meeting claims another load added: 30 new, 30 refreshed, each claim once with this file's entry in its history",
     r3.ok && r3.r.inserted === 30 && r3.r.updated === 30 && nw === 60 && fw === 60 && (await orphans()) === orphan0, { r3: r3.ok ? r3.r : r3.e, nw, fw, orphans: (await orphans()) - orphan0 });
+}
+
+S("K-12: client names in OneDrive (Production file names keep the month; two clients never share a folder)");
+{
+  const me = (await A("auth.me")).user, biller = U("Biller Rk One");
+  const profile = { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: me.id } } };
+  const newClient = (name, code) => T(() => A("clients.save", { name, code, locations: ["Main"], profile }));
+  const long = "Rk Valley Eye Care Associates of the Northern Plains Ophthalmology and Retina Group";   // 83 characters
+  const okLong = await newClient(long + " - North", "RKN");
+  const twinLong = await newClient(long + " - South", "RKS");
+  ok("K-12: a second client whose name is the same as another's in its first 80 characters is refused, naming the other client",
+    okLong.ok && !twinLong.ok && twinLong.e.includes(long + " - North") && /OneDrive/.test(twinLong.e), twinLong.e);
+  const okSlash = await newClient("Rk Hill/Vale Pediatrics", "RKH");
+  const twinSlash = await newClient("Rk Hill Vale Pediatrics.", "RKV");
+  ok("K-12: a client whose name differs from another only by / : ? or a final dot is refused (OneDrive would give them one folder)", okSlash.ok && !twinSlash.ok && /Rk Hill\/Vale Pediatrics/.test(twinSlash.e), twinSlash.e);
+  const plain = await newClient("Rk Meadow Dental", "RKM");
+  const cl = (await A("clients.list")).clients;
+  const lc = cl.find((c) => c.name === long + " - North"), sc = cl.find((c) => c.name === "Rk Hill/Vale Pediatrics"), pc = cl.find((c) => c.name === "Rk Meadow Dental");
+  const ren = await T(() => A("clients.save", { id: pc.id, name: "Rk Hill:Vale Pediatrics" }));
+  const renSelf = await T(() => A("clients.save", { id: sc.id, name: "Rk Hill Vale Pediatrics" }));
+  ok("K-12: renaming a client into another's OneDrive name is refused; a client may still change its own name's punctuation", plain.ok && !ren.ok && /OneDrive/.test(ren.e) && renSelf.ok, { ren: ren.e, renSelf: renSelf.ok || renSelf.e });
+  await A("clients.save", { id: sc.id, name: "Rk Hill/Vale Pediatrics" });
+  // AR entries in November on a long-named client and a short-named one, and one more on the long-named one in December
+  rig.liveEnv.DEMO = false;
+  const work = { saag: { status: "Claim In Process", sub_status: "Need to allow some time", action: "EOB not Available/Requested EOB", bucket: "Payer", effective: "Pending-Collectible Insurance" }, note: { source: "Portal", findings: "Claim is in process per the payer portal, EOB requested", action: "follow up" } };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const entry = async (c, key, who) => {
+    await who.A("clients.saveTeam", { client_id: c.id, team: [biller] });
+    await who.A("inventory.upload", { client_id: c.id, location_id: c.locations[0].id, kind: "fresh", file_name: "rk-one-claim.xlsx", rows_read: 1, final: true, summary: {},
+      claims: [{ match_key: key, claim_no: key, patient: "Test Patient " + key, payer: "Test Payer", dos: "2026-10-01", balance: 120, status_class: "awaiting", tier: "Medium", priority: 30 }] });
+    const id = (await q("SELECT id FROM claims WHERE client_id = ? AND match_key = ?", c.id, key))[0].id;
+    await who.A("alloc.reassign", { ids: [id], user_id: biller });
+    await who.B("queue.complete", { id, ...work });
+  };
+  const B1t = TOK["Biller Rk One"];
+  try {
+    await entry(lc, "RKL-8800001", { A, B: as(B1t) }); await entry(pc, "RKP-8800002", { A, B: as(B1t) }); await sleep(600);
+    const realNow = Date.now; Date.now = () => Date.parse("2026-12-02T05:30:00Z");
+    try {
+      const A2 = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token), B2 = as((await login("rk-b1@purview-healthcare.com", "pw-rk-b1@purview-healthcare.com")).token);
+      await entry(lc, "RKL-8800003", { A: A2, B: B2 }); await sleep(600);
+    } finally { Date.now = realNow; }
+  } finally { rig.liveEnv.DEMO = true; }
+  const files = [...OD.items.values()].filter((x) => x.kind === "file" && /^AR Production/.test(x.name)).map((x) => x.name);
+  ok("K-12: a name that fits keeps exactly today's file name", files.includes("AR Production - Rk Meadow Dental - Nov 2026.xlsx"), files);
+  const lf = files.filter((f) => f.startsWith("AR Production - Rk Valley"));
+  ok("K-12: a long client name keeps the month: one AR Production file for November and one for December, each 80 characters or less before .xlsx",
+    lf.length === 2 && lf.some((f) => f.endsWith(" - Nov 2026.xlsx")) && lf.some((f) => f.endsWith(" - Dec 2026.xlsx")) && lf.every((f) => f.length <= 85), lf);
+  const folders = (await q("SELECT od_folder_id FROM clients WHERE name LIKE 'Rk %' AND od_folder_id IS NOT NULL")).map((r) => r.od_folder_id);
+  ok("K-12: each client has a folder of its own", folders.length >= 2 && new Set(folders).size === folders.length, folders);
 }
 
 const fails = results.filter((x) => !x.pass);

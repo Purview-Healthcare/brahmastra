@@ -995,6 +995,10 @@ Brahmastra Clients / <Client> /
       Rejections        rejected claims worked by the Rejections person
 ```
 
+OneDrive names leave out / \ : * ? " < > | # % and a final dot, and keep the first 80 characters. A file name too long
+for that keeps its month and cuts the client's name instead, so each month still has its own file. Two clients whose
+names would be the same in OneDrive would share one folder, so such a name is refused when a client is added or renamed.
+
 Dates are written as Excel dates shown as mm/dd/yyyy and amounts as money, so the files read the same whatever OneDrive's language.
 Each desk's rows go to a tab of its own (**Payment posting**, **Submission**, **Rejections**) under that tab's header; a new
 month's file starts from the AR template, so its first tab is renamed and given the desk's header. A file that already held
