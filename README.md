@@ -630,7 +630,11 @@ once it opens (the client's recheck time after submitting; until then the row sa
 as can the recheck person, the Submission and Rejections people and the client's AR team leads. Rejected again goes
 straight back to the Rejections person (or Submission) to fix and resubmit, within the client's TAT. With nobody set for
 either, it goes back on the biller's list, unless the claim was already closed or excluded: then it stays so, and the
-rejection is kept on the recheck and in the claim history.
+rejection is kept on the recheck and in the claim history. Either way the client's team lead(s) get a line in the bell
+(the claim number only) saying nobody active is set for Rejections or Submission on the client's profile; it opens the
+profile. A client with Submission in its scope cannot be saved without an active Submission person (new or edited, on the
+profile or on the client card), so this happens when that person is later switched off or leaves, or when Submission
+was taken out of the scope while a recheck was still open.
 
 **Supervisor review in Needs attention.** Each escalation (and each claim a department sent back) has **Review**:
 four notes (why it came, what was reviewed, the findings, the next action) go on the claim's timeline only (who escalated it and when, who reviewed it, where it went; the claim's notes and work stay as they were), and the claim

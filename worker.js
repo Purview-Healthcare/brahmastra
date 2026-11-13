@@ -4953,8 +4953,9 @@ const OPS = {
     let alerts = [];
     const add = (key, tone, n, text, view, params) => { if (n > 0) items.push({ key, tone, n, text, view, params: params || null }); };
     // what was done to this person: made responsible for a client, or taken off one (two weeks)
-    for (const n of await all(env, "SELECT id, text, view, client_id, at FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
-      items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: n.view === "escalations" && n.client_id ? { client_id: n.client_id } : null, at: n.at });
+    // (a notice about a client's profile opens that profile: a rejected recheck with nobody set for Rejections or Submission)
+    for (const n of await all(env, "SELECT id, text, view, client_id, at, kind FROM user_notices WHERE user_id = ? AND at > ? ORDER BY at DESC LIMIT 10", user.id, now - 14 * 86400000))
+      items.push({ key: "notice:" + n.id, tone: "info", n: 1, text: n.text, view: n.view, params: n.view === "escalations" && n.client_id ? { client_id: n.client_id } : n.kind === "profile" && n.client_id ? { client_id: n.client_id, focus: "profile" } : null, at: n.at });
     const ho = await OPS["handoffs.count"]({ env, user });
     add("handoffs", ho.overdue ? "red" : ho.due_soon ? "amber" : "info", ho.n, plural(ho.n, "posting / submission hand-off", "posting / submission hand-offs") + " on your desk" + (ho.overdue ? `, ${ho.overdue} past the TAT` : ""), "handoffs");
     if (user.role === "supervisor") {
@@ -7545,6 +7546,12 @@ const OPS = {
         // the recheck and in the claim history).
         stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ?${KEEP}`).bind(today, now, c.id));
         went = kept ? "kept" : "biller";
+        // the client's team lead(s) hear it in the bell: the claim number only, and that nobody active is set on the profile; the
+        // line opens the client's profile (kind "profile") so they can set someone
+        const cl2 = await one(env, "SELECT name FROM clients WHERE id = ?", h.client_id);
+        const told = `${c.claim_no ? "Claim " + c.claim_no : "A claim"} was marked Rejected at its recheck, but nobody active is set for Rejections or Submission on ${(cl2 && cl2.name) || "the client"}'s profile to correct and resubmit it. Set someone on the profile.`;
+        for (const u of await escalationPeople(env, h.client_id))
+          stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id, kind) VALUES (?,?,?,?,?,?,?)").bind(uuid(), u.id, now, told.slice(0, 300), "clients", h.client_id, "profile"));
       }
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, `Submission rejected (${reason}): ${note}`, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_rejected", "Submission", { dept: "subcheck", reason, note, resent: !!(toRej || toSub), to: toRej ? "Rejections" : toSub ? "Submission" : "", ...(kept ? { kept: c.state } : {}) }));

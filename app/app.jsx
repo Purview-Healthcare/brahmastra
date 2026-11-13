@@ -2585,6 +2585,13 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
   useEffect(() => { if (reload) reload(); }, []);
   const [hist, setHist] = useState(null);
   const [prof, setProf] = useState(null);
+  // a bell line about a client's profile (a rejected recheck with nobody set for Rejections or Submission) opens that profile
+  const profAsked = useRef(false);
+  useEffect(() => {
+    if (profAsked.current || ro || !params || params.focus !== "profile" || !params.client_id) return;
+    const c = ctx.clients.find((x) => x.id === params.client_id);
+    if (c && c.can_edit !== false) { profAsked.current = true; setProf({ client: c }); }
+  }, [params && params.client_id, params && params.focus, ctx.clients]);
   // Find a client: by name, code or location, and narrow by status. Opening a client from elsewhere clears the search so it shows.
   const [cq, setCq] = useState(""), [cf, setCf] = useState("all");
   useEffect(() => { if (params && params.client_id) { setCq(""); setCf("all"); } }, [params && params.client_id]);

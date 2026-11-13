@@ -252,6 +252,77 @@ async function makeWorld({ feed = FEED(), envExtra = {} } = {}) {
     /\{l\.name\}\{!l\.active \? " · stopped working here" : ""\}/.test(src) && /confirmLabel="Stopped working here: switch off"/.test(src) && /text=\{"Switch a location off only when the team has stopped working it\. "/.test(src));
 }
 
+/* ================= N-02: a rejected recheck with nobody to send it to tells the client's team lead ================= */
+{
+  const w = await makeWorld();
+  const { A, T, sun, id } = w;
+  const TI = await w.c("Tina Lead"), LA = await w.c("Lara Lead"), AR = await w.c("Arun Agent"), SB = await w.c("Sahil Submitter");
+  const profile = (resp) => ({ scope: ["ar", "submission"], targets: { ar: 40 }, tat: { submission: 24, subcheck: 48 }, resp: { ar: { lead: id["Tina Lead"] }, subcheck: { mode: "biller" }, ...resp } });
+  const save = (who, resp, extra = {}) => T(() => who("clients.save", { id: sun.id, name: sun.name, profile: profile(resp), ...extra }));
+
+  S("N-02: a client with Submission in its scope always has an active Submission person");
+  let r = await T(() => TI("clients.save", { name: "Echo Clinic N02", locations: ["Main"], profile: profile({}) }));
+  ok("N-02: a new client with Submission in its scope cannot be created without a Submission person", !r.ok && r.status === 400 && /who is responsible for Submission/.test(r.e), r);
+  r = await save(TI, { submission: { lead: id["Sahil Submitter"] } });
+  ok("N-02: with one it saves", r.ok, r);
+  r = await save(TI, {});
+  ok("N-02: an edited profile cannot drop the Submission person either", !r.ok && r.status === 400 && /who is responsible for Submission/.test(r.e), r);
+  r = await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "client" }));
+  const r2 = await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "person" }));
+  ok("N-02: nor can the client card hand Submission to the client, or to nobody, while it is in the scope", !r.ok && /in this client's scope of work/.test(r.e) && !r2.ok && /Pick the person responsible/.test(r2.e), [r, r2]);
+  await w.sql("UPDATE users SET active = 0 WHERE id = ?", id["Pavan Poster"]);
+  r = await save(TI, { submission: { lead: id["Pavan Poster"] } });
+  const r3 = await T(() => TI("clients.saveResponsibility", { client_id: sun.id, dept: "submission", mode: "person", lead: id["Pavan Poster"] }));
+  ok("N-02: nor be given someone switched off, on the profile or on the card", !r.ok && /only people who are active/.test(r.e) && !r3.ok && /not active/.test(r3.e), [r, r3]);
+  ok("N-02: the Submission person is still the one set", (await w.row("SELECT submission_mode, submission_lead FROM clients WHERE id = ?", sun.id)).submission_lead === id["Sahil Submitter"]);
+
+  // a resubmission: Arun's entry sends the claim to Submission, Sahil submits it, the recheck opens (moved to now)
+  const SUBMIT = { saag: { status: "Claim In Process", sub_status: "Need to allow some time", action: "Correction, Resubmission & Reprocessing", bucket: "Payer", effective: "Pending-Collectible Insurance" },
+    note: { source: "Portal", findings: "Claim is in process per the payer portal", action: "follow up" } };
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const pool = (await TI("claims.list", { client_id: sun.id, state: "open", page_size: 20 })).rows;
+  await TI("alloc.apply", { client_id: sun.id, assignments: pool.slice(0, 3).map((c) => ({ id: c.id, user_id: id["Arun Agent"] })) });
+  const recheck = async (c) => {
+    await AR("queue.complete", { id: c.id, ...SUBMIT });
+    const h = (await SB("handoffs.list", {})).rows.find((x) => x.claim_id === c.id);
+    await SB("handoffs.close", { id: h.id, outcome: "complete", proof: { date: today, ref: "B-" + c.claim_no } });
+    const sc = await w.row("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'subcheck' AND status IN ('pending','assigned')", c.id);
+    await w.sql("UPDATE handoffs SET available_at = ? WHERE id = ?", Date.now() - 60000, sc.id);
+    return sc.id;
+  };
+  const reject = (who, hid) => T(() => who("handoffs.close", { id: hid, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy code" }));
+  const profileNotes = async (who) => (await who("notify.list", {})).items.filter((x) => x.key.startsWith("notice:") && x.params && x.params.focus === "profile");
+  const [c1, c2, c3] = pool;
+
+  S("N-02: nobody active for Rejections or Submission: the team lead hears it, and the line opens the profile");
+  const h1 = await recheck(c1), h2 = await recheck(c2);
+  await w.sql("UPDATE users SET active = 0 WHERE id = ?", id["Sahil Submitter"]);   // Sahil leaves after submitting
+  r = await reject(AR, h1);
+  let tn = await profileNotes(TI);
+  const want = `Claim ${c1.claim_no} was marked Rejected at its recheck, but nobody active is set for Rejections or Submission on ${sun.name}'s profile to correct and resubmit it. Set someone on the profile.`;
+  ok("N-02: the recheck is marked Rejected and goes back on the biller's list, as before", r.ok && r.r.went === "biller", r);
+  ok("N-02: the client's team lead gets a bell line: the claim number, and nobody active is set for Rejections or Submission on the profile", tn.length === 1 && tn[0].text === want, tn);
+  ok("N-02: it opens the client's profile", tn.length === 1 && tn[0].view === "clients" && tn[0].params.client_id === sun.id && tn[0].params.focus === "profile", tn[0]);
+  const pc = await w.row("SELECT patient, account_no FROM claims WHERE id = ?", c1.id);
+  ok("N-02: the claim number only: no patient, account number, reason or note in it", tn.length === 1 && !tn[0].text.includes(pc.patient) && !(pc.account_no && tn[0].text.includes(pc.account_no)) && !/Taxonomy|taxonomy/.test(tn[0].text), tn[0] && tn[0].text);
+  ok("N-02: only the client's team lead: not the biller who marked it, nor another client's team lead", (await profileNotes(AR)).length === 0 && (await profileNotes(LA)).length === 0);
+  await TI("claims.setState", { ids: [c2.id], state: "closed" });
+  r = await reject(TI, h2);
+  tn = await profileNotes(TI);
+  ok("N-02: a claim the team lead had closed stays closed, and the team lead still hears it (the team lead marked it here)", r.ok && r.r.went === "kept" && tn.length === 2 && tn.some((x) => x.text.startsWith(`Claim ${c2.claim_no} was marked Rejected`)), [r, tn.map((x) => x.text)]);
+
+  S("N-02: with someone active set, nothing new");
+  await w.sql("UPDATE users SET active = 1 WHERE id = ?", id["Sahil Submitter"]);
+  const h3 = await recheck(c3);
+  r = await reject(AR, h3);
+  ok("N-02: an active Submission person gets the rejection, and the team lead's bell has no new line", r.ok && r.r.went === "submission" && (await profileNotes(TI)).length === 2, [r, (await profileNotes(TI)).length]);
+
+  S("N-02: the page opens the profile from the bell");
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("N-02: Clients & locations opens the profile of the client in the link when the bell line asks for it (focus: profile), for whoever may edit it",
+    /if \(profAsked\.current \|\| ro \|\| !params \|\| params\.focus !== "profile" \|\| !params\.client_id\) return;/.test(src) && /if \(c && c\.can_edit !== false\) \{ profAsked\.current = true; setProf\(\{ client: c \}\); \}/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
