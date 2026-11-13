@@ -537,7 +537,10 @@ const postingWorld = async ({ backup = true } = {}) => {
   ok("N-17: switching a location back on answers with the location, on", on.ok && on.r.location.active === true && (await w.row("SELECT active FROM locations WHERE id = ?", west.id)).active === 1, on.e);
   const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
   ok("N-17: the upload reads the client's locations as they are now, not as the page loaded them", /const locsNow = \(\(await rpc\("clients\.list"\)\)\.clients\.find\(\(x\) => x\.id === client\.id\)/.test(src) && /loc = locsNow\.find\(/.test(src) && /groups\.push\(\{ loc: locsNow\.find\(\(l\) => l\.id === locId\)/.test(src));
-  ok("N-17: a switched-off location that would receive claims is switched on again, and the result says so", /for \(const g of groups\) if \(g\.loc && !g\.loc\.active\) \{ const r = await rpc\("locations\.save", \{ id: g\.loc\.id, name: g\.loc\.name, active: true \}\)/.test(src) && /\$\{r\.note \? " \(" \+ r\.note \+ "\)" : ""\}/.test(src));
+  // (owner's decision after the bug test: a switched-off location is one the team stopped working, so its rows are left out and it
+  // stays off; this check asserted the earlier rule, switching it back on. suite45 checks the new rule, server and page.)
+  ok("N-17: rows for a switched-off location are left out (never loaded, the location stays off), and the result says so", !/rpc\("locations\.save", \{ id: g\.loc\.id, name: g\.loc\.name, active: true \}\)/.test(src)
+    && /const live = groups\.filter\(\(g\) => !\(g\.loc && !g\.loc\.active\)\);/.test(src) && /setLeftOut\(off\)/.test(src));
 }
 
 {

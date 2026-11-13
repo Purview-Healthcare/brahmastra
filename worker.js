@@ -5990,7 +5990,12 @@ const OPS = {
     if (kind !== "fresh" && kind !== "worked") throw bad("kind must be fresh or worked.");
     const client = await one(env, "SELECT id, follow_up_days FROM clients WHERE id = ?", client_id);
     if (!client) throw bad("Unknown client.");
-    if (location_id) { const l = await one(env, "SELECT id FROM locations WHERE id = ? AND client_id = ?", location_id, client.id); if (!l) throw bad("Unknown location."); }
+    if (location_id) {
+      const l = await one(env, "SELECT id, name, active FROM locations WHERE id = ? AND client_id = ?", location_id, client.id);
+      if (!l) throw bad("Unknown location.");
+      // a location is switched off only when the team has stopped working it: an upload never loads claims into it (nor switches it on)
+      if (!l.active) throw bad(`${l.name} is switched off because the team stopped working it, so nothing was loaded into it. If the work starts again, switch it on in Clients & locations, then upload again.`);
+    }
     const now = Date.now();
     let bid = batch_id;
     if (!bid) {

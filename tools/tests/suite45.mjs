@@ -213,6 +213,45 @@ async function makeWorld({ feed = FEED(), envExtra = {} } = {}) {
   ok("B-01: the team's totals and the Production line carry the four day-off days' targets", r.totals.target_done === 210 * 4 + 175 * (r.rows.length - 4) && prod.target === Math.round(r.totals.target_done), { totals: r.totals.target_done, people: r.rows.length, prod });
 }
 
+/* ================= N-17: an upload never loads claims into a switched-off location, and never switches it on ================= */
+{
+  // The upload wizard is page code (React) this rig does not render; the page itself is checked in a browser by
+  // fix-DA/repro-N-17.js (which also took the owner's pictures). Here: the server's rule, and the page's.
+  const w = await makeWorld();
+  const { T, sun } = w;
+  const TI = await w.c("Tina Lead");
+  const locs = await w.rows("SELECT id, name FROM locations WHERE client_id = ? ORDER BY name", sun.id);
+  const west = locs.find((l) => l.name === "Westside"), down = locs.find((l) => l.name === "Downtown");
+  // a claim already in Westside before the team stopped working it
+  const old = await w.row("SELECT id, claim_no, match_key FROM claims WHERE client_id = ? AND location_id = ? AND state = 'open' ORDER BY id LIMIT 1", sun.id, west.id);
+  await TI("locations.save", { id: west.id, name: west.name, active: false });
+  const claim = (n) => ({ match_key: "n17|" + n, claim_no: "N17-" + n, patient: "Testcase, N17 " + n, payer: "Aetna", dos: "2026-10-01", balance: 120, billed: 200, lines: 1 });
+  const up = (location_id, claims, file = "n17.xlsx") => T(() => TI("inventory.upload", { client_id: sun.id, location_id, kind: "fresh", file_name: file, rows_read: claims.length, claims, final: true, summary: {} }));
+
+  S("N-17: the server never loads claims into a switched-off location");
+  let r = await up(west.id, [claim(1), claim(2), claim(3)]);
+  ok("N-17: an upload into a switched-off location is refused, and says why and what to do", !r.ok && r.status === 400
+    && r.e === "Westside is switched off because the team stopped working it, so nothing was loaded into it. If the work starts again, switch it on in Clients & locations, then upload again.", r);
+  ok("N-17: nothing was loaded, no upload is in the history, and Westside stays off", (await w.row("SELECT COUNT(*) AS n FROM claims WHERE claim_no LIKE 'N17-%'")).n === 0
+    && !(await w.row("SELECT 1 AS x FROM batches WHERE file_name = 'n17.xlsx'")) && (await w.row("SELECT active FROM locations WHERE id = ?", west.id)).active === 0);
+  r = await up(down.id, [claim(4), claim(5)], "n17-down.xlsx");
+  ok("N-17: an active location loads as before", r.ok && r.r.inserted === 2 && (await w.row("SELECT COUNT(*) AS n FROM claims WHERE claim_no LIKE 'N17-%' AND location_id = ?", down.id)).n === 2, r);
+  r = await up(null, [{ match_key: old.match_key, claim_no: old.claim_no, balance: 77, lines: 1 }], "n17-client.xlsx");
+  const oc = await w.row("SELECT location_id, balance, state FROM claims WHERE id = ?", old.id);
+  ok("N-17: a claim already in Westside keeps today's behaviour: a client-level upload refreshes it where it is", r.ok && r.r.updated === 1 && oc.location_id === west.id && oc.balance === 77 && oc.state === "open", [r, oc]);
+  ok("N-17: and Westside is still off after it", (await w.row("SELECT active FROM locations WHERE id = ?", west.id)).active === 0);
+
+  S("N-17: the page leaves those rows out, says so, and the switch says what off means");
+  const src = fs.readFileSync(REPO + "/app/app.jsx", "utf8");
+  ok("N-17: the upload never switches a location on: its rows are left out and only the other locations load",
+    !/rpc\("locations\.save", \{ id: g\.loc\.id, name: g\.loc\.name, active: true \}\)/.test(src) && /const off = groups\.filter\(\(g\) => g\.loc && !g\.loc\.active\)\.map\(\(g\) => \(\{ location: g\.loc\.name, rows: g\.claims\.reduce\(\(t, c\) => t \+ \(c\.lines \|\| 1\), 0\) \}\)\);/.test(src)
+    && /for \(const g of live\) \{/.test(src));
+  ok("N-17: the result says how many rows, for which location, why, and to switch it on in Clients & locations, then upload again",
+    /<b>\{x\.location\}: \{plural\(x\.rows, "row"\)\} left out\.<\/b> \{x\.location\} is switched off because the team stopped working it, so nothing was loaded into it\. If the work starts again, switch it on in Clients &amp; locations, then upload the file again\./.test(src));
+  ok("N-17: on the client card an off location reads 'stopped working here', and switching one off says it is for a location the team stopped working",
+    /\{l\.name\}\{!l\.active \? " · stopped working here" : ""\}/.test(src) && /confirmLabel="Stopped working here: switch off"/.test(src) && /text=\{"Switch a location off only when the team has stopped working it\. "/.test(src));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

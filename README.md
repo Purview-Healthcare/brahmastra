@@ -1083,8 +1083,12 @@ BR-... number from Brahmastra; when a later file carries its real number it is f
 two claims. Several service
 lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
-locations automatically: a name the client does not have yet becomes a new location, and a
-switched-off location named in the file is switched on again; the result says which.
+locations automatically: a name the client does not have yet becomes a new location (the result says so).
+A location is switched off only when the team has stopped working it (on the client card it reads
+**stopped working here**), so an upload never loads claims into it and never switches it on: its rows are
+left out, and the result says how many rows, for which location, and that it is switched off because the
+team stopped working it: switch it on in Clients & locations if the work starts again, then upload again.
+Claims already in a switched-off location stay as they are.
 
 **Upload history** lists every batch. **Undo** removes the claims that upload added which nobody has
 opened or worked yet (no entry, never opened, no note, attachment or hand-off), also when the upload had already
