@@ -456,6 +456,16 @@ S("K-15: money on the digest from $999,500 up is written in millions ($1M, not $
   } finally { Date.now = realNow; }
 }
 
+S("K-01, K-02 (Shastra's floor feed SQL, as text; run on Postgres in the fixer's notes)");
+{
+  const fs = await import("fs");
+  const sqlText = fs.readFileSync(new URL("../../dev/shastra-floor-feed.sql", import.meta.url), "utf8");
+  ok("K-01: each Guard event counts for whoever was signed in when it happened (guard_events.employee_id), the computer's link only for older events",
+    /join ad on ad\.employee_id = coalesce\(ge\.employee_id, gm\.employee_id\)/.test(sqlText) && /'guard', exists \(select 1 from guard_machines gm where gm\.employee_id = ad\.employee_id\) or exists \(select 1 from ev where ev\.employee_id = ad\.employee_id\)/.test(sqlText));
+  ok("K-02: overlapping breaks are joined once (range_agg) before they are taken off idle time and summed, and idle never goes below zero",
+    /range_agg\(r\)/.test(sqlText) && /greatest\(0, extract\(epoch from upper\(ev\.r\)/.test(sqlText) && /unnest\(bm\.mr\)/.test(sqlText) && !/from brk k/.test(sqlText));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

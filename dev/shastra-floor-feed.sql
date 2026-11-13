@@ -3,7 +3,10 @@
 -- It adds one read-only function, brahmastra_floor(p_key, p_from, p_to). For each person and day in the dates it returns:
 --   the attendance status, time on the floor (Shastra's own figure for a finished shift, breaks taken out; a shift still
 --   open counts up to now), time logged in, breaks, and the minutes Shastra Guard saw no movement or a locked screen
---   while they were punched in (time inside a break is left out), and whether the person has a Guard machine linked.
+--   while they were punched in (time inside a break is left out, two breaks that overlap counted once), and whether the
+--   person has Shastra Guard (a machine linked now, or Guard events in the dates). Each Guard event counts for whoever was
+--   signed in on the computer when it happened (guard_events.employee_id), so a computer shared or moved to someone else
+--   keeps everyone's own idle time; an older event without that goes by the computer's link.
 -- Only Emp ID and email identify a person: no names, PINs, phones or anything personal.
 -- It uses the key brahmastra_roster already uses (the brahmastra_feed table): no new key, and nothing in Shastra's own
 -- tables changes. Running it again just replaces the function.
@@ -37,20 +40,22 @@ begin
            tstzrange(b.start_ts, greatest(b.start_ts, coalesce(b.end_ts, upper(ad.shift)))) * ad.shift as r
       from ad join breaks b on b.employee_id = ad.employee_id
      where ad.shift is not null and b.start_ts < upper(ad.shift) and coalesce(b.end_ts, upper(ad.shift)) > lower(ad.shift)),
-  ev as (        -- Shastra Guard: no movement and screen locked on the person's machines, inside the shift
+  bm as (        -- each person's breaks in a day as one set of ranges: two breaks that overlap count once
+    select employee_id, date, range_agg(r) as mr from brk where not isempty(r) group by employee_id, date),
+  ev as (        -- Shastra Guard: no movement and screen locked while the person was signed in on the computer, inside the shift
     select ad.employee_id, ad.date, ge.kind,
            tstzrange(ge.from_ts, greatest(ge.from_ts, coalesce(ge.to_ts, ge.from_ts + make_interval(mins => coalesce(ge.minutes, 0))))) * ad.shift as r
-      from ad join guard_machines gm on gm.employee_id = ad.employee_id
-              join guard_events ge on ge.machine_id = gm.id
+      from guard_events ge left join guard_machines gm on gm.id = ge.machine_id
+      join ad on ad.employee_id = coalesce(ge.employee_id, gm.employee_id)
      where ad.shift is not null and ge.kind in ('idle', 'locked') and ge.from_ts is not null
        and ge.from_ts >= p_from::timestamptz - interval '1 day' and ge.from_ts < p_to::timestamptz + interval '2 days'
        and ge.from_ts < upper(ad.shift)
        and coalesce(ge.to_ts, ge.from_ts + make_interval(mins => coalesce(ge.minutes, 0))) > lower(ad.shift)),
-  evm as (       -- minutes of each, less the part inside a break
+  evm as (       -- minutes of each, less the part inside a break (never below zero)
     select ev.employee_id, ev.date, ev.kind,
-           extract(epoch from upper(ev.r) - lower(ev.r)) / 60
-           - coalesce((select sum(extract(epoch from upper(ev.r * k.r) - lower(ev.r * k.r)) / 60) from brk k
-                        where k.employee_id = ev.employee_id and k.date = ev.date and not isempty(k.r) and ev.r && k.r), 0) as mins
+           greatest(0, extract(epoch from upper(ev.r) - lower(ev.r)) / 60
+           - coalesce((select sum(extract(epoch from upper(x) - lower(x)) / 60) from bm, unnest(bm.mr * tstzmultirange(ev.r)) x
+                        where bm.employee_id = ev.employee_id and bm.date = ev.date), 0)) as mins
       from ev where not isempty(ev.r)),
   idl as (
     select employee_id, date,
@@ -58,8 +63,8 @@ begin
            round(coalesce(sum(mins) filter (where kind = 'locked'), 0))::int as locked_min
       from evm group by employee_id, date),
   bk as (
-    select employee_id, date, round(sum(extract(epoch from upper(r) - lower(r)) / 60))::int as brk_min
-      from brk where not isempty(r) group by employee_id, date)
+    select bm.employee_id, bm.date, round(sum(extract(epoch from upper(x) - lower(x)) / 60))::int as brk_min
+      from bm, unnest(bm.mr) x group by bm.employee_id, bm.date)
   select coalesce(jsonb_agg(jsonb_build_object(
            'emp_id', coalesce(e.emp_id, ''),
            'email', coalesce(e.email, ''),
@@ -71,7 +76,7 @@ begin
                            else greatest(0, round(extract(epoch from upper(ad.shift) - lower(ad.shift)) / 60) - coalesce(bk.brk_min, 0))::int end,
            'logged_min', coalesce(ad.logged_min, 0),
            'break_min', coalesce(ad.break_min, bk.brk_min, 0),
-           'guard', exists (select 1 from guard_machines gm where gm.employee_id = ad.employee_id),
+           'guard', exists (select 1 from guard_machines gm where gm.employee_id = ad.employee_id) or exists (select 1 from ev where ev.employee_id = ad.employee_id),
            'idle_min', coalesce(i.idle_min, 0),
            'locked_min', coalesce(i.locked_min, 0)) order by ad.date, e.emp_id), '[]'::jsonb)
     into res

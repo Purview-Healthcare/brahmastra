@@ -856,7 +856,9 @@ export's columns and nothing else, and only for the right key. Shastra stores on
 Time on the floor and idle time for Team status come from a second read-only function, `brahmastra_floor(p_key,
 p_from, p_to)` (`dev/shastra-floor-feed.sql`, run once the same way). It uses the same key (no new secret) and
 returns, for each person and day, the attendance status, time on the floor, time logged in, breaks, and the minutes
-Shastra Guard saw no movement or a locked screen while they were punched in; people are matched by Emp ID, then
+Shastra Guard saw no movement or a locked screen while they were punched in (outside their breaks; two breaks that
+overlap count once). Each Guard event counts for whoever was signed in on the computer when it happened, so a computer
+shared or moved to someone else keeps everyone's own idle time. People are matched by Emp ID, then
 email. Brahmastra keeps the days it fetched, settles a day once it was fetched 12 hours after it ended, and asks
 again for newer days after 10 minutes. Shastra corrects days afterwards (a missed punch-out, a day regularised at
 month close), so a settled day of this month or last month is asked for again after 3 hours, and every kept day
