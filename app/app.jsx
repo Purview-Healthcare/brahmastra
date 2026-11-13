@@ -2269,8 +2269,8 @@ function StackTlRow({ t, ticks, onOpen, onTick }) {
         hint={"Brahmastra cannot tell: " + t.left_unknown.join(", ") + " left with no exit date; the manager types the count"} /> : t.attrition}</td>
       <td className="num"><StkSc v={s.attr} max={5} /></td>
       <td className="num">{t.adherence}</td><td className="num"><StkSc v={s.adh} max={5} /></td>
-      <td><button type="button" className="ticks" disabled={!t.can_tick} onClick={open}><StkTicks t={t} keys={STK_TH} ticks={ticks} /></button></td><td className="num"><StkSc v={s.th} max={5} /></td>
-      <td><button type="button" className="ticks" disabled={!t.can_tick} onClick={open}><StkTicks t={t} keys={STK_CF} ticks={ticks} /></button></td><td className="num"><StkSc v={s.cf} max={5} /></td>
+      <td><button type="button" className="ticks" disabled={!t.can_tick} onClick={open} aria-label={"Team handling ticks of " + t.name + ": " + s.th + " of 5"}><StkTicks t={t} keys={STK_TH} ticks={ticks} /></button></td><td className="num"><StkSc v={s.th} max={5} /></td>
+      <td><button type="button" className="ticks" disabled={!t.can_tick} onClick={open} aria-label={"Client forefront ticks of " + t.name + ": " + s.cf + " of 5"}><StkTicks t={t} keys={STK_CF} ticks={ticks} /></button></td><td className="num"><StkSc v={s.cf} max={5} /></td>
       <td className="num">{stkN(t.addition)}</td>
       <td className="num b">{stkN(s.total)}</td><td className="num b">{stkPct(s.pct)}</td><td><StkChip n={s.stack} /></td>
     </tr>
