@@ -6957,23 +6957,36 @@ const OPS = {
     if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
     if (payload.user_id && scope === "ar") { where.push("nt.user_id = ?"); args.push(str(payload.user_id, 60)); }
     const extra = where.length ? " AND " + where.join(" AND ") : "";
+    // A page of entries when the page asks for one (page, page_size up to 5,000, total), so no single answer holds a whole month: a
+    // month of 60,000 entries in one answer came close to a Worker's 128 MB. Without page: every entry (up to 60,000) at once, as before.
+    const paged = payload.page != null, size = paged ? Math.max(1, Math.min(5000, Math.round(num(payload.page_size, 5000)))) : 60000;
+    const page = paged ? Math.max(1, Math.round(num(payload.page, 1))) : 1, skip = (page - 1) * size, lim = Math.max(0, Math.min(size, 60000 - skip));
+    const pageInfo = async (sql, ...a) => (paged ? { page, page_size: size, total: Math.min(60000, ((await one(env, sql, ...a)) || {}).n || 0) } : {});
     if (scope === "ar") {
-      const notes = await all(env, `SELECT c.*, cl.name AS client_name, l.name AS location_name, nt.user_id, nt.user_name, nt.created_at AS worked_at, nt.comment, nt.status, nt.sub_status, nt.action,
+      // only the claim fields a Production row uses: c.* (73 columns, the file's own row among them) took a month's entries past a
+      // Worker's 128 MB on Cloudflare
+      const notes = await all(env, `SELECT c.claim_no, c.patient, c.payer, c.cpt, c.dos, c.age_days, c.billed, c.balance, cl.name AS client_name, l.name AS location_name,
+          nt.user_id, nt.user_name, nt.created_at AS worked_at, nt.comment, nt.status, nt.sub_status, nt.action,
           nt.bucket AS work_bucket, nt.fields_json FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
-        WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY nt.created_at LIMIT 60000`, from, to, ...args, ...scopeArgs(user));
+        WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY nt.created_at${paged ? ", nt.id LIMIT ? OFFSET ?" : " LIMIT 60000"}`,
+        from, to, ...args, ...scopeArgs(user), ...(paged ? [lim, skip] : []));
+      const info = await pageInfo(`SELECT COUNT(*) AS n FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")}`, from, to, ...args, ...scopeArgs(user));
       const iDos = WORKBOOK_HEADER.indexOf("DOS"), iWorked = WORKBOOK_HEADER.indexOf("Date Worked");
       const rows = notes.map((n, i) => {
         const row = productionRow({ ...n, last_note: n.comment, last_status_code: n.status, last_sub_status: n.sub_status, last_action_code: n.action, last_bucket: n.work_bucket },
           person(n.user_id, n.user_name), { ended_at: n.worked_at, fields: noteFields(n) });
-        row[0] = i + 1; row[iDos] = n.dos || ""; row[iWorked] = istISO(n.worked_at);
+        row[0] = skip + i + 1; row[iDos] = n.dos || ""; row[iWorked] = istISO(n.worked_at);
         return row;
       });
-      return { scope, header: WORKBOOK_HEADER, rows };
+      return { scope, header: WORKBOOK_HEADER, rows, ...info };
     }
     const dept = scope === "pp" ? "posting" : "submission";
     const hs = await all(env, `SELECT h.*, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.billed, c.balance${scope === "sub" ? ", c.raw_json" : ""}, cl.name AS client_name, l.name AS location_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
-      WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY h.done_at LIMIT 60000`, dept, from, to, ...args, ...scopeArgs(user));
+      WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")} ORDER BY h.done_at${paged ? ", h.id LIMIT ? OFFSET ?" : " LIMIT 60000"}`,
+      dept, from, to, ...args, ...scopeArgs(user), ...(paged ? [lim, skip] : []));
+    const info = await pageInfo(`SELECT COUNT(*) AS n FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = ? AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?${extra}${scopeSql(user, "c.client_id")}`,
+      dept, from, to, ...args, ...scopeArgs(user));
     // what the desk person entered goes along, under the column names Third Eye reads (an amount not entered stays empty)
     const header = scope === "pp"
       ? ["Client", "Practice", "Team Lead", "Associate Name", "Emp ID", "Date Worked", "Claim No", "Patient Name", "Insurance", "DOS", "Billed Amount", "Check Number", "Check Date",
@@ -6992,7 +7005,7 @@ const OPS = {
       return [h.client_name || "", h.location_name || "", p.reports_to_name, p.name, p.emp_id || "", istISO(h.done_at), h.claim_no || "", h.patient || "", h.payer || "", h.dos || "", h.billed == null ? "" : h.billed, "Submitted", proof.mode || "",
         proof.type || rawPick(jsonObj(h.raw_json), "Type"), proof.claim_type || claimTypeOf(h.saag_action), [proof.ref ? "Batch / claim ID " + proof.ref : "", h.note].filter(Boolean).join(" · ")];
     });
-    return { scope, header, rows };
+    return { scope, header, rows, ...info };
   },
   /* Portfolio & SLA: every client in scope with Drishti's latest score (the Portfolio's SLA column). */
   "sla.summary": async ({ env, user, payload }) => {

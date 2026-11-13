@@ -7,6 +7,9 @@
          client list is one JSON value too. Checked at scale: 150 AR billers (a third on a night shift) and 120 active clients.
    I-07: a manager who can edit many clients can Close, Exclude, Reopen, Assign, Unassign and Set priority on 80 or more ticked
          claims, and opens every page: the person's own client list (scopeSql, editScopeSql) is one JSON value as well.
+   I-08: a month's production (reports.production, which Third Eye's page and the Production Conso download load) no longer
+         reads every claim's 73 columns (the file's own row among them), and comes in pages of 5,000: a whole month in one answer
+         passed a Worker's 128 MB on Cloudflare.
    I-02: a search longer than 48 characters works (Dashboard > a payer bar > Open these claims with a long payer name): D1
          refuses a LIKE pattern over 50 bytes, so typed text is cut to its first 48 bytes inside the % signs.
    I-03: closing claims answers how many claims were closed: D1 counts the closed_at trigger's change too (3 closed read 6), so
@@ -14,7 +17,9 @@
    I-04: a call that leaves out the id it needs answers the op's own message ("Claim not found."), never a 500: D1 refuses an
          undefined value, and the database helpers now bind a left-out value as NULL.
    Made-up data only. */
-import { makeRig } from "./rig.mjs";
+import fs from "fs";
+import path from "path";
+import { makeRig, REPO } from "./rig.mjs";
 const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond, info }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 500))); };
@@ -126,6 +131,37 @@ ok("I-02: the audit trail's action filter takes 40 characters of any kind", (awa
 const qb = await tryOp(() => B("queue.list", { day_from_ms: 0, q: "z".repeat(60), payer: LONG, provider: "p".repeat(80), cpt: "–".repeat(40) }));
 ok("I-02: a biller's My list filters take long text", qb.ok, qb.ok ? "" : qb.status + " " + qb.e);
 ok("I-02: a search of 48 characters or less is as before (the demo's sample payer)", (await A("claims.list", { client_id: sun.id, q: "Aetna", state: "", page_size: 500 })).rows.every((r) => /aetna/i.test(r.claim_no + r.patient + r.account_no + r.payer)));
+
+S("I-08: the month's production reads only what a row needs and comes in pages");
+{ // 40 made-up work entries by the demo's billers on the claims loaded above, some in the same millisecond
+  const billers = (await A("users.list")).users.filter((u) => u.role === "user" && u.active).slice(0, 3);
+  const onFile = (await A("claims.list", { client_id: sun.id, state: "", page_size: 40 })).rows, t0 = Date.now() - 3 * 3600000;
+  for (let i = 0; i < 40; i++) await DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, created_at, status, sub_status, action, bucket, comment, fields_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind("s44-prod-" + i, onFile[i % onFile.length].id, billers[i % 3].id, billers[i % 3].name, "work", t0 + Math.floor(i / 4) * 60000, "Claim In Process", "Need to allow some time", "Follow Up", "Payer",
+      "Made-up note " + i, JSON.stringify({ source: "Call", call_start: "10:05", call_end: "10:19" })).run();
+  // and 8 finished Payment posting and 8 finished Submission tasks (two finished in the same millisecond each time)
+  for (let i = 0; i < 16; i++) await DB.prepare("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by_name, due_at, done_at, done_by, done_by_name, proof_json, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind("s44-ho-" + i, onFile[i % onFile.length].id, sun.id, i % 2 ? "posting" : "submission", "complete", t0, "Supervisor", t0 + 86400000, t0 + Math.floor(i / 4) * 60000, billers[0].id, billers[0].name,
+      JSON.stringify(i % 2 ? { ref: "CHK" + i, check_date: "2026-11-02", allowed: 120, amount: 80, adjustment: 40, deductible: 0 } : { ref: "B" + i, mode: "Electronic" }), "Made-up desk note " + i).run(); }
+{ // the database rows read for Production: only the fields a row uses, not the claim's 73 columns
+  const ST = Object.getPrototypeOf(DB.prepare("SELECT 1")), ex = ST._exec; let widest = 0;
+  ST._exec = function () { const r = ex.call(this); if (/FROM notes nt JOIN claims c/.test(this.sql)) for (const row of r.results) widest = Math.max(widest, Object.keys(row).length); return r; };
+  let whole; try { whole = await A("reports.production", { scope: "ar", from_ms: 0, to_ms: Date.now() + 86400000 }); } finally { ST._exec = ex; }
+  ok("I-08: the Production query reads at most 20 fields an entry (it read the claim's 73 columns and the file's own row)", whole.rows.length > 10 && widest > 0 && widest <= 20, { rows: whole.rows.length, widest });
+  const strip = (rows) => rows.map((r) => JSON.stringify(r.slice(1))).sort();   // the SR No apart: entries worked in the same millisecond may come in either order
+  const pages = []; let pg = null;
+  for (let page = 1; page <= 50; page++) { pg = await A("reports.production", { scope: "ar", from_ms: 0, to_ms: Date.now() + 86400000, page, page_size: 7 }); pages.push(...pg.rows); if (pages.length >= pg.total || !pg.rows.length) break; }
+  ok("I-08: pages of 7 put together give the very entries of the one answer, numbered 1 on", pg.total === whole.rows.length && JSON.stringify(strip(pages)) === JSON.stringify(strip(whole.rows)) && pages.every((r, i) => r[0] === i + 1),
+    { total: pg && pg.total, got: pages.length, whole: whole.rows.length });
+  const big = await A("reports.production", { scope: "ar", from_ms: 0, to_ms: Date.now() + 86400000, page: 1, page_size: 99999 });
+  ok("I-08: a page is at most 5,000 entries", big.page_size === 5000 && big.page === 1 && big.total === whole.rows.length);
+  for (const sc of ["pp", "sub"]) { const w = await A("reports.production", { scope: sc, from_ms: 0, to_ms: Date.now() + 86400000 }), parts = [];
+    for (let page = 1; page <= 50; page++) { const x = await A("reports.production", { scope: sc, from_ms: 0, to_ms: Date.now() + 86400000, page, page_size: 1 }); parts.push(...x.rows); if (parts.length >= x.total || !x.rows.length) break; }
+    ok(`I-08: ${sc === "pp" ? "Payment posting" : "Submission"}'s production pages too, the same 8 entries`, w.rows.length === 8 && JSON.stringify(parts.map((r) => JSON.stringify(r)).sort()) === JSON.stringify(w.rows.map((r) => JSON.stringify(r)).sort()), { whole: w.rows.length, pages: parts.length }); }
+  const viaPage = await rig.app.rpcAllPages("reports.production", { scope: "ar", from_ms: 0, to_ms: Date.now() + 86400000 }, 5000);
+  ok("I-08: the page's own code (rpcAllPages, pages of 5,000) gets the same entries", JSON.stringify(strip(viaPage.rows)) === JSON.stringify(strip(whole.rows)));
+  const jsx = fs.readFileSync(path.join(REPO, "app", "app.jsx"), "utf8");
+  ok("I-08: Third Eye's page and the Production Conso download both load it in pages of 5,000", (jsx.match(/rpcAllPages\("reports\.production", \{[^\n]*\}, 5000\)/g) || []).length === 2 && !/[^l]rpc\("reports\.production"/.test(jsx)); }
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // I-01 and I-05 at scale, in a second rig (its own database): a made-up Shastra roster of a VP, 3 managers, 12 team leads and 150
