@@ -1909,6 +1909,11 @@ function sameHash(a, b) { // constant time
 const mailClean = (e) => String(e || "").trim().toLowerCase();
 const mailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 const str = (v, max = 4000) => (v == null ? "" : String(v)).slice(0, max);
+/* Typed text in a LIKE pattern: D1 refuses a LIKE or GLOB pattern over 50 bytes ("LIKE or GLOB pattern too complex", a 500), so
+   the text is cut to its first 48 bytes (whole characters) inside the two % signs: a longer search finds what its first 48
+   characters find. likeCut(s, n) cuts to n bytes for other patterns. */
+const likeCut = (s, n = 48) => { let out = "", b = 0; for (const ch of String(s)) { const c = ch.codePointAt(0), k = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; if (b + k > n) break; out += ch; b += k; } return out; };
+const likeAny = (s) => "%" + likeCut(s) + "%";
 const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 /* A whole number typed in a box, from lo to hi. Anything else (empty, a fraction, out of range) is refused with msg,
    never saved as some other number. */
@@ -3895,7 +3900,7 @@ const OPS = {
   "auth.lookup": async ({ env, payload }) => {
     const q = str(payload.q, 80).trim().toLowerCase().replace(/[%_]/g, " ");
     if (q.length < 2) return { matches: [] };
-    const like = "%" + q + "%";
+    const like = likeAny(q);
     const rows = await all(env, `SELECT id, name, emp_id, designation, department, email, email_missing, pass_hash, role FROM users
       WHERE active = 1 AND (lower(name) LIKE ? OR lower(emp_id) LIKE ? OR (role = 'admin' AND ? LIKE '%admin%')) ORDER BY role = 'admin' DESC, name LIMIT 8`, like, like, q);
     return { matches: rows.map((u) => ({ id: u.id, name: u.name, emp_id: u.emp_id || "", designation: u.role === "admin" ? "Admin" : u.designation || "", department: u.department || "",
@@ -4832,7 +4837,7 @@ const OPS = {
   "search.global": async ({ env, user, payload }) => {
     const q = str(payload.q, 80).trim().replace(/[%_\\]/g, "");
     if (q.length < 2) return { claims: [] };
-    const like = "%" + q + "%", sup = user.role === "supervisor";
+    const like = likeAny(q), sup = user.role === "supervisor";
     // A biller or desk person finds what they may open: their list, what they worked, the claims on their desk (hand-offs they
     // lead, back up or were given) and the claims of a client they are responsible for.
     const rc = sup ? [] : [...(user.resp_clients || [])];
@@ -5391,7 +5396,7 @@ const OPS = {
     if (!user.is_admin && !user.access_all) throw denied("The audit trail is for admins and the VP.");
     const where = [], args = [];
     if (payload.client_id) { where.push("a.client_id = ?"); args.push(str(payload.client_id, 60)); }
-    if (payload.action) { where.push("a.action LIKE ?"); args.push(str(payload.action, 40) + "%"); }
+    if (payload.action) { where.push("a.action LIKE ?"); args.push(likeCut(str(payload.action, 40), 49) + "%"); }
     if (payload.from_ms) { where.push("a.at >= ?"); args.push(num(payload.from_ms, 0)); }
     const rows = await all(env, `SELECT a.*, c.name AS client_name FROM audit_log a LEFT JOIN clients c ON c.id = a.client_id${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY a.at DESC LIMIT 500`, ...args);
     return { rows };
@@ -6251,9 +6256,9 @@ const OPS = {
     // Posting / submission people see what is handed to their desk, and every claim of a client they are responsible for.
     { const dk = deskSql(user, "c.id"); const rc = [...(user.resp_clients || [])];
       if (dk && !ro) { if (rc.length) { where.push(`(${dk.replace(/^ AND /, "")} OR c.client_id IN (${rc.map(() => "?").join(",")}))`); params.push(...rc); } else where.push(dk.replace(/^ AND /, "")); } }
-    if (payload.provider) { where.push("c.provider LIKE ?"); params.push("%" + str(payload.provider, 80).trim() + "%"); }
-    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
-    if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer_like, 80).trim() + "%"); }
+    if (payload.provider) { where.push("c.provider LIKE ?"); params.push(likeAny(str(payload.provider, 80).trim())); }
+    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push(likeAny(str(payload.cpt, 40).trim())); }
+    if (payload.payer_like) { where.push("c.payer LIKE ?"); params.push(likeAny(str(payload.payer_like, 80).trim())); }
     if (payload.min_balance != null && payload.min_balance !== "") { where.push("c.balance >= ?"); params.push(num(payload.min_balance, 0)); }
     // Turning 90 within N days: 91 - N to 90 days old today
     if (payload.turning90 != null && payload.turning90 !== "") { const n = Math.max(1, Math.min(30, Math.round(num(payload.turning90, 7)))); where.push(`${AGE_SQL("c.")} BETWEEN ? AND 90 AND c.balance > 0`); params.push(isoDate(payload.today) || isoToday(), 91 - n); }
@@ -6269,7 +6274,7 @@ const OPS = {
     if (payload.overdue) { where.push(`c.state = 'completed' AND c.follow_up_on <> '' AND c.follow_up_on < ? AND ${INV_NO_OPEN_HO}`); params.push(isoDate(payload.today) || isoToday()); }
     // stage: exactly one of Inventory status's stages, so a stage button opens the claims it counts
     if (payload.stage && INV_STAGE_SQL[payload.stage]) { where.push(INV_STAGE_SQL[payload.stage]); const t = isoDate(payload.today) || isoToday(); params.push(...(payload.stage === "overdue" || payload.stage === "due" ? [t] : payload.stage === "later" ? [t, t] : [])); }
-    if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
+    if (payload.q) { const q = likeAny(str(payload.q, 80).trim()); where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
     const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday('now') - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END)", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on",
       claim_no: "c.claim_no", tier: "c.tier", status_class: "c.status_class", inventory_kind: "c.inventory_kind", provider: "c.provider", cpt: "c.cpt" };
     const sort = SORTS[payload.sort] || "c.priority";
@@ -6298,7 +6303,7 @@ const OPS = {
     if (payload.client_id) { where.push("client_id = ?"); params.push(str(payload.client_id, 60)); }
     if (payload.location_id) { where.push("location_id = ?"); params.push(str(payload.location_id, 60)); }
     const w = where.join(" AND ");
-    const like = "%" + q.replace(/[%_]/g, " ") + "%";
+    const like = likeAny(q.replace(/[%_]/g, " "));
     const col = { payer: "payer", provider: "provider", cpt: "cpt" }[String(payload.field || "")];
     if (col) {
       const rows = await all(env, `SELECT ${col} AS v, COUNT(*) AS n FROM claims WHERE ${w} AND ${col} <> ''${q ? ` AND ${col} LIKE ?` : ""} GROUP BY ${col} ORDER BY n DESC LIMIT 12`, ...params, ...(q ? [like] : []));
@@ -6729,10 +6734,10 @@ const OPS = {
     const from = num(payload.day_from_ms, 0);
     const where = ["c.assigned_to = ?", "(c.state IN ('assigned','in_progress') OR (c.state IN ('completed','closed','in_process') AND c.completed_at >= ?))"];
     const params = [user.id, from];
-    if (payload.q) { const q = "%" + str(payload.q, 80).trim() + "%"; where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ?)"); params.push(q, q, q); }
-    if (payload.payer) { where.push("c.payer LIKE ?"); params.push("%" + str(payload.payer, 80).trim() + "%"); }
-    if (payload.provider) { where.push("c.provider LIKE ?"); params.push("%" + str(payload.provider, 80).trim() + "%"); }
-    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push("%" + str(payload.cpt, 40).trim() + "%"); }
+    if (payload.q) { const q = likeAny(str(payload.q, 80).trim()); where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ?)"); params.push(q, q, q); }
+    if (payload.payer) { where.push("c.payer LIKE ?"); params.push(likeAny(str(payload.payer, 80).trim())); }
+    if (payload.provider) { where.push("c.provider LIKE ?"); params.push(likeAny(str(payload.provider, 80).trim())); }
+    if (payload.cpt) { where.push("c.cpt LIKE ?"); params.push(likeAny(str(payload.cpt, 40).trim())); }
     if (payload.min_balance != null && payload.min_balance !== "") { where.push("c.balance >= ?"); params.push(num(payload.min_balance, 0)); }
     if (payload.max_balance != null && payload.max_balance !== "") { where.push("c.balance <= ?"); params.push(num(payload.max_balance, 0)); }
     if (payload.saag_status) { where.push("c.last_status_code = ?"); params.push(str(payload.saag_status, 60)); }
