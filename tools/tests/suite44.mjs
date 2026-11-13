@@ -10,6 +10,8 @@
    I-08: a month's production (reports.production, which Third Eye's page and the Production Conso download load) no longer
          reads every claim's 73 columns (the file's own row among them), and comes in pages of 5,000: a whole month in one answer
          passed a Worker's 128 MB on Cloudflare.
+   Also: the hourly roster sync no longer writes every person when nothing changed (3 database calls a person every hour, and D1
+         allows 1,000 an invocation: it failed from about 325 people).
    I-02: a search longer than 48 characters works (Dashboard > a payer bar > Open these claims with a long payer name): D1
          refuses a LIKE pattern over 50 bytes, so typed text is cut to its first 48 bytes inside the % signs.
    I-03: closing claims answers how many claims were closed: D1 counts the closed_at trigger's change too (3 closed read 6), so
@@ -196,6 +198,18 @@ const usersS = (await AS("users.list")).users, US = (n) => usersS.find((u) => u.
 const firstIn = async (name, email) => { await rigS.as(null)("auth.firstPassword", { user_id: US(name).id, passHash: await rigS.sha("pw-" + email) }); return rigS.as((await loginS(email, "pw-" + email)).token); };
 const VP = await firstIn("Test VP 001", "tvp1@purview-healthcare.com"), MG = await firstIn("Test Manager 001", "tm1@purview-healthcare.com"), TL = await firstIn("Test Lead 001", "tl1@purview-healthcare.com");
 const PO = await firstIn("Test Poster 001", "tp1@purview-healthcare.com");
+{ // the roster sync and the hourly job when nothing in the roster changed: a few statements, whatever the number of people
+  const DBS = rigS.backend.env.DB, ST = Object.getPrototypeOf(DBS.prepare("SELECT 1")), ex = ST._exec; let n = 0;
+  ST._exec = function () { n++; return ex.call(this); };
+  let r, job = 0;
+  try {
+    r = await AS("roster.syncShastra");
+    const syncN = n; n = 0; const ps = []; const l0 = console.log; console.log = () => {};
+    try { await rigS.worker.default.scheduled({ cron: "17 * * * *" }, { ...rigS.backend.env, ...rigS.liveEnv, DB: DBS }, { waitUntil: (p) => ps.push(p) }); await Promise.all(ps); } finally { console.log = l0; }
+    job = n; n = syncN;
+  } finally { ST._exec = ex; }
+  ok("roster: syncing 167 unchanged people makes at most 40 database statements, not 3 a person (it made about 520)", r.summary.same === r.summary.people && n <= 40, { statements: n, summary: r.summary });
+  ok("roster: the whole hourly job then stays far under D1's 1,000 a run (at most 100)", job > 0 && job <= 100, { statements: job }); }
 const activeClients = (await AS("clients.list")).clients.filter((c) => c.active);
 const billersS = usersS.filter((u) => u.role === "user" && u.active && /^Test Biller/.test(u.name));
 ok("I-01/I-05 setup: 150 AR billers synced (50 on a night shift) and 120 active clients", billersS.length === NB && billersS.filter((u) => /18:30/.test(u.shift || "")).length === 50 && activeClients.length === NC,

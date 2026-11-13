@@ -2134,23 +2134,27 @@ async function importRoster(env, user, payload) {
   if (payload.dry_run) return out;
 
   // Apply: people first, then who reports to whom, then project access and teams.
-  const now = Date.now();
+  // A row that already holds exactly what would be written is not written again: an unchanged roster made 3 database calls a
+  // person on every hourly sync, and D1 allows 1,000 calls an invocation (the hourly job is one).
+  const now = Date.now(), freed = new Set();
+  const holds = (p, vals) => !!p.match && !freed.has(p.match.id) && Object.keys(vals).every((k) => p.match[k] === vals[k]);
   for (const p of plan) {
     if (p.action === "skip") continue;
     const n = p.next;
-    if (n.free_email_from) await run(env, "UPDATE users SET email = ?, email_missing = 1 WHERE id = ?", "freed-" + String(n.free_email_from).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) + "@no-email.invalid", n.free_email_from);
+    if (n.free_email_from) { freed.add(n.free_email_from); await run(env, "UPDATE users SET email = ?, email_missing = 1 WHERE id = ?", "freed-" + String(n.free_email_from).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) + "@no-email.invalid", n.free_email_from); }
     let id = p.match && p.match.id;
+    const [first, ...rest] = n.name.split(/\s+/);
     if (!id) {
       id = uuid();
-      const [first, ...rest] = n.name.split(/\s+/);
       await run(env, `INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at, source)
         VALUES (?,?,?,?,?,?,?,'','',0,?,35,?,'roster')`, id, n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, now);
-    } else {
-      const [first, ...rest] = n.name.split(/\s+/);
+    } else if (!holds(p, { email: n.email, name: n.name, first_name: first || "", last_name: rest.join(" "), designation: n.designation, role: n.role, active: n.active, source: "roster" })) {
       await run(env, "UPDATE users SET email = ?, name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, active = ?, source = 'roster' WHERE id = ?", n.email, n.name, first || "", rest.join(" "), n.designation, n.role, n.active, id);
     }
-    await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, email_typed = ?, shift = ?, city = ? WHERE id = ?`,
-      n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, id);
+    if (!holds(p, { emp_id: n.emp_id, position: n.position, roster_kind: n.roster_kind, department: n.department, departments_also: n.departments_also, roster_status: n.roster_status, exit_date: n.exit_date,
+      doj: n.doj || "", reports_to_name: n.reports_to_name, projects_json: n.projects_json, access_all: n.access_all, email_missing: n.email_missing, email_typed: n.email_typed, shift: n.shift, city: n.city }))
+      await run(env, `UPDATE users SET emp_id = ?, position = ?, roster_kind = ?, department = ?, departments_also = ?, roster_status = ?, exit_date = ?, doj = ?, reports_to_name = ?, projects_json = ?, access_all = ?, email_missing = ?, email_typed = ?, shift = ?, city = ? WHERE id = ?`,
+        n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, id);
     p.id = id;
     if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
     // Moved off AR in Shastra (to Payment posting or Submission): their AR claims go back to the pool, as when someone leaves.
@@ -2160,7 +2164,8 @@ async function importRoster(env, user, payload) {
   const off = [...leaving.map((u) => u.id), ...dropped];
   for (const id of off) { await run(env, "UPDATE users SET active = 0 WHERE id = ?", id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
   const idByName = new Map(); plan.forEach((p) => { if (p.id) idByName.set(p.row.name.toLowerCase(), p.id); });
-  for (const p of plan) if (p.id) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", idByName.get(String(p.row.reports_to || "").toLowerCase()) || null, p.id);
+  for (const p of plan) { if (!p.id) continue; const to = idByName.get(String(p.row.reports_to || "").toLowerCase()) || null;
+    if (!p.match || freed.has(p.match.id) || p.match.reports_to !== to) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", to, p.id); }
   await recomputeScopes(env);
   await autoMapProjects(env);
   await syncTeams(env);
