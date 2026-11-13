@@ -250,6 +250,14 @@ await world("N-09", async () => {
   await noChange("Vik puts the flagged claim on hold", () => VK("tat.hold", { kind: "flag", id: c2.id, reason: "Waiting on the payer", until: "2026-11-13" }), VIEW_ONLY);
   await noChange("Vik saves the payer's TFL", () => VK("payers.saveLimit", { client_id: sun.id, payer: "Aetna", tfl_days: 90 }), VIEW_ONLY);
   await noChange("Vik logs an escalation", () => VK("escalations.save", escPayload(w, sun.id, id["Tina Lead"])), VIEW_ONLY);
+  // a request Payment posting needs from the client, and Tina's hold on the flagged claim, both on Sunrise
+  await sql(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, due_at, saag_action, paused_at, reason) VALUES ('h46-cl', ?, ?, 'posting', 'client', ?, ?, 'Test Lead', ?, 'Need to Post', ?, 'Need EOB / ERA from the client')`,
+    c5.id, sun.id, NOW - 86400000, id["Tina Lead"], NOW + 86400000, NOW - 3600000);
+  await noChange("Vik marks the client request sent", () => VK("attention.clientSent", { id: "h46-cl", how: "Email" }), VIEW_ONLY);
+  await TI("tat.hold", { kind: "flag", id: c2.id, reason: "Waiting on the payer", until: "2026-11-13" });
+  const hold = (await row("SELECT id FROM tat_holds WHERE ref_id = ? AND cleared_at IS NULL", c2.id)).id;
+  await noChange("Vik clears Tina's hold", () => VK("tat.unhold", { id: hold }), VIEW_ONLY);
+  await noChange("Vik uploads the client's inventory", () => VK("inventory.upload", { client_id: sun.id, file_name: "x.xlsx", rows: [] }), VIEW_ONLY);
 
   S("N-09: a view-only person who once worked a claim cannot write on it now");
   // Bo worked c4 before (it is on his list, his entry and file are minutes old) and is the biller of its recheck; now he has only the view share
@@ -267,6 +275,8 @@ await world("N-09", async () => {
   await noChange("Bo attaches a file", () => BO("attachments.add", { claim_id: c4.id, name: "x.pdf", type: "application/pdf", data: pdf }), VIEW_ONLY);
   await noChange("Bo removes his own file", () => BO("attachments.delete", { id: "a46-bo" }), VIEW_ONLY);
   await noChange("Bo marks his recheck accepted", () => BO("handoffs.close", { id: "h46-bo", outcome: "complete", proof: { ref: "ACK1", date: TODAY } }), VIEW_ONLY);
+  await sql("UPDATE handoffs SET lead_id = ? WHERE id = 'h46-bo'", id["Bo Viewer"]);   // as if he had been its lead
+  await noChange("Bo assigns the hand-off he leads", () => BO("handoffs.assign", { id: "h46-bo", user_id: id["Bo Viewer"] }), VIEW_ONLY);
   const nx = await T(() => BO("queue.next", { today: TODAY }));
   ok("N-09: Next claim does not open it for him", nx.ok && !nx.r.claim && (await row("SELECT state FROM claims WHERE id = ?", c4.id)).state === "assigned", nx);
   await sql("UPDATE claims SET state = 'in_progress', started_at = ? WHERE id = ?", NOW - 60000, c4.id);
