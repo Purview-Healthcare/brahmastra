@@ -6501,7 +6501,12 @@ const OPS = {
         if (fu && fu > today) { newState = "completed"; reason = reason || WAITS; }
       }
       { const fw = fileWork(ex.id); if (fw) stmts.push(fw); }
-      stmts.push(claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), { kind, batch: bid, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance, ...(newState !== ex.state ? { changes: { state: [ex.state, newState] } } : {}) }));
+      // The state (and the biller on it) changes only while the claim still has the state this part read: a team lead who allocates
+      // it, or a biller who saves it, between this part's read and its write keeps their change, and the history names no change.
+      const refreshed = { kind, batch: bid, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance };
+      stmts.push(newState === ex.state ? claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), refreshed)
+        : env.DB.prepare("INSERT INTO claim_events (id, claim_id, at, user_id, user_name, kind, text, data_json) SELECT ?, id, ?, ?, ?, 'refreshed', ?, CASE WHEN state = ? THEN ? ELSE ? END FROM claims WHERE id = ?")
+          .bind(uuid(), Date.now(), user.id, user.name || "", str(file_name, 200), ex.state, JSON.stringify({ ...refreshed, changes: { state: [ex.state, newState] } }), JSON.stringify(refreshed), ex.id));
       stmts.push(env.DB.prepare(`UPDATE claims SET location_id = COALESCE(?, location_id), batch_id = ?, claim_no = CASE WHEN ? <> '' THEN ? ELSE claim_no END,
           account_no = CASE WHEN ? <> '' THEN ? ELSE account_no END, patient = CASE WHEN ? <> '' THEN ? ELSE patient END, payer = CASE WHEN ? <> '' THEN ? ELSE payer END,
           dos = CASE WHEN ? <> '' THEN ? ELSE dos END, cpt = CASE WHEN ? <> '' THEN ? ELSE cpt END, provider = CASE WHEN ? <> '' THEN ? ELSE provider END,
@@ -6512,15 +6517,16 @@ const OPS = {
           follow_up_on = CASE WHEN ? <> '' AND (COALESCE(last_worked_on, '') = '' OR (? <> '' AND ? >= last_worked_on)) THEN ? ELSE follow_up_on END,
           priority = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority ELSE ${PRIO_SQL} END,
           priority_base = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority_base ELSE ? END,
-          priority_reason = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority_reason ELSE ${PRIO_REASON_SQL} END, state = ?, state_reason = COALESCE(?, state_reason),
-          assigned_to = CASE WHEN ? = 1 THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 1 THEN NULL ELSE assigned_at END,
-          skipped_at = CASE WHEN ? = 1 THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ?,
+          priority_reason = CASE WHEN state IN ('assigned','in_progress','completed') THEN priority_reason ELSE ${PRIO_REASON_SQL} END,
+          state = CASE WHEN state = ? THEN ? ELSE state END, state_reason = CASE WHEN state = ? THEN COALESCE(?, state_reason) ELSE state_reason END,
+          assigned_to = CASE WHEN ? = 1 AND state = ? THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN ? = 1 AND state = ? THEN NULL ELSE assigned_at END,
+          skipped_at = CASE WHEN ? = 1 AND state = ? THEN NULL ELSE skipped_at END, raw_json = ?, updated_at = ?,
           alt_key = CASE WHEN alt_key = '' OR ? = 1 THEN ? ELSE alt_key END, fp_key = CASE WHEN fp_key = '' THEN ? ELSE fp_key END WHERE id = ?`).bind(
           location_id || null, bid, keepNo ? "" : vals.claim_no, keepNo ? "" : vals.claim_no, vals.account_no, vals.account_no, vals.patient, vals.patient, vals.payer, vals.payer,
           vals.dos, vals.dos, vals.cpt, vals.cpt, vals.provider, vals.provider, vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class,
           vals.file_status, vals.file_sub_status, vals.file_action, vals.file_comments, vals.file_comments, vals.file_bucket,
-          kind, kind, lastWorked, lastWorked, lastWorked, followUp, lastWorked, lastWorked, followUp, ...prioArgs(vals.priority), vals.priority, vals.priority_reason, vals.priority_reason, newState, reason,
-          clearAssign, clearAssign, clearAssign, vals.raw_json, now, gotNo, keepNo ? "" : c._alt, c._fp, ex.id));
+          kind, kind, lastWorked, lastWorked, lastWorked, followUp, lastWorked, lastWorked, followUp, ...prioArgs(vals.priority), vals.priority, vals.priority_reason, vals.priority_reason, ex.state, newState, ex.state, reason,
+          clearAssign, ex.state, clearAssign, ex.state, clearAssign, ex.state, vals.raw_json, now, gotNo, keepNo ? "" : c._alt, c._fp, ex.id));
     }
     if (stmts.length) await batchAll(env, stmts, 40);
     await run(env, `UPDATE batches SET inserted = inserted + ?, updated = updated + ?, reopened = reopened + ?, closed = closed + ?, excluded = excluded + ?, skipped = skipped + ?,
