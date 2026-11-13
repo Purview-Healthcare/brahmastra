@@ -1160,6 +1160,12 @@ opened or worked yet (no entry, never opened, no note, attachment or hand-off), 
 handed them to a biller, who is told in the bell; claims already opened or worked stay, so no work is lost. An
 upload is undone once.
 
+A big file loads in parts of 250 claims. An upload that stops part way (the page was closed or reloaded, or the
+connection dropped, before its last part) keeps the claims that arrived and says so: Upload history marks it
+"stopped part way: upload it again", and the upload screen tells the person who uploaded it. An error half way
+shows on the upload screen with how many claims loaded before it stopped, and **Load the file again**. Loading the
+file again refreshes the claims already loaded (none is added twice) and adds the rest.
+
 ### Prioritisation (the Revenue Doctor's rules)
 
 Every claim gets a priority score when it is loaded and again when it is

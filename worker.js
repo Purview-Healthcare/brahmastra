@@ -245,7 +245,9 @@ const EXTRA_COLUMNS = {
     ["logo", "TEXT NOT NULL DEFAULT ''"],
     // Payment posting and Submission TAT for this client, in working hours (set on the client profile; 24 when not set).
     ["posting_tat_hours", "INTEGER"], ["submission_tat_hours", "INTEGER"], ["subcheck_hours", "INTEGER"]],
-  batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"]],
+  batches: [["source", "TEXT NOT NULL DEFAULT 'file'"], ["web_url", "TEXT NOT NULL DEFAULT ''"],
+    // finished is 0 from an upload's first part until its last part is in (an upload stopped half way stays 0); part_at: its latest part
+    ["finished", "INTEGER NOT NULL DEFAULT 1"], ["part_at", "INTEGER"]],
   users: [["failed_logins", "INTEGER NOT NULL DEFAULT 0"], ["locked_at", "INTEGER"], ["prefs_json", "TEXT NOT NULL DEFAULT '{}'"], ["doj", "TEXT NOT NULL DEFAULT ''"], ["first_name", "TEXT NOT NULL DEFAULT ''"], ["last_name", "TEXT NOT NULL DEFAULT ''"], ["designation", "TEXT NOT NULL DEFAULT ''"],
     // From the Purview Shastra roster (source = 'roster'); people added by hand keep source = 'manual'.
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
@@ -276,6 +278,8 @@ const OTP_MAX_TRIES = 5;
 /* Files attached to a claim are kept in D1 as base64, split into parts that stay well under D1's row size limit. */
 const ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 const ATTACH_PART_CHARS = 512 * 1024;
+/* An inventory upload's parts come one after another, each in a few seconds: one with no part for this long has stopped half way. */
+const UPLOAD_STOPPED_MS = 3 * 60 * 1000;
 
 /* ---- email: one-time codes go out through whichever provider the Worker is configured with ----
    EMAIL_PROVIDER = resend | brevo | sendgrid | graph | webhook, with EMAIL_API_KEY and EMAIL_FROM ("Brahmastra <no-reply@purview-healthcare.com>").
@@ -6413,8 +6417,8 @@ const OPS = {
     let bid = batch_id;
     if (!bid) {
       bid = uuid();
-      await run(env, "INSERT INTO batches (id, client_id, location_id, kind, file_name, uploaded_by, uploaded_at, rows_read, source, web_url) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        bid, client.id, location_id || null, kind, str(file_name, 200), user.id, now, Math.round(num(rows_read, 0)), payload.source === "onedrive" ? "onedrive" : "file", str(payload.web_url, 1000));
+      await run(env, "INSERT INTO batches (id, client_id, location_id, kind, file_name, uploaded_by, uploaded_at, rows_read, source, web_url, finished, part_at) VALUES (?,?,?,?,?,?,?,?,?,?,0,?)",
+        bid, client.id, location_id || null, kind, str(file_name, 200), user.id, now, Math.round(num(rows_read, 0)), payload.source === "onedrive" ? "onedrive" : "file", str(payload.web_url, 1000), now);
     } else {
       const b = await one(env, "SELECT id, client_id FROM batches WHERE id = ?", bid);
       if (!b || b.client_id !== client.id) throw bad("Unknown batch.");
@@ -6529,10 +6533,11 @@ const OPS = {
           clearAssign, ex.state, clearAssign, ex.state, clearAssign, ex.state, vals.raw_json, now, gotNo, keepNo ? "" : c._alt, c._fp, ex.id));
     }
     if (stmts.length) await batchAll(env, stmts, 40);
+    // the last part marks the upload finished: one stopped half way (the page closed, reloaded or cut off) says so in Upload history
     await run(env, `UPDATE batches SET inserted = inserted + ?, updated = updated + ?, reopened = reopened + ?, closed = closed + ?, excluded = excluded + ?, skipped = skipped + ?,
-        rows_read = CASE WHEN ? > 0 THEN ? ELSE rows_read END, summary_json = CASE WHEN ? = 1 THEN ? ELSE summary_json END WHERE id = ?`,
+        rows_read = CASE WHEN ? > 0 THEN ? ELSE rows_read END, summary_json = CASE WHEN ? = 1 THEN ? ELSE summary_json END, finished = CASE WHEN ? = 1 THEN 1 ELSE finished END, part_at = ? WHERE id = ?`,
       counts.inserted, counts.updated, counts.reopened, counts.closed, counts.excluded, counts.skipped,
-      Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), bid);
+      Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), final ? 1 : 0, Date.now(), bid);
     // An empty file (headers only, or every row skipped) does not count as the month's inventory.
     const loaded = final ? await one(env, "SELECT inserted + updated + reopened + closed + excluded AS n FROM batches WHERE id = ?", bid) : null;
     if (final && loaded && loaded.n > 0) { try { await monthendAuto(env, client.id, istISO(Date.now()).slice(0, 7), "inventory", user.name); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) {} }
@@ -6544,7 +6549,10 @@ const OPS = {
     const rows = payload.client_id
       ? await all(env, "SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id WHERE b.client_id = ?" + tail + " ORDER BY b.uploaded_at DESC LIMIT 100", payload.client_id, ...range)
       : await all(env, `SELECT b.*, u.name AS uploaded_by_name, l.name AS location_name, c.name AS client_name FROM batches b LEFT JOIN users u ON u.id = b.uploaded_by LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN clients c ON c.id = b.client_id WHERE 1 = 1${scopeSql(user, "b.client_id")}${tail} ORDER BY b.uploaded_at DESC LIMIT 100`, ...scopeArgs(user), ...range);
-    return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} return { ...b, summary: s, summary_json: undefined }; }) };
+    // an upload whose last part has not come: still loading while its parts keep coming, stopped once none has come for a few minutes
+    const now = Date.now();
+    return { batches: rows.map((b) => { let s = {}; try { s = JSON.parse(b.summary_json); } catch {} const open = !b.finished;
+      return { ...b, summary: s, summary_json: undefined, unfinished: open, stopped: open && now - (b.part_at || b.uploaded_at) > UPLOAD_STOPPED_MS }; }) };
   },
   /* Merge claims that are really the same claim (same normalised claim number, or same patient + DOS and payer with no
      conflicting claim number; a made-up BR-... number is no claim number). The oldest row is kept; notes, work history and

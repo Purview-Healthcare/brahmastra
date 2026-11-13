@@ -26,7 +26,8 @@ const login = async (email, pw) => as(null)("auth.login", { email, passHash: awa
 const A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
 await A("roster.syncShastra");
 const users = (await A("users.list")).users; const U = (n) => users.find((u) => u.name === n).id;
-const firstIn = async (name, email) => { await as(null)("auth.firstPassword", { user_id: U(name), passHash: await sha("pw-" + email) }); return as((await login(email, "pw-" + email)).token); };
+const TOK = {};
+const firstIn = async (name, email) => { await as(null)("auth.firstPassword", { user_id: U(name), passHash: await sha("pw-" + email) }); TOK[name] = (await login(email, "pw-" + email)).token; return as(TOK[name]); };
 const L1 = await firstIn("Lead Rk One", "rk-lead1@purview-healthcare.com"), L2 = await firstIn("Lead Rk Two", "rk-lead2@purview-healthcare.com");
 const B1 = await firstIn("Biller Rk One", "rk-b1@purview-healthcare.com");
 const sun = (await A("clients.list")).clients.find((c) => /Sunrise/.test(c.name));
@@ -97,6 +98,42 @@ S("K-08: an upload part keeps the state another person set between its read and 
   const r3 = await L2("inventory.upload", { client_id: sun.id, location_id: e.location_id, kind: "fresh", file_name: "rk-reopen.xlsx", rows_read: 1, claims: fileOf([e]), final: true, summary: {} });
   const st3 = (await q("SELECT state, assigned_to, state_reason FROM claims WHERE id = ?", e.id))[0];
   ok("K-08: a closed claim listed again is still reopened into the pool by the upload", r3.reopened === 1 && st3.state === "open" && st3.assigned_to === null && /Reopened/.test(st3.state_reason), { r3, st3 });
+}
+
+S("K-10, K-11: an upload stopped half way says so");
+{
+  // claim numbers whose digits differ between files (a claim number is recognised by its digits)
+  const mkFile = (pre, n, base) => { const out = []; for (let i = 1; i <= n; i++) out.push({ match_key: pre + i, claim_no: pre + (base + i), patient: "Test Patient " + pre + i, payer: "Test Payer " + (i % 5),
+    dos: "2026-10-" + String(1 + (i % 28)).padStart(2, "0"), balance: 60 + (i % 90), status_class: "awaiting", tier: "Medium", priority: 30 }); return out; };
+  const file = mkFile("RKH", 700, 7100000), loc = sun.locations[0].id;
+  const up = (claims, name, onProgress) => { rig.app.setToken(TOK["Lead Rk Two"]); return rig.app.uploadClaims({ client_id: sun.id, location_id: loc, kind: "fresh", file_name: name, claims, summary: { included: claims.length }, rows_read: claims.length, onProgress }); };
+  let parts = 0;
+  const r1 = await up(file, "rk-stops.xlsx", () => { parts++; if (parts === 2) throw new Error("page reloaded"); }).then(() => ({ ok: true }), (e) => ({ ok: false, e: e.message }));
+  const hist = async () => (await L2("inventory.batches", { client_id: sun.id })).batches.filter((b) => b.file_name === "rk-stops.xlsx").sort((a, b) => a.uploaded_at - b.uploaded_at);
+  let h = await hist();
+  ok("K-10: an upload stopped after 2 of its 3 parts is marked unfinished in Upload history, still loading right after its last part",
+    !r1.ok && h.length === 1 && h[0].unfinished === true && h[0].stopped === false && h[0].inserted === 500 && h[0].rows_read === 700, h.map((b) => [b.unfinished, b.stopped, b.inserted, b.rows_read]));
+  const real = Date.now; Date.now = () => real() + 4 * 60 * 1000;
+  try { h = await hist(); } finally { Date.now = real; }
+  ok("K-10: with no part for a few minutes it reads as stopped part way", h[0].unfinished === true && h[0].stopped === true, h.map((b) => [b.unfinished, b.stopped]));
+  const r2 = await up(file, "rk-stops.xlsx");
+  h = await hist();
+  const n = (await q("SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND match_key LIKE 'RKH%'", sun.id))[0].n;
+  ok("K-10: the same file loaded again in full refreshes the 500 already loaded, adds the other 200, and that upload is finished",
+    r2.inserted === 200 && r2.updated === 500 && n === 700 && h.length === 2 && h[1].unfinished === false && h[1].stopped === false && h[0].unfinished === true, { r2, n, h: h.map((b) => [b.unfinished, b.inserted, b.updated]) });
+  const one1 = await up(mkFile("RKS", 40, 7200000), "rk-small.xlsx");
+  const hs = (await L2("inventory.batches", { client_id: sun.id })).batches.find((b) => b.file_name === "rk-small.xlsx");
+  ok("K-10: an upload in one part is finished as soon as it loads", one1.inserted === 40 && hs && hs.unfinished === false && hs.finished === 1, { one1, hs: hs && [hs.unfinished, hs.finished] });
+  // an upload kept before this change has no mark of its own: it reads as finished
+  await sql("INSERT INTO batches (id, client_id, kind, file_name, uploaded_by, uploaded_at, rows_read, inserted) VALUES ('rk-old-batch', ?, 'fresh', 'rk-older.xlsx', ?, ?, 10, 10)", sun.id, U("Lead Rk Two"), Date.now() - 86400000);
+  const ho = (await L2("inventory.batches", { client_id: sun.id })).batches.find((b) => b.id === "rk-old-batch");
+  ok("K-10: an upload from before the change reads as finished", ho && ho.unfinished === false && ho.stopped === false, ho && [ho.unfinished, ho.stopped, ho.finished]);
+  // K-11: a part the server refuses half way: the page's loop stops with the server's message and how many claims loaded before it
+  let bid = null;
+  const r3 = await up(mkFile("RKF", 600, 7300000), "rk-refused.xlsx", () => { if (!bid) { bid = 1; return DB.prepare("DELETE FROM batches WHERE file_name = 'rk-refused.xlsx'").run(); } })
+    .then(() => ({ ok: true }), (e) => ({ ok: false, msg: e.message, loaded: e.loaded }));
+  ok("K-11: a part refused half way stops the upload with the server's message and the number of claims loaded before it (for the upload screen)",
+    !r3.ok && r3.msg === "Unknown batch." && r3.loaded === 250, r3);
 }
 
 const fails = results.filter((x) => !x.pass);

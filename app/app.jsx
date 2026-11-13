@@ -758,14 +758,17 @@ function maskPhi(doc) {
 }
 function signedOut() { setToken(null); try { localStorage.removeItem("drishti:token:v1"); } catch (e) {} try { window.dispatchEvent(new CustomEvent("brahmastra:signedout")); } catch (e) {} }
 
-/* Upload mapped claims in chunks; the first chunk opens the batch. */
+/* Upload mapped claims in chunks; the first chunk opens the batch. A part the server refuses (or a lost connection) stops the
+   upload: the error carries how many claims the parts before it loaded (they stay loaded). */
 async function uploadClaims({ client_id, location_id, kind, file_name, claims, summary, rows_read, source, web_url, onProgress }) {
   const totals = { inserted: 0, updated: 0, reopened: 0, closed: 0, excluded: 0, skipped: 0 };
   const parts = chunk(claims, 250);
   let batch_id = null;
   if (!parts.length) parts.push([]);
   for (let i = 0; i < parts.length; i++) {
-    const r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, source: source || "file", web_url: web_url || "", claims: parts[i], final: i === parts.length - 1, summary });
+    let r;
+    try { r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, source: source || "file", web_url: web_url || "", claims: parts[i], final: i === parts.length - 1, summary }); }
+    catch (e) { e.loaded = totals.inserted + totals.updated + totals.reopened + totals.closed + totals.excluded; throw e; }
     batch_id = r.batch_id;
     for (const k in totals) totals[k] += r[k] || 0;
     if (onProgress) onProgress((i + 1) / parts.length);
@@ -3673,6 +3676,11 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const [over, setOver] = useState(false);
   const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
+  const [stopped, setStopped] = useState(null);   // a load that stopped half way: the server's message and the claims loaded before it
+  // this person's uploads that did not finish (the page was closed, reloaded or cut off while it loaded) and were not loaded again since
+  const mineQ = useRpc("inventory.batches", {}, []);
+  const mineOpen = ((mineQ.data && mineQ.data.batches) || []).filter((b, _, all) => me && b.uploaded_by === me.id && b.unfinished && !b.undone_at
+    && !all.some((x) => x.client_id === b.client_id && x.file_name === b.file_name && x.uploaded_at > b.uploaded_at && !x.unfinished && !x.undone_at));
   const inputRef = useRef();
   const client = ctx.clients.find((c) => c.id === clientId);
   const today = todayISO();
@@ -3711,12 +3719,13 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const built = useMemo(() => (table ? buildClaims({ rows: table.rows, mapping, kind, today }) : null), [table, mapping, kind]);
   const [autoGo, setAutoGo] = useState(false);
   useEffect(() => { if (autoGo && built && file) { setAutoGo(false); load(); } }, [autoGo, built, file]);
-  const backToStart = () => { setStep(0); setFile(null); setTable(null); setMapping({}); };
+  const backToStart = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setStopped(null); };
   const mappingOk = !!(mapping.claim_no || (mapping.patient && mapping.dos));
   const samples = (h) => { if (!h || !table) return ""; const vals = []; for (const r of table.rows) { const v = r[h]; if (v !== "" && v != null) vals.push(String(v).slice(0, 28)); if (vals.length >= 3) break; } return vals.join(" · "); };
   const load = async () => {
     if (!built) return;
     setBusy(true); setStep(4); setProgress(0);
+    let loaded = 0;   // claims loaded by the groups already done (a file split across locations loads one group after another)
     try {
       const groups = [];
       // the client's locations as they are now (one may have been switched off since this page loaded)
@@ -3747,15 +3756,16 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           try { row.assigned = await autoAllocate({ ctx, client, loc: g.loc }); } catch (e) { row.assignError = e.message; }
         }
         results.push(row);
+        loaded += r.inserted + r.updated + r.reopened + r.closed + r.excluded;
         done++;
       }
       setResult(results); setProgress(1);
       toast("Inventory loaded.");
       reload();
-    } catch (e) { toast(e.message, "err"); setStep(3); }
+    } catch (e) { toast(e.message, "err"); setStopped({ msg: e.message, loaded: loaded + (e.loaded || 0) }); setProgress(null); if (loaded + (e.loaded || 0)) reload(); }
     setBusy(false);
   };
-  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setProgress(null); };
+  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setProgress(null); setStopped(null); mineQ.reload(); };
   const downloadSample = (k) => {
     const rows = makeSampleRows({ kind: k, seed: k === "worked" ? 5 : 3, count: 120, today });
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -3767,6 +3777,10 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       {step === 0 && refreshing && <Spinner label={"Fetching " + (refreshBatch.file_name || "the file") + " again from OneDrive…"} />}
       {step === 0 && !refreshing && (
         <div className="stack">
+          {mineOpen.map((b) => { const where = [b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name, b.location_name].filter(Boolean).join(" · "), n = b.inserted + b.updated + b.reopened + b.closed + b.excluded;
+            return <div key={b.id} className={"alert " + (b.stopped ? "err" : "info")}>{b.stopped
+              ? <><b>Your upload of {b.file_name} stopped part way</b> ({where}, {fmtWhen(b.uploaded_at)}): only {plural(n, "claim")} of it loaded, before the page was closed, reloaded or lost its connection. Upload the file again: claims already loaded are refreshed, not added twice.</>
+              : <><b>Your upload of {b.file_name} is still loading</b> ({where}, started {fmtWhen(b.uploaded_at)}): {plural(n, "claim")} so far. Upload history shows it when it is done.</>}</div>; })}
           <div className="card tight stack" style={{ borderColor: "var(--teal)", alignItems: "flex-start" }}>
             <div className="b">Open OneDrive</div>
             <div className="small muted">{msSupported() ? "Your OneDrive opens here. Click the inventory file and it is read on the spot." : `Microsoft sign in only works when the app is opened from ${MS_CFG.redirectUri}.`}</div>
@@ -3842,6 +3856,12 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       {step === 4 && (
         <div className="stack">
           {progress != null && progress < 1 && <div><div className="bar"><i style={{ width: Math.round(progress * 100) + "%" }} /></div><div className="small muted mt8"><span className="spin" /> Loading claims… {Math.round(progress * 100)}%</div></div>}
+          {stopped && (
+            <>
+              <div className="alert err"><b>The upload stopped: {stopped.msg}</b> {stopped.loaded ? `${plural(stopped.loaded, "claim")} of ${file ? file.name : "the file"} loaded before it stopped and stay loaded.` : `Nothing of ${file ? file.name : "the file"} was loaded.`} Load it again: claims already loaded are refreshed, not added twice.</div>
+              <div className="row"><button className="btn primary" disabled={busy || !built} onClick={() => { setStopped(null); load(); }}>Load the file again</button><button className="btn" disabled={busy} onClick={() => { setStopped(null); setStep(table ? 2 : 0); }}>Back</button><button className="btn" disabled={busy} onClick={resetAll}>Upload another file</button></div>
+            </>
+          )}
           {result && (
             <>
               <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>
@@ -3883,6 +3903,8 @@ function ReviewStep({ built, kind, onBack, onLoad, busy }) {
 function BatchesTable({ ctx, onRefresh }) {
   const [clientId, setClientId] = useState("");
   const q = useRpc("inventory.batches", { client_id: clientId || undefined }, [clientId]);
+  // an upload that stopped part way, then the same file of the same client loaded in full later
+  const loadedAgain = (b) => ((q.data && q.data.batches) || []).some((x) => x.client_id === b.client_id && x.file_name === b.file_name && x.uploaded_at > b.uploaded_at && !x.unfinished && !x.undone_at);
   const [undo, setUndo] = useState(null);
   const [busy, setBusy] = useState(false);
   const doUndo = async () => { setBusy(true); try { const r = await rpc("inventory.undoBatch", { batch_id: undo.id }); const cl = (n) => fmtInt(n) + (n === 1 ? " claim" : " claims");
@@ -3899,7 +3921,9 @@ function BatchesTable({ ctx, onRefresh }) {
       )}
       <ErrorBox error={q.error} />
       <div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Client · location</th><th>Kind</th><th>File</th><th>By</th><th className="r">Rows</th><th className="r">New</th><th className="r">Refreshed</th><th className="r">Reopened</th><th className="r">Closed</th><th className="r">Excluded</th><th></th></tr></thead>
-        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td style={{ whiteSpace: "nowrap" }}>{b.undone_at ? <span className="tiny muted">undone</span> : <>{b.source === "onedrive" && b.web_url && msSupported() && <button className="btn sm" title="Read the same OneDrive file again and refresh the claims from it" onClick={() => onRefresh(b)}>Refresh</button>} <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button></>}</td></tr>)}
+        <tbody>{(q.data ? q.data.batches : []).map((b) => <tr key={b.id} style={b.undone_at ? { opacity: .5 } : undefined}><td className="small">{fmtWhen(b.uploaded_at)}</td><td>{b.client_name || (ctx.clients.find((c) => c.id === b.client_id) || {}).name}{b.location_name ? <span className="muted"> · {b.location_name}</span> : ""}</td><td>{b.kind === "worked" ? <span className="badge purple">worked</span> : <span className="badge green">fresh</span>}</td><td className="small">{b.web_url ? <a href={b.web_url} target="_blank" rel="noopener" title="Open in OneDrive">{b.file_name}</a> : b.file_name}{b.source === "onedrive" && <span className="badge blue" style={{ marginLeft: 6 }}>OneDrive</span>}{b.unfinished && !b.undone_at && (b.stopped
+            ? <span className="badge red" style={{ marginLeft: 6 }} title="Only the claims counted here loaded: the page was closed, reloaded or lost its connection before the last part. Upload the file again: claims already loaded are refreshed, not added twice.">{loadedAgain(b) ? "stopped part way (loaded again later)" : "stopped part way: upload it again"}</span>
+            : <span className="badge blue" style={{ marginLeft: 6 }} title="Its parts are still coming in.">still loading</span>)}</td><td className="small">{b.uploaded_by_name}</td><td className="num">{fmtInt(b.rows_read)}</td><td className="num">{fmtInt(b.inserted)}</td><td className="num">{fmtInt(b.updated)}</td><td className="num">{fmtInt(b.reopened)}</td><td className="num">{fmtInt(b.closed)}</td><td className="num">{fmtInt(b.excluded)}</td><td style={{ whiteSpace: "nowrap" }}>{b.undone_at ? <span className="tiny muted">undone</span> : <>{b.source === "onedrive" && b.web_url && msSupported() && <button className="btn sm" title="Read the same OneDrive file again and refresh the claims from it" onClick={() => onRefresh(b)}>Refresh</button>} <button className="btn sm link" onClick={() => setUndo(b)}>Undo</button></>}</td></tr>)}
           {q.data && !q.data.batches.length && <tr><td colSpan={12} className="muted">No uploads yet.</td></tr>}</tbody></table></div>
       {undo && <Confirm title="Undo this upload?" text="Claims this upload added that nobody has opened or worked yet will be deleted, also from the lists of the billers they were handed to (they are told). Claims it refreshed keep their refreshed values." confirmLabel="Undo upload" danger onYes={doUndo} onNo={() => setUndo(null)} busy={busy} />}
     </div>
