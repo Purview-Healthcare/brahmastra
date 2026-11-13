@@ -4382,7 +4382,29 @@ const OPS = {
       (await all(env, `SELECT DISTINCT nt.user_id AS id FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.user_id IN (${qs}) AND nt.created_at > ?${cw}${lw}`, ...ids, since, ...ca, ...la)).forEach((x) => touched.add(x.id));
       people = people.filter((u) => touched.has(u.id) || f.teamIds.has(u.id));
     }
-    if (!people.length) return { rows: [], totals: { people: 0 }, leads: f.leads, can_pick_lead: f.canPickLead };
+    // The two lists under the floor, in this person's view (their clients; a client, location or team lead picked narrows them):
+    // the Escalation tracker's open escalations, red as the tracker shows them (open over 24 working hours with no reason given yet,
+    // or past the expected close date), and the claims billers flagged for the team lead still waiting for an answer (red past the
+    // 48 working hours of Needs attention, unless on hold).
+    const todayIst = istISO(now), ew = f.clientIds ? ` AND e.client_id IN (${f.clientIds.length ? f.clientIds.map(() => "?").join(",") : "NULL"})` : "";
+    const escalations = (await all(env, `SELECT e.id, e.client_id, e.sr, e.kind, e.dept, e.claim_no, e.created_at, e.created_by_name, e.delay_reason, e.expected_on, cl.name AS client_name
+        FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id WHERE e.status != 'resolved'${scopeSql(user, "e.client_id")}${ew}${f.locationId ? " AND (e.location_id = ? OR e.location_id IS NULL)" : ""}
+        ORDER BY e.created_at LIMIT 300`, ...scopeArgs(user), ...ca, ...la))
+      .map((e) => { const past = escPast(e.created_at, now), reason = past && !e.delay_reason, late = !!e.expected_on && e.expected_on < todayIst;
+        return { id: e.id, client_id: e.client_id, client_name: e.client_name || "", sr: e.sr, kind: escKind(e), dept: e.dept, claim_no: e.claim_no || "", by: e.created_by_name || "", at: e.created_at,
+          open_hours: Math.floor(workingHoursBetween(e.created_at, now)), past_24: past, needs_reason: reason, past_expected: late, red: reason || late }; })
+      .sort((a, b) => b.red - a.red || a.at - b.at);
+    const flagged = (await all(env, `SELECT c.id, c.client_id, c.claim_no, c.escalated_at, cl.name AS client_name, COALESCE(fb.name, u.name) AS by_name,
+        EXISTS (SELECT 1 FROM tat_holds t WHERE t.kind = 'flag' AND t.ref_id = c.id AND t.cleared_at IS NULL AND t.until >= ? AND (t.since IS NULL OR t.since = c.escalated_at)) AS held
+        FROM claims c LEFT JOIN users fb ON fb.id = c.escalated_by LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN clients cl ON cl.id = c.client_id
+        WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")}${cw}${lw} ORDER BY c.escalated_at LIMIT 300`,
+      todayIst, ...scopeArgs(user), ...ca, ...la))
+      .map((r) => { const late = !!r.escalated_at && addWorkingHours(r.escalated_at, ATTN_TAT_HOURS) < now && !r.held;
+        return { id: r.id, client_id: r.client_id, client_name: r.client_name || "", claim_no: r.claim_no || "", by: r.by_name || "", at: r.escalated_at,
+          waiting_ms: r.escalated_at ? workingHoursBetween(r.escalated_at, now) * 3600000 : 0, held: !!r.held, red: late }; })
+      .sort((a, b) => b.red - a.red || (a.at || 0) - (b.at || 0));
+    const lists = { escalations, flagged, attn_tat_hours: ATTN_TAT_HOURS };
+    if (!people.length) return { rows: [], totals: { people: 0 }, leads: f.leads, can_pick_lead: f.canPickLead, ...lists };
     const ids = people.map((u) => u.id), qs = ids.map(() => "?").join(",");
     const desk = await all(env, `SELECT c.id, c.assigned_to, c.assigned_at, c.state, c.started_at, c.claim_no, c.payer, c.client_id, c.tier, c.balance, c.follow_up_on, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
       WHERE c.state IN ('assigned','in_progress') AND c.assigned_to IN (${qs})${cw}${lw}`, ...ids, ...ca, ...la);
@@ -4390,6 +4412,9 @@ const OPS = {
     const notes = await all(env, `SELECT nt.user_id, nt.kind, nt.created_at, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here FROM notes nt JOIN claims c ON c.id = nt.claim_id
       WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN (${qs})`, ...ca, ...la, since, ...ids);
     const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN (${qs})${cw}${lw}`, since, ...ids, ...ca, ...la);
+    // the claim each person last worked (their latest entry in the last 7 days, on any client) and when: shown when no claim is open
+    const lastWork = new Map((await all(env, `SELECT n.user_id, n.claim_id, MAX(n.created_at) AS at, c.claim_no, c.client_id, cl.name AS client_name FROM notes n JOIN claims c ON c.id = n.claim_id
+      LEFT JOIN clients cl ON cl.id = c.client_id WHERE n.kind = 'work' AND n.user_id IN (${qs}) AND n.created_at > ? GROUP BY n.user_id`, ...ids, now - 7 * 86400000)).map((r) => [r.user_id, r]));
     const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN (${qs})`, today, ...ids)).map((r) => [r.user_id, r]));
     const live = await shastraLive(env);
     const weekdayToday = isWorkDay(today);   // Monday to Friday, not a Shastra holiday
@@ -4437,6 +4462,8 @@ const OPS = {
         // client's claim, and then nothing of it is shown (claim number, client, payer, balance), only that it is elsewhere
         current: cur ? { ...(inScope(user, cur.client_id) ? { id: cur.id, claim_no: cur.claim_no, client: cur.client_name, payer: cur.payer, balance: cur.balance } : { id: null, claim_no: "", client: "", payer: "", balance: null, elsewhere: true }),
           minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
+        // the same rule for the claim last worked: its number and client only when the client is one of the viewer's
+        last_claim: lastWork.has(u.id) ? (({ claim_id, claim_no, client_id, client_name, at }) => ({ at, ...(inScope(user, client_id) ? { id: claim_id, claim_no: claim_no || "", client: client_name || "" } : { id: null, claim_no: "", client: "", elsewhere: true }) }))(lastWork.get(u.id)) : null,
         status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, off_day: offDay, in_shift: inShift,
         untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null };
     });
@@ -4444,7 +4471,7 @@ const OPS = {
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
     const present = rows.filter((r) => r.status !== "out");
     const add = (k) => rows.reduce((t, r) => t + r[k], 0);
-    return { rows, weekend: !weekdayToday, holiday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
+    return { rows, ...lists, weekend: !weekdayToday, holiday, leads: f.leads, can_pick_lead: f.canPickLead, shastra_state: live.state, shastra_error: live.error || "", shastra_at: live.at, totals: { people: rows.length, out: rows.length - present.length, on_desk: add("on_desk"), worked: add("worked"), closed: add("closed"),
       capacity: weekdayToday ? present.reduce((t, r) => t + r.capacity, 0) : 0, in_weekend: weekdayToday ? null : present.filter((r) => !r.off_day).length, carried: add("carried"), left_high: add("left_high"), idle: rows.filter((r) => r.status === "idle").length,
       behind: rows.filter((r) => r.behind).length, working: rows.filter((r) => r.status === "working").length, out_on_desk: rows.filter((r) => r.status === "out").reduce((t, r) => t + r.on_desk, 0) } };
   },
@@ -8224,8 +8251,12 @@ const OPS = {
       const helpIds = new Set(); for (const part of chunks(lt.map((t) => t.id), 80)) for (const h of await all(env, `SELECT DISTINCT task_id FROM team_task_people WHERE status = 'help' AND task_id IN (${part.map(() => "?").join(",")})`, ...part)) helpIds.add(h.task_id);
       tk = { open: lt.length, late: lt.filter((t) => !(t.hold_until && t.hold_until >= today) && now > t.due_at).length, help: helpIds.size };
     }
+    // For the Live status tab (not part of n): the Escalation tracker's open escalations in this person's view, and how many are red
+    // as the tracker shows them (open over 24 working hours with no reason given yet, or past the expected close date)
+    const eo = await all(env, `SELECT created_at, delay_reason, expected_on FROM escalations WHERE status != 'resolved'${one1("client_id")}${scopeSql(user, "client_id")}`, ...cargs, ...scopeArgs(user));
+    const istToday = istISO(now), escRed = eo.filter((e) => (escPast(e.created_at, now) && !e.delay_reason) || (!!e.expected_on && e.expected_on < istToday)).length;
     return { n: ((r && r.n) || 0) + ((cr && cr.n) || 0) + ((fd && fd.n) || 0) + tk.late + tk.help, escalations: (r && r.n) || 0, client_to_send: (cr && cr.n) || 0, from_desks: (fd && fd.n) || 0, overdue: (r && r.overdue) || 0, my_desk: (mine && mine.n) || 0,
-      tasks: tk.open, tasks_late: tk.late, tasks_help: tk.help };
+      tasks: tk.open, tasks_late: tk.late, tasks_help: tk.help, esc_open: eo.length, esc_late: escRed };
   },
   /* Supervisor review of anything in Needs attention (a biller's escalation, or a claim a department sent back): four notes
      (why it came, what was reviewed, the findings, the next action) go into the claim history, then it goes to the biller who

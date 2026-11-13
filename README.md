@@ -144,9 +144,9 @@ result (and, the first time, the audit trail) names them.
   in front, the rest is grouped under **Work** (Needs attention, Posting & submission,
   Inventory & allocation, Escalation tracker) and **Manage** (Team, Note templates, Clients &
   locations, SAAG reference, TFL / AFL, Roster for admins, Audit trail for admins and the VP). Client 360 is not on
-  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The escalation count (claims flagged
-  by billers waiting for an answer, the first line of its **Needs you**) shows on the Live status tab, and the attention
-  and hand-off counts on the group button while it is closed.
+  the menu: it opens from **Dashboard › Client 360 report › Open Client 360**, a client's name or link, or Ctrl+K. The Live
+  status tab counts its two lists, the open escalations (Escalation tracker) plus the claims flagged by billers waiting for
+  an answer, red once one of them is past its time; the attention and hand-off counts show on the group button while it is closed.
 - The view follows the Shastra department and "also in" departments: anyone on AR
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
@@ -266,12 +266,20 @@ worked today against the target, closed today and **left over** (allocated befor
 into **high priority** (the High tier) and other. Worked and closed today count the whole day from midnight IST,
 entries before the shift time too, as Team status and My day do (a night shift's count to the day it began).
 
-- **On the floor now**: each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
+- **Working now** (on the floor now): each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
   after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
-  been on it (the claim number opens the claim), pace today against their target, on desk, closed today and left
+  been on it, or, with no claim open, the claim they last worked (in the last 7 days) with its client and how long ago (the claim
+  number opens the claim; a claim of a client that is not yours shows only as another client's claim), pace today against their target, on desk, closed today and left
   over. Managers and above see the billers grouped by team lead: each group opens and closes (a closed group shows
   working, idle and on desks), **Expand all** / **Collapse all**, or **One list**. Click a biller's name to open
   **their claims**.
+- **Open escalations**: the Escalation tracker's open escalations on your clients (and the client, location or team lead
+  picked), oldest first: the client, the SR number (and the claim number when it has one), who logged it and how long ago, and
+  the working hours it has been open. Red as in the tracker: open over 24 working hours with no reason given yet, or past
+  the expected close date.
+- **Flagged by billers**: the claims billers flagged for the team lead that still wait for an answer, as in Needs attention:
+  the claim number (it opens the claim), client, who flagged it and how long ago, and the working hours waiting; red past
+  the 48 working hours, not while it is on hold. The **Live status** tab counts these two lists, red when one of them is red.
 - Below the floor: unassigned claims, claims with Posting / Submission and follow-ups due today.
 - Posting and Submission people are not on the floor: they have their own desks.
 - **Shastra**: each person's attendance in Purview Shastra now, read every 2 minutes with Shastra's own rules
