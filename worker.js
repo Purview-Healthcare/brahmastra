@@ -6439,7 +6439,7 @@ const OPS = {
     for (const chunk of chunks(rows.map((c) => str(c.match_key, 300)), 80)) (await all(env, SEL + `match_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => byMatch.set(r.match_key, r));
     for (const chunk of chunks([...new Set(rows.map((c) => c._num).filter(Boolean))], 80)) (await all(env, SEL + `alt_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!isGeneratedNo(r) && !byAlt.has(r.alt_key)) byAlt.set(r.alt_key, r); });
     for (const chunk of chunks([...new Set(rows.map((c) => c._fp).filter(Boolean))], 80)) (await all(env, SEL + `fp_key IN (${chunk.map(() => "?").join(",")}) ORDER BY created_at`, client.id, ...chunk)).forEach((r) => { if (!byFp.has(r.fp_key)) byFp.set(r.fp_key, []); byFp.get(r.fp_key).push(r); });
-    const stmts = [];
+    const stmts = [], added = [];   // added: the new claims' INSERTs (their place in stmts), to find any another load added first
     const taken = new Set(), altSeen = new Set();
     // A previously worked claim whose follow-up date is still to come is worked and waiting, like a claim worked in Brahmastra:
     // it is not in the pool, and comes back into it on that date.
@@ -6478,13 +6478,15 @@ const OPS = {
         const waits = !exclude && !!followUp && followUp > today;
         const state = waits ? "completed" : !exclude ? "open" : closedInFile ? "closed" : "excluded";
         const reason = waits ? WAITS : !exclude ? "" : closedInFile ? "Closed in " + kind + " file" + (vals.file_status ? ": " + vals.file_status : "") : exclude;
-        if (state === "open" || state === "completed") counts.inserted++; else if (state === "closed") counts.closed++; else counts.excluded++;
+        const counted = state === "open" || state === "completed" ? "inserted" : state === "closed" ? "closed" : "excluded";
+        counts[counted]++;
         const nid = uuid();
         const fw = fileWork(nid); if (fw) stmts.push(fw);
+        added.push({ at: stmts.length, id: nid, c, counted });
         stmts.push(env.DB.prepare(`INSERT INTO claims (id, client_id, location_id, batch_id, first_batch_id, match_key, claim_no, account_no, patient, payer, dos, cpt, provider,
             billed, balance, lines, lines_json, age_days, bucket, tier, status_class, file_status, file_sub_status, file_action, file_comments, file_bucket,
             inventory_kind, worked_before, last_worked_on, follow_up_on, priority, priority_reason, state, state_reason, raw_json, created_at, updated_at, alt_key, fp_key)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (client_id, match_key) DO NOTHING RETURNING id`).bind(
           nid, client.id, location_id || null, bid, bid, key, vals.claim_no, vals.account_no, vals.patient, vals.payer, vals.dos, vals.cpt, vals.provider,
           vals.billed, vals.balance, vals.lines, vals.lines_json, vals.age_days, vals.bucket, vals.tier, vals.status_class, vals.file_status, vals.file_sub_status,
           vals.file_action, vals.file_comments, vals.file_bucket, kind, kind === "worked" ? 1 : 0, lastWorked, followUp, vals.priority, vals.priority_reason,
@@ -6532,7 +6534,19 @@ const OPS = {
           kind, kind, lastWorked, lastWorked, lastWorked, followUp, lastWorked, lastWorked, followUp, ...prioArgs(vals.priority), vals.priority, vals.priority_reason, vals.priority_reason, ex.state, newState, ex.state, reason,
           clearAssign, ex.state, clearAssign, ex.state, clearAssign, ex.state, vals.raw_json, now, gotNo, keepNo ? "" : c._alt, c._fp, ex.id));
     }
-    if (stmts.length) await batchAll(env, stmts, 40);
+    // Two loads of the same new claims at the same moment (two team leads, or the same file picked again while it still loads): a
+    // claim the other load added after this part read the claims is not added twice; this part refreshes it from its own file.
+    let again = null;
+    if (stmts.length) {
+      const res = await batchAll(env, stmts, 40);
+      const lost = added.filter((x) => !((res[x.at] && res[x.at].results) || []).length);
+      if (lost.length) {
+        await run(env, `DELETE FROM claim_events WHERE claim_id IN ${IN_LIST}`, listArg(lost.map((x) => x.id)));
+        lost.forEach((x) => counts[x.counted]--);
+        if (payload.again) counts.skipped += lost.length;
+        else again = await OPS["inventory.upload"]({ env, user, payload: { ...payload, batch_id: bid, final: false, again: true, claims: lost.map((x) => ({ ...x.c, claim_no: x.c._gen ? "" : x.c.claim_no })) } });
+      }
+    }
     // the last part marks the upload finished: one stopped half way (the page closed, reloaded or cut off) says so in Upload history
     await run(env, `UPDATE batches SET inserted = inserted + ?, updated = updated + ?, reopened = reopened + ?, closed = closed + ?, excluded = excluded + ?, skipped = skipped + ?,
         rows_read = CASE WHEN ? > 0 THEN ? ELSE rows_read END, summary_json = CASE WHEN ? = 1 THEN ? ELSE summary_json END, finished = CASE WHEN ? = 1 THEN 1 ELSE finished END, part_at = ? WHERE id = ?`,
@@ -6541,6 +6555,7 @@ const OPS = {
     // An empty file (headers only, or every row skipped) does not count as the month's inventory.
     const loaded = final ? await one(env, "SELECT inserted + updated + reopened + closed + excluded AS n FROM batches WHERE id = ?", bid) : null;
     if (final && loaded && loaded.n > 0) { try { await monthendAuto(env, client.id, istISO(Date.now()).slice(0, 7), "inventory", user.name); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) {} }
+    if (again) for (const k in counts) counts[k] += again[k] || 0;
     return { batch_id: bid, ...counts };
   },
   "inventory.batches": async ({ env, user, payload }) => {

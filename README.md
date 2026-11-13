@@ -1164,7 +1164,9 @@ A big file loads in parts of 250 claims. An upload that stops part way (the page
 connection dropped, before its last part) keeps the claims that arrived and says so: Upload history marks it
 "stopped part way: upload it again", and the upload screen tells the person who uploaded it. An error half way
 shows on the upload screen with how many claims loaded before it stopped, and **Load the file again**. Loading the
-file again refreshes the claims already loaded (none is added twice) and adds the rest.
+file again refreshes the claims already loaded (none is added twice) and adds the rest. Two loads of the same file at
+the same moment (two team leads, or the same file picked again while it still loads) also add each claim once: the
+second refreshes what the first added.
 
 ### Prioritisation (the Revenue Doctor's rules)
 

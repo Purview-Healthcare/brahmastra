@@ -136,6 +136,41 @@ S("K-10, K-11: an upload stopped half way says so");
     !r3.ok && r3.msg === "Unknown batch." && r3.loaded === 250, r3);
 }
 
+S("K-14: two loads of the same new claims at the same moment");
+{
+  const mk = (pre, n, base, extra = {}) => { const out = []; for (let i = 1; i <= n; i++) out.push({ match_key: pre + i, claim_no: pre + (base + i), patient: "Test Patient " + pre + i, payer: "Test Payer " + (i % 5),
+    dos: "2026-10-" + String(1 + (i % 28)).padStart(2, "0"), balance: 100 + (i % 50), status_class: "awaiting", tier: "Medium", priority: 30, ...extra }); return out; };
+  const loc = sun.locations[0].id;
+  const load = (L, claims, name, kind = "fresh") => L("inventory.upload", { client_id: sun.id, location_id: loc, kind, file_name: name, rows_read: claims.length, claims, final: true, summary: {} });
+  const orphans = async () => (await q("SELECT COUNT(*) AS n FROM claim_events e WHERE NOT EXISTS (SELECT 1 FROM claims c WHERE c.id = e.claim_id)"))[0].n;
+  const orphan0 = await orphans();
+  // lead 2's part reads the claims (none yet), then lead 1's load of the same file lands before lead 2's part writes
+  const file = mk("RKD", 120, 7400000);
+  let release = holdNext(/INSERT INTO claims \(id, client_id/);
+  const p2 = T(() => load(L2, file, "rk-same.xlsx"));
+  await tick();
+  const r1 = await T(() => load(L1, file, "rk-same.xlsx"));
+  release(); const r2 = await p2; unhold();
+  const n = (await q("SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND match_key LIKE 'RKD%'", sun.id))[0].n;
+  const hist = (await L2("inventory.batches", { client_id: sun.id })).batches.filter((b) => b.file_name === "rk-same.xlsx");
+  ok("K-14: the second load of the same new file at the same moment finishes (no 'Server error.'): it refreshes the claims the first one added",
+    r1.ok && r2.ok && r1.r.inserted === 120 && r2.r.inserted === 0 && r2.r.updated === 120 && n === 120, { r1: r1.ok ? r1.r : r1.e, r2: r2.ok ? r2.r : r2.e, n });
+  ok("K-14: Upload history shows two real uploads (new 120 and refreshed 120), both finished", hist.length === 2 && hist.some((b) => b.inserted === 120 && b.updated === 0) && hist.some((b) => b.inserted === 0 && b.updated === 120) && hist.every((b) => !b.unfinished),
+    hist.map((b) => [b.inserted, b.updated, b.unfinished]));
+  ok("K-14: no history line is left behind for a claim that was not added", (await orphans()) === orphan0, (await orphans()) - orphan0);
+  // a worked file whose part meets claims another load added: half of it new, half added by the other load a moment before
+  const wf = mk("RKW", 60, 7500000, { last_worked_on: "2026-11-02", file_comments: "Called the payer, claim in process" });
+  release = holdNext(/INSERT INTO claims \(id, client_id/);
+  const p3 = T(() => load(L2, wf, "rk-worked-same.xlsx", "worked"));
+  await tick();
+  await load(L1, wf.slice(0, 30), "rk-worked-half.xlsx", "worked");
+  release(); const r3 = await p3; unhold();
+  const nw = (await q("SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND match_key LIKE 'RKW%'", sun.id))[0].n;
+  const fw = (await q("SELECT COUNT(*) AS n FROM claim_events e JOIN claims c ON c.id = e.claim_id WHERE c.match_key LIKE 'RKW%' AND e.kind = 'file_work' AND e.text = 'rk-worked-same.xlsx'"))[0].n;
+  ok("K-14: a worked file meeting claims another load added: 30 new, 30 refreshed, each claim once with this file's entry in its history",
+    r3.ok && r3.r.inserted === 30 && r3.r.updated === 30 && nw === 60 && fw === 60 && (await orphans()) === orphan0, { r3: r3.ok ? r3.r : r3.e, nw, fw, orphans: (await orphans()) - orphan0 });
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
