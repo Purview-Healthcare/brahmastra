@@ -173,11 +173,11 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("Live status shows the floor", (await p.locator(".dash-team").count()) === 1 && /On the floor now/i.test(await p.locator(".dash-team").innerText()));
     ok("no error on Live status", !(await p.locator(".alert.err").count()));
     ok("a team lead has no team lead filter", !/team lead/i.test(await p.locator(".dash-filters").innerText()));
-    // Dashboard: Team status, Inventory status, Client 360 report
+    // Dashboard: Team status, Inventory status, Client 360 report, Stack report
     await open("#/dashboard"); await t(2500);
     ok("Dashboard opens on Team status", /Team status by team lead/i.test(await p.innerText(".main")));
     ok("Team status has the suggestions", /Suggestions/i.test(await p.innerText(".main")) && /Do today/i.test(await p.innerText(".main")));
-    ok("the Dashboard has three tabs: Team status, Inventory status, Client 360 report", (await p.locator(".dash-subtabs button").allInnerTexts()).map((x) => x.trim()).join("|") === "Team status|Inventory status|Client 360 report", await p.locator(".dash-subtabs button").allInnerTexts());
+    ok("the Dashboard has four tabs: Team status, Inventory status, Client 360 report, Stack report", (await p.locator(".dash-subtabs button").allInnerTexts()).map((x) => x.trim()).join("|") === "Team status|Inventory status|Client 360 report|Stack report", await p.locator(".dash-subtabs button").allInnerTexts());
     await p.locator('.dash-subtabs button:has-text("Inventory status")').click(); await t(3500);
     { const tx = await p.innerText(".main");
       ok("Inventory status: where the inventory stands, age, pace, SLA checks, do these first, by client, claims in detail", /Where the inventory stands/i.test(tx) && /Age of the workable AR/i.test(tx) && /Pace to clear/i.test(tx) && /SLA checks/i.test(tx) && /do these first/i.test(tx) && /Claims in detail/i.test(tx)
@@ -497,6 +497,130 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const ra = ((await rpc("team.status", { from: todayIst, to: todayIst, today: todayIst })).rows || []).find((x) => x.name === "Arun Agent");
     ok("Team status has a Tasks column and Arun's 3 task items count with his claims", /\btasks\b/i.test(head) && /\b3\s*items/.test(arun) && ra && ra.task_items_today === 3 && ra.count_today === ra.worked_today + 3,
       [head, arun.replace(/\s+/g, " ").slice(0, 300), ra && { items: ra.task_items_today, count: ra.count_today, claims: ra.worked_today }]);
+  });
+
+
+  S("Stack report: the month worked out, a typed PKT, the ticks, the lock, My stack, the Excel, the unlock");
+  await step("stack-report", async () => {
+    const XLSX = require("xlsx");
+    // the month before this one in India, and Purview Shastra's days for it: Arun in every working day, 8 h 05 on the floor;
+    // Cara on approved leave the first working day, late the second, a 75-minute break the third, 7 h 40 a day
+    const ist = new Date(Date.now() + 330 * 60000), m0 = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() - 1, 1));
+    const M = m0.toISOString().slice(0, 7), label = m0.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }), mon = label.split(" ")[0];
+    const days = []; for (let d = m0; d.getUTCMonth() === m0.getUTCMonth(); d = new Date(d.getTime() + 86400000)) days.push(d.toISOString().slice(0, 10));
+    const work = days.filter((d) => { const w = new Date(d + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6; });
+    const F = (emp, date, status, tof, brk = 45) => ({ emp_id: emp, email: "", date, status, open: false, tof_min: tof, logged_min: tof + brk, break_min: brk, guard: false, idle_min: 0, locked_min: 0 });
+    const FLOOR = [...work.map((d) => F("A1", d, "present", 485)), ...work.map((d, i) => (i === 0 ? F("A3", d, "approved_leave", 0, 0) : F("A3", d, i === 1 ? "late" : "present", 460, i === 2 ? 75 : 45)))];
+    await p.route(/brahmastra_floor/, (r) => { let b = {}; try { b = JSON.parse(r.request().postData() || "{}"); } catch (e) { /* none */ }
+      r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, rows: FLOOR.filter((x) => x.date >= b.p_from && x.date <= b.p_to) }) }); });
+    // the month's work, as Team status counts it: Arun 112% of 30 a day, Cara 97% of hers (her day of leave has no target)
+    const nA = Math.round(work.length * 30 * 1.12), nC = Math.round((work.length - 1) * 30 * 0.97);
+    await p.evaluate(async ([day, ids, nA, nC]) => {
+      await window.__sql("DELETE FROM settings WHERE key = 'floor_sync'");
+      const at = Date.parse(day + "T00:00:00Z") - 330 * 60000 + 11 * 3600000;
+      const c = (await (await getLocalBackend()).env.DB.prepare("SELECT id FROM claims ORDER BY id LIMIT 1").all()).results[0].id;
+      for (const [uid, n] of [[ids.arunId, nA], [ids.caraId, nC]]) {
+        await window.__sql(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO notes (id, claim_id, user_id, user_name, kind, created_at)
+          SELECT 'wf-stk-' || ? || '-' || i, ?, ?, 'x', 'work', ? + i * 1000 FROM n`, n, uid, c, uid, at);
+        await window.__sql("UPDATE users SET capacity = 30 WHERE id = ?", uid);
+      }
+      await window.__flush();
+    }, [work[0], { arunId: tok.arunId, caraId: tok.caraId }, nA, nC]);
+    const row = (n) => p.locator(`.main table.stk-t tr:has-text("${n}")`).first();
+    const openStack = async () => { await open("#/dashboard"); await p.locator('.dash-subtabs button:has-text("Stack report")').click(); await t(4000); };
+    // the team lead: her own team, the month before, a draft
+    await as("tina"); await openStack();
+    let tx = await p.innerText(".main");
+    ok("a team lead opens the Stack report on the month before: her team, grouped under her, a draft", new RegExp(label).test(await p.locator(".stk-bar").innerText()) && /Tina Lead's team/.test(tx) && /Arun Agent/.test(tx) && /Cara Agent/.test(tx) && /Draft/.test(await p.locator(".stk-state").innerText()), tx.slice(0, 300));
+    ok("the KPI row: people listed, floor average, a tile for each Stack 5 to 0, to enter", (await p.locator(".stk-kpis .kpi").count()) === 9 && /PEOPLE LISTED\s*2/i.test(await p.locator(".stk-kpis").innerText()), await p.locator(".stk-kpis").innerText());
+    ok("a team lead has no team lead stack while the month is a draft, and cannot lock", !(await p.locator('.main .seg2 button:has-text("Team lead stack")').count()) && !(await p.locator(`.main button:has-text("Lock ${mon}")`).count()));
+    ok("Arun: his month's work against his target, as Team status counts it (Productivity 10); PKT and quality still to type", new RegExp(nA + " / " + work.length * 30).test(await row("Arun Agent").innerText()) && (await row("Arun Agent").locator("td:nth-child(4)").innerText()).trim() === "10" && (await row("Arun Agent").locator("button.typed.need").count()) === 2, await row("Arun Agent").innerText());
+    // a typed PKT: the yellow cell opens, takes the percentage and shows who typed it
+    await row("Arun Agent").locator("td:nth-child(14) button.typed").click(); await t(800);
+    ok("the PKT cell opens a small form for Arun's PKT score", /PKT score · Arun Agent/.test(await p.locator(".overlay .modal").first().innerText()));
+    await p.locator(".overlay .modal input").first().fill("100"); await p.locator('.overlay button.primary:has-text("Save")').click(); await t(2500);
+    await row("Arun Agent").locator("td:nth-child(5) button.typed").click(); await t(800);
+    await p.locator(".overlay .modal input").first().fill("99.2"); await p.locator('.overlay button.primary:has-text("Save")').click(); await t(2500);
+    tx = (await row("Arun Agent").innerText()).replace(/\s+/g, " ");
+    ok("Arun's PKT (100%: 2) and quality (99.2%: 10) are typed: 40 of 40, 100%, Stack 5", /100%/.test(tx) && /99\.2%/.test(tx) && /\b40 100% 5$/.test(tx), tx);
+    ok("the typed cell says who typed it", /Typed by Tina Lead/.test(await row("Arun Agent").locator("td:nth-child(14) button.typed").getAttribute("title")));
+    const cell = async (n, i) => (await row(n).locator(`td:nth-child(${i})`).innerText()).trim();
+    ok("Cara: a day of approved leave (AL 1), late once (0.5), one break over the hour (0.5)", (await cell("Cara Agent", 7)).replace(/\s+/g, " ") === "1 · 0" && await cell("Cara Agent", 9) === "1" && await cell("Cara Agent", 10) === "0.5"
+      && await cell("Cara Agent", 11) === "1" && await cell("Cara Agent", 12) === "0.5", (await row("Cara Agent").innerText()).replace(/\s+/g, " "));
+    await row("Arun Agent").locator("td:nth-child(2)").click(); await t(1000);
+    tx = await p.locator(".overlay .modal").first().innerText();
+    ok("a click on a person shows how it was worked out: what Brahmastra found, the band, the score and where it came from", /What Brahmastra found/i.test(tx) && /110\.51% and above → 10/.test(tx) && /Brahmastra/.test(tx) && /Shastra/.test(tx) && /Typed · Tina Lead/.test(tx), tx.slice(0, 400));
+    await p.keyboard.press("Escape"); await t(500);
+    await p.locator('.main button:has-text("How it is worked out")').click(); await t(800);
+    ok("How it is worked out lists the bands in plain words (read-only)", /99\.51% to 110\.5% → 8/.test(await p.locator(".overlay .modal").first().innerText()) && !(await p.locator(".overlay .modal input").count()));
+    await p.keyboard.press("Escape"); await t(500);
+    // phone width: the page does not scroll sideways, the table does inside its card
+    await p.setViewportSize({ width: 390, height: 860 }); await t(1000);
+    const w = await p.evaluate(() => ({ page: document.documentElement.scrollWidth, wrap: document.querySelector(".stk-card .table-wrap").scrollWidth, box: document.querySelector(".stk-card .table-wrap").clientWidth }));
+    ok("at phone width only the table scrolls sideways, inside its card", w.page <= 392 && w.wrap > w.box, w);
+    await p.setViewportSize({ width: 1440, height: 950 }); await t(800);
+    // a month with nobody in it yet (before everyone joined)
+    await open("#/dashboard?tab=stack&month=2026-02"); await t(3000);
+    ok("an empty month says so", /Nothing for this month yet/.test(await p.innerText(".main")), (await p.innerText(".main")).slice(0, 200));
+    // the manager: both stacks, the ticks, the download, the lock
+    await as("joseph"); await openStack();
+    await p.locator('.main .seg2 button:has-text("Team lead stack")').click(); await t(1200);
+    ok("the manager sees the team lead stack: Tina's row from her whole team", /Tina Lead/.test(await p.locator(".main table.stk-t").innerText()));
+    await row("Tina Lead").locator("button.ticks").first().click(); await t(800);
+    const tm = p.locator(".overlay .modal").first();
+    for (const k of ["4 Quality sessions", "One on One", "Daily Huddle", "Training", "Issue Resolution"]) await tm.locator(`.stk-tickrow:has-text("${k}") button:text-is("Yes")`).click();
+    await tm.locator('button.primary:has-text("Save")').click(); await t(2500);
+    ok("the manager ticks Tina's five Team handling ticks: 5 of 5", (await row("Tina Lead").locator(".tick.y").count()) === 5 && /\b5\b/.test(await row("Tina Lead").locator("td:nth-child(15)").innerText()), await row("Tina Lead").innerText());
+    await p.locator('.main .seg2 button:has-text("Associate stack")').click(); await t(800);
+    // the Excel download in her layout; a name starting with = stays text
+    await p.evaluate(async (id) => { await window.__sql("UPDATE users SET name = '=SUM(1,1) Cara' WHERE id = ?", id); await window.__flush(); }, tok.caraId);
+    await open("#/dashboard?tab=stack&month=" + M); await t(500); await p.reload(); await t(4500);
+    const f = await dl(() => p.locator('.main button:has-text("Download Excel")').click());
+    const wb = XLSX.readFile(f, { cellNF: true, cellFormula: true }), sh = wb.Sheets["Stack Sheet"], cellAt = (a) => sh[a] || {};
+    const rowOf = (r) => { const out = []; for (let c = 0; c < 40; c++) { const x = sh[XLSX.utils.encode_cell({ r, c })]; out.push(x ? x.v : ""); } return out; };
+    const head = rowOf(1).slice(0, 36).join(",");
+    ok("Download Excel: Stack Sheet, Associate Stack and TL Stack", wb.SheetNames.join("|") === "Stack Sheet|Associate Stack|TL Stack", wb.SheetNames);
+    ok("the Team Member Stack under her group headers, in her column order", ["A1", "F1", "L1", "O1", "V1", "AF1", "AH1", "AK1"].map((a) => cellAt(a).v).join("|") === "Month|Productivity 10|Quality 10|Attendance 10|Others 5|TOS 5|Total Score 40|Attriation"
+      && head === "Month,ECN,Name,DOJ,Title,Achieved,Expected,Percentage,AVR Production,Avr Target,Score,Achieved,Expected,Score,AL,LWP,Total,Total Working Day,Total Present Day,Shrinkage,Score,Login/Logout Adherence,Score,Break adherence,Score,Total Adherence,Team Player,Score,PKT Scores,Score,Total Score out of 5,Average TOS,Score,Total Score,Percentage,Stack", head);
+    const all = Object.keys(sh).filter((k) => k[0] !== "!").map((k) => [k, sh[k]]);
+    const ar = all.find(([, x]) => x.v === "Arun Agent"), cara = all.find(([, x]) => String(x.v).includes("SUM(1,1)"));
+    const ra = ar && XLSX.utils.decode_cell(ar[0]).r, val = (c) => sh[XLSX.utils.encode_cell({ r: ra, c })] || {};
+    ok("values, not formulas: dates are dates, percentages percentages, numbers numbers", ar && val(0).t === "n" && /m/.test(val(0).z || "") && val(3).t === "n" && /yy/.test(val(3).z || "") && val(7).t === "n" && /%/.test(val(7).z || "") && val(35).v === 5 && val(33).v === 40 && !all.some(([, x]) => x.f),
+      ar && [0, 3, 7, 33, 35].map((c) => [val(c).t, val(c).v, val(c).z]));
+    ok("a name starting with = stays text in the file, never a formula", cara && cara[1].t === "s" && cara[1].v === "=SUM(1,1) Cara" && !cara[1].f, cara);
+    ok("the TL STACK table is under it with Tina's row", all.some(([, x]) => x.v === "TL STACK") && all.some(([, x]) => x.v === "Tina Lead") && all.some(([, x]) => x.v === "Addition Point"));
+    await p.evaluate(async (id) => { await window.__sql("UPDATE users SET name = 'Cara Agent' WHERE id = ?", id); await window.__flush(); }, tok.caraId);
+    await p.reload(); await t(4500);
+    // the lock: what is still empty first, then the snapshot
+    await p.locator(`.main button:has-text("Lock ${mon}")`).click(); await t(900);
+    tx = await p.locator(".overlay .modal").first().innerText();
+    ok("Lock lists what is still empty and asks first: Cara's PKT and quality, Tina's Client forefront ticks", /Still empty/.test(tx) && /PKT scores/.test(tx) && /Cara Agent/.test(tx) && /Ticks not ticked yet/.test(tx), tx.slice(0, 400));
+    await p.locator(`.overlay .modal button.primary:has-text("Lock ${mon}")`).click(); await t(4000);
+    ok("the month is locked by the manager, and stays on screen", new RegExp("Locked by Joseph Manager").test(await p.locator(".stk-state").innerText()) && new RegExp(label).test(await p.locator(".stk-bar").innerText()), await p.locator(".stk-bar").innerText());
+    const audits = await p.evaluate(async () => (await (await getLocalBackend()).env.DB.prepare("SELECT action, detail FROM audit_log WHERE action LIKE 'stack.%'").all()).results);
+    ok("the lock is in the audit trail", audits.some((x) => x.action === "stack.lock" && x.detail.includes(label + " locked")), audits);
+    // the associate: My stack on My day, the locked month only
+    await as("arun"); await open("#/queue"); await t(1500);
+    const card = p.locator(".stk-mine").first();
+    ok("Arun's My day has My stack: Stack 5, 40 of 40, locked by Joseph Manager", (await card.count()) === 1 && /MY STACK/.test(await card.innerText()) && /40 of 40/.test(await card.innerText()) && /Locked by Joseph Manager/.test(await card.innerText()), (await card.count()) ? await card.innerText() : "no card");
+    await card.click(); await t(900);
+    ok("it opens how it was worked out, as locked, with nothing to type", /Locked: this is the month as it was locked/.test(await p.locator(".overlay .modal").first().innerText()) && !(await p.locator(".overlay .modal button.typed").count()));
+    await p.keyboard.press("Escape"); await t(400);
+    ok("an associate cannot open the Stack report itself (the server says no)", !(await rpc("stack.month", {}).then(() => true).catch(() => false)));
+    // the team lead: her own row of the team lead stack once locked; typed cells closed
+    await as("tina"); await open("#/dashboard?tab=stack&month=" + M); await t(500); await p.reload(); await t(4500);
+    ok("once locked, the team lead's cells are closed", !(await p.locator(".main table.stk-t button.typed").count()) && /Locked by/.test(await p.locator(".stk-state").innerText()));
+    await p.locator('.main .seg2 button:has-text("Team lead stack")').click(); await t(1000);
+    ok("and she sees her own team lead row", (await p.locator(".main table.stk-t tbody tr").count()) === 1 && /Tina Lead/.test(await p.locator(".main table.stk-t").innerText()));
+    // the admin unlocks: a draft again, in the audit trail
+    await as("admin"); await open("#/dashboard?tab=stack&month=" + M); await t(500); await p.reload(); await t(4500);
+    await p.locator(`.main button:has-text("Unlock ${mon}")`).click(); await t(800);
+    await p.locator(`.overlay .modal button.danger:has-text("Unlock ${mon}")`).click(); await t(4000);
+    const au2 = await p.evaluate(async () => (await (await getLocalBackend()).env.DB.prepare("SELECT action FROM audit_log WHERE action = 'stack.unlock'").all()).results);
+    ok("the admin unlocks it: a draft again, in the audit trail", /Draft/.test(await p.locator(".stk-state").innerText()) && au2.length === 1, await p.locator(".stk-bar").innerText());
+    await p.unroute(/brahmastra_floor/);
+    await p.evaluate(async () => { await window.__sql("DELETE FROM settings WHERE key = 'floor_sync'"); await window.__flush(); });
+    await as("tina");
   });
 
   ok("no script errors on any page", !errs.length, errs);

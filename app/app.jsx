@@ -2141,6 +2141,8 @@ function StackReportTab({ me, params }) {
   const [view, setView] = useState("assoc"), [leadF, setLeadF] = useState(""), [clientF, setClientF] = useState("");
   const [person, setPerson] = useState(null), [lead, setLead] = useState(null), [edit, setEdit] = useState(null), [tick, setTick] = useState(null), [crit, setCrit] = useState(false), [ask, setAsk] = useState("");
   useEffect(() => { if (d && d.month) navKeep({ month: d.month }); }, [d && d.month]);
+  // a link to another month while the report is open (Back, or a pasted link) opens that month
+  useEffect(() => { const m = params && String(params.month || ""); if (/^\d{4}-\d{2}$/.test(m) && m !== month) setMonth(m); }, [params && params.month]);
   const rows = useMemo(() => (d ? d.rows.filter((r) => (!leadF || (r.lead_id || "none") === leadF) && (!clientF || r.title === clientF)) : []), [d, leadF, clientF]);
   const tls = useMemo(() => (d ? d.tls.filter((t) => (!leadF || t.id === leadF) && (!clientF || t.title === clientF || d.rows.some((r) => r.lead_id === t.id && r.title === clientF))) : []), [d, leadF, clientF]);
   if (q.error && !d) return <ErrorBox error={q.error} />;
