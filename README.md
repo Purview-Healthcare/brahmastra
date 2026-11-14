@@ -389,8 +389,8 @@ bar to narrow the charts), then:
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
   with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
   address or an Emp ID, added or deleted an account, changed the extra sign-in emails, matched a roster project
-  to a client, or counted or removed an extra production file. A code or a password is never written there: only
-  who did it, for whom and when.
+  to a client, or counted, edited or removed an extra production file. A code or a password is never written there:
+  only who did it, for whom and when.
 
 #### Dashboard › Stack report
 
@@ -486,21 +486,46 @@ counts it as the person's work done on that day, the same way a claim worked cou
   the VP's and the admin's span): the Emp ID first, then the name in any case, extra spaces ignored. Brahmastra never
   guesses between two people with the same name: those rows are left out, and an Emp ID column tells them apart. A
   name not found, and someone Team status does not count (a team lead, an SME, a desk person), are named with how many
-  rows each, and not counted.
-- **Before anything is saved**, the preview shows the rows read and to count, the rows per person (Emp ID, team lead,
-  days, from and to), the dates, the months, what is left out and why, the months already locked, and what the same
-  file counted before. **Count** saves it.
-- **Kept.** Each upload keeps the OneDrive file (its id, name and link), who uploaded it and when, and the counts per
-  person per day. The same OneDrive file uploaded again **replaces** what it counted before, never adds to it. Rows
-  dated after today, or in a month that is locked for the person's team, are not counted, and a locked month keeps
-  what it counted until the admin unlocks it. Uploads and removals are in the audit trail.
+  rows each, and not counted. When the same file was loaded before by someone with a wider span, a name it already
+  counts for a person the uploader does not see is said to be so: it stays counted there and is never counted twice.
+- **Before anything is saved**, the check shows the rows read and to count, each name of the file on a line (who it
+  counts for, Emp ID, team lead, rows, days, from and to), the dates, the months, what is left out and why, the months
+  already locked, and what the same file counted before. **Count** saves it.
+- **Edit.** Each line has **Edit**, in the check before saving and later on a file already counted (in the month's
+  list, **Open** shows the file's people), so a mistake is corrected without loading the file again. Whoever may
+  upload may edit, for the same people.
+  - **A day's count**: a whole number, 0 or more; 0 means that day is not counted. The file's own number stays
+    beside an edited one ("5 (file: 3)").
+  - **Who it counts for**: another person of the editor's span whom Team status counts. The name written in the file
+    stays visible ("in the file: Mina Agent"), and one click goes back to the file's own match.
+  - **Pick the person**, for a name left out because nobody was found or because two people share it: once a person
+    is picked, those rows count for them (and can be left out again).
+  - **Not by hand:** rows left out for no DOW, a DOW that is no date or no user name stay out, and so does a name
+    Team status does not count: the fix is in the file. A person or a day the file does not have cannot be added. To
+    add work, add it to the file in OneDrive and load it again (the screen says so).
+  - **Marked and audited.** An edited count and a picked person show in the yellow dashed look of a typed cell, with
+    who changed it and when; the month's list marks the file ("1 count edited by hand", "15 (file: 13)"). The server
+    checks every edit (the editor's span, the person picked, that Team status counts them, that the name and the day
+    are in the file), and each one is in the audit trail with the old and the new value. The edited figures are what
+    count everywhere: Team status, the Stack report, its Excel.
+  - **Locked months** take no edits, and the screen says why; the admin can unlock a month.
+- **Kept.** Each upload keeps the OneDrive file (its id, name and link), who uploaded it and when, and for each name
+  of the file and each day: the file's own number, the number counted and who it counts for. The same OneDrive file
+  uploaded again **replaces** what it counted before, never adds to it. Rows dated after today, or in a month that is
+  locked for the person's team, are not counted, and a locked month keeps what it counted until the admin unlocks it.
+  Uploads, removals and edits are in the audit trail.
+- **The same file loaded again, after edits.** A picked person is remembered for that name in that file and applied
+  again. An edited count is kept, with who edited it and when, while the file's own number for that name and day is
+  the same. When the file's own number changed, the file's new number is used, and the check before saving lists each
+  edit that could not be kept: the file's old number, the edit, and the file's new number (also an edit on a day the
+  file no longer has, and a pick whose person can no longer be counted).
 - **The month's files** are listed at the bottom of the Stack report, each with its link, who uploaded it, its rows in
-  the month, its people and dates, and **Remove** (it takes the file's counts off for the remover's people, outside
-  a locked month).
+  the month, its people and dates, the names still left out, **Open** (its people, with Edit) and **Remove** (it
+  takes the file's counts off for the remover's people, outside a locked month).
 - **Where it counts.** On its DOW, as work done: on Team status (attainment, its line "250 claims + 40
   extra", the KPI, Performance by status and the CSV's **Extra production** column), and so in the Stack report's
-  Productivity ("incl. 40 extra" under Achieved; a person's *how it was worked out* names the files; *How it is
-  worked out* lists the month's files) and its Excel. The target does not change. The Monday digest counts each
+  Productivity ("incl. 40 extra" under Achieved; a person's *how it was worked out* names the files and says when
+  their counts were edited by hand; *How it is worked out* lists the month's files) and its Excel. The target does not change. The Monday digest counts each
   client's claim entries, and a file of extra production has no client, so it is not there (as team task items are
   not).
 - **Size.** Up to 10 MB and 50,000 rows a file; split a bigger one, for example a file a month.
