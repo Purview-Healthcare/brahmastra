@@ -2143,7 +2143,7 @@ const stkDay = (iso) => { const [y, m, d] = String(iso).split("-").map(Number); 
 const stkDays = (list) => list.map((x) => (Array.isArray(x) ? stkDay(x[0]) + (x[1] === 0.5 ? " (half day)" : "") : stkDay(x))).join(", ");
 const stkTyped = (t) => (t ? t.by + ", " + stkDay(istISOOf(t.at)) : "");
 // the files a person's extra production came from, with the rows each counted
-const stkExtraFiles = (r) => (r.extra_files || []).map((f) => f.name + " (" + plural(f.n, "row") + ")").join(", ");
+const stkExtraFiles = (r) => (r.extra_files || []).map((f) => f.name + " (" + plural(f.n, "row") + (f.edited ? ", edited by hand" + (f.edit_by ? " by " + f.edit_by : "") + (f.edit_at ? ", " + stkDay(istISOOf(f.edit_at)) : "") + ": the file has " + fmtInt(f.file_n) : "") + ")").join(", ");
 // what is still empty, in words: the associate stack's typed cells, or the team lead stack's ticks and attrition counts
 const stkEnterParts = (te, tl) => (tl ? [te.ticks && plural(te.ticks, "tick") + " to confirm", te.attrition && plural(te.attrition, "attrition count") + " to type"]
   : [te.pkt && plural(te.pkt, "PKT score"), te.quality && plural(te.quality, "quality score"), te.prod && plural(te.prod, "person's work numbers", "people's work numbers")]).filter(Boolean);
@@ -2224,66 +2224,180 @@ function extraRead(bytes, name) {
     sheets: sheets.map((s) => ({ name: s.name, rows: s.data.length, dow: extraCell(s.head[s.dow]), user: extraCell(s.head[s.user]), emp: s.emp >= 0 ? extraCell(s.head[s.emp]) : "", order: s.order })) };
 }
 const extraSpan = (a, b) => (!a ? "–" : a === b ? fmtDate(a) : fmtDate(a) + " to " + fmtDate(b));
-/* What the file would count, before anything is saved: the rows, rows per person, the dates, what is left out and why, the
-   months already locked, and what the same file counted before. Then the person confirms. */
+// "edited by Tess Lead, Nov 12, 3:10 PM" (an edit made in the check before saving is not saved yet)
+const extraMark = (m, verb = "Edited") => (m ? verb + " by " + (m.by || "you") + (m.now || !m.at ? ", not saved yet" : ", " + fmtWhen(m.at)) : "");
+const extraSame = (a, b) => String(a || "").replace(/\s+/g, " ").trim().toLowerCase() === String(b || "").replace(/\s+/g, " ").trim().toLowerCase();
+const extraNameIn = (l) => l.name + (l.emp_id ? " (" + l.emp_id + ")" : "");
+/* The names of a file, one line each: who it counts for, the rows counted (the file's own number beside an edited one), its days,
+   and Edit. A picked person and an edited count have the yellow dashed look of a typed cell, with who changed it and when. */
+function ExtraLinesTable({ lines, onEdit, maxHeight = 300 }) {
+  if (!lines.length) return null;
+  return (
+    <div className="table-wrap" style={{ maxHeight }}><table className="t xp-lines"><thead><tr><th>Counts for</th><th>Emp ID</th><th>Team lead</th><th className="r">Rows</th><th className="r">Days</th><th>DOW</th><th /></tr></thead>
+      <tbody>{lines.map((l) => { const locked = l.days.length > 0 && l.days.every((d) => d.locked);
+        return <tr key={l.line}>
+          <td>{l.picked ? <span className="typed ro" title={extraMark(l.picked, "Picked")}><b>{l.person}</b></span> : <b>{l.person}</b>}
+            {(l.picked || !extraSame(l.name, l.person)) && <div className="tiny muted">in the file: {extraNameIn(l)}</div>}</td>
+          <td className="small">{l.person_emp || "–"}</td><td className="small">{l.lead_name || "–"}</td>
+          <td className="num">{l.edits ? <span className="typed ro" title={plural(l.edits, "day") + " edited by hand: " + l.days.filter((d) => d.edited).map((d) => stkDay(d.day) + " " + d.n + " (file: " + d.file_n + "), " + extraMark(d.edited).toLowerCase()).join("; ")}>{fmtInt(l.rows)} (file: {fmtInt(l.file_rows)})</span> : fmtInt(l.rows)}</td>
+          <td className="num">{l.n_days}</td><td className="small nowrap">{extraSpan(l.from, l.to)}</td>
+          <td className="r">{onEdit && (locked ? <span className="tiny muted" title="Its month is locked: no edits. The admin can unlock the month.">locked</span> : <button type="button" className="btn sm" onClick={() => onEdit(l)}>Edit</button>)}</td></tr>; })}</tbody></table></div>
+  );
+}
+/* The names left out because nobody was found, or two people share the name: each can be given a person (Pick the person). */
+function ExtraLeftNames({ list, sub, onPick }) {
+  return <span className="xp-names">{list.slice(0, 40).map((n) => <span key={n.line || n.name} className="xp-name">{n.name}{n.emp_id ? <span className="muted"> ({n.emp_id})</span> : null}: {plural(n.rows, "row")}{sub ? <span className="muted">; {sub(n)}</span> : null}
+    {onPick && n.line ? <> <button type="button" className="btn sm link xp-pick" onClick={() => onPick(n)}>Pick the person</button></> : null}</span>)}{list.length > 40 ? <span className="tiny muted">and {list.length - 40} more</span> : null}</span>;
+}
+/* One name of the file, edited by hand: who it counts for (another of the editor's people, or a person for a name that was left
+   out) and each day's count (a whole number, 0 for a day that is not counted; the file's own number stays beside it). A person or
+   a day the file does not have cannot be added. onSave gets { user_id } (only when it changed) and counts [{ day, n }] (only the
+   changed ones). */
+function ExtraLineModal({ l, pickable, note, onSave, onClose }) {
+  const left = !l.id;   // a name that was left out: pick the person first
+  const [who, setWho] = useState(l.id || ""), [vals, setVals] = useState(() => Object.fromEntries((l.days || []).map((d) => [d.day, String(d.n == null ? d.file_n : d.n)])));
+  const [busy, setBusy] = useState(false), [err, setErr] = useState(null);
+  const days = l.days || [], bad = (v) => !/^\d{1,6}$/.test(String(v).trim()) || Number(v) > EXTRA_MAX_ROWS;
+  const changed = left ? [] : days.filter((d) => !d.locked && !bad(vals[d.day]) && Number(vals[d.day]) !== d.n).map((d) => ({ day: d.day, n: Number(vals[d.day]) }));
+  const anyBad = !left && days.some((d) => !d.locked && bad(vals[d.day])), moved = who !== (l.id || "");
+  const save = async (over) => {
+    setBusy(true); setErr(null);
+    try { await onSave(over || { ...(moved ? { user_id: who } : {}), counts: changed }); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  const total = days.reduce((t, d) => t + (d.locked || left || bad(vals[d.day]) ? d.n || 0 : Number(vals[d.day])), 0), fileTotal = days.reduce((t, d) => t + d.file_n, 0);
+  return (
+    <Modal title={left ? "Pick the person" : "Edit extra production"} sub={<>In the file: <b>{extraNameIn(l)}</b>{left ? <> · {plural(fileTotal, "row")} left out</> : <> · counts for {l.person}</>}</>} onClose={busy ? undefined : onClose}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || anyBad || (left ? !who : !moved && !changed.length)} onClick={() => save()}>{busy ? "Saving…" : left ? "Count for this person" : "Save"}</button></>}>
+      <div className="stack xp-edit">
+        <Field label={left ? "Who these rows count for" : "Who it counts for"} hint={left ? "One of the people you see who is counted on Team status. The name in the file stays as it is written." : "Pick another of your people to count these rows for them. The name written in the file stays visible."}>
+          <Combo value={who} onChange={(v) => v && setWho(v)} clearable={false} placeholder="Pick the person" options={pickable.map((p) => ({ id: p.id, label: p.name + (p.emp_id ? " (" + p.emp_id + ")" : ""), sub: p.lead_name ? "team lead " + p.lead_name : "" }))} /></Field>
+        {l.picked && <div className="small"><span className="typed ro">{extraMark(l.picked, "Picked")}</span>{" "}
+          <button type="button" className="btn sm link" disabled={busy} onClick={() => save({ user_id: "", counts: [] })}>{l.auto_id ? "Back to the file's own match (" + (l.auto_name || "the person it names") + ")" : "Leave it out again"}</button></div>}
+        <div className="table-wrap" style={{ maxHeight: 280 }}><table className="t xp-days"><thead><tr><th>DOW</th><th className="r">In the file</th><th className="r">{left ? "" : "Counted"}</th><th /></tr></thead>
+          <tbody>{days.map((d) => <tr key={d.day}><td className="small nowrap">{fmtDate(d.day)}</td><td className="num">{fmtInt(d.file_n)}</td>
+            <td className="num">{left ? null : d.locked ? fmtInt(d.n) : <input className={"input sm xp-n" + (bad(vals[d.day]) ? " bad" : "")} type="number" min="0" step="1" inputMode="numeric" aria-label={"Count for " + fmtDate(d.day)} value={vals[d.day]} onChange={(e) => setVals((o) => ({ ...o, [d.day]: e.target.value }))} />}</td>
+            <td className="small">{left ? null : d.locked ? <span className="tiny muted">{STK_MON_FULL[Number(d.day.slice(5, 7)) - 1]} is locked: no edits</span>
+              : !bad(vals[d.day]) && Number(vals[d.day]) !== d.file_n ? <span className="typed ro" title={d.edited && Number(vals[d.day]) === d.n ? extraMark(d.edited) : "Edited now, not saved yet"}>{fmtInt(Number(vals[d.day]))} (file: {fmtInt(d.file_n)}){Number(vals[d.day]) === 0 ? " · not counted" : ""}</span>
+              : bad(vals[d.day]) ? <span className="tiny red-ink">a whole number, 0 or more</span> : null}</td></tr>)}</tbody>
+          {!left && <tfoot><tr><td className="b small">Total</td><td className="num b">{fmtInt(fileTotal)}</td><td className="num b">{fmtInt(total)}</td><td /></tr></tfoot>}</table></div>
+        <ErrorBox error={err} />
+        <div className="tiny muted">{left ? "Once a person is picked, these rows count for them, and each day's count can be edited. " : "0 means that day is not counted. "}{note} A person or a day the file does not have cannot be added here.</div>
+      </div>
+    </Modal>
+  );
+}
+const STK_MON_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/* What the file would count, before anything is saved: the rows, each name of the file with who it counts for (Edit), the dates,
+   what is left out and why (Pick the person for a name not found or shared), the months already locked, what the same file
+   counted before and the hand edits that could not be kept. The edits made here are checked by the server each time and saved
+   with the file. Then the person confirms. */
 function ExtraPreviewModal({ x, label, onClose, onSaved }) {
-  const p = x.p, L = p.left_out, [busy, setBusy] = useState(false);
+  const [p, setP] = useState(x.p), [edits, setEdits] = useState({ picks: {}, counts: {} }), [line, setLine] = useState(null), [busy, setBusy] = useState(false);
+  const L = p.left_out;
+  const bodyWith = (e) => ({ ...x.body, edits: { picks: Object.entries(e.picks).map(([k, user_id]) => ({ line: k, user_id })), counts: Object.entries(e.counts).map(([k, n]) => ({ line: k.slice(0, k.lastIndexOf("|")), day: k.slice(k.lastIndexOf("|") + 1), n })) } });
+  // an edit on one name: the server works the whole check out again with it (and refuses what it must)
+  const apply = async (l, ch) => {
+    const e = { picks: { ...edits.picks }, counts: { ...edits.counts } };
+    if (ch.user_id !== undefined) e.picks[l.line] = ch.user_id;
+    for (const c of ch.counts || []) e.counts[l.line + "|" + c.day] = c.n;
+    if (ch.user_id === "" && !l.auto_id) for (const k of Object.keys(e.counts)) if (k.slice(0, k.lastIndexOf("|")) === l.line) delete e.counts[k];   // left out again: its counts go with it
+    setP(await rpc("stack.extraPreview", bodyWith(e))); setEdits(e); setLine(null);
+  };
   const save = async () => {
     setBusy(true);
-    try { const r = await rpc("stack.extraSave", x.body); toast("Counted " + plural(r.counted, "row") + " of extra production for " + plural(r.people, "person", "people") + (r.replaced ? ", in place of what the file counted before" : "") + "."); onSaved(r); }
+    try { const r = await rpc("stack.extraSave", bodyWith(edits)); toast("Counted " + plural(r.counted, "row") + " of extra production for " + plural(r.people, "person", "people") + (r.replaced ? ", in place of what the file counted before" : "") + "."); onSaved(r); }
     catch (e) { toast(e.message, "err"); setBusy(false); }
   };
-  const names = (list, sub) => list.slice(0, 40).map((n, i) => <span key={i} className="xp-name">{n.name}{n.emp_id ? <span className="muted"> ({n.emp_id})</span> : null}: {plural(n.rows, "row")}{sub ? <span className="muted">; {sub(n)}</span> : null}</span>);
-  const more = (list) => (list.length > 40 ? <span className="tiny muted">and {list.length - 40} more</span> : null);
+  const edited = p.edits && (p.edits.counts || p.edits.picks);
   const reasons = [
     L.no_date ? [plural(L.no_date, "row") + " with no DOW"] : null,
     L.bad_date ? [plural(L.bad_date, "row") + " whose DOW is not a date Brahmastra can read" + (L.bad_examples.length ? " (for example " + L.bad_examples.map((v) => '"' + v + '"').join(", ") + ")" : "")] : null,
     L.no_name ? [plural(L.no_name, "row") + " with no user name"] : null,
     L.future ? [plural(L.future, "row") + " dated after today"] : null,
-    L.not_found.length ? ["Not found among the active people you see", L.not_found] : null,
-    L.same_name.length ? ["More than one person you see has this name, so Brahmastra does not guess (an Emp ID column tells them apart)", L.same_name, (n) => n.people + " people"] : null,
+    L.not_found.length ? ["Not found among the active people you see", L.not_found, null, true] : null,
+    L.same_name.length ? ["More than one person you see has this name, so Brahmastra does not guess (an Emp ID column tells them apart)", L.same_name, (n) => n.people + " people", true] : null,
     L.not_counted.length ? ["Not on Team status, so not counted", L.not_counted, (n) => n.why] : null,
+    L.elsewhere && L.elsewhere.length ? ["Already counted from an earlier upload of this file, for people you do not see (it stays counted there, and is not counted twice)", L.elsewhere] : null,
   ].filter(Boolean);
-  return (
+  return (<>
     <Modal wide title="Extra production" sub={"Check what this file from OneDrive would count, for " + label + " and any other month it has rows for, then count it."} onClose={onClose}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !p.counted} onClick={save}>{busy ? "Counting…" : p.counted ? "Count " + plural(p.counted, "row") : "Nothing to count"}</button></>}>
       <div className="stack xp">
         <div className="small">{p.file.web_url ? <a href={p.file.web_url} target="_blank" rel="noopener noreferrer"><b>{p.file.name}</b></a> : <b>{p.file.name}</b>}
           {p.sheets.map((s) => <div key={s.name} className="tiny muted">Sheet <b>{s.name}</b>: {plural(s.rows, "row")} · DOW from "{s.dow}" (dates read {s.order === "dmy" ? "day first, 13/11/2026 style" : "month first, 11/13/2026 style"}) · User Name from "{s.user}"{s.emp ? <> · Emp ID from "{s.emp}" (matched first)</> : null}</div>)}</div>
-        {p.earlier && <div className="alert info small"><b>This file was counted before</b> ({p.earlier.uploads.map((u) => "uploaded " + fmtWhen(u.at) + " by " + u.by + ", " + plural(u.rows, "row")).join("; ")}). Counting it again replaces those counts; it never adds to them.{p.earlier.keeps ? " " + plural(p.earlier.keeps, "row") + " of them stay: a locked month's, or for people you do not see." : ""}</div>}
+        {p.earlier && <div className="alert info small"><b>This file was counted before</b> ({p.earlier.uploads.map((u) => "uploaded " + fmtWhen(u.at) + " by " + u.by + ", " + plural(u.rows, "row")).join("; ")}). Counting it again replaces those counts; it never adds to them.{p.earlier.keeps ? " " + plural(p.earlier.keeps, "row") + " of them stay: a locked month's, or for people you do not see." : ""} A person picked for a name is applied again, and a count edited by hand is kept while the file's own number is the same.</div>}
+        {(p.dropped.length > 0 || p.dropped_picks.length > 0) && <div className="alert warn small xp-dropped"><b>{plural(p.dropped.length + p.dropped_picks.length, "hand edit")} could not be kept:</b>
+          <ul>{p.dropped.map((d, i) => <li key={"d" + i}>{d.person || d.name}{d.person && !extraSame(d.person, d.name) ? " (in the file: " + d.name + ")" : ""}, {fmtDate(d.day)}: the file had {fmtInt(d.old_file)}, edited to {fmtInt(d.edit)} by {d.by}{d.at ? " (" + fmtWhen(d.at) + ")" : ""}; {d.why === "gone" ? "that day is no longer in the file, so nothing is counted for it" : d.why === "left_out" ? "the file has " + fmtInt(d.new_file) + ", and that row is left out now" : <>the file now has <b>{fmtInt(d.new_file)}</b>, so {fmtInt(d.new_file)} is counted</>}.</li>)}
+            {p.dropped_picks.map((d, i) => <li key={"p" + i}>{d.name}{d.emp_id ? " (" + d.emp_id + ")" : ""} was counted for {d.person || "someone"} (picked by {d.by}{d.at ? ", " + fmtWhen(d.at) : ""}): that person cannot be counted now, so the name is matched afresh.</li>)}</ul>
+          Edit the line below again if the edit should still stand.</div>}
         <div className="grid xp-kpis">
           <Kpi label="Rows read" value={fmtInt(p.rows)} sub="one row is one piece of work" />
-          <Kpi label="To count" value={<span className="teal-ink">{fmtInt(p.counted)}</span>} sub={plural(p.people.length, "person", "people")} tone="accent" />
+          <Kpi label="To count" value={<span className="teal-ink">{fmtInt(p.counted)}</span>} sub={plural(p.people.length, "person", "people") + (edited && p.file_counted !== p.counted ? " · the file has " + fmtInt(p.file_counted) : "")} tone="accent" />
           <Kpi label="Left out" value={<span className={L.rows ? "amber-ink" : ""}>{fmtInt(L.rows)}</span>} sub={L.rows ? "see why below" : "nothing left out"} />
           <Kpi label="Dates" value={<span className="xp-dates">{extraSpan(p.from, p.to)}</span>} sub="DOW of the rows counted" />
         </div>
         {(p.months.length > 0 || L.locked.length > 0) && <div className="row xp-months">{p.months.map((m) => <span key={m.month} className={"badge " + (m.rows ? "green" : "gray")}>{m.label}: {plural(m.rows, "row")}{m.locked_rows ? " · " + fmtInt(m.locked_rows) + " locked, not counted" : ""}</span>)}</div>}
-        {L.locked.length > 0 && <div className="alert warn small"><b>Already locked:</b> {L.locked.map((m) => m.label + " (" + plural(m.rows, "row") + " for " + plural(m.people, "person", "people") + ")").join(", ")}. Rows dated in a locked month are not counted, and what was counted there before stays. The admin can unlock a month.</div>}
-        {p.people.length > 0 && <div className="table-wrap" style={{ maxHeight: 300 }}><table className="t"><thead><tr><th>Person</th><th>Emp ID</th><th>Team lead</th><th className="r">Rows</th><th className="r">Days</th><th>DOW</th></tr></thead>
-          <tbody>{p.people.map((x) => <tr key={x.id}><td><b>{x.name}</b></td><td className="small">{x.emp_id || "–"}</td><td className="small">{x.lead_name || "–"}</td><td className="num">{fmtInt(x.rows)}</td><td className="num">{x.days}</td><td className="small nowrap">{extraSpan(x.from, x.to)}</td></tr>)}</tbody></table></div>}
+        {L.locked.length > 0 && <div className="alert warn small"><b>Already locked:</b> {L.locked.map((m) => m.label + " (" + plural(m.rows, "row") + " for " + plural(m.people, "person", "people") + ")").join(", ")}. Rows dated in a locked month are not counted and cannot be edited, and what was counted there before stays. The admin can unlock a month.</div>}
+        <ExtraLinesTable lines={p.lines} onEdit={busy ? null : setLine} />
         {reasons.length > 0 && <div className="xp-out"><div className="b small">Left out, and why</div>
-          <ul>{reasons.map(([t, list, sub], i) => <li key={i} className="small">{t}{list ? <>: <span className="xp-names">{names(list, sub)}{more(list)}</span></> : "."}</li>)}</ul></div>}
-        <div className="tiny muted">Each row counts as one piece of work done by that person on its DOW: on Team status and in the Stack report's Productivity, the same way a claim worked does; the target does not change. Brahmastra reads .xlsx and .csv files up to {EXTRA_MAX_MB} MB and {plural(EXTRA_MAX_ROWS, "row")}. Nothing is written back to OneDrive.</div>
+          <ul>{reasons.map(([t, list, sub, pick], i) => <li key={i} className="small">{t}{list ? <>: <ExtraLeftNames list={list} sub={sub} onPick={pick && !busy ? setLine : null} /></> : "."}</li>)}</ul></div>}
+        <div className="tiny muted">Each row counts as one piece of work done by that person on its DOW: on Team status and in the Stack report's Productivity, the same way a claim worked does; the target does not change. <b>Edit</b> changes a day's count or who a name counts for; rows left out for no DOW, no date or no user name are fixed in the file. {p.add_note} Brahmastra reads .xlsx and .csv files up to {EXTRA_MAX_MB} MB and {plural(EXTRA_MAX_ROWS, "row")}. Nothing is written back to OneDrive.</div>
       </div>
     </Modal>
-  );
+    {line && <ExtraLineModal l={line} pickable={p.pickable} note={p.add_note} onClose={() => setLine(null)} onSave={(ch) => apply(line, ch)} />}
+  </>);
 }
-/* The files counted for the month on screen, for the people the viewer sees, each with Remove. */
-function ExtraFilesCard({ d, onRemove }) {
+/* A file already counted, opened to its people: the same lines with Edit, and the names still left out with Pick the person.
+   Each edit is saved at once (stack.extraEdit), so a mistake is corrected without loading the file again. */
+function ExtraFileModal({ file, onClose, onChanged }) {
+  const [v, setV] = useState(null), [err, setErr] = useState(null), [line, setLine] = useState(null), [dirty, setDirty] = useState(false);
+  useEffect(() => { let on = true; rpc("stack.extraFile", { upload_id: file.id }).then((r) => on && setV(r)).catch((e) => on && setErr(e.message)); return () => { on = false; }; }, [file.id]);
+  const close = () => { if (dirty) onChanged(); onClose(); };
+  const apply = async (l, ch) => {
+    const r = await rpc("stack.extraEdit", { upload_id: file.id, line: l.line, ...ch });
+    setDirty(true); setLine(null);
+    if (!r.view) { toast(file.name + " counts nothing now, so it is off the list."); onChanged(); onClose(); return; }
+    setV(r.view); toast(r.changed ? "Saved. The edited figures count on Team status and the Stack report." : "Nothing changed.");
+  };
+  const names = v ? [...v.left_out.not_found.map((n) => ({ ...n, why: "not found among the active people" })), ...v.left_out.same_name.map((n) => ({ ...n, why: "more than one person has this name" }))] : [];
+  return (<>
+    <Modal wide title="Extra production" sub={<>{v && v.file.web_url ? <a href={v.file.web_url} target="_blank" rel="noopener noreferrer"><b>{file.name}</b></a> : <b>{file.name}</b>} · uploaded by {file.by}, {fmtWhen(file.at)}</>} onClose={close}>
+      <div className="stack xp">
+        <ErrorBox error={err} />
+        {!v && !err && <Spinner label="Opening the file's counts…" />}
+        {v && <>
+          <div className="small muted">What this file counts for the people you see: {plural(v.counted, "row")}{v.file_counted !== v.counted ? <> (the file has {fmtInt(v.file_counted)})</> : null}. <b>Edit</b> changes a day's count or who a name counts for, at once; a yellow dashed value was changed by hand (hover for who and when).</div>
+          {v.locked_months.length > 0 && <div className="alert warn small">{v.locked_months.join(" and ")} {v.locked_months.length > 1 ? "are" : "is"} locked: what the file counts there cannot be edited. The admin can unlock a month.</div>}
+          <ExtraLinesTable lines={v.lines} onEdit={setLine} maxHeight={360} />
+          {names.length > 0 && <div className="xp-out"><div className="b small">Left out: {plural(names.length, "name")} without a person</div>
+            <ul><li className="small"><ExtraLeftNames list={names} sub={(n) => n.why} onPick={setLine} /></li></ul></div>}
+          <div className="tiny muted">{v.add_note} A person or a day the file does not have cannot be added here. Every edit is kept with who made it and when, and is in the audit trail.</div>
+        </>}
+      </div>
+    </Modal>
+    {line && v && <ExtraLineModal l={line} pickable={v.pickable} note={v.add_note} onClose={() => setLine(null)} onSave={(ch) => apply(line, ch)} />}
+  </>);
+}
+/* The files counted for the month on screen, for the people the viewer sees: each opens to its people (Edit), with Remove. */
+function ExtraFilesCard({ d, onOpen, onRemove }) {
   const x = d.extra;
   if (!x) return null;
   const mon = d.label.split(" ")[0];
   return (
     <div className="stk-extra">
       <div className="b">Extra production · {d.label}</div>
-      <div className="tiny muted">Work done outside Brahmastra, counted from the team leads' files in OneDrive: each row is one piece of work done on its DOW, on Team status and in Productivity. <b>Extra production</b> above adds a file; the same file again replaces what it counted.</div>
+      <div className="tiny muted">Work done outside Brahmastra, counted from the team leads' files in OneDrive: each row is one piece of work done on its DOW, on Team status and in Productivity. <b>Extra production</b> above adds a file; the same file again replaces what it counted. <b>Open</b> a file to edit a person's counts or who a name counts for.</div>
       {x.files.length ? <div className="table-wrap mt8"><table className="t"><thead><tr><th>File</th><th>Uploaded by</th><th className="r">Rows in {mon}</th><th className="r">People</th><th>DOW</th><th /></tr></thead>
-        <tbody>{x.files.map((f) => <tr key={f.id}>
-          <td>{f.web_url ? <a href={f.web_url} target="_blank" rel="noopener noreferrer"><b>{f.name}</b></a> : <b>{f.name}</b>}{f.other_rows ? <div className="tiny muted">and {plural(f.other_rows, "row")} in other months</div> : null}</td>
-          <td className="small">{f.by}<div className="tiny muted">{fmtWhen(f.at)}</div></td>
-          <td className="num">{fmtInt(f.rows)}{f.locked_rows ? <div className="tiny muted">{fmtInt(f.locked_rows)} in a locked team</div> : null}</td>
-          <td className="num">{f.people}</td><td className="small nowrap">{extraSpan(f.from, f.to)}</td>
-          <td className="r">{f.can_remove && <button className="btn sm" onClick={() => onRemove(f)}>Remove</button>}</td></tr>)}</tbody></table></div>
+        <tbody>{x.files.map((f) => { const marks = [f.edits ? plural(f.edits, "count") + " edited by hand" : "", f.picks ? plural(f.picks, "name") + " given a person by hand" : ""].filter(Boolean);
+          return <tr key={f.id}>
+            <td>{f.web_url ? <a href={f.web_url} target="_blank" rel="noopener noreferrer"><b>{f.name}</b></a> : <b>{f.name}</b>}{f.other_rows ? <div className="tiny muted">and {plural(f.other_rows, "row")} in other months</div> : null}
+              {marks.length > 0 && <div className="tiny"><span className="typed ro" title={f.edited_at ? "Last edit " + fmtWhen(f.edited_at) : undefined}>{marks.join(" · ")}</span></div>}
+              {f.left_names > 0 && <div className="tiny amber-ink">{plural(f.left_names, "name")} left out ({plural(f.left_rows, "row")}): open to pick the person</div>}</td>
+            <td className="small">{f.by}<div className="tiny muted">{fmtWhen(f.at)}</div></td>
+            <td className="num">{f.edits || f.rows !== f.file_rows ? <span className="typed ro" title={"Edited by hand" + (f.edited_at ? ", last " + fmtWhen(f.edited_at) : "") + ": the file's own number is " + fmtInt(f.file_rows)}>{fmtInt(f.rows)} (file: {fmtInt(f.file_rows)})</span> : fmtInt(f.rows)}{f.locked_rows ? <div className="tiny muted">{fmtInt(f.locked_rows)} in a locked team</div> : null}</td>
+            <td className="num">{f.people}</td><td className="small nowrap">{extraSpan(f.from, f.to)}</td>
+            <td className="r nowrap">{f.can_edit && <button className="btn sm" onClick={() => onOpen(f)}>Open</button>}{f.can_remove && <> <button className="btn sm" onClick={() => onRemove(f)}>Remove</button></>}</td></tr>; })}</tbody></table></div>
         : <div className="small muted mt8">No extra production file is counted for {d.label}.</div>}
     </div>
   );
@@ -2295,7 +2409,7 @@ function StackReportTab({ me, params }) {
   const [view, setView] = useState("assoc"), [leadF, setLeadF] = useState(""), [clientF, setClientF] = useState("");
   const [person, setPerson] = useState(null), [lead, setLead] = useState(null), [edit, setEdit] = useState(null), [tick, setTick] = useState(null), [crit, setCrit] = useState(false), [ask, setAsk] = useState("");
   // extra production: the OneDrive picker, what the picked file would count (before it is saved), a file to remove
-  const [xPick, setXPick] = useState(false), [xPrev, setXPrev] = useState(null), [xDel, setXDel] = useState(null), [xBusy, setXBusy] = useState(false);
+  const [xPick, setXPick] = useState(false), [xPrev, setXPrev] = useState(null), [xDel, setXDel] = useState(null), [xBusy, setXBusy] = useState(false), [xOpen, setXOpen] = useState(null);
   useEffect(() => { if (d && d.month) navKeep({ month: d.month }); }, [d && d.month]);
   // a link to another month while the report is open (Back, or a pasted link) opens that month
   useEffect(() => { const m = params && String(params.month || ""); if (/^\d{4}-\d{2}$/.test(m) && m !== month) setMonth(m); }, [params && params.month]);
@@ -2391,7 +2505,8 @@ function StackReportTab({ me, params }) {
           <div className="tiny muted">Team handling: {d.ticks.filter(([k]) => k[0] === "t").map((x) => x[1]).join(" · ")}. Client forefront: {d.ticks.filter(([k]) => k[0] === "c").map((x) => x[1]).join(" · ")}.</div>
         </>}
       </>}
-      <ExtraFilesCard d={d} onRemove={setXDel} />
+      <ExtraFilesCard d={d} onOpen={setXOpen} onRemove={setXDel} />
+      {xOpen && <ExtraFileModal file={xOpen} onClose={() => setXOpen(null)} onChanged={again} />}
       {xPick && <OneDrivePicker onClose={() => setXPick(false)} onPick={pickExtra} accept={(n) => /\.(xlsx|csv)$/i.test(n || "")} what="Excel (.xlsx) or CSV" />}
       {xPrev && <ExtraPreviewModal x={xPrev} label={d.label} onClose={() => setXPrev(null)} onSaved={() => { setXPrev(null); again(); }} />}
       {xDel && <Confirm title={"Remove " + xDel.name + "?"} danger busy={xBusy} confirmLabel="Remove" onNo={() => setXDel(null)} onYes={removeExtra}
@@ -2580,7 +2695,8 @@ function StackCriteriaModal({ criteria, label, files, onClose }) {
       {part("Team lead stack: total out of 50", criteria.tl)}
       {files && <><h3 className="mt">Extra production counted for {label}</h3>
         <div className="small muted">Work done outside Brahmastra, from the team leads' files in OneDrive. Each row is one piece of work on its DOW, in Achieved as a claim worked is; Expected does not change.</div>
-        {files.length ? <ul className="small stk-xfiles">{files.map((f) => <li key={f.id}><b>{f.name}</b>: {plural(f.rows, "row")} for {plural(f.people, "person", "people")}, {extraSpan(f.from, f.to)} · uploaded by {f.by}, {fmtWhen(f.at)}</li>)}</ul>
+        {files.length ? <ul className="small stk-xfiles">{files.map((f) => <li key={f.id}><b>{f.name}</b>: {plural(f.rows, "row")} for {plural(f.people, "person", "people")}, {extraSpan(f.from, f.to)} · uploaded by {f.by}, {fmtWhen(f.at)}
+          {f.edits || f.picks ? <> · <span className="typed ro">edited by hand{f.edited_at ? ", last " + fmtWhen(f.edited_at) : ""}: {[f.edits ? plural(f.edits, "count") : "", f.picks ? plural(f.picks, "name") + " given a person" : ""].filter(Boolean).join(", ")}{f.rows !== f.file_rows ? "; the file has " + fmtInt(f.file_rows) : ""}</span></> : null}</li>)}</ul>
           : <div className="small mt8">No file is counted for {label}.</div>}</>}
     </Modal>
   );
@@ -2827,7 +2943,7 @@ function TeamStatusTab({ ctx, me, go }) {
                   <td className="num">{attainStamp(r.attain)}<div className="tiny muted">{r.attain_basis === "done" ? r.count_done + " of " + Math.round(r.target_done) + " to yesterday" : r.count_today + " of " + Math.round(r.target_today) + " today"}{r.attain_basis === "done" && r.count_today ? " · " + r.count_today + " today" : ""}{r.worked_here != null ? " · " + r.worked_here + " on the client picked" : ""}</div>
                     {r.attain != null && (() => { const done = r.attain_basis === "done", ti = (done ? r.task_items_done : r.task_items_today) || 0, ex = (done ? r.extra_done : r.extra_today) || 0;
                       if (!ti && !ex) return null;
-                      const tip = ex && r.extra_files && r.extra_files.length ? "Extra production (work done outside Brahmastra) from " + r.extra_files.map((f) => f.name + " (" + plural(done ? f.n_done : f.n - f.n_done, "row") + ")").join(", ") : undefined;
+                      const tip = ex && r.extra_files && r.extra_files.length ? "Extra production (work done outside Brahmastra) from " + r.extra_files.map((f) => f.name + " (" + plural(done ? f.n_done : f.n - f.n_done, "row") + (f.edited ? ", edited by hand" : "") + ")").join(", ") : undefined;
                       return <div className="tiny muted" title={tip}>{[plural(done ? r.worked_done : r.worked_today, "claim"), ti ? plural(ti, "task item") : "", ex ? fmtInt(ex) + " extra" : ""].filter(Boolean).join(" + ")}</div>; })()}</td>
                   <td className="num">{r.task_items ? <><b>{fmtInt(r.task_items)}</b> <span className="tiny muted">items</span><div className="tiny muted">{plural(r.tasks_worked || 0, "task")}{r.tasks_completed ? " · " + r.tasks_completed + " completed" : ""}</div></> : <span className="muted">0</span>}</td>
                   <td className="num">{fmtHM(r.floor_needed_min)}{r.days_half || r.days_out ? <div className="tiny muted">{[r.days_half ? plural(r.days_half, "half day") : "", r.days_out ? r.days_out + " out" : ""].filter(Boolean).join(" · ")}</div> : null}</td>
