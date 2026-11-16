@@ -487,7 +487,10 @@ counts it as the person's work done on that day, the same way a claim worked cou
   (10/31/2026), else month first (05/06/2026 is May 6; 31/31/2026 is no date either way and says nothing). A row with
   no DOW, a DOW that is no date or no user name is left out and counted.
 - **People.** Each name is matched to an active person of the uploader's span (a team lead's team, a manager's,
-  the VP's and the admin's span): the Emp ID first, then the name in any case, extra spaces ignored. Brahmastra never
+  the VP's and the admin's span): the Emp ID first, then the name in any case, extra spaces ignored. A row whose Emp ID is
+  someone else's (another team's person, or someone switched off) is never counted by its name: it is left out as not found.
+  The name is used only for a row with no Emp ID, or one Brahmastra does not know (the line then shows the file's Emp ID
+  beside the person's). Brahmastra never
   guesses between two people with the same name: those rows are left out, and an Emp ID column tells them apart. A
   name not found, and someone Team status does not count (a team lead, an SME, a desk person), are named with how many
   rows each, and not counted. When the same file was loaded before by someone with a wider span, a name it already

@@ -2239,7 +2239,7 @@ function ExtraLinesTable({ lines, onEdit, maxHeight = 300 }) {
       <tbody>{lines.map((l) => { const locked = l.days.length > 0 && l.days.every((d) => d.locked);
         return <tr key={l.line}>
           <td>{l.picked ? <span className="typed ro" title={extraMark(l.picked, "Picked")}><b>{l.person}</b></span> : <b>{l.person}</b>}
-            {(l.picked || !extraSame(l.name, l.person)) && <div className="tiny muted">in the file: {extraNameIn(l)}</div>}</td>
+            {(l.picked || !extraSame(l.name, l.person) || (l.emp_id && !extraSame(l.emp_id, l.person_emp))) && <div className="tiny muted">in the file: {extraNameIn(l)}</div>}</td>
           <td className="small">{l.person_emp || "–"}</td><td className="small">{l.lead_name || "–"}</td>
           <td className="num">{l.edits ? <span className="typed ro" title={plural(l.edits, "day") + " edited by hand: " + l.days.filter((d) => d.edited).map((d) => stkDay(d.day) + " " + d.n + " (file: " + d.file_n + "), " + extraMark(d.edited).toLowerCase()).join("; ")}>{fmtInt(l.rows)} (file: {fmtInt(l.file_rows)})</span> : fmtInt(l.rows)}</td>
           <td className="num">{l.n_days}</td><td className="small nowrap">{extraSpan(l.from, l.to)}</td>

@@ -154,6 +154,38 @@ S("U-10, U-04, U-05: one rounding rule, two decimals of a percent, cut: in the s
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-07: extra production: a row's Emp ID is never ignored in favour of a person of the same name");
+{
+  // three people called Arun Agent: Tina's (PHC-A1), Leo's (PHC-B9), and one who left Tina's team (PHC-A8, switched off)
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-B9", "Arun Agent", "Leo Lead", LAKE, { email: "arun.agent2@purview-healthcare.com" }),
+    AS("PHC-A8", "Arun Agent", "Tina Lead", SUN, { email: "arun.agent3@purview-healthcare.com" })];
+  const NOV = dayList(D(11, 2), D(11, 13)).filter(isWeekday);
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-B9", "PHC-A8"], NOV), holidays: [] });
+  await F.work(F.users.find((u) => u.emp_id === "PHC-A8"), D(10, 20), 30);   // worked in October, then left
+  F.st.feed = feed.map((f) => (f.emp_id === "PHC-A8" ? { ...f, status: "Resigned", exit_date: D(10, 30) } : f)); await F.sync();
+  const TI = await F.who("Tina Lead"), LE = await F.who("Leo Lead");
+  const tina = F.users.find((u) => u.emp_id === "PHC-A1"), leo = F.users.find((u) => u.emp_id === "PHC-B9");
+  // the manager's file for both teams: 5 rows of Leo's Arun, 2 of Tina's, 3 of the one who left, 4 with an Emp ID nobody has
+  // (a typo) and 1 with no Emp ID
+  const file = F.read(F.xlsx([["Both", [["DOW", "Emp ID", "User Name"], ...rep(5, [serial(D(11, 10)), "PHC-B9", "Arun Agent"]), ...rep(2, [serial(D(11, 10)), "PHC-A1", "Arun Agent"]),
+    ...rep(3, [serial(D(11, 10)), "phc-a8 ", "arun  agent"]), ...rep(4, [serial(D(11, 11)), "PHC-ZZ9", "Arun Agent"]), [serial(D(11, 12)), "", "Arun Agent"]]]]), "Both teams.xlsx");
+  const pv = await TI("stack.extraPreview", F.body(file, { item: "both" }));
+  const line = (emp) => pv.lines.find((l) => l.emp_id === emp), out = (emp) => pv.left_out.not_found.find((n) => n.emp_id === emp);
+  ok("U-07: Tina's check: Leo's Arun (PHC-B9) is left out as not found among her people, with its Emp ID, never counted for her Arun", !line("PHC-B9") && out("PHC-B9") && out("PHC-B9").rows === 5, { lines: pv.lines.map((l) => [l.emp_id, l.person_emp, l.rows]), out: pv.left_out.not_found });
+  ok("U-07: the Emp ID of someone switched off (PHC-A8, any case and spacing) is not matched by the name either", !line("phc-a8") && out("phc-a8") && out("phc-a8").rows === 3, pv.left_out.not_found);
+  ok("U-07: her own Arun's rows (PHC-A1) count for him", line("PHC-A1") && line("PHC-A1").id === tina.id && line("PHC-A1").rows === 2, line("PHC-A1"));
+  ok("U-07: an Emp ID nobody has (a typo) falls back to the name: it counts for her Arun, and the line keeps the file's Emp ID beside his", line("PHC-ZZ9") && line("PHC-ZZ9").id === tina.id && line("PHC-ZZ9").person_emp === "PHC-A1" && line("PHC-ZZ9").rows === 4, line("PHC-ZZ9"));
+  ok("U-07: a row with no Emp ID is matched by the name, as before", line("") && line("").id === tina.id && line("").rows === 1, line(""));
+  ok("U-07: To count 7 for Tina (2 + 4 + 1), 8 left out (5 + 3)", pv.counted === 7 && pv.left_out.rows === 8, { counted: pv.counted, left: pv.left_out.rows });
+  await TI("stack.extraSave", F.body(file, { item: "both" }));
+  const lv = await LE("stack.extraPreview", F.body(file, { item: "both" }));
+  ok("U-07: Leo then loads the same file: his Arun's 5 rows (PHC-B9) count for him", lv.counted === 5 && lv.lines.length === 1 && lv.lines[0].id === leo.id && lv.lines[0].emp_id === "PHC-B9", { counted: lv.counted, lines: lv.lines.map((l) => [l.emp_id, l.person, l.rows]) });
+  await LE("stack.extraSave", F.body(file, { item: "both" }));
+  const ts = await F.ts(F.AD, D(11, 1), D(11, 16)), ex = (u) => (ts.rows.find((r) => r.id === u.id) || {}).extra;
+  ok("U-07: Team status: Tina's Arun 7 extra, Leo's Arun 5: nothing counted for the wrong person, nothing twice", ex(tina) === 7 && ex(leo) === 5, { tina: ex(tina), leo: ex(leo) });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

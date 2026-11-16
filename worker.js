@@ -4382,6 +4382,9 @@ async function extraPlan(env, user, payload) {
   const { span, act, byId: spanById, ok: countable } = await extraPeople(env, user);
   const byEmp = new Map(), byName = new Map(), put = (m, k, u) => { if (k) m.set(k, [...(m.get(k) || []), u]); };
   for (const u of act) { put(byEmp, extraKey(u.emp_id), u); put(byName, extraKey(u.name), u); }
+  // every Emp ID Brahmastra knows: one that is someone's (outside the uploader's people, or switched off) is never matched by the
+  // name instead, so another team's Arun Agent is never counted for this team's Arun Agent
+  const empKnown = new Set((await all(env, "SELECT emp_id FROM users WHERE COALESCE(emp_id, '') <> ''")).map((u) => extraKey(u.emp_id)));
   // what this OneDrive file counts now: of it, the uploader's people's counts go (outside a locked month), with the hand edits
   // on them carried over where the file still says the same; what counts for people the uploader does not see stays as it is
   const before = await all(env, `SELECT x.id, x.by_name, x.at, w.line, w.day, w.name, w.user_id, w.file_n, w.n, w.n_by, w.n_at, w.pick_by, w.pick_at
@@ -4408,9 +4411,9 @@ async function extraPlan(env, user, payload) {
       o.why = "elsewhere"; for (const d of days) { if (d > today) future += L.file.get(d); else o.days.push({ day: d, file_n: L.file.get(d), n: 0, state: "out" }); }
       continue;
     }
-    // the file's own match
+    // the file's own match: the Emp ID first; the name only when the row has no Emp ID, or one nobody in Brahmastra has
     const e = extraKey(L.emp_id); let hit = e ? byEmp.get(e) || [] : [];
-    if (!hit.length) hit = byName.get(extraKey(L.name)) || [];
+    if (!hit.length && !(e && empKnown.has(e))) hit = byName.get(extraKey(L.name)) || [];
     if (!hit.length) o.why = "none"; else if (hit.length > 1) { o.why = "same"; o.people = hit.length; } else if (isArBiller(hit[0])) o.auto = hit[0]; else { o.why = "noton"; o.other = hit[0]; }
     // who it counts for: a person picked now, else the one picked before for this name in this file (while they can still be
     // counted), else the file's own match
