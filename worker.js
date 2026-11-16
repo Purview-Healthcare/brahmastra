@@ -464,17 +464,27 @@ const odFileName = (head, client, tail) => { const whole = odClean(head + " " + 
 const odKey = (s) => odName(s).toLowerCase();
 const odClashMsg = (other) => `This name would share one OneDrive folder with ${other}: OneDrive leaves out / \\ : * ? " < > | # % and a final dot, and keeps only the first 80 characters. Change the name so the two still differ after that.`;
 /* The team lead(s) of a client: roster team leads whose projects are matched to it. Nobody matched: the lead most of its billers report to. */
-async function clientTeamLeads(env, clientId, byUserId) {
-  const c = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", clientId);
-  const names = new Set(jsonList(c && c.roster_names_json).map(projKey));
-  const leads = names.size ? (await all(env, "SELECT name, designation, projects_json FROM users WHERE active = 1 AND role IN ('supervisor','admin') AND roster_kind = 'lead'"))
-    .filter((u) => /\b(sr\.? )?tl\b|team lead/i.test(u.designation || "") && jsonList(u.projects_json).some((p) => names.has(projKey(p && p.name != null ? p.name : p))))
-    .map((u) => u.name) : [];
-  if (leads.length) return [...new Set(leads)].sort();
+async function clientTeamLeads(env, clientId, byUserId) { return (await clientTeamLeadsOf(env, [clientId])).get(clientId); }
+/* clientTeamLeads for many clients at once (Reports' folders for every client): a few queries in all, not two or three a client. */
+async function clientTeamLeadsOf(env, ids) {
+  const out = new Map(), rest = []; if (!ids.length) return out;
+  const cs = new Map((await all(env, `SELECT id, roster_names_json FROM clients WHERE id IN ${IN_LIST}`, listArg(ids))).map((c) => [c.id, c]));
+  let leads0 = null;
+  for (const id of ids) {
+    const c = cs.get(id), names = new Set(jsonList(c && c.roster_names_json).map(projKey));
+    if (names.size && !leads0) leads0 = await all(env, "SELECT name, designation, projects_json FROM users WHERE active = 1 AND role IN ('supervisor','admin') AND roster_kind = 'lead'");
+    const leads = names.size ? leads0.filter((u) => /\b(sr\.? )?tl\b|team lead/i.test(u.designation || "") && jsonList(u.projects_json).some((p) => names.has(projKey(p && p.name != null ? p.name : p))))
+      .map((u) => u.name) : [];
+    if (leads.length) out.set(id, [...new Set(leads)].sort()); else rest.push(id);
+  }
   // No roster team lead matched: the lead most of the client's billers report to, so every save (and Third Eye) picks the same folder.
-  const top = await one(env, `SELECT r.name, COUNT(*) AS n FROM claims c JOIN users u ON u.id = c.assigned_to JOIN users r ON r.id = u.reports_to
-    WHERE c.client_id = ? GROUP BY r.id ORDER BY n DESC, r.name LIMIT 1`, clientId);
-  return [top && top.name ? top.name : "No team lead"];
+  if (rest.length) {
+    const top = new Map();
+    for (const r of await all(env, `SELECT c.client_id, r.name, COUNT(*) AS n FROM claims c JOIN users u ON u.id = c.assigned_to JOIN users r ON r.id = u.reports_to
+        WHERE c.client_id IN ${IN_LIST} GROUP BY c.client_id, r.id ORDER BY c.client_id, n DESC, r.name`, listArg(rest))) if (!top.has(r.client_id)) top.set(r.client_id, r.name);
+    for (const id of rest) out.set(id, [top.get(id) || "No team lead"]);
+  }
+  return out;
 }
 function b64Bytes(b64) { const s = atob(b64); const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
 /* ---- each client's own folders ----
@@ -3526,14 +3536,15 @@ async function scopeOf(env, user, pre = null) {
 }
 /* Who may be given a client's claims: an active biller (not a team lead) whose projects include the client. A biller added by
    hand with no projects can be given any client's claims (that is how they come to see it). */
-async function billerFor(env, userId, clientId) {
-  const row = userId ? await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(userId, 60)) : null;
+async function billerFor(env, userId, clientId, pre = null) {
+  // pre: scopePre's read plus every active person's row (users), when many people are asked about at once
+  const row = userId ? (pre ? pre.users.get(str(userId, 60)) || null : await one(env, "SELECT * FROM users WHERE id = ? AND active = 1", str(userId, 60))) : null;
   if (!row) return null;
   const u = publicUser(row);
   if (u.role !== "user" || u.is_admin || userDesk(u)) return null;
   const projects = (u.projects || []).map((p) => (p && p.name != null ? p.name : p)).filter(Boolean);
   if (!projects.length && !(u.scope_projects || []).length && u.source !== "roster") return u;
-  const sc = await scopeOf(env, u);
+  const sc = await scopeOf(env, u, pre);
   // a view-only share is for looking: it never puts the client's claims on someone's list (Can edit does: README, Crossover access)
   return sc == null || (sc.includes(clientId) && !viewOnlyOf(u, clientId)) ? u : null;
 }
@@ -3542,11 +3553,11 @@ async function billerFor(env, userId, clientId) {
    projects, they are set on it, or it is shared with them to edit (a view-only share is not enough). deskTeam reads everyone on
    a desk once; onDeskFor answers for one hand-off. The Posting & submission tab offers exactly this list. */
 async function deskTeam(env) {
-  const out = [];
+  const out = [], pre = await scopePre(env);
   for (const row of await all(env, "SELECT * FROM users WHERE active = 1 ORDER BY name")) {
     const u = publicUser(row), desk = userDesk(u);
     if (!desk || u.is_admin) continue;
-    const scope = await scopeOf(env, u);
+    const scope = await scopeOf(env, u, pre);
     out.push({ id: u.id, name: u.name, desk, scope, view: u.scope_view_only || new Set() });
   }
   return out;
@@ -8648,8 +8659,8 @@ const OPS = {
   /* Each client's team lead(s), by client name, for the Brahmastra Reports folders Third Eye and Drishti save to. */
   "reports.clientLeads": async ({ env, user }) => {
     const clients = await all(env, `SELECT id, name FROM clients WHERE active = 1${scopeSql(user, "id")} ORDER BY name`, ...scopeArgs(user));
-    const leads = {};
-    for (const c of clients) leads[c.name] = await clientTeamLeads(env, c.id, null);
+    const leads = {}, of = await clientTeamLeadsOf(env, clients.map((c) => c.id));
+    for (const c of clients) leads[c.name] = of.get(c.id);
     return { root: REPORTS_ROOT, leads };
   },
   /* The AR Inventory report, written straight into the client's SLA & KPI folder in the Purviewautomate OneDrive (under each
@@ -9859,8 +9870,9 @@ const OPS = {
     const c = await one(env, "SELECT id, client_id FROM claims WHERE id = ?", str(payload.id, 60));
     if (!c) throw bad("Claim not found.");
     if (!inScope(user, c.client_id)) throw outOfScope();
-    const out = [];
-    for (const p of await reviewPeople(env, user)) if (await billerFor(env, p.id, c.client_id)) out.push(p);
+    // the clients, the shares and the people read once for everyone asked about (three queries, not three a person)
+    const out = [], pre = { ...(await scopePre(env)), users: new Map((await all(env, "SELECT * FROM users WHERE active = 1")).map((r) => [r.id, r])) };
+    for (const p of await reviewPeople(env, user)) if (await billerFor(env, p.id, c.client_id, pre)) out.push(p);
     return { people: out };
   },
   /* Resubmitted claims waiting on the recheck (accepted or rejected again?), for the biller who worked them, with the TAT. */
