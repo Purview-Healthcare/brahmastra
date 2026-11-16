@@ -8818,7 +8818,8 @@ const OPS = {
         if (h.dept === "submission") for (const [k, n] of [["inv_status", 80], ["bucket", 60], ["claim_type", 60], ["type", 60]]) { const v = txt(p[k], n); if (v) proof[k] = v; }
       }
       // Names of the proof files attached to the claim with this step (optional), so the history shows what backs it.
-      const files = (Array.isArray(p.files) ? p.files : []).slice(0, 10).map((f) => str(f, 200).trim()).filter(Boolean);
+      // each name as attachments.add keeps it (a long one shortened before its ending), so the list names the files on the claim
+      const files = (Array.isArray(p.files) ? p.files : []).slice(0, 10).map((f) => keepEnding(String(f == null || typeof f === "object" ? "" : f), 200).replace(/[\\/\u0000-\u001f]/g, "_").trim()).filter(Boolean);
       if (files.length) proof.files = files;
       // Rejections: what was wrong, for the rejection reports.
       if (h.dept === "rejection") { proof.code = str(p.code, 80).trim(); if (!REJECT_CODES.includes(proof.code)) throw bad("Pick what was wrong with the claim (the rejection code)."); }

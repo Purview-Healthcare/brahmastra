@@ -412,6 +412,19 @@ S("W-09: the Rejections tab writes its dates as Excel dates in mm/dd/yyyy, as th
   } finally { rig.liveEnv.DEMO = true; }
 }
 
+S("W-15: a long proof file name keeps its .pdf in the hand-off's list, as on the claim");
+{
+  const [c] = await q("SELECT id FROM claims WHERE client_id = ? AND state = 'open' AND assigned_to IS NULL ORDER BY id LIMIT 1", sun.id);
+  await give([c.id], "Arun Agent"); await AR("queue.open", { id: c.id }); await AR("queue.complete", { id: c.id, ...SUBMIT, desk: true });
+  const h = await q1("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'submission'", c.id);
+  const name = "Clearinghouse acceptance report for the corrected claim batch of November " + "with every line item listed ".repeat(6) + "final.pdf";
+  const a = await R["Sam Sub"]("attachments.add", { claim_id: c.id, name, type: "application/pdf", data: Buffer.from("%PDF-1.4 made-up").toString("base64") });
+  await R["Sam Sub"]("handoffs.close", { id: h.id, outcome: "complete", seen: "pending", proof: { date: todayIST(), ref: "BATCH-1", files: [name, "short.pdf"] } });
+  const proof = JSON.parse((await q1("SELECT proof_json FROM handoffs WHERE id = ?", h.id)).proof_json);
+  ok("W-15: the 251-character name is listed exactly as attached (200 characters, ends .pdf)", proof.files[0] === a.attachment.name && proof.files[0].length === 200 && /\.pdf$/.test(proof.files[0]), [proof.files[0].length, proof.files[0].slice(-12), a.attachment.name.slice(-12)]);
+  ok("W-15: a short name is listed as it is", proof.files[1] === "short.pdf");
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
