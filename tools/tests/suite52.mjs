@@ -393,6 +393,25 @@ S("EP-1: one impossible date does not decide a date column's order");
   ok("EP-1: so 05/06/2026 in that column is 6 May, and 31/31/2026 is no date", read("05/06/2026") === "2026-05-06" && read("31/31/2026") === "", [read("05/06/2026"), read("31/31/2026")]);
 }
 
+S("W-09: the Rejections tab writes its dates as Excel dates in mm/dd/yyyy, as the other desks do");
+{
+  rig.liveEnv.DEMO = false;
+  try {
+    const [c] = await q("SELECT id FROM claims WHERE client_id = ? AND state = 'open' AND assigned_to IS NULL AND dos <> '' ORDER BY id LIMIT 1", sun.id);
+    await give([c.id], "Arun Agent"); await AR("queue.open", { id: c.id }); await AR("queue.complete", { id: c.id, ...REJECTED, desk: true });
+    const h = await q1("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'rejection'", c.id);
+    await R["Rex Rej"]("handoffs.close", { id: h.id, outcome: "complete", seen: "pending", proof: { date: todayIST(), ref: "BATCH-2", code: "Coordination of benefits" } });
+    await new Promise((r) => setTimeout(r, 400));
+    const pathOf = (id) => { const p = []; let it = OD.items.get(id); while (it) { p.unshift(it.name); it = OD.items.get(it.parent); } return p.join("/"); };
+    const it = [...OD.items.values()].find((i) => i.kind === "file" && pathOf(i.id).includes("/Production/Rejections/"));
+    const sh = it && OD.books.get(it.id).sheets.find((x) => x.name === "Rejections");
+    const hdr = sh ? sh.rows[0] : [], row = sh ? sh.rows[sh.rows.length - 1] : [], fm = (sh && sh.fmts && sh.fmts[sh.rows.length - 1]) || [];
+    const dateOk = (n) => { const i = hdr.indexOf(n); return typeof row[i] === "number" && fm[i] === "mm/dd/yyyy"; };
+    ok("W-09: Date, DOS, Proof date and Sent at are Excel dates shown as mm/dd/yyyy", sh && ["Date", "DOS", "Proof date", "Sent at"].every(dateOk), sh ? ["Date", "DOS", "Proof date", "Sent at"].map((n) => [n, row[hdr.indexOf(n)], fm[hdr.indexOf(n)]]) : "no Rejections tab");
+    ok("W-09: Balance is money (#,##0.00)", sh && fm[hdr.indexOf("Balance")] === "#,##0.00" && typeof row[hdr.indexOf("Balance")] === "number");
+  } finally { rig.liveEnv.DEMO = true; }
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

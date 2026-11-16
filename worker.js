@@ -549,6 +549,8 @@ function postingRow(h, user, proof, action, now, comment) {
 }
 const AR_FMT = fmtFor(WORKBOOK_HEADER, ["DOS", "Date Worked"], ["Billed Amount($)", "Balance Amount($)"]);
 const SUB_FMT = fmtFor(SUB_HEADER, ["Date", "Allocation Date", "DOW"], ["Balance", "VEC Patient Balance"]);
+// Rejections (the desks' own layout): its dates as Excel dates in mm/dd/yyyy and its amounts as money, as the other two desks
+const DESK_FMT = fmtFor(DESK_HEADER, ["Date", "DOS", "Proof date", "Sent at"], ["Balance", "Amount"]);
 const POST_FMT = fmtFor(POST_HEADER, ["Date", "Check / EFT date", "Posted date", "Allocation Date", "DOW"],
   ["Billed", "Balance", "Allowed", "Paid", "Adjustment", "Deductible", "Co-insurance", "Co-pay", "Patient responsibility", "Write-off", "Balance after posting"]);
 /* A desk's row goes to its own tab (Payment posting, Submission, Rejections) under that tab's header. A new month's file starts from
@@ -667,12 +669,12 @@ async function deskProduction(env, user, handoffId, outcome = "") {
   const header = scope === "submission" ? SUB_HEADER : scope === "posting" ? POST_HEADER : DESK_HEADER;
   const row = scope === "submission" ? submissionRow(h, user, proof, action, now, comment) : scope === "posting" ? postingRow(h, user, proof, action, now, comment)
     : [SR_NO, excelSerial(istISO(now)), DEPT_LABEL[h.dept] || h.dept, user.name || "", h.client_name || "", h.location_name || "", h.claim_no || "", h.account_no || "", h.patient || "", h.payer || "",
-    h.dos || "", Number(h.balance) || 0, action, proof.date || "", proof.ref || proof.code || "", proof.amount == null ? "" : Number(proof.amount), h.reason || "", h.note || "", h.created_by_name || "",
+    dateCell(h.dos), Number(h.balance) || 0, action, proof.date ? dateCell(proof.date) : "", proof.ref || proof.code || "", proof.amount == null ? "" : Number(proof.amount), h.reason || "", h.note || "", h.created_by_name || "",
     h.created_at ? excelSerial(istISO(h.created_at)) : "", h.due_at ? (now <= h.due_at ? "Yes" : "No") : ""];
   try {
     const tok = await graphAppToken(env);
     const loc = await clientProductionFile(env, tok, h.client_id, now, scope);
-    await appendDeskRow(tok, loc, row, header, DESK_SHEET[scope] || SCOPE_FOLDER[scope], scope === "submission" ? SUB_FMT : scope === "posting" ? POST_FMT : null);
+    await appendDeskRow(tok, loc, row, header, DESK_SHEET[scope] || SCOPE_FOLDER[scope], scope === "submission" ? SUB_FMT : scope === "posting" ? POST_FMT : DESK_FMT);
     await recordWorkbookStatus(env, h.client_id + ":" + scope, { ok: true, at: now, file: loc.path, claim_no: h.claim_no });
   } catch (e) {
     const msg = String(e && e.message || e).slice(0, 300);
