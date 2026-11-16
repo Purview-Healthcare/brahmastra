@@ -288,6 +288,27 @@ S("U-01: someone who changes team lead between two locks of one month has exactl
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-14: the month list says locked for a viewer only when everyone they see on the month is locked");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-B1", "Bela Agent", "Leo Lead", LAKE), AS("PHC-C1", "Zed Agent", "Lila Lead", HARBOR),
+    AS("PHC-A9", "Jo Joiner", "Tina Lead", SUN, { doj: D(11, 3) })];
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-B1", "PHC-C1"]) });
+  const MO = await F.who("Mona Manager"), MK = await F.who("Mark Manager"), LI = await F.who("Lila Lead"), TI = await F.who("Tina Lead");
+  for (const n of ["Arun Agent", "Bela Agent", "Zed Agent"]) await F.work(n, D(10, 5), 200);
+  const oct = (d) => d.months.find((m) => m.month === "2026-10");
+  await MO("stack.lock", { month: "2026-10" });   // Mona locks her teams; Mark's is still a draft
+  let mk = await F.month(MK, "2026-10"), li = await F.month(LI, "2026-10"), mo = await F.month(MO, "2026-10"), ti = await F.month(TI, "2026-10"), ad = await F.month(F.AD, "2026-10");
+  ok("U-14: Mark's month list does not say October is locked: none of his team is (his page offers Lock October)", !oct(mk).locked && !oct(mk).partly && mk.can_lock, oct(mk));
+  ok("U-14: nor Lila's (his team lead)", !oct(li).locked && !oct(li).partly, oct(li));
+  ok("U-14: Mona's and Tina's say locked (a joiner of November is not on October)", oct(mo).locked && oct(ti).locked, [oct(mo), oct(ti)]);
+  ok("U-14: the admin's says partly locked", !oct(ad).locked && oct(ad).partly, oct(ad));
+  ok("U-14: November is not locked for anyone", [mk, mo, ad].every((d) => { const n = d.months.find((m) => m.month === "2026-11"); return !n.locked && !n.partly; }));
+  await MK("stack.lock", { month: "2026-10" });
+  mk = await F.month(MK, "2026-10");
+  ok("U-14: once Mark locks, his list says locked too", oct(mk).locked, oct(mk));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

@@ -5494,8 +5494,16 @@ const OPS = {
       month = mine.length && mine.every((u) => locked.has(u.id)) ? cur : prev;
     }
     const v = await stackView(env, user, span, month, today);
-    const lockedMonths = new Map((await all(env, "SELECT month, COUNT(*) AS n FROM stack_locks GROUP BY month")).map((x) => [x.month, x.n]));
-    v.months = Array.from({ length: 13 }, (_, i) => stackMonthAdd(cur, -i)).map((m) => ({ month: m, label: stackMonthLabel(m), locked: lockedMonths.get(m) || 0 }));
+    // the month list, for this viewer: "locked" when everyone they see on the month is locked (in a snapshot of it), "partly
+    // locked" when some are; another span's lock says nothing here
+    const lockedOf = new Map();
+    for (const x of await all(env, "SELECT s.month, json_extract(r.value, '$.id') AS id FROM stack_locks s, json_each(s.rows_json, '$.rows') r WHERE s.month >= ?", stackMonthAdd(cur, -12))) {
+      if (!lockedOf.has(x.month)) lockedOf.set(x.month, new Set()); lockedOf.get(x.month).add(x.id); }
+    const seenNow = (await all(env, "SELECT id, doj FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id));
+    v.months = Array.from({ length: 13 }, (_, i) => stackMonthAdd(cur, -i)).map((m) => {
+      const L = lockedOf.get(m), end = stackMonthEnd(m), on = seenNow.filter((u) => !(isoDate(u.doj) && u.doj > end)), n = L ? on.filter((u) => L.has(u.id)).length : 0;
+      return { month: m, label: stackMonthLabel(m), locked: n > 0 && n === on.length, partly: n > 0 && n < on.length };
+    });
     // extra production: the files counted for the month (team leads and above, not desk people, who alone see the files)
     if (mayExtra(user)) v.extra = { can_upload: true, files: await extraFiles(env, user, span, v.month), max_rows: EXTRA_MAX_ROWS };
     else { v.extra = null; for (const r of v.rows) r.extra_files = []; }

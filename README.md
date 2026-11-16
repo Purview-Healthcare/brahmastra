@@ -450,7 +450,8 @@ stacks, type the ticks (never their own) and the attrition Brahmastra cannot tel
 everything and alone can unlock. A value Brahmastra works out is never typed over. **Yellow dashed** cells are typed:
 click one to type it; its title says who typed it and when.
 
-**The page**: Month, Team lead and Client; a chip with **Draft** and what is left to enter, or **Locked by** whom and
+**The page**: Month (the list marks a month *locked* when everyone the viewer sees on it is locked, *partly locked* when
+some are), Team lead and Client; a chip with **Draft** and what is left to enter, or **Locked by** whom and
 when; **How it is worked out** (every band above in plain words); **Download Excel**; **Lock**. Below, the people
 listed, the floor average, how many are at each Stack and what is still to enter. Click a person (or a team lead) for
 how it was worked out: each parameter, what Brahmastra found, the band that applied, the score and where it came

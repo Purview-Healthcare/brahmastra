@@ -2460,7 +2460,7 @@ function StackReportTab({ me, params }) {
         <div className="stk-l">
           {showTl && <div className="seg2" role="tablist" aria-label="Which stack">{[["assoc", "Associate stack"], ["tl", "Team lead stack"]].map(([k, l]) =>
             <button key={k} type="button" role="tab" aria-selected={(isTl ? "tl" : "assoc") === k} className={(isTl ? "tl" : "assoc") === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>)}</div>}
-          <div className="stk-f"><Field label="Month"><Combo value={d.month} clearable={false} onChange={(v) => v && setMonth(v)} options={d.months.map((m) => ({ id: m.month, label: m.label, sub: m.locked ? "locked" : "" }))} /></Field></div>
+          <div className="stk-f"><Field label="Month"><Combo value={d.month} clearable={false} onChange={(v) => v && setMonth(v)} options={d.months.map((m) => ({ id: m.month, label: m.label, sub: m.locked ? "locked" : m.partly ? "partly locked" : "" }))} /></Field></div>
           {leads.length > 1 && <div className="stk-f"><Field label="Team lead"><Combo value={leadF} onChange={setLeadF} placeholder="All team leads" options={leads.map(([id, n]) => ({ id, label: n }))} /></Field></div>}
           {clients.length > 1 && <div className="stk-f"><Field label="Client"><Combo value={clientF} onChange={setClientF} placeholder="All clients" options={clients.map((c) => ({ id: c, label: c }))} /></Field></div>}
         </div>
