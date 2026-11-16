@@ -1477,8 +1477,10 @@ async function clientWfm(env, clientIds) {
   // a project matched to more than one active client is shared out evenly between them, so it is not counted twice
   const users = new Map();
   for (const c of await all(env, "SELECT id, roster_names_json FROM clients WHERE active = 1")) for (const k of new Set(jsonList(c.roster_names_json).map(projKey))) users.set(k, (users.get(k) || 0) + 1);
+  // the asked clients' own rows in one read (one query a client added up past D1's 1,000 in the Monday digest)
+  const rows = clientIds.length ? new Map((await all(env, `SELECT id, roster_names_json FROM clients WHERE id IN ${IN_LIST}`, listArg(clientIds))).map((c) => [c.id, c])) : new Map();
   for (const id of clientIds) {
-    const c = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", id);
+    const c = rows.get(id);
     const keys = [...new Set(jsonList(c && c.roster_names_json).map(projKey))].filter((k) => byKey.has(k));
     if (!keys.length) continue;
     const ps = keys.map((k) => ({ x: byKey.get(k), share: 1 / Math.max(1, users.get(k) || 1) }));
@@ -1491,10 +1493,11 @@ async function clientWfm(env, clientIds) {
   return out;
 }
 const fteTxt = (v) => (v == null ? "–" : String(Math.round(v * 10) / 10));
-/* A client's escalations received in a period, for the SLA (threshold 0). */
-async function escSummary(env, clientId, from, to, now = Date.now()) {
+/* A client's escalations received in a period, for the SLA (threshold 0). rows: the same rows, when the caller read them already
+   (the digest reads every client's at once). */
+async function escSummary(env, clientId, from, to, now = Date.now(), rows = null) {
   // External (the client's own escalations: its SLA KPI, target 0) and Internal, counted side by side
-  const every = await all(env, "SELECT * FROM escalations WHERE client_id = ? AND day >= ? AND day <= ? ORDER BY day DESC, sr DESC", clientId, from, to);
+  const every = rows || await all(env, "SELECT * FROM escalations WHERE client_id = ? AND day >= ? AND day <= ? ORDER BY day DESC, sr DESC", clientId, from, to);
   const part = (xs) => {
     const open = xs.filter((e) => e.status !== "resolved"), closed = xs.filter((e) => e.status === "resolved" && e.resolved_at);
     const by = new Map(); xs.forEach((e) => by.set(e.dept, (by.get(e.dept) || 0) + 1));
@@ -1808,6 +1811,46 @@ async function drTickMonthEnd(env, summaries) {
       WHERE client_monthend.auto = 1 AND (client_monthend.score IS NULL OR client_monthend.score <> excluded.score)`).bind(cid, month, now, "Drishti", d.score, "from Drishti's scorecard"));
   }
   if (stmts.length) await batchAll(env, stmts, 50);
+}
+/* One client's SLA scorecard (the SLA scorecard page; the Monday digest's card for each client) from a read of Drishti (ov):
+   the period picked (the latest month unless asked), every KPI and SLA line, the scopes, what pulls it down and the trend.
+   tick: the month-end "SLA scored" step ticks itself from the score (the digest ticked every client's already). */
+async function slaCard(env, ov, client, payload, tick = true) {
+  const today = isoDate(payload.today) || istISO(Date.now());
+  if (ov.state !== "ok") return { state: ov.state, error: ov.error || "", failed_at: ov.failed_at || null, retry_at: ov.retry_at || null, client: { id: client.id, name: client.name }, drishti: null };
+  const { d, ambiguous } = drMatch(ov, client.name);
+  if (!d) return { state: "unmatched", client: { id: client.id, name: client.name }, drishti: null, others: ov.clients.map((c) => c.name).slice(0, 50) };
+  const done = d.periods.filter((p) => !p.range.to || p.range.to < today);
+  const kind = ["month", "week", "latest", "custom", "day"].includes(payload.kind) ? payload.kind : "month";
+  // a kind the client has no period of: the latest period of any kind, said so (fallback), never shown as if it were that kind
+  let list = kind === "latest" ? done : done.filter((p) => p.kind === kind); const fallback = !list.length && done.length ? kind : ""; if (!list.length) list = done;
+  // step by the period's id (two periods can end on the same day); the end date still works for old links
+  const pid = str(payload.period_id, 120), want = isoDate(payload.to);
+  const cur = (pid && list.find((p) => String(p.id) === pid)) || (want && list.find((p) => p.range.to === want)) || list[0];
+  if (!cur) return { state: "no_period", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner }, periods: [] };
+  // a period Drishti scored twice (the same dates) counts once: the newer one, or the one picked
+  const sameAll = done.filter((p) => p.kind === cur.kind), dupOf = (p) => sameAll.find((q) => q !== p && q.range.from === p.range.from && q.range.to === p.range.to && (q === cur || (p !== cur && String(q.createdAt || "") > String(p.createdAt || ""))));
+  const same = sameAll.filter((p) => !dupOf(p)), prev = same.find((p) => p !== cur && p.range.to < cur.range.from) || null;
+  const sc = drScore(d, cur, prev);
+  // each KPI's last month and its last 6 periods, for the change arrow and the KPI's own trend
+  const hist = same.filter((p) => p.range.to <= cur.range.to).slice(0, 6).reverse().map((p) => ({ p, s: p === cur ? sc : drScore(d, p, null) }));
+  const prevItems = prev ? new Map(drScore(d, prev, null).items.map((i) => [i.scope_key + "." + i.key, i])) : new Map();
+  for (const it of sc.items) {
+    const k = it.scope_key + "." + it.key, pv = prevItems.get(k);
+    it.prev = pv ? { value: pv.value, shown: pv.shown, status: pv.status } : null;
+    it.history = hist.map(({ p, s }) => { const x = s.items.find((i) => i.scope_key + "." + i.key === k); return { label: p.label, to: p.range.to, value: x ? x.value : null, shown: x ? x.shown : "", status: x ? x.status : null }; });
+  }
+  const trend = same.filter((p) => p.range.to <= cur.range.to).slice(0, 6).reverse().map((p) => ({ id: p.id, label: p.label, to: p.range.to, pct: drScore(d, p, null).pct }));
+  const sources = []; for (const it of sc.items) { const k = it.source; const x = sources.find((y) => y.from === k); if (x) x.metrics.push(it.name); else sources.push({ from: k, metrics: [it.name] }); }
+  const sums = tick ? drSummary(ov, [client], today) : new Map(); if (sums.size) await drTickMonthEnd(env, sums);
+  return { state: "ok", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner }, ambiguous, fallback,
+    periods: done.map((p) => ({ id: p.id, kind: p.kind, label: p.label, from: p.range.from, to: p.range.to })), kind: cur.kind,
+    period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to, created_at: cur.createdAt, created_by: cur.createdBy, reports: cur.reports },
+    prev: prev ? { id: prev.id, label: prev.label, from: prev.range.from, to: prev.range.to, pct: drScore(d, prev, null).pct } : null,
+    score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts, scored: sc.scored, kpi_pct: sc.kpi_pct, sla_pct: sc.sla_pct,
+    scopes: sc.scopes.map((x) => ({ key: x.key, name: x.name, short: x.short, ok: x.ok, warn: x.warn, miss: x.miss, scored: x.scored, pct: x.pct, band: x.band, missing: x.missing || [], items: x.items.map((i) => ({ name: i.name, shown: i.shown, status: i.status })) })),
+    // stale: Drishti has not answered since the read these figures come from (at); the page says so
+    items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at, stale: !!ov.stale, failed_at: ov.failed_at || null, retry_at: ov.retry_at || null };
 }
 /* One SLA score per client and month, the same on every page: Drishti's score for a month Drishti has scored (what the scorecard,
    the Portfolio's SLA column and the Monday digest show), and the score typed at month-end only for a month Drishti has not
@@ -2846,11 +2889,11 @@ function digestWeek(now) {
 }
 async function digestPeople(env) {
   const rows = await all(env, "SELECT * FROM users WHERE active = 1 AND role IN ('supervisor', 'admin')");
-  const out = [];
+  const out = [], pre = await scopePre(env);
   for (const r of rows) {
     const u = publicUser(r);
     if (!u.email || u.email_missing || !/@/.test(u.email)) continue;
-    u.scope = await scopeOf(env, u);
+    u.scope = await scopeOf(env, u, pre);
     out.push(u);
   }
   return out;
@@ -2879,30 +2922,94 @@ async function digestSpans(env, people) {
 /* A team lead sees only their own clients of a manager's digest; the manager, the admin and people with every client see it all. */
 const spanFor = (user, s) => (user.is_admin || user.access_all || (s.manager && s.manager.id === user.id)) ? s : { ...s, clients: s.clients.filter((c) => onClient(user, c.id)) };
 const spanVisible = (user, s) => user.is_admin || user.access_all || (s.manager && s.manager.id === user.id) || s.recipients.some((u) => u.id === user.id);
-async function digestData(env, clientId, wk) {
-  const today = istISO(wk.to);
-  const o = await OPS["client.overview"]({ env, user: DIGEST_SYSTEM, payload: { client_id: clientId, from_ms: wk.from, to_ms: wk.to, today, tz_offset_min: IST_MIN } });
+/* Each client's figures for the digest: Client 360's (client.overview: health and its reasons, AR, collected, entries, SLA,
+   month-end, missed tasks, requests waiting on the client, timely filing) and the week's own (AR a week before and at the
+   week's end, entries the week before, who worked, claims flagged). Read for all the clients of a span at once, each query
+   grouped by client, so a span costs the same few queries however many clients it has: one client at a time it was about 35
+   queries a client, and D1 allows 1,000 in one run of the Worker. ov: the one read of Drishti it used. */
+async function digestData(env, ids, wk) {
+  if (!ids.length) return { ds: [], ov: null };
+  const today = istISO(wk.to), from = wk.from, to = wk.to, span = Math.max(86400000, to - from), IN = IN_LIST, L = listArg(ids);
+  const byClient = (rows) => new Map(rows.map((r) => [r.client_id, r]));
+  const cs = new Map((await all(env, `SELECT * FROM clients WHERE id IN ${IN}`, L)).map((c) => [c.id, c]));
+  if (ids.some((id) => !cs.has(id))) throw bad("Unknown client.");
+  await snapshotIfStale(env);
+  const now = Date.now();
+  const ageSql = "CASE WHEN dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(julianday(?) - julianday(substr(dos, 1, 10)), age_days) ELSE age_days END";
+  // over 90 and over 120 are of the money owed: credit balances are left out (the Dashboard's rule), as on Client 360
+  const ar = byClient(await all(env, `SELECT client_id, COALESCE(SUM(balance), 0) AS bal, COUNT(*) AS n, SUM(CASE WHEN age > 90 AND balance > 0 THEN 1 ELSE 0 END) AS o90n,
+      COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS balp, COALESCE(SUM(CASE WHEN age > 90 AND balance > 0 THEN balance ELSE 0 END), 0) AS o90p,
+      COALESCE(SUM(CASE WHEN age > 120 AND balance > 0 THEN balance ELSE 0 END), 0) AS o120 FROM (SELECT client_id, balance, ${ageSql} AS age FROM claims WHERE client_id IN ${IN} AND state IN ${WORKABLE}) GROUP BY client_id`, today, L));
+  const paid = async (a, b) => byClient(await all(env, `SELECT client_id, COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt, COUNT(*) AS n FROM handoffs
+    WHERE client_id IN ${IN} AND dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ? GROUP BY client_id`, L, a, b));
+  const coll = await paid(from, to), collPrev = await paid(from - span, from);
+  // requests waiting on the client: Client 360 lists the oldest 100 of each client
+  const waiting = new Map(ids.map((id) => [id, []]));
+  for (const w of await all(env, `SELECT client_id, paused_at, client_sent_at, balance FROM (SELECT h.client_id, h.paused_at, h.client_sent_at, c.balance,
+      ROW_NUMBER() OVER (PARTITION BY h.client_id ORDER BY h.paused_at ASC) AS rn FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id IN ${IN} AND h.status = 'client')
+      WHERE rn <= 100 ORDER BY client_id, rn`, L)) waiting.get(w.client_id).push(w);
+  // each claim once per reason: a claim denied twice in the dates is one claim and its balance once; the top 6 reasons a client
+  const reasons = new Map(ids.map((id) => [id, []]));
+  for (const r of await all(env, `SELECT client_id, reason, COUNT(*) AS n, COALESCE(SUM(bal), 0) AS bal FROM (SELECT c.client_id, COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, n.claim_id, MAX(c.balance) AS bal
+      FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id IN ${IN} AND n.kind = 'work' AND n.created_at BETWEEN ? AND ? AND COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Denied', 'Claim Rejected')
+      GROUP BY c.client_id, reason, n.claim_id) GROUP BY client_id, reason ORDER BY client_id, bal DESC`, L, from, to)) { const xs = reasons.get(r.client_id); if (xs.length < 6) xs.push({ reason: r.reason, n: r.n, bal: r.bal }); }
+  const lim = (await OPS["payers.limits"]({ env, user: DIGEST_SYSTEM, payload: { today } })).rows;
+  const esc = await trackerEsc(env);
+  const missed = await missedByClient(env, { from_ms: from, to_ms: to, today, tz_offset_min: IST_MIN });
+  const worked = byClient(await all(env, `SELECT c.client_id, COUNT(*) AS n, COUNT(DISTINCT n.user_id) AS people FROM notes n JOIN claims c ON c.id = n.claim_id
+    WHERE c.client_id IN ${IN} AND n.kind = 'work' AND n.created_at BETWEEN ? AND ? GROUP BY c.client_id`, L, from, to));
+  // the month still being closed for each client (closingMonthOf): last month while any of its steps is not done, else this month
+  const cur = today.slice(0, 7), last = prevMonthISO(cur), keys = MONTHEND_STEPS.map(([k]) => k);
+  const lastDone = byClient(await all(env, `SELECT client_id, COUNT(*) AS n FROM client_monthend WHERE client_id IN ${IN} AND month = ? AND done_at IS NOT NULL AND step IN (${keys.map(() => "?").join(",")}) GROUP BY client_id`, L, last, ...keys));
+  const month = new Map(ids.map((id) => [id, addedThisMonth(cs.get(id).created_at, today) || (lastDone.get(id) || { n: 0 }).n >= keys.length ? cur : last]));
+  // the SLA: Drishti's score for a month it has scored, the one typed at month-end otherwise; the month-end step ticks itself from Drishti
+  const clients = ids.map((id) => cs.get(id));
+  const ov = await drishtiOverview(env), drs = ov.state === "ok" ? drSummary(ov, clients, today) : new Map();
+  if (drs.size) await drTickMonthEnd(env, drs);
+  const slaAll = await slaScores(env, clients, today, ov);
+  const me = await all(env, `SELECT * FROM client_monthend WHERE client_id IN ${IN} AND month IN (?, ?)`, L, cur, last);
+  const locs = new Map(ids.map((id) => [id, []]));
+  for (const l of await all(env, `SELECT client_id, name FROM locations WHERE client_id IN ${IN} AND active = 1 ORDER BY name`, L)) locs.get(l.client_id).push(l.name);
   // a week before: AR at the end of the Sunday before the digest week (so the week's own Monday counts in the change)
-  const weekAgo = await one(env, "SELECT ar_balance, over90_balance FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.from - 1));
+  const snapAt = async (day) => byClient(await all(env, `SELECT s.client_id, s.day, s.ar_balance, s.over90_balance, s.ar_owed, s.over90_owed FROM client_snapshots s
+    WHERE s.client_id IN ${IN} AND s.day = (SELECT MAX(day) FROM client_snapshots WHERE client_id = s.client_id AND day <= ?)`, L, day));
+  const weekAgo = await snapAt(istISO(wk.from - 1));
   // AR as it stood at the week's end (the reading of its Sunday, which the hourly job keeps), whenever the digest is sent or
   // opened, this week's too: so a week reads the same on its Monday and later, and the next week's change starts from it.
   // Live AR only for a client with no reading by then.
-  const endSnap = await one(env, "SELECT day, ar_balance, over90_balance, ar_owed, over90_owed FROM client_snapshots WHERE client_id = ? AND day <= ? ORDER BY day DESC LIMIT 1", clientId, istISO(wk.to - 1));
-  const prevWorked = await one(env, "SELECT COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id = ? AND n.kind = 'work' AND n.created_at BETWEEN ? AND ?", clientId, wk.from - 7 * 86400000, wk.from);
-  const people = await all(env, `SELECT n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
-    WHERE c.client_id = ? AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY n.user_id ORDER BY work DESC LIMIT 12`, clientId, wk.from, wk.to);
-  const esc = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE client_id = ? AND escalated_at BETWEEN ? AND ?", clientId, wk.from, wk.to);
-  return {
-    client: o.client, health: o.health, reasons: o.reasons,
-    // that week's money owed (credits left out); a reading kept before the money owed was kept falls back to the net figures
-    ar: endSnap ? (() => { const owed = endSnap.ar_owed != null ? endSnap.ar_owed : endSnap.ar_balance, o90 = endSnap.over90_owed != null ? endSnap.over90_owed : endSnap.over90_balance;
-        return { now: endSnap.ar_balance, over90: o90, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: owed ? Math.round(o90 / owed * 1000) / 10 : 0, target: o.ar.target, owed, over90_owed: o90, as_of: endSnap.day }; })()
-      : { now: o.ar.balance, over90: o.ar.over90, week_ago: weekAgo ? weekAgo.ar_balance : null, over90_pct: o.ar.over90_pct, target: o.ar.target, owed: o.ar.owed || 0, over90_owed: o.ar.over90_owed || 0 },
-    collected: o.collected, worked: { n: o.worked.entries, people: o.worked.people, prev: (prevWorked && prevWorked.n) || 0 }, team: people,
-    sla: o.sla, escalations: { open: o.escalations.open, late: o.escalations.late, raised: (esc && esc.n) || 0 }, missed: o.missed,
-    waiting: { n: o.waiting.rows.length, balance: o.waiting.balance, oldest: o.waiting.oldest }, tfl: o.tfl, denials: o.reasons_top,
-    monthend: { month: o.monthend.month, done: o.monthend.done, total: o.monthend.steps.length, late: o.monthend.steps.filter((s) => !s.done && s.due < today).map((s) => s.label) },
-  };
+  const endSnaps = await snapAt(istISO(wk.to - 1));
+  const prevWorked = byClient(await all(env, `SELECT c.client_id, COUNT(*) AS n FROM notes n JOIN claims c ON c.id = n.claim_id WHERE c.client_id IN ${IN} AND n.kind = 'work' AND n.created_at BETWEEN ? AND ? GROUP BY c.client_id`, L, from - 7 * 86400000, from));
+  // who worked how much: the top 12 of each client
+  const team = new Map(ids.map((id) => [id, []]));
+  for (const p of await all(env, `SELECT c.client_id, n.user_name AS name, SUM(n.kind = 'work') AS work, SUM(n.kind = 'skip') AS skips FROM notes n JOIN claims c ON c.id = n.claim_id
+      WHERE c.client_id IN ${IN} AND n.kind IN ('work', 'skip') AND n.created_at BETWEEN ? AND ? GROUP BY c.client_id, n.user_id ORDER BY c.client_id, work DESC`, L, from, to)) { const xs = team.get(p.client_id); if (xs.length < 12) xs.push({ name: p.name, work: p.work, skips: p.skips }); }
+  const raised = byClient(await all(env, `SELECT client_id, COUNT(*) AS n FROM claims WHERE client_id IN ${IN} AND escalated_at BETWEEN ? AND ? GROUP BY client_id`, L, from, to));
+  const ds = ids.map((id) => {
+    const c = cs.get(id), a = ar.get(id) || { bal: 0, n: 0, o90n: null, balp: 0, o90p: 0, o120: 0 }, ws = waiting.get(id), e = esc.get(id) || { n: 0, late: 0 };
+    const m = missed.get(id) || { ar: 0, posting: 0, submission: 0 }, mon = month.get(id), sla = slaAll.get(id), slaRow = sla.latest, slaPrev = sla.prev;
+    const tfl = lim.filter((r) => r.client_id === id).reduce((t, r) => ({ soon_bal: t.soon_bal + r.soon_bal, soon_n: t.soon_n + r.soon_n, past_bal: t.past_bal + r.past_bal, past_n: t.past_n + r.past_n }), { soon_bal: 0, soon_n: 0, past_bal: 0, past_n: 0 });
+    const done = new Map(me.filter((r) => r.client_id === id && r.month === mon).map((r) => [r.step, r]));
+    // the SLA step shows the score in use (Client 360's month-end steps)
+    const steps = MONTHEND_STEPS.map(([key, label, due]) => { const r = done.get(key); return { key, label, due: monthendDue(mon, due), done: !!(r && r.done_at) }; });
+    const pct = a.balp ? Math.round(a.o90p / a.balp * 1000) / 10 : 0;
+    const oldest = ws.length ? Math.floor((now - (ws[0].client_sent_at || ws[0].paused_at || now)) / 86400000) : 0;
+    const hh = healthOf({ pct, sla: slaRow, tfl, escLate: e.late, waitingN: ws.length, oldest, missed: m.ar + m.posting + m.submission });
+    const wa = weekAgo.get(id), endSnap = endSnaps.get(id), co = coll.get(id) || { amt: 0, n: 0 }, wo = worked.get(id);
+    return {
+      client: { id: c.id, name: c.name, code: c.code, active: !!c.active, created_at: c.created_at, team: parseTeam(c.team_json).length, locations: locs.get(id) },
+      health: hh.health, reasons: hh.reasons.slice(0, 4),
+      // that week's money owed (credits left out); a reading kept before the money owed was kept falls back to the net figures
+      ar: endSnap ? (() => { const owed = endSnap.ar_owed != null ? endSnap.ar_owed : endSnap.ar_balance, o90 = endSnap.over90_owed != null ? endSnap.over90_owed : endSnap.over90_balance;
+          return { now: endSnap.ar_balance, over90: o90, week_ago: wa ? wa.ar_balance : null, over90_pct: owed ? Math.round(o90 / owed * 1000) / 10 : 0, target: OVER90_TARGET, owed, over90_owed: o90, as_of: endSnap.day }; })()
+        : { now: a.bal, over90: a.o90p || 0, week_ago: wa ? wa.ar_balance : null, over90_pct: pct, target: OVER90_TARGET, owed: a.balp || 0, over90_owed: a.o90p || 0 },
+      collected: { amount: co.amt, n: co.n, prev: (collPrev.get(id) || { amt: 0 }).amt }, worked: { n: (wo && wo.n) || 0, people: (wo && wo.people) || 0, prev: (prevWorked.get(id) || { n: 0 }).n || 0 }, team: team.get(id),
+      sla: slaRow ? { score: slaRow.score, month: slaRow.month, prev: slaPrev ? slaPrev.score : null } : null,
+      escalations: { open: e.n || 0, late: e.late || 0, raised: (raised.get(id) || { n: 0 }).n || 0 }, missed: m,
+      waiting: { n: ws.length, balance: ws.reduce((t, w) => t + (w.balance || 0), 0), oldest }, tfl, denials: reasons.get(id),
+      monthend: { month: mon, done: steps.filter((x) => x.done).length, total: steps.length, late: steps.filter((x) => !x.done && x.due < today).map((x) => x.label) },
+    };
+  });
+  return { ds, ov };
 }
 const dMoney = (n) => (n == null ? "–" : "$" + Math.round(Number(n)).toLocaleString("en-US"));
 const dDay = (iso) => { const [, m, d] = iso.split("-").map(Number); return MONTHS[m - 1].slice(0, 3) + " " + d; };
@@ -3021,25 +3128,28 @@ ${link ? `<tr><td style="padding:16px 22px 4px"><table role="presentation" cellp
   const subject = `${span.title} · week of ${dDay(wk.first)}: ${R.count.risk ? R.count.risk + " at risk, " : ""}AR ${dMoney(R.ar)}${R.attention.length ? ", " + R.attention.length + " to look at" : ""}`;
   return { subject, html, text };
 }
-async function spanData(env, span, wk) {
-  const ds = []; for (const c of span.clients) ds.push(await digestData(env, c.id, wk));
+/* A span's figures, every client's read together (digestData); people: digestPeople's list, read once by the caller. */
+async function spanData(env, span, wk, people) {
+  const { ds, ov } = await digestData(env, span.clients.map((c) => c.id), wk);
   // the header: the manager, their designation; each client's team leads and SMEs; each client's SLA report card from Drishti
   const mgr = span.manager ? await one(env, "SELECT name, designation, position FROM users WHERE id = ?", span.manager.id) : null;
-  const people = await digestPeople(env);
+  if (!people) people = await digestPeople(env);
   const isMgr = (u) => u.is_admin || u.access_all || u.roster_kind === "manager";
   // the escalation box is a month (the SLA KPI): the month to date at the week's end; a week that starts in the month before
   // (the Monday after a month ends) shows that month in full, so no escalation falls between two digests
   const cross = wk.first.slice(0, 7) !== wk.last.slice(0, 7);
   const escFrom = (cross ? wk.first : wk.last).slice(0, 8) + "01";
   const escTo = cross ? new Date(Date.parse(nextMonthISO(wk.first.slice(0, 7)) + "-01T00:00:00Z") - 86400000).toISOString().slice(0, 10) : wk.last;
+  const escRows = ds.length ? await all(env, `SELECT * FROM escalations WHERE client_id IN ${IN_LIST} AND day >= ? AND day <= ? ORDER BY day DESC, sr DESC`, listArg(ds.map((d) => d.client.id)), escFrom, escTo) : [];
   for (const d of ds) {
     const on = people.filter((u) => !isMgr(u) && u.role === "supervisor" && canEditClient(u, d.client.id));
     d.smes = on.filter((u) => isSME(u)).map((u) => u.name).sort();
     d.tls = on.filter((u) => !isSME(u)).map((u) => u.name).sort();
-    let sc = null; try { sc = await OPS["sla.scorecard"]({ env, user: DIGEST_SYSTEM, payload: { client_id: d.client.id, kind: "month", today: istISO(wk.to) } }); } catch (e) { sc = null; }
+    // the scorecard of each client from the one read of Drishti above (its month-end step was ticked there already)
+    let sc = null; try { sc = ov.state === "ok" ? await slaCard(env, ov, { id: d.client.id, name: d.client.name }, { kind: "month", today: istISO(wk.to) }, false) : { state: ov.state }; } catch (e) { sc = null; }
     // the digest scores months only: a client with only weeks in Drishti is "not scored" here, not a week under the month
     d.card = sc && sc.state === "ok" && sc.score != null && sc.period && sc.period.kind === "month" ? sc : null;
-    d.esc = await escSummary(env, d.client.id, escFrom, escTo, wk.to);
+    d.esc = await escSummary(env, d.client.id, escFrom, escTo, wk.to, escRows.filter((e) => e.client_id === d.client.id));
   }
   const wfm = await clientWfm(env, ds.map((d) => d.client.id)); ds.forEach((d) => { d.wfm = wfm.get(d.client.id) || null; });
   // turning 90 in the next 7 days, on the latest digest only (an older week's claims have moved on since): work them first
@@ -3052,15 +3162,20 @@ async function spanData(env, span, wk) {
   // TAT last week: Payment posting, Submission and Needs attention, and where it was missed most (no claim numbers in the digest)
   const ts = await tatStats(env, ds.map((d) => d.client.id), wk.from, wk.to);
   for (const d of ds) d.tat = tatDigest(ts.get(d.client.id));
-  // Drishti not answering when the digest is made: the cards are its last read, and the digest says from when
-  const old = ds.find((d) => d.card && d.card.stale && d.card.at);
-  return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null, drStale: old ? { at: old.card.at } : null };
+  return { ds, manager: mgr ? { name: mgr.name, designation: mgr.designation || mgr.position || "Manager" } : null, drStale: drStaleOf(ds) };
 }
+// Drishti not answering when the digest is made: the cards are its last read, and the digest says from when
+const drStaleOf = (ds) => { const old = ds.find((d) => d.card && d.card.stale && d.card.at); return old ? { at: old.card.at } : null; };
 // "SLA scores are from Brahmastra's last read of Drishti, Nov 9 14:05 IST": for the digest when Drishti did not answer
 const drStaleText = (s) => (s && s.at ? `Drishti did not answer when this digest was made, so the SLA scores are from Brahmastra's last read of Drishti, ${dDay(istISO(s.at))} ${istStamp(s.at).slice(9)} IST.` : "");
-async function spanMail(env, span, wk) {
-  const { ds, manager, drStale } = await spanData(env, span, wk);
-  return spanEmail(span, wk, ds, env.APP_URL || "", { manager, drStale });
+/* The email for su (a span, or a team lead's own clients of it) from its span's figures (spanData), so every email of a span is
+   cut from one read of all its clients. */
+function spanMailOf(su, wk, sd, appUrl) {
+  const keep = new Set(su.clients.map((c) => c.id)), ds = sd.ds.filter((d) => keep.has(d.client.id));
+  return spanEmail(su, wk, ds, appUrl || "", { manager: sd.manager, drStale: drStaleOf(ds) });
+}
+async function spanMail(env, span, wk, people) {
+  return spanMailOf(span, wk, await spanData(env, span, wk, people), env.APP_URL);
 }
 /* Sends this week's digest for up to `limit` spans that have not had it yet. Each person gets each span once a week. */
 async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, by = "Monday job" } = {}) {
@@ -3076,8 +3191,12 @@ async function sendDigests(env, { now = Date.now(), limit = 3, spanKey = null, b
     n++;
     const to = s.recipients.filter((u) => (u.prefs || {}).digest !== "off");
     const already = new Set((await all(env, "SELECT user_id FROM digest_log WHERE week = ? AND client_id = ? AND ok = 1", wk.week, s.key)).map((r) => r.user_id));
-    // one email per set of clients: the manager's whole span, or a team lead's own clients only
-    const mails = new Map(), mailFor = async (u) => { const su = spanFor(u, s), k = su.clients.map((c) => c.id).join(","); if (!mails.has(k)) mails.set(k, su.clients.length ? await spanMail(env, su, wk) : null); return mails.get(k); };
+    // one email per set of clients: the manager's whole span, or a team lead's own clients only, each cut from the span's
+    // figures, read once for all its clients
+    let sd = null;
+    const mails = new Map(), mailFor = async (u) => { const su = spanFor(u, s), k = su.clients.map((c) => c.id).join(",");
+      if (!mails.has(k)) { if (su.clients.length && !sd) sd = await spanData(env, s, wk, people); mails.set(k, su.clients.length ? spanMailOf(su, wk, sd, env.APP_URL) : null); }
+      return mails.get(k); };
     let ok = 0, bad = 0;
     for (const u of to.filter((x) => !already.has(x.id))) {
       const mail = await mailFor(u); if (!mail) continue;
@@ -3370,13 +3489,16 @@ async function noticeResponsibility(env, actor, client, before, after) {
    Admins and the VP (access_all) see every client, and so does an account added by hand that has no projects
    (the bootstrap account). Everyone else, billers included, sees the clients their projects are matched to:
    their own projects (team leads and SMEs too), managers also every project of the people under them, plus
-   clients shared with them person-to-person. user.scope is null (everything) or the list of client ids. */
-async function scopeOf(env, user) {
+   clients shared with them person-to-person. user.scope is null (everything) or the list of client ids.
+   pre: scopePre's one read of the clients and of every share, for many people at once (two queries, not two a person). */
+const SCOPE_CLIENTS_SQL = `SELECT id, roster_names_json, team_json, ar_mode, ar_lead, ar_backup, posting_mode, posting_lead, posting_backup, submission_mode, submission_lead, submission_backup,
+    submission_check_mode, submission_check_person, rejection_mode, rejection_lead, rejection_backup FROM clients`;
+const scopePre = async (env) => ({ cls: await all(env, SCOPE_CLIENTS_SQL), grants: await all(env, "SELECT user_id, client_id, level FROM client_access") });
+async function scopeOf(env, user, pre = null) {
   if (user.is_admin || user.access_all) { user.resp_clients = new Set(); return null; }
   // Anyone set on a client profile as responsible (AR, posting, submission, follow-up, rejections), or on its team,
   // gets that client: the claims and the profile. Supervisors can change it; billers only see it.
-  const cls = await all(env, `SELECT id, roster_names_json, team_json, ar_mode, ar_lead, ar_backup, posting_mode, posting_lead, posting_backup, submission_mode, submission_lead, submission_backup,
-    submission_check_mode, submission_check_person, rejection_mode, rejection_lead, rejection_backup FROM clients`);
+  const cls = pre ? pre.cls : await all(env, SCOPE_CLIENTS_SQL);
   const resp = cls.filter((c) => RESP_PEOPLE.some(([m, l]) => c[l] === user.id && c[m] === "person")).map((c) => c.id);
   const onTeam = cls.filter((c) => parseTeam(c.team_json).includes(user.id)).map((c) => c.id);
   user.resp_clients = new Set(resp);
@@ -3390,7 +3512,7 @@ async function scopeOf(env, user) {
   const names = new Set(mine.map(projKey));
   const own = [...new Set([...handBiller,...cls.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id), ...resp, ...onTeam])];
   // Clients shared person-to-person (Clients & locations, Shared with): they add to what this person sees; a "view" share cannot be changed.
-  const grants = await all(env, "SELECT client_id, level FROM client_access WHERE user_id = ?", user.id);
+  const grants = pre ? pre.grants.filter((g) => g.user_id === user.id) : await all(env, "SELECT client_id, level FROM client_access WHERE user_id = ?", user.id);
   user.scope_view_only = new Set(grants.filter((g) => g.level !== "edit" && !own.includes(g.client_id)).map((g) => g.client_id));
   return [...new Set([...own, ...grants.map((g) => g.client_id)])];
 }
@@ -6350,17 +6472,17 @@ const OPS = {
     return { spans: out, week: wk, email_ready: !!env.EMAIL_PROVIDER, can_send: !!(user.is_admin || user.access_all), mine_off: ((user.prefs || {}).digest === "off") };
   },
   "digest.preview": async ({ env, user, payload }) => {
-    const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
+    const people = await digestPeople(env), s = (await digestSpans(env, people)).find((x) => x.key === str(payload.span, 80));
     if (!s || !spanVisible(user, s)) throw denied("That digest is not one of yours.");
     // the same clients as this person's Monday email: a team lead sees only their own clients of the span
     const su = spanFor(user, s);
     if (!su.clients.length) throw bad("None of this digest's clients are yours.");
-    return spanMail(env, su, digestWeek(Date.now()));
+    return spanMail(env, su, digestWeek(Date.now()), people);
   },
   /* The full digest as a landscape dashboard (the email's "Open the full digest" button): every client's card with its SLA
      score, Billable and Assign FTE, AR, escalations and what pulls it down, for this week or one of the 8 before. */
   "digest.dashboard": async ({ env, user, payload }) => {
-    const spans = (await digestSpans(env, await digestPeople(env))).filter((x) => spanVisible(user, x));
+    const people = await digestPeople(env), spans = (await digestSpans(env, people)).filter((x) => spanVisible(user, x));
     if (!spans.length) return { empty: true, spans: [], weeks: [], clients: [], notices: [] };
     const askSpan = str(payload.span, 80), askWeek = str(payload.week, 20), notices = [];
     const s0 = spans.find((x) => x.key === askSpan) || spans[0], s = spanFor(user, s0);
@@ -6369,7 +6491,7 @@ const OPS = {
     const want = weeks.find((w) => w.week === isoDate(payload.week)) || weeks[0];
     if (askWeek && want.week !== askWeek) notices.push(`The week in the link (${askWeek}) is not one of the last 9 Mondays. This is the week of ${dDay(want.first)}.`);
     const wk = digestWeek(Date.parse(want.week + "T12:00:00Z"));
-    const { ds, manager, drStale } = await spanData(env, s, wk);
+    const { ds, manager, drStale } = await spanData(env, s, wk, people);
     if (drStale) notices.push(drStaleText(drStale));
     const R = digestRollup(ds);
     const card = (c) => c ? { score: c.score, band: c.band, period: c.period.label, delta: c.delta, prev: c.prev ? c.prev.label : "", kpi_ok: c.items.filter((i) => i.kind === "KPI" && i.status === "ok").length,
@@ -6381,12 +6503,12 @@ const OPS = {
         ar: d.ar, collected: d.collected, worked: d.worked, esc: d.esc ? { ...d.esc, rows: undefined } : null, card: card(d.card), monthend: d.monthend, tat: d.tat || null, tat_line: tatLine(d.tat) })) };
   },
   "digest.sendMe": async ({ env, user, payload }) => {
-    const s = (await digestSpans(env, await digestPeople(env))).find((x) => x.key === str(payload.span, 80));
+    const people = await digestPeople(env), s = (await digestSpans(env, people)).find((x) => x.key === str(payload.span, 80));
     if (!s || !spanVisible(user, s)) throw denied("That digest is not one of yours.");
     if (!user.email || !/@/.test(user.email)) throw bad("Your account has no email address.");
     const su = spanFor(user, s);
     if (!su.clients.length) throw bad("None of this digest's clients are yours.");
-    const m = await spanMail(env, su, digestWeek(Date.now()));
+    const m = await spanMail(env, su, digestWeek(Date.now()), people);
     await sendEmail(env, { to: user.email, subject: "[Copy] " + m.subject, text: m.text, html: m.html });
     return { ok: true, to: user.email };
   },
@@ -8414,42 +8536,7 @@ const OPS = {
     if (user.role !== "supervisor") throw denied("The SLA scorecard is for team leads and above.");
     if (!inScope(user, clientId)) throw outOfScope();
     const client = await one(env, "SELECT id, name FROM clients WHERE id = ?", clientId); if (!client) throw bad("Unknown client.");
-    const today = isoDate(payload.today) || istISO(Date.now());
-    const ov = await drishtiOverview(env);
-    if (ov.state !== "ok") return { state: ov.state, error: ov.error || "", failed_at: ov.failed_at || null, retry_at: ov.retry_at || null, client: { id: client.id, name: client.name }, drishti: null };
-    const { d, ambiguous } = drMatch(ov, client.name);
-    if (!d) return { state: "unmatched", client: { id: client.id, name: client.name }, drishti: null, others: ov.clients.map((c) => c.name).slice(0, 50) };
-    const done = d.periods.filter((p) => !p.range.to || p.range.to < today);
-    const kind = ["month", "week", "latest", "custom", "day"].includes(payload.kind) ? payload.kind : "month";
-    // a kind the client has no period of: the latest period of any kind, said so (fallback), never shown as if it were that kind
-    let list = kind === "latest" ? done : done.filter((p) => p.kind === kind); const fallback = !list.length && done.length ? kind : ""; if (!list.length) list = done;
-    // step by the period's id (two periods can end on the same day); the end date still works for old links
-    const pid = str(payload.period_id, 120), want = isoDate(payload.to);
-    const cur = (pid && list.find((p) => String(p.id) === pid)) || (want && list.find((p) => p.range.to === want)) || list[0];
-    if (!cur) return { state: "no_period", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner }, periods: [] };
-    // a period Drishti scored twice (the same dates) counts once: the newer one, or the one picked
-    const sameAll = done.filter((p) => p.kind === cur.kind), dupOf = (p) => sameAll.find((q) => q !== p && q.range.from === p.range.from && q.range.to === p.range.to && (q === cur || (p !== cur && String(q.createdAt || "") > String(p.createdAt || ""))));
-    const same = sameAll.filter((p) => !dupOf(p)), prev = same.find((p) => p !== cur && p.range.to < cur.range.from) || null;
-    const sc = drScore(d, cur, prev);
-    // each KPI's last month and its last 6 periods, for the change arrow and the KPI's own trend
-    const hist = same.filter((p) => p.range.to <= cur.range.to).slice(0, 6).reverse().map((p) => ({ p, s: p === cur ? sc : drScore(d, p, null) }));
-    const prevItems = prev ? new Map(drScore(d, prev, null).items.map((i) => [i.scope_key + "." + i.key, i])) : new Map();
-    for (const it of sc.items) {
-      const k = it.scope_key + "." + it.key, pv = prevItems.get(k);
-      it.prev = pv ? { value: pv.value, shown: pv.shown, status: pv.status } : null;
-      it.history = hist.map(({ p, s }) => { const x = s.items.find((i) => i.scope_key + "." + i.key === k); return { label: p.label, to: p.range.to, value: x ? x.value : null, shown: x ? x.shown : "", status: x ? x.status : null }; });
-    }
-    const trend = same.filter((p) => p.range.to <= cur.range.to).slice(0, 6).reverse().map((p) => ({ id: p.id, label: p.label, to: p.range.to, pct: drScore(d, p, null).pct }));
-    const sources = []; for (const it of sc.items) { const k = it.source; const x = sources.find((y) => y.from === k); if (x) x.metrics.push(it.name); else sources.push({ from: k, metrics: [it.name] }); }
-    const sums = drSummary(ov, [client], today); if (sums.size) await drTickMonthEnd(env, sums);
-    return { state: "ok", client: { id: client.id, name: client.name }, drishti: { id: d.id, name: d.name, owner: d.owner }, ambiguous, fallback,
-      periods: done.map((p) => ({ id: p.id, kind: p.kind, label: p.label, from: p.range.from, to: p.range.to })), kind: cur.kind,
-      period: { id: cur.id, kind: cur.kind, label: cur.label, from: cur.range.from, to: cur.range.to, created_at: cur.createdAt, created_by: cur.createdBy, reports: cur.reports },
-      prev: prev ? { id: prev.id, label: prev.label, from: prev.range.from, to: prev.range.to, pct: drScore(d, prev, null).pct } : null,
-      score: sc.pct, band: sc.band, delta: sc.delta, counts: sc.counts, scored: sc.scored, kpi_pct: sc.kpi_pct, sla_pct: sc.sla_pct,
-      scopes: sc.scopes.map((x) => ({ key: x.key, name: x.name, short: x.short, ok: x.ok, warn: x.warn, miss: x.miss, scored: x.scored, pct: x.pct, band: x.band, missing: x.missing || [], items: x.items.map((i) => ({ name: i.name, shown: i.shown, status: i.status })) })),
-      // stale: Drishti has not answered since the read these figures come from (at); the page says so
-      items: sc.items, drags: sc.drags, strengths: sc.strengths, trend, sources, at: ov.at, stale: !!ov.stale, failed_at: ov.failed_at || null, retry_at: ov.retry_at || null };
+    return slaCard(env, await drishtiOverview(env), client, payload);
   },
   /* Beside the scorecard: the client's people from Shastra WFM and its escalations in the period (SLA threshold 0). */
   "sla.extras": async ({ env, user, payload }) => {
