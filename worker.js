@@ -8428,11 +8428,17 @@ const OPS = {
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(payload.location_id); }
     if (payload.user_id) { where.push("nt.user_id = ?"); params.push(payload.user_id); }
     if (payload.kind) { where.push("nt.kind = ?"); params.push(str(payload.kind, 20)); }
+    // A page of entries (page, page_size up to 5,000, total), as reports.production: the page loads every page, so a manager's
+    // week of 15,000 entries is all there. Pages go oldest first, so an entry saved while they load only adds to the last one.
+    // Without page: the latest 5,000, as before, with the total.
+    const paged = payload.page != null, size = paged ? Math.max(1, Math.min(5000, Math.round(num(payload.page_size, 5000)))) : 5000;
+    const page = paged ? Math.max(1, Math.round(num(payload.page, 1))) : 1;
     const rows = await all(env, `SELECT nt.created_at, nt.user_name, nt.kind, nt.status_code, nt.action_code, nt.comment, nt.follow_up_on, nt.status, nt.sub_status, nt.action, nt.bucket AS work_bucket, nt.effective, nt.note_action, nt.fields_json, nt.edited_at,
         c.id AS claim_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider,
         c.balance, c.billed, c.age_days, c.bucket, c.tier, c.status_class, c.state, c.inventory_kind, c.worked_before, c.file_status, c.file_sub_status, cl.name AS client_name, l.name AS location_name
-      FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")} ORDER BY nt.created_at DESC LIMIT 5000`, ...params);
-    return { rows };
+      FROM notes nt JOIN claims c ON c.id = nt.claim_id LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")} ORDER BY ${paged ? "nt.created_at, nt.id" : "nt.created_at DESC, nt.id"} LIMIT ? OFFSET ?`, ...params, size, (page - 1) * size);
+    const total = ((await one(env, `SELECT COUNT(*) AS n FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE ${where.join(" AND ")}`, ...params)) || {}).n || 0;
+    return { rows, page, page_size: size, total };
   },
   /* Team allocations: every claim on a biller's desk (or worked in the period), side by side with the latest entry on it in
      the period, so a team lead sees in one list what was allocated, what was done, and what is still waiting. */
@@ -8443,18 +8449,24 @@ const OPS = {
     if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
     if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
     if (payload.user_id) { where.push("(c.assigned_to = ? OR nt.user_id = ?)"); args.push(str(payload.user_id, 60), str(payload.user_id, 60)); }
-    // worked = SAAG work entries; a skip is shown as skipped, and a plain note (a lead's comment) is not work
-    const rows = await all(env, `WITH wk AS (SELECT claim_id, NULLIF(SUM(kind = 'work'), 0) AS n, SUM(kind = 'skip') AS skips, MAX(created_at) AS last_at FROM notes WHERE created_at BETWEEN ? AND ? AND kind IN ('work', 'skip') GROUP BY claim_id)
+    // worked = SAAG work entries; a skip is shown as skipped, and a plain note (a lead's comment) is not work. One line per claim,
+    // with its latest entry in the period (of two at the same moment, the first written).
+    const wkSql = `WITH wk AS (SELECT claim_id, NULLIF(SUM(kind = 'work'), 0) AS n, SUM(kind = 'skip') AS skips, MAX(created_at) AS last_at FROM notes WHERE created_at BETWEEN ? AND ? AND kind IN ('work', 'skip') GROUP BY claim_id)`;
+    const fromSql = `FROM claims c LEFT JOIN wk ON wk.claim_id = c.id LEFT JOIN notes nt ON nt.rowid = (SELECT n2.rowid FROM notes n2 WHERE n2.claim_id = c.id AND n2.created_at = wk.last_at ORDER BY n2.rowid LIMIT 1)`;
+    const whereSql = `WHERE ((c.assigned_to IS NOT NULL AND c.state IN ('assigned', 'in_progress', 'completed')) OR wk.n IS NOT NULL OR wk.skips > 0)${where.length ? " AND " + where.join(" AND ") : ""}`;
+    // A page of claims (page, page_size up to 5,000, total), as reports.production: the page loads every page, so every biller is
+    // there however many claims the team has (pages in claim order; the page drops a claim a page repeats). Without page: the
+    // first 5,000 by biller, as before, with the total.
+    const paged = payload.page != null, size = paged ? Math.max(1, Math.min(5000, Math.round(num(payload.page_size, 5000)))) : 5000;
+    const page = paged ? Math.max(1, Math.round(num(payload.page, 1))) : 1;
+    const rows = await all(env, `${wkSql}
       SELECT c.id AS claim_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.age_days, c.tier, c.priority, c.state, c.follow_up_on, c.assigned_to, c.assigned_at,
         c.escalated, u.name AS assigned_name, cl.name AS client_name, l.name AS location_name,
         wk.n AS entries, wk.skips, wk.last_at, nt.user_id AS by_id, nt.user_name AS by_name, nt.kind, nt.status, nt.sub_status, nt.action, nt.bucket AS work_bucket, nt.comment, nt.follow_up_on AS next_follow_up
-      FROM claims c LEFT JOIN wk ON wk.claim_id = c.id LEFT JOIN notes nt ON nt.claim_id = c.id AND nt.created_at = wk.last_at
-        LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
-      WHERE ((c.assigned_to IS NOT NULL AND c.state IN ('assigned', 'in_progress', 'completed')) OR wk.n IS NOT NULL OR wk.skips > 0)${where.length ? " AND " + where.join(" AND ") : ""}
-      ORDER BY u.name, c.priority DESC LIMIT 5000`, ...args);
-    // one line per claim (two entries at the same moment would repeat it)
-    const seen = new Set();
-    return { rows: rows.filter((r) => !seen.has(r.claim_id) && seen.add(r.claim_id)), today: istISO(Date.now()) };
+      ${fromSql} LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
+      ${whereSql} ORDER BY ${paged ? "c.id" : "u.name, c.priority DESC, c.id"} LIMIT ? OFFSET ?`, ...args, size, (page - 1) * size);
+    const total = ((await one(env, `${wkSql} SELECT COUNT(*) AS n ${fromSql} ${whereSql}`, ...args)) || {}).n || 0;
+    return { rows, today: istISO(Date.now()), page, page_size: size, total };
   },
   /* ---- data for the reporting apps inside My day & reports (team leads and above) ----
      Production: one row per entry in the Production Conso layout (AR), or one row per completed posting / submission

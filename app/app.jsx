@@ -205,6 +205,12 @@ async function rpcAllPages(op, payload, pageSize = 500) {
   for (let page = 1; page <= 10000; page++) { r = await rpc(op, { ...payload, page, page_size: pageSize }); rows.push(...r.rows); if (rows.length >= r.total || !r.rows.length) break; }
   return { ...r, rows };
 }
+// for useRpc: every row of a list sent in pages of 5,000 (Reports, Team allocations)
+const allPages5000 = (op, payload) => rpcAllPages(op, payload, 5000);
+/* A long list draws its first TABLE_MAX rows (a table of tens of thousands of rows stalls the browser); the page says so, and its
+   tiles and downloads count every row. */
+const TABLE_MAX = 5000;
+const tableNote = (shown, all, what, rest) => (all > shown ? <div className="small muted table-cap" style={{ padding: "8px 10px" }}>The table shows the first {fmtInt(shown)} of {fmtInt(all)} {what}, in its sort order. {rest} all {fmtInt(all)}.</div> : null);
 /* a CSV from a header row and array rows (the Production layout the server builds) */
 function arrayCSV(header, rows) {
   const esc = (v) => { let s = csvSafe(v); if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"'; return s; };
@@ -1052,14 +1058,14 @@ function Pager({ page, pageSize, total, onPage }) {
 }
 const Empty = ({ children }) => <div className="empty">{children}</div>;
 const ErrorBox = ({ error }) => (error ? <div className="alert err">{String(error)}</div> : null);
-function useRpc(op, payload, deps = [], enabled = true) {
+function useRpc(op, payload, deps = [], enabled = true, call = rpc) {
   const [state, setState] = useState({ data: null, error: null, loading: !!enabled });
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!enabled) { setState({ data: null, error: null, loading: false }); return; }
     let alive = true;
     setState((s) => ({ ...s, loading: true, error: null }));
-    rpc(op, payload).then((d) => alive && setState({ data: d, error: null, loading: false })).catch((e) => alive && setState({ data: null, error: e.message, loading: false }));
+    call(op, payload).then((d) => alive && setState({ data: d, error: null, loading: false })).catch((e) => alive && setState({ data: null, error: e.message, loading: false }));
     return () => { alive = false; };
   }, [...deps, tick, enabled]);
   return { ...state, reload: () => setTick((t) => t + 1) };
@@ -9743,9 +9749,10 @@ function deskStatus(r, today) {
 function TeamDesk({ ctx, from, to, rangeLabel, fixedUser }) {
   const [f, setF] = useState({ client_id: "", location_id: "", user_id: fixedUser || "", show: "all" });
   const payload = { client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, from_ms: dayBounds(from)[0], to_ms: dayBounds(to)[1] };
-  const q = useRpc("reports.desk", payload, [JSON.stringify(payload)]);
+  const q = useRpc("reports.desk", payload, [JSON.stringify(payload)], true, allPages5000);
   const today = (q.data && q.data.today) || todayISO();
-  const all = useMemo(() => (q.data ? q.data.rows : []).map((r) => ({ ...r, st: deskStatus(r, today), who: r.assigned_name || r.by_name || "Not allocated" })), [q.data]);
+  // one line per claim: a claim a later page repeats (the list changed while it loaded) is shown once
+  const all = useMemo(() => { const seen = new Set(); return (q.data ? q.data.rows : []).filter((r) => !seen.has(r.claim_id) && seen.add(r.claim_id)).map((r) => ({ ...r, st: deskStatus(r, today), who: r.assigned_name || r.by_name || "Not allocated" })); }, [q.data]);
   const sort = useTableSort("who", "asc");
   const rows = sort.sortRows(all.filter((r) => f.show === "all" || r.st.k === f.show || (f.show === "waiting" && r.st.k === "waiting")));
   const count = (k) => all.filter((r) => r.st.k === k).length;
@@ -9783,7 +9790,7 @@ function TeamDesk({ ctx, from, to, rangeLabel, fixedUser }) {
         <div className="table-wrap" style={{ maxHeight: 640 }}><table className="t desk"><thead><tr>
           {sort.Th("who", "Biller")}{sort.Th("claim_no", "Claim")}{sort.Th("client_name", "Client")}{sort.Th("payer", "Payer")}{sort.Th("balance", "Balance", "r")}{sort.Th("assigned_at", "Allocated")}
           <th className="desk-split">Work done {rangeLabel}</th>{sort.Th("next_follow_up", "Next follow-up")}</tr></thead>
-          <tbody>{rows.map((r) => <tr key={r.claim_id} className={r.st.k === "waiting" ? "desk-wait" : ""}>
+          <tbody>{rows.slice(0, TABLE_MAX).map((r) => <tr key={r.claim_id} className={r.st.k === "waiting" ? "desk-wait" : ""}>
             <td className="small"><b>{r.who}</b></td>
             <td><span className="mono small">{r.claim_no || r.account_no || "–"}</span><div className="tiny muted">{r.patient}</div></td>
             <td className="small">{r.client_name}{r.location_name ? <div className="tiny muted">{r.location_name}</div> : null}</td>
@@ -9797,6 +9804,7 @@ function TeamDesk({ ctx, from, to, rangeLabel, fixedUser }) {
             </td>
             <td className="small">{r.next_follow_up || r.follow_up_on ? fmtDate(r.next_follow_up || r.follow_up_on) : "–"}</td></tr>)}
             {q.data && !rows.length && <tr><td colSpan={8}><Empty>{all.length ? "Nothing for this filter." : "Nothing allocated or worked in this period."}</Empty></td></tr>}</tbody></table></div>
+        {tableNote(Math.min(rows.length, TABLE_MAX), rows.length, "claims", "The counts above, the people and the download cover")}
       </div>
     </div>
   );
@@ -10088,7 +10096,7 @@ function MyDeskView(props) { return <QueueView {...props} />; }
 function ReportsView({ ctx, from, to, embedded }) {
   const [f, setF] = useState({ client_id: "", location_id: "", user_id: "", kind: "work", from: from || addDaysISO(todayISO(), -6), to: to || todayISO() });
   const payload = { client_id: f.client_id || undefined, location_id: f.location_id || undefined, user_id: f.user_id || undefined, kind: f.kind || undefined, from_ms: dayBounds(f.from)[0], to_ms: dayBounds(f.to)[1] };
-  const q = useRpc("reports.work", payload, [JSON.stringify(payload)]);
+  const q = useRpc("reports.work", payload, [JSON.stringify(payload)], true, allPages5000);
   const rows = q.data ? q.data.rows : [];
   const rSort = useTableSort("created_at", "desc");
   const shownRows = rSort.sortRows(rows);
@@ -10117,8 +10125,9 @@ function ReportsView({ ctx, from, to, embedded }) {
       <div className="card tight">
         {q.loading && !q.data && <Spinner />}
         <div className="table-wrap" style={{ maxHeight: 600 }}><table className="t"><thead><tr>{rSort.Th("created_at", "When")}{rSort.Th("user_name", "Who")}{rSort.Th("client_name", "Client")}{rSort.Th("claim_no", "Claim #")}{rSort.Th("patient", "Patient")}{rSort.Th("payer", "Payer")}{rSort.Th("balance", "Balance", "r")}{rSort.Th("status_code", "Status")}{rSort.Th("action_code", "Action")}{rSort.Th("follow_up_on", "Follow-up")}<th>Comment</th></tr></thead>
-          <tbody>{shownRows.map((r, i) => <tr key={i}><td className="small">{fmtWhen(r.created_at)}</td><td className="small">{r.user_name}</td><td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td><td className="small">{r.status_code ? <><b>{r.status_code}</b>{r.sub_status ? <div className="tiny muted">{r.sub_status}</div> : null}</> : <span className="tiny muted">{r.kind}</span>}</td><td className="small">{r.action_code || ""}{r.work_bucket ? <div><span className={"badge " + (r.work_bucket === "Closed" ? "green" : "teal")}>{r.work_bucket}</span></div> : null}</td><td className="small">{r.follow_up_on ? fmtDate(r.follow_up_on) : ""}</td><td className="small" style={{ maxWidth: 360 }}>{r.comment}</td></tr>)}
+          <tbody>{shownRows.slice(0, TABLE_MAX).map((r, i) => <tr key={i}><td className="small">{fmtWhen(r.created_at)}</td><td className="small">{r.user_name}</td><td className="small">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</td><td className="mono small">{r.claim_no || "–"}</td><td>{r.patient}</td><td className="small">{r.payer}</td><td className="num">{fmtMoney(r.balance)}</td><td className="small">{r.status_code ? <><b>{r.status_code}</b>{r.sub_status ? <div className="tiny muted">{r.sub_status}</div> : null}</> : <span className="tiny muted">{r.kind}</span>}</td><td className="small">{r.action_code || ""}{r.work_bucket ? <div><span className={"badge " + (r.work_bucket === "Closed" ? "green" : "teal")}>{r.work_bucket}</span></div> : null}</td><td className="small">{r.follow_up_on ? fmtDate(r.follow_up_on) : ""}</td><td className="small" style={{ maxWidth: 360 }}>{r.comment}</td></tr>)}
             {q.data && !rows.length && <tr><td colSpan={11}><Empty>No entries in this range.</Empty></td></tr>}</tbody></table></div>
+        {tableNote(Math.min(shownRows.length, TABLE_MAX), shownRows.length, "entries", "The counts above and both downloads cover")}
       </div>
     </div>
   );
