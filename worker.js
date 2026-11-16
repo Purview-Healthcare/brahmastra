@@ -3972,6 +3972,13 @@ async function canSeeClaim(env, user, c) {
 const postedClosed = (c) => !!c && c.state === "closed" && c.handoff_status === "posted";
 const POSTED_CLOSED_SQL = "(c.state = 'closed' AND c.handoff_status = 'posted')";
 async function canViewClaim(env, user, c) { return postedClosed(c) || (await canSeeClaim(env, user, c)); }
+/* An upload that lists a Posting Closed claim as open again reopens it (a payer take-back: the owner keeps that). The entries and
+   files it had were locked when Posting closed it, and stay locked: the time of the claim's latest such reopening, or 0. */
+async function postedLockAt(env, c) {
+  if (!c || !c.id) return 0;
+  const r = await one(env, "SELECT MAX(at) AS at FROM claim_events WHERE claim_id = ? AND kind = 'refreshed' AND data_json LIKE ?", c.id, '%"posted_closed":true%');
+  return (r && r.at) || 0;
+}
 /* A view-only share of the claim's client opens its claims to read: the claim, its history, notes and files (README: View only).
    Not for Payment posting and Submission people: a share does not take them past their desk. */
 const viewShareOf = (user, c) => !!c && !deskOf(user) && viewOnlyOf(user, c.client_id);
@@ -7256,7 +7263,7 @@ const OPS = {
       c._num = c._gen ? "" : c._alt;                      // the claim number's key; none for a made-up number
     });
     const byMatch = new Map(), byAlt = new Map(), byFp = new Map();
-    const SEL = "SELECT id, match_key, alt_key, fp_key, claim_no, payer, state, touches, assigned_to, worked_before, last_worked_on, follow_up_on, inventory_kind FROM claims WHERE client_id = ? AND ";
+    const SEL = "SELECT id, match_key, alt_key, fp_key, claim_no, payer, state, touches, assigned_to, worked_before, last_worked_on, follow_up_on, inventory_kind, handoff_status FROM claims WHERE client_id = ? AND ";
     for (const chunk of chunks(rows.map((c) => str(c.match_key, 300)), 80)) (await all(env, SEL + `match_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => byMatch.set(r.match_key, r));
     for (const chunk of chunks([...new Set(rows.map((c) => c._num).filter(Boolean))], 80)) (await all(env, SEL + `alt_key IN (${chunk.map(() => "?").join(",")})`, client.id, ...chunk)).forEach((r) => { if (!isGeneratedNo(r) && !byAlt.has(r.alt_key)) byAlt.set(r.alt_key, r); });
     for (const chunk of chunks([...new Set(rows.map((c) => c._fp).filter(Boolean))], 80)) (await all(env, SEL + `fp_key IN (${chunk.map(() => "?").join(",")}) ORDER BY created_at`, client.id, ...chunk)).forEach((r) => { if (!byFp.has(r.fp_key)) byFp.set(r.fp_key, []); byFp.get(r.fp_key).push(r); });
@@ -7333,7 +7340,7 @@ const OPS = {
       const refreshed = { kind, batch: bid, file_status: [vals.file_status, vals.file_sub_status].filter(Boolean).join(" · "), balance: vals.balance };
       stmts.push(newState === ex.state ? claimEvent(env, ex.id, user, "refreshed", str(file_name, 200), refreshed)
         : env.DB.prepare("INSERT INTO claim_events (id, claim_id, at, user_id, user_name, kind, text, data_json) SELECT ?, id, ?, ?, ?, 'refreshed', ?, CASE WHEN state = ? THEN ? ELSE ? END FROM claims WHERE id = ?")
-          .bind(uuid(), Date.now(), user.id, user.name || "", str(file_name, 200), ex.state, JSON.stringify({ ...refreshed, changes: { state: [ex.state, newState] } }), JSON.stringify(refreshed), ex.id));
+          .bind(uuid(), Date.now(), user.id, user.name || "", str(file_name, 200), ex.state, JSON.stringify({ ...refreshed, changes: { state: [ex.state, newState] }, ...(postedClosed(ex) ? { posted_closed: true } : {}) }), JSON.stringify(refreshed), ex.id));
       stmts.push(env.DB.prepare(`UPDATE claims SET location_id = COALESCE(?, location_id), batch_id = ?, claim_no = CASE WHEN ? <> '' THEN ? ELSE claim_no END,
           account_no = CASE WHEN ? <> '' THEN ? ELSE account_no END, patient = CASE WHEN ? <> '' THEN ? ELSE patient END, payer = CASE WHEN ? <> '' THEN ? ELSE payer END,
           dos = CASE WHEN ? <> '' THEN ? ELSE dos END, cpt = CASE WHEN ? <> '' THEN ? ELSE cpt END, provider = CASE WHEN ? <> '' THEN ? ELSE provider END,
@@ -7726,7 +7733,7 @@ const OPS = {
       all(env, "SELECT id, user_name, name, type, size, created_at FROM attachments WHERE claim_id = ? ORDER BY created_at DESC LIMIT 200", c.id),
       all(env, "SELECT * FROM claim_events WHERE claim_id = ? ORDER BY at DESC LIMIT 500", c.id),
     ]);
-    const out = [];
+    const out = [], lockAt = await postedLockAt(env, c);
     // who last edited each entry (a team lead may edit a biller's entry), and the entries by id for the edit lines below
     const edNames = await namesOf(env, notes.map((n) => n.edited_by)), noteById = new Map(notes.map((n) => [n.id, n]));
     const workEv = events.filter((e) => e.kind === "worked");
@@ -7738,7 +7745,7 @@ const OPS = {
       if (n.kind === "work") {
         const ev = workEv.find((e) => e.user_id === n.user_id && Math.abs(e.at - n.created_at) < 5000);
         const d = ev ? jsonObj(ev.data_json) : {};
-        out.push({ at: n.created_at, kind: "work", id: n.id, editable: !postedClosed(c) && !viewOnlyOf(user, c.client_id) && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
+        out.push({ at: n.created_at, kind: "work", id: n.id, editable: !postedClosed(c) && n.created_at > lockAt && !viewOnlyOf(user, c.client_id) && (n.user_id === user.id || leadFor(user, c.client_id)), who: n.user_name, saag: { status: n.status || n.status_code, sub_status: n.sub_status, action: n.action || n.action_code, bucket: n.bucket, effective: n.effective },
           follow_up_on: n.follow_up_on, fields: f, comment: n.comment, changes: d.changes || {}, escalated: !!d.escalated, edited_at: n.edited_at, edited_by: (n.edited_by && edNames.get(n.edited_by)) || "" });
       } else if (n.kind === "skip") out.push({ at: n.created_at, kind: "skip", who: n.user_name, text: n.comment });
       else if (/^Escalation answered:/.test(n.comment || "")) out.push({ at: n.created_at, kind: "answer", who: n.user_name, text: n.comment.replace(/^Escalation answered:\s*/, "") });
@@ -8086,6 +8093,7 @@ const OPS = {
     ownClientOr(user, c.client_id); writableOr(user, c.client_id);
     if (deskOf(user) && !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     if (postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): its notes can no longer be edited.");
+    if (n.created_at <= (await postedLockAt(env, c))) throw bad("Posting closed this claim (the payment was posted) before an upload reopened it: the entries from before can no longer be edited.");
     const saag = validateWork(payload);
     const fields = cleanNoteFields(payload.note, c);
     if (!attachNeeded({ sub_status: n.sub_status, action: n.action })) {
@@ -8221,6 +8229,7 @@ const OPS = {
     if (ac) { ownClientOr(user, ac.client_id); writableOr(user, ac.client_id); }
     // a claim Posting closed is read only: the EOB and the proof its posting rests on stay with it (files can still be added)
     if (postedClosed(ac)) throw bad("Posting closed this claim (the payment is posted): its files can no longer be removed.");
+    if (a.created_at <= (await postedLockAt(env, ac))) throw bad("Posting closed this claim (the payment was posted) before an upload reopened it: the files from before can no longer be removed.");
     await env.DB.batch([
       env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id),
       env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(a.id),
@@ -9890,14 +9899,14 @@ async function claimBundle(env, user, c, opts = {}) {
   let lines = []; try { lines = JSON.parse(c.lines_json || "[]"); } catch {}
   let raw = {}; try { raw = JSON.parse(c.raw_json || "{}"); } catch {}
   const { raw_json, lines_json, ...rest } = c;
-  const now = Date.now();
+  const now = Date.now(), lockAt = await postedLockAt(env, c);
   const edNames = await namesOf(env, notes.map((n) => n.edited_by));
-  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), edited_by_name: (n.edited_by && edNames.get(n.edited_by)) || "", editable: !locked && !opts.viewOnly && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
+  const shaped = notes.map((n) => { const { fields_json, ...nn } = n; return { ...nn, fields: noteFields(n), edited_by_name: (n.edited_by && edNames.get(n.edited_by)) || "", editable: !locked && n.created_at > lockAt && !opts.viewOnly && n.kind === "work" && (n.user_id === user.id || leadFor(user, c.client_id)), edit_until: n.created_at + EDIT_WINDOW_MS }; });
   const handoffs = await all(env, `SELECT h.*, l.name AS lead_name, b.name AS backup_name, a.name AS assigned_name FROM handoffs h LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
       LEFT JOIN users a ON a.id = h.assigned_to WHERE h.claim_id = ? ORDER BY h.created_at DESC LIMIT 10`, c.id);
   const role = await handoffRole(env, user, c.id);
   const limits = payerKey(c.payer) ? await one(env, "SELECT tfl_days, afl_days, note, updated_at, updated_by_name FROM payer_limits WHERE client_id = ? AND payer_key = ?", c.client_id, payerKey(c.payer)) : null;
-  const attachments = files.map((a) => ({ ...a, deletable: !locked && !opts.viewOnly && (leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS)) }));
+  const attachments = files.map((a) => ({ ...a, deletable: !locked && a.created_at > lockAt && !opts.viewOnly && (leadFor(user, c.client_id) || (a.user_id === user.id && now - a.created_at <= EDIT_WINDOW_MS)) }));
   // whether this client has an active Posting / Submission / Rejections person (the same rule as queue.complete): a claim sent
   // there leaves AR with no follow-up date until the desk is done
   const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")}, subcheck_hours FROM clients WHERE id = ?`, c.client_id);

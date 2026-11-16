@@ -425,6 +425,36 @@ S("W-15: a long proof file name keeps its .pdf in the hand-off's list, as on the
   ok("W-15: a short name is listed as it is", proof.files[1] === "short.pdf");
 }
 
+S("W-06: an upload reopening a Posting Closed claim is kept (the owner's decision); its entries and files from before stay locked");
+{
+  const [c] = await q("SELECT id FROM claims WHERE client_id = ? AND state = 'open' AND assigned_to IS NULL ORDER BY id LIMIT 1", sun.id);
+  const cl = await q1("SELECT * FROM claims WHERE id = ?", c.id);
+  await give([c.id], "Arun Agent"); await AR("queue.open", { id: c.id });
+  const eob = await AR("attachments.add", { claim_id: c.id, name: "eob.pdf", type: "application/pdf", data: Buffer.from("%PDF-1.4 made-up eob").toString("base64") });
+  await AR("queue.complete", { id: c.id, ...POST, desk: true });
+  const h = await q1("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'posting'", c.id);
+  await R["Paula Post"]("handoffs.close", { id: h.id, outcome: "complete", seen: "pending", proof: { date: todayIST(), ref: "CHK-77", allowed: "180", paid: "150", adjustment: "30" } });
+  const before = await q1("SELECT state, handoff_status FROM claims WHERE id = ?", c.id);
+  // the client's next file lists it again (a payer take-back)
+  app.setToken(TOK["Tina Lead"]);
+  const row = { match_key: cl.match_key, claim_no: cl.claim_no, patient: cl.patient, payer: cl.payer, dos: cl.dos, balance: 30, status_class: "denied", tier: "Low", priority: 20, file_status: "Denied", cpt: cl.cpt };
+  const up = await app.uploadClaims({ client_id: sun.id, location_id: cl.location_id, kind: "fresh", file_name: "W-06 next month.xlsx", claims: [row], summary: {}, rows_read: 1 });
+  const after = await q1("SELECT state, state_reason FROM claims WHERE id = ?", c.id);
+  ok("W-06 (not a bug: the owner keeps it): the next file reopens the Posting Closed claim", before.state === "closed" && before.handoff_status === "posted" && up.reopened === 1 && after.state === "open" && /Reopened by fresh upload/.test(after.state_reason), [before, up.reopened, after]);
+  const note = (await q1("SELECT id FROM notes WHERE claim_id = ? AND kind = 'work'", c.id)).id;
+  const byBiller = await T(() => AR("notes.update", { id: note, ...FOLLOW })), byLead = await T(() => TI("notes.update", { id: note, ...FOLLOW }));
+  ok("W-06: the entry written before Posting closed it stays locked for its biller and the team lead", !byBiller.ok && !byLead.ok && /before an upload reopened it/.test(byBiller.e), [byBiller.e, byLead.e]);
+  const rm = await T(() => TI("attachments.delete", { id: eob.attachment.id }));
+  ok("W-06: the EOB attached before stays too", !rm.ok && /files from before can no longer be removed/.test(rm.e), rm.e);
+  const tl = await TI("claims.timeline", { id: c.id }), bd = await TI("claims.get", { id: c.id });
+  ok("W-06: the claim's history and profile offer no Edit or remove for them", !tl.items.some((x) => x.id === note && x.editable) && !bd.notes.some((x) => x.id === note && x.editable) && !bd.attachments.some((x) => x.id === eob.attachment.id && x.deletable));
+  // new work after the reopening is edited as usual
+  await give([c.id], "Arun Agent"); await AR("queue.open", { id: c.id }); await AR("queue.complete", { id: c.id, ...FOLLOW, desk: true });
+  const fresh = (await q1("SELECT id FROM notes WHERE claim_id = ? AND kind = 'work' ORDER BY created_at DESC LIMIT 1", c.id)).id;
+  const ed = await T(() => AR("notes.update", { id: fresh, ...FOLLOW }));
+  ok("W-06: an entry written after the reopening can be edited as any entry", fresh !== note && ed.ok, ed.e);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
