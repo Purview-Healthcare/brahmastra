@@ -832,13 +832,17 @@ function typedLayerFor(cur, h) {
   if (!cur || !cur.view || !h || (cur.view === h.view && JSON.stringify(cur.params) === JSON.stringify(h.params))) return null;
   return [...LAYER_GUARDS].reverse().find((x) => x.typed()) || null;
 }
-function useLayer(onClose, guard = true) {
-  const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose);
-  closeFn.current = onClose;
+/* unsaved: changes the pop-up holds that are not typed in a box of it (a person picked, a count edited in a pop-up that has closed,
+   a tick): closing asks first for them too. */
+function useLayer(onClose, guard = true, unsaved = false) {
+  const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose), held = useRef(unsaved);
+  closeFn.current = onClose; held.current = !!unsaved;
   const [asking, setAsking] = useState(false);
   const after = useRef(null);   // what follows a Discard asked for by Back or Forward: going where the person was going
   const [opener] = useState(() => document.activeElement);
-  const close = () => { const f = closeFn.current; if (!f) return; if (guard && ref.current && typedIn(seen.current, ref.current)) setAsking(true); else f(); };
+  // "typed": text typed in a box of it; "changes": only changes made otherwise
+  const lose = () => (!guard || !ref.current ? "" : typedIn(seen.current, ref.current) ? "typed" : held.current ? "changes" : "");
+  const close = () => { const f = closeFn.current; if (!f) return; const k = lose(); if (k) setAsking(k); else f(); };
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
@@ -857,7 +861,7 @@ function useLayer(onClose, guard = true) {
       if (to) { e.preventDefault(); (to === "box" ? box.current || el : to).focus(); }
     };
     window.addEventListener("keydown", key);
-    const g = { typed: () => !!(guard && closeFn.current && el.isConnected && typedIn(seen.current, el)), ask: (then) => { after.current = then; setAsking(true); } };
+    const g = { typed: () => !!(closeFn.current && el.isConnected && lose()), ask: (then) => { after.current = then; setAsking(lose() || "typed"); } };
     const unload = (e) => { if (g.typed()) { e.preventDefault(); e.returnValue = ""; } };
     LAYER_GUARDS.add(g); window.addEventListener("beforeunload", unload);
     return () => {
@@ -872,15 +876,15 @@ function useLayer(onClose, guard = true) {
     if (e.target !== s || e.clientX >= r.left + s.clientWidth || e.clientY >= r.top + s.clientHeight) return;
     e.preventDefault(); close();
   };
-  const ask = asking ? <DiscardAsk onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
+  const ask = asking ? <DiscardAsk changes={asking === "changes"} onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
   return { ref, box, close, shade, ask };
 }
-function DiscardAsk({ onKeep, onDiscard }) {
-  const L = useLayer(onKeep, false);
+function DiscardAsk({ onKeep, onDiscard, changes }) {
+  const L = useLayer(onKeep, false), q = changes ? "Discard your changes?" : "Discard what you typed?";
   return (
     <div className="overlay ask-overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
-      <div className="modal narrow" ref={L.box} tabIndex={-1} role="alertdialog" aria-modal="true" aria-label="Discard what you typed?">
-        <h2>Discard what you typed?</h2>
+      <div className="modal narrow" ref={L.box} tabIndex={-1} role="alertdialog" aria-modal="true" aria-label={q}>
+        <h2>{q}</h2>
         <div className="sub">It has not been saved.</div>
         <div className="row mt" style={{ justifyContent: "flex-end" }}><button type="button" className="btn" autoFocus onClick={onKeep}>Keep editing</button><button type="button" className="btn danger" onClick={onDiscard}>Discard</button></div>
       </div>
@@ -903,8 +907,8 @@ function SidePanel({ className, label, onClose, children }) {
     </>
   );
 }
-function Modal({ title, sub, onClose, children, wide, narrow, footer }) {
-  const L = useLayer(onClose);
+function Modal({ title, sub, onClose, children, wide, narrow, footer, unsaved }) {
+  const L = useLayer(onClose, true, unsaved);
   return (
     <div className="overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
       <div className={"modal" + (wide ? " wide" : "") + (narrow ? " narrow" : "")} ref={L.box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
@@ -2269,7 +2273,7 @@ function ExtraLineModal({ l, pickable, note, onSave, onClose }) {
   };
   const total = days.reduce((t, d) => t + (d.locked || left || bad(vals[d.day]) ? d.n || 0 : Number(vals[d.day])), 0), fileTotal = days.reduce((t, d) => t + d.file_n, 0);
   return (
-    <Modal title={left ? "Pick the person" : "Edit extra production"} sub={<>In the file: <b>{extraNameIn(l)}</b>{left ? <> · {plural(fileTotal, "row")} left out</> : <> · counts for {l.person}</>}</>} onClose={busy ? undefined : onClose}
+    <Modal title={left ? "Pick the person" : "Edit extra production"} sub={<>In the file: <b>{extraNameIn(l)}</b>{left ? <> · {plural(fileTotal, "row")} left out</> : <> · counts for {l.person}</>}</>} onClose={busy ? undefined : onClose} unsaved={moved}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || anyBad || (left ? !who : !moved && !changed.length)} onClick={() => save()}>{busy ? "Saving…" : left ? "Count for this person" : "Save"}</button></>}>
       <div className="stack xp-edit">
         <Field label={left ? "Who these rows count for" : "Who it counts for"} hint={left ? "One of the people you see who is counted on Team status. The name in the file stays as it is written." : "Pick another of your people to count these rows for them. The name written in the file stays visible."}>
@@ -2324,6 +2328,7 @@ function ExtraPreviewModal({ x, label, onClose, onSaved }) {
   ].filter(Boolean);
   return (<>
     <Modal wide title="Extra production" sub={"Check what this file from OneDrive would count, for " + label + " and any other month it has rows for, then count it."} onClose={onClose}
+      unsaved={!busy && Object.keys(edits.picks).length + Object.keys(edits.counts).length > 0}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !p.counted} onClick={save}>{busy ? "Counting…" : p.counted ? "Count " + plural(p.counted, "row") : "Nothing to count"}</button></>}>
       <div className="stack xp">
         <div className="small">{p.file.web_url ? <a href={p.file.web_url} target="_blank" rel="noopener noreferrer"><b>{p.file.name}</b></a> : <b>{p.file.name}</b>}
@@ -2648,7 +2653,7 @@ function StackEditModal({ month, label, r, field, onClose, onSaved }) {
     } catch (e) { toast(e.message, "err"); setBusy(false); }
   };
   return (
-    <Modal narrow title={TITLE[field] + " · " + r.name} sub={label + (typed ? " · last typed by " + stkTyped(typed) : "")} onClose={onClose}
+    <Modal narrow title={TITLE[field] + " · " + r.name} sub={label + (typed ? " · last typed by " + stkTyped(typed) : "")} onClose={onClose} unsaved={!busy && field === "tp" && v1 !== (r.tp ? "yes" : "no")}
       footer={<>{typed && <button className="btn" disabled={busy} onClick={() => save(true)}>{field === "tp" ? "Back to Yes" : "Clear"}</button>}<button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => save(false)}>{busy ? "Saving…" : "Save"}</button></>}>
       {field === "pkt" || field === "quality" ? <Field label={TITLE[field] + " (%)"} hint={(field === "pkt" ? "A percentage from 0 to 100. Empty counts as 0." : "The month's quality, a percentage from 0 to 100.") + " Two decimals are kept, cut, never rounded up (98.999 is kept as 98.99)."}>
         <input className="input" type="number" min="0" max="100" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
@@ -2679,7 +2684,7 @@ function StackTicksModal({ month, label, t, ticks, onClose, onSaved }) {
     return <div key={k} className="stk-tickrow"><div><div>{lbl}</div>{x && <div className="tiny muted">{stkTyped(x)}</div>}</div>
       <div className="seg2">{[["yes", "Yes"], ["no", "No"]].map(([v, l]) => <button key={v} type="button" className={vals[k] === v ? "on" : ""} onClick={() => setVals((o) => ({ ...o, [k]: v }))}>{l}</button>)}</div></div>; })}</div>;
   return (
-    <Modal title={"Ticks · " + t.name} sub={label + ". 1 point for each Yes; a tick not ticked counts as No."} onClose={onClose}
+    <Modal title={"Ticks · " + t.name} sub={label + ". 1 point for each Yes; a tick not ticked counts as No."} onClose={onClose} unsaved={!busy && ticks.some(([k]) => vals[k] !== ((t.ticks[k] && t.ticks[k].v) || ""))}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button></>}>
       <div className="grid g2">{part("Team handling", STK_TH)}{part("Client forefront", STK_CF)}</div>
       {t.left_unknown.length > 0 && <div className="mt"><Field label="Attrition: people who left in the month" hint={"Brahmastra cannot tell: " + t.left_unknown.join(", ") + " left with no exit date in Shastra. " + (t.left.length ? "It counts " + t.left.length + " by exit date." : "")}>

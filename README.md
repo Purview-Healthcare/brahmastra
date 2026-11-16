@@ -504,7 +504,9 @@ counts it as the person's work done on that day, the same way a claim worked cou
   counts for a person the uploader does not see is said to be so: it stays counted there and is never counted twice.
 - **Before anything is saved**, the check shows the rows read and to count, each name of the file on a line (who it
   counts for, Emp ID, team lead, rows, days, from and to), the dates, the months, what is left out and why, the months
-  already locked, and what the same file counted before. **Count** saves it.
+  already locked, and what the same file counted before. **Count** saves it. Hand edits made in the check are kept
+  until then: Escape, a click outside it, Back or a reload asks first ("Discard your changes?"), as every pop-up does for
+  typed text (and so do the manager's ticks and a Team player Yes or No not saved yet).
 - **Edit.** Each line has **Edit**, in the check before saving and later on a file already counted (in the month's
   list, **Open** shows the file's people), so a mistake is corrected without loading the file again. Whoever may
   upload may edit, for the same people.
