@@ -382,6 +382,17 @@ S("W-11: My day's work form asks before Back, Forward or a reload drops a typed 
   ok("W-11: My day's work panel holds its typed entry with it (its root and the question)", /const TG = useTypedGuard\(\)/.test(panel) && /ref=\{TG\.ref\}/.test(panel) && /\{TG\.ask\}/.test(panel));
 }
 
+S("EP-1: one impossible date does not decide a date column's order");
+{
+  const order = (vals) => app.dateOrderOf(vals);
+  ok("EP-1: 31/31/2026 alone says nothing: the column is read month first", order(["05/06/2026", "31/31/2026"]) === "mdy", order(["05/06/2026", "31/31/2026"]));
+  ok("EP-1: 30/02/2026 (no such day) says nothing either", order(["05/06/2026", "30/02/2026"]) === "mdy", order(["05/06/2026", "30/02/2026"]));
+  ok("EP-1: a real day-first date (13/06/2026) still makes the column day first", order(["05/06/2026", "13/06/2026", "31/31/2026"]) === "dmy");
+  ok("EP-1: a real month-first date (06/13/2026) month first; both kinds: each date on its own", order(["06/13/2026"]) === "mdy" && order(["13/06/2026", "06/13/2026"]) === "");
+  const read = pageConst("dateReader")(["05/06/2026", "31/31/2026"]);
+  ok("EP-1: so 05/06/2026 in that column is 6 May, and 31/31/2026 is no date", read("05/06/2026") === "2026-05-06" && read("31/31/2026") === "", [read("05/06/2026"), read("31/31/2026")]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

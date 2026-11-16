@@ -295,10 +295,15 @@ function parseDateAny(v, { order = "", dob = false } = {}) {
 }
 /* The day / month order of one date column of a file, decided once for the whole column: a date whose first part is over 12
    (13/06/2026) makes it day first, one whose second part is over 12 (06/13/2026) month first; with neither it is month first.
-   A column with both reads each date on its own. */
+   A column with both reads each date on its own. Only a real day counts as a sign (as the Extra production reader decides):
+   31/10/2026 is day first, 10/31/2026 month first, and 31/31/2026 or 30/02/2026, no date either way, says nothing. */
 function dateOrderOf(values) {
   let dayFirst = false, monthFirst = false;
-  for (const v of values) { const m = typeof v === "string" ? v.trim().match(DMY_RE) : null; if (!m) continue; if (+m[1] > 12) dayFirst = true; else if (+m[2] > 12) monthFirst = true; }
+  for (const v of values) {
+    const m = typeof v === "string" ? v.trim().match(DMY_RE) : null; if (!m) continue;
+    const a = +m[1], b = +m[2], y = m[3].length === 2 ? (+m[3] < 50 ? 2000 : 1900) + +m[3] : +m[3];
+    if (a > 12 && isRealDay(y, b, a)) dayFirst = true; else if (b > 12 && isRealDay(y, a, b)) monthFirst = true;
+  }
   return dayFirst && monthFirst ? "" : dayFirst ? "dmy" : "mdy";
 }
 // the reader for one date column: every value of the column read in the same order (dob: a date of birth column)
