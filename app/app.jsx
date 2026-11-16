@@ -2135,8 +2135,10 @@ function DashClientReport({ ctx, me, go, params }) {
    typed: PKT, Team player and the fallbacks by the team lead, the ticks (and an attrition Brahmastra cannot tell) by the
    manager. A locked month shows its snapshot, its cells closed. Download Excel writes her layout (stackWorkbook). */
 const canStack = (me) => !!me && me.role === "supervisor" && !isSmeUI(me);
-// a share as a percentage, cut (not rounded) at two decimals: 110.509% shows as 110.5%, never as a 110.51% it did not reach
+// a share as a percentage, cut (not rounded) at two decimals: 110.509% shows as 110.5%, never as a 110.51% it did not reach. The
+// report's one rounding rule: the server judges the bands (stackJudge) and the Excel writes its cells (stkCut) the same way
 const stkPct = (v) => (v == null || !isFinite(v) ? "–" : Math.floor(v * 1e4 + 1e-6) / 100 + "%");
+const stkCut = (v) => (v == null || !isFinite(v) ? null : Math.floor(v * 1e4 + 1e-6) / 1e4);
 const stkHM = (m) => (m == null ? "–" : Math.floor(m / 60) + " h " + String(Math.floor(m % 60)).padStart(2, "0"));
 const stkN = (v, dec = 2) => (v == null || !isFinite(v) ? "–" : Number(v).toLocaleString(LOC, { maximumFractionDigits: dec }));
 const stkDay = (iso) => { const [y, m, d] = String(iso).split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString(LOC, { month: "short", day: "numeric" }); };
@@ -2638,16 +2640,17 @@ function StackEditModal({ month, label, r, field, onClose, onSaved }) {
     setBusy(true);
     try {
       const put = (f, value, note) => rpc("stack.save", { month, user_id: r.id, field: f, value, note });
+      let kept = "";
       if (field === "prod") { await put("achieved", clear ? "" : v1); await put("expected", clear ? "" : v2); }
       else if (field === "tp") await put("tp", clear ? "" : v1, v2);
-      else await put(field, clear ? "" : v1);
-      toast((clear ? "Cleared " : "Saved ") + TITLE[field] + " for " + r.name + "."); onSaved();
+      else { const x = await put(field, clear ? "" : v1); kept = x && x.value ? stkPct(Number(x.value)) : ""; }
+      toast((clear ? "Cleared " : "Saved ") + TITLE[field] + " for " + r.name + (kept ? ": " + kept : "") + "."); onSaved();
     } catch (e) { toast(e.message, "err"); setBusy(false); }
   };
   return (
     <Modal narrow title={TITLE[field] + " · " + r.name} sub={label + (typed ? " · last typed by " + stkTyped(typed) : "")} onClose={onClose}
       footer={<>{typed && <button className="btn" disabled={busy} onClick={() => save(true)}>{field === "tp" ? "Back to Yes" : "Clear"}</button>}<button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => save(false)}>{busy ? "Saving…" : "Save"}</button></>}>
-      {field === "pkt" || field === "quality" ? <Field label={TITLE[field] + " (%)"} hint={field === "pkt" ? "A percentage from 0 to 100. Empty counts as 0." : "The month's quality, a percentage from 0 to 100."}>
+      {field === "pkt" || field === "quality" ? <Field label={TITLE[field] + " (%)"} hint={(field === "pkt" ? "A percentage from 0 to 100. Empty counts as 0." : "The month's quality, a percentage from 0 to 100.") + " Two decimals are kept, cut, never rounded up (98.999 is kept as 98.99)."}>
         <input className="input" type="number" min="0" max="100" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
         : field === "tp" ? <div className="stack">
           <div className="seg2" role="radiogroup">{[["yes", "Yes"], ["no", "No"]].map(([k, l]) => <button key={k} type="button" role="radio" aria-checked={v1 === k} className={v1 === k ? "on" : ""} onClick={() => setV1(k)}>{l}</button>)}</div>
@@ -2728,7 +2731,8 @@ function StackUnlockModal({ d, onClose, onDone }) {
 }
 /* The Stack report in the owner's Excel layout: "Stack Sheet" (the Team Member Stack table under her group headers, and the TL
    STACK table under it), then "Associate Stack" and "TL Stack" stating the bands. Values, not formulas: dates are dates, percentages
-   percentages, numbers numbers, and text is a text cell (a name or typed text starting with = + - @ stays text, never a formula). */
+   percentages, numbers numbers, and text is a text cell (a name or typed text starting with = + - @ stays text, never a formula).
+   A percentage is written cut at two decimals (stkCut), as the page shows it: Excel's 0.00% would round 99.506% up to 99.51%. */
 function stackWorkbook(d, rows, tls) {
   const serial = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000) : null; };
   const MON = "mmm-yy", DAY = "mm/dd/yyyy", PCT = "0.00%", DEC = "0.00", TIME = "[h]:mm";
@@ -2747,9 +2751,9 @@ function stackWorkbook(d, rows, tls) {
   HEAD.forEach((h, i) => put(st, 1, i, h));
   const ordered = groupByLead(rows, true).flatMap((g) => g.rows);
   ordered.forEach((r, i) => { const R = 2 + i, s = r.s;
-    [[month, MON], [r.emp_id], [r.name], [serial(r.doj), DAY], [r.title], [r.achieved], [r.expected], [r.pct, PCT], [r.avr_prod, DEC], [r.avr_target, DEC], [s.prod], [r.quality, PCT], [null], [s.qual],
-      [r.al], [r.lwp], [r.al + r.lwp], [r.working], [r.present], [r.shrink, PCT], [s.att], [r.late], [s.late], [r.brk], [s.brk], [r.adherence], [r.tp ? "Yes" : "No"], [s.tp], [r.pkt, PCT], [s.pkt], [s.others],
-      [r.tos == null ? null : r.tos / 1440, TIME], [s.tos], [s.total], [s.pct, PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z)); });
+    [[month, MON], [r.emp_id], [r.name], [serial(r.doj), DAY], [r.title], [r.achieved], [r.expected], [stkCut(r.pct), PCT], [r.avr_prod, DEC], [r.avr_target, DEC], [s.prod], [stkCut(r.quality), PCT], [null], [s.qual],
+      [r.al], [r.lwp], [r.al + r.lwp], [r.working], [r.present], [stkCut(r.shrink), PCT], [s.att], [r.late], [s.late], [r.brk], [s.brk], [r.adherence], [r.tp ? "Yes" : "No"], [s.tp], [stkCut(r.pkt), PCT], [s.pkt], [s.others],
+      [r.tos == null ? null : r.tos / 1440, TIME], [s.tos], [s.total], [stkCut(s.pct), PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z)); });
   // the TL STACK under it
   let R = 2 + ordered.length + 2;
   const thK = d.ticks.filter(([k]) => k[0] === "t"), cfK = d.ticks.filter(([k]) => k[0] === "c");
@@ -2759,7 +2763,7 @@ function stackWorkbook(d, rows, tls) {
   TLH.forEach((h, i) => put(st, R, i, h)); R++;
   for (const t of tls) { const s = t.s;
     [[month, MON], [t.emp_id], [t.name], [serial(t.doj), DAY], [s.prod], [s.qual], [s.shrink], [s.attr], [s.adh], ...thK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.th],
-      ...cfK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.cf], [t.addition, DEC], [s.total, DEC], [s.pct, PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z));
+      ...cfK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.cf], [t.addition, DEC], [s.total, DEC], [stkCut(s.pct), PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z));
     R++; }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, done(st, HEAD.map((h, i) => (i === 2 ? 22 : i === 4 ? 20 : Math.max(9, Math.min(16, h.length + 2))))), "Stack Sheet");

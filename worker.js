@@ -4023,8 +4023,13 @@ const STACK_LWP_ZERO = 0.5, STACK_OUT_OF = 40, STACK_TL_OUT_OF = 50;
 // minutes as she confirmed it (one number, easy to change)
 const STACK_BREAK_LIMIT_MIN = 60;
 const stackNum = (v) => (v == null || v === "" || typeof v === "boolean" || !Number.isFinite(Number(v)) ? null : Number(v));
+/* The one rounding rule of the report: a value is judged as the number it is meant to be, never by the computer's tiny float
+   error (three team members typed at 99% average 0.98999999999999999, which is 99%). A percentage is taken at two decimals of a
+   percent, cut, never rounded up (99.509% is 99.5%), exactly as the page and the Excel show it; any other value with the float
+   error taken off. The owner's lines all have two decimals of a percent, so the cut never moves a value across one. */
+const stackJudge = (rule, x) => (rule.unit === "pct" ? Math.floor(x * 1e4 + 1e-6) / 1e4 : Math.round(x * 1e9) / 1e9);
 // which band applies: its index, rule.bands.length for "other", -1 for an empty value
-const stackBandAt = (rule, v) => { const x = stackNum(v); if (x == null) return -1; const i = rule.bands.findIndex(([op, t]) => (op === ">" ? x > t : x >= t)); return i < 0 ? rule.bands.length : i; };
+const stackBandAt = (rule, v) => { const x0 = stackNum(v); if (x0 == null) return -1; const x = stackJudge(rule, x0); const i = rule.bands.findIndex(([op, t]) => (op === ">" ? x > t : x >= t)); return i < 0 ? rule.bands.length : i; };
 const stackBand = (rule, v) => { const i = stackBandAt(rule, v); return i < 0 ? 0 : i < rule.bands.length ? rule.bands[i][2] : rule.other; };
 const stackAttendance = (al, lwp) => (lwp >= STACK_LWP_ZERO ? 0 : stackBand(STACK_RULES.leave, al + lwp));
 /* One associate's month. x: pct (Achieved / Expected), quality, al and lwp (days), late (late logins), brk (days the break ran
@@ -5504,11 +5509,13 @@ const OPS = {
     else if (field === "pkt" || field === "quality") {
       const p = Number(raw.replace(/\s*%$/, ""));
       if (!/^\d+(\.\d+)?\s*%?$/.test(raw) || !(p >= 0 && p <= 100)) throw bad(STACK_FIELDS[field] + " is a percentage from 0 to 100.");
-      value = String(Math.round(p * 100) / 10000);
+      // the report's one rounding rule (stackJudge): two decimals of a percent, cut, never rounded up over a line (98.999 is 98.99)
+      value = String(Math.floor(p * 100 + 1e-6) / 10000);
     } else if (field === "achieved" || field === "expected") {
       const x = Number(raw);
       if (!/^\d+(\.\d+)?$/.test(raw) || !(x >= 0 && x <= 100000) || (field === "expected" && x === 0)) throw bad(STACK_FIELDS[field] + " is a number" + (field === "expected" ? " above 0." : " from 0."));
-      value = String(Math.round(x * 100) / 100);
+      // kept as typed (never rounded): their percentage is judged by the one rule
+      value = String(x);
     } else if (field === "attrition") {
       if (!/^\d{1,3}$/.test(raw)) throw bad("Attrition is the number of people who left: 0 or more.");
       value = String(Number(raw));

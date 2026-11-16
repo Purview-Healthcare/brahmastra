@@ -439,6 +439,10 @@ grouped by team lead as on Team status, ranked by percentage (a tie: the higher 
 - **Addition point**: the average of the members' Stacks, added as it is. **Stack**: 96% and above: 5; 91%: 4;
   86%: 3; 81%: 2; 76%: 1; less: 0.
 
+**Rounding.** A percentage is taken at two decimals, cut, never rounded up (99.509% is 99.5%, so it never reaches a line it
+did not reach): the same in the score, on the page and in the Excel. A team's average is judged the same way (three members at
+99% are 99%), and a typed PKT or quality keeps two decimals (98.999 is kept as 98.99).
+
 **Who sees and types what.** A team lead sees their own team (their span, as everywhere: the people under them and
 on their projects), draft and locked, types PKT, Team player and the fallbacks (Achieved and Expected, Quality), and
 sees their own team lead row once the month is locked. Managers and above see the teams of their span on both
