@@ -430,7 +430,9 @@ grouped by team lead as on Team status, ranked by percentage (a tie: the higher 
 - **Shrinkage (10)**: the members' average shrinkage: 16% and above: 0; 13.49%: 2; 11.49%: 4; 9.49%: 6; 8%: 8;
   under 8%: 10.
 - **Attrition (5)**: people of the team who left in the month, by Shastra's exit date or else the day the roster
-  sync switched them off (kept since this report came in): none: 5; 1: 4; 2: 3; more: 0. Someone switched off with
+  sync switched them off (kept since this report came in): none: 5; 1: 4; 2: 3; more: 0. A leaver stays in Brahmastra
+  (switched off) for the report's 13 months, also one who never signed in, and so do values typed for someone and
+  their extra production. Someone switched off with
   neither date who still worked in the month cannot be placed, so the manager types the count.
 - **Adherence (5)**: the members' late logins and breaks over added up: more than 12: 0; 9 to 12: 3; 6 to 8: 4;
   less: 5.

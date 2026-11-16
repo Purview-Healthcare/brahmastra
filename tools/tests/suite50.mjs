@@ -309,6 +309,37 @@ S("U-14: the month list says locked for a viewer only when everyone they see on 
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-11: a leaver who never signed in stays for the Stack report: counted in the attrition, typed values kept");
+{
+  // on Tina's team: Paula (Posting: her numbers are typed), Jay (AR, joined in October, no work in Brahmastra), Xena (AR, only
+  // extra production), Old Ola (left long ago), and Gil, who an old roster file brought in (not in Shastra any more)
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-A10", "Paula Poster", "Tina Lead", SUN, { department: "Posting" }),
+    AS("PHC-A11", "Jay Joiner", "Tina Lead", SUN, { doj: D(10, 6) }), AS("PHC-A12", "Xena Extra", "Tina Lead", SUN), AS("PHC-A13", "Old Ola", "Tina Lead", SUN), AS("PHC-A14", "Gil Ghost", "Tina Lead", SUN)];
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-A10", "PHC-A11", "PHC-A12"]), now: IST(2026, 10, 15, 15) });
+  const TI = await F.who("Tina Lead"), MO = await F.who("Mona Manager");
+  await F.work("Arun Agent", D(10, 5), 200);
+  for (const [f, v] of [["achieved", "180"], ["expected", "200"], ["pkt", "95"], ["quality", "97"]]) await F.save(TI, "2026-10", "Paula Poster", f, v);
+  const xr = F.read(F.xlsx([["S", [["DOW", "User Name"], ...rep(4, [serial(D(10, 8)), "Xena Extra"])]]]), "Extra production Oct.xlsx");
+  await TI("stack.extraSave", F.body(xr, { month: "2026-10" }));
+  const ids = Object.fromEntries(["Paula Poster", "Jay Joiner", "Xena Extra", "Old Ola", "Gil Ghost"].map((n) => [n, F.id(n)]));
+  // the next roster syncs: Paula, Jay and Xena resign in October; Old Ola's exit date is typed in Shastra late (Sep 2025); Gil is gone from Shastra
+  F.clock(IST(2026, 10, 28, 9));
+  F.st.feed = feed.filter((f) => f.name !== "Gil Ghost").map((f) => (f.name === "Paula Poster" ? { ...f, status: "Resigned", exit_date: D(10, 20) } : f.name === "Jay Joiner" ? { ...f, status: "Resigned", exit_date: D(10, 24) }
+    : f.name === "Xena Extra" ? { ...f, status: "Resigned", exit_date: null } : f.name === "Old Ola" ? { ...f, status: "Resigned", exit_date: "2025-09-30" } : f));
+  await F.sync();
+  F.clock(IST(2026, 11, 16, 15));
+  const kept = async (n) => (await F.rows("SELECT id, active FROM users WHERE id = ?", ids[n]))[0];
+  ok("U-11: Paula (Posting, never signed in, typed values) is kept, switched off, with her 4 typed values", (await kept("Paula Poster")) && !(await kept("Paula Poster")).active
+    && (await F.rows("SELECT field FROM stack_typed WHERE subject_id = ?", ids["Paula Poster"])).length === 4);
+  ok("U-11: Jay (an AR joiner with no work in Brahmastra, exit date Oct 24) is kept for the attrition", !!(await kept("Jay Joiner")));
+  ok("U-11: Xena (only extra production, Resigned with no exit date) is kept, her extra production with her", !!(await kept("Xena Extra")) && (await F.rows("SELECT 1 FROM extra_lines WHERE user_id = ?", ids["Xena Extra"])).length > 0);
+  ok("U-11: Old Ola (left in Sep 2025, beyond the report's 13 months, nothing of hers kept) is removed, as before", !(await kept("Old Ola")));
+  ok("U-11: Gil (gone from Shastra, never a leaver there, no work) is removed, as before", !(await kept("Gil Ghost")));
+  const tina = F.tl(await F.month(MO, "2026-10"), "Tina Lead");
+  ok("U-11: October's team lead stack counts Tina's 3 leavers (attrition 3: score 0)", tina.attrition === 3 && tina.s.attr === 0 && tina.left.map((x) => x.name).sort().join() === "Jay Joiner,Paula Poster,Xena Extra", { n: tina.attrition, who: tina.left, s: tina.s.attr });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

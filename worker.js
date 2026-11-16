@@ -2581,13 +2581,20 @@ async function returnsOf(env, claimId) {
   return (r && r.n) || 0;
 }
 /* People an old roster file brought in who are not in Shastra: switched off by the sync, and removed here when they
-   never signed in and have nothing on any claim. Anyone with work in Brahmastra stays (switched off) for the history. */
+   never signed in and have nothing on any claim. Anyone with work in Brahmastra stays (switched off) for the history, and so
+   does anyone the Stack report still needs: values typed for them, extra production of theirs, and a leaver of the report's
+   months (Shastra's exit date, or a leaving status such as Resigned, in the last 13 months), whom the attrition counts. */
 async function removeLeftovers(env) {
-  const gone = await all(env, `SELECT id FROM users u WHERE u.source = 'roster' AND u.active = 0 AND u.role <> 'admin' AND u.last_login IS NULL AND COALESCE(u.pass_hash, '') = ''
+  // the day they left, as the attrition dates it (stackLeavers): Shastra's exit date, else the day the sync switched off someone
+  // Shastra marks as gone (someone only missing from Shastra may never have been real: an old file's leftover, removed as before)
+  const keepFrom = stackMonthAdd(istISO(Date.now()).slice(0, 7), -12) + "-01";
+  const leaver = (u) => { const d = isoDate(u.exit_date) || (u.off_at && ROSTER_GONE.test(String(u.roster_status || "").trim()) ? istISO(u.off_at) : ""); return !!d && d >= keepFrom; };
+  const gone = (await all(env, `SELECT id, exit_date, off_at, roster_status FROM users u WHERE u.source = 'roster' AND u.active = 0 AND u.role <> 'admin' AND u.last_login IS NULL AND COALESCE(u.pass_hash, '') = ''
     AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.user_id = u.id) AND NOT EXISTS (SELECT 1 FROM claim_events e WHERE e.user_id = u.id)
     AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.user_id = u.id) AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.assigned_to = u.id OR c.last_worked_by = u.id)
     AND NOT EXISTS (SELECT 1 FROM handoffs h WHERE h.lead_id = u.id OR h.backup_id = u.id OR h.assigned_to = u.id OR h.done_by = u.id)
-    AND NOT EXISTS (SELECT 1 FROM allocations l WHERE l.by_user = u.id)`);
+    AND NOT EXISTS (SELECT 1 FROM allocations l WHERE l.by_user = u.id)
+    AND NOT EXISTS (SELECT 1 FROM stack_typed t WHERE t.subject_id = u.id) AND NOT EXISTS (SELECT 1 FROM extra_lines x WHERE x.user_id = u.id OR x.auto_id = u.id)`)).filter((u) => !leaver(u));
   if (!gone.length) return 0;
   await batchAll(env, gone.flatMap((u) => [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id), env.DB.prepare("DELETE FROM users WHERE id = ?").bind(u.id)]), 40);
   return gone.length;
