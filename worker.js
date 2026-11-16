@@ -5415,11 +5415,12 @@ const OPS = {
     // The two lists under the floor, in this person's view (their clients; a client, location or team lead picked narrows them):
     // the Escalation tracker's open escalations, red as the tracker shows them (open over 24 working hours with no reason given yet,
     // or past the expected close date), and the claims billers flagged for the team lead still waiting for an answer (red past the
-    // 48 working hours of Needs attention, unless on hold).
+    // 48 working hours of Needs attention, unless on hold). Every one of them, red first: the page counts them as the Live status
+    // tab does (attention.count) and shows the first few.
     const todayIst = istISO(now), ew = f.clientIds ? ` AND e.client_id IN ${IN_LIST}` : "";
     const escalations = (await all(env, `SELECT e.id, e.client_id, e.sr, e.kind, e.dept, e.claim_no, e.created_at, e.created_by_name, e.delay_reason, e.expected_on, cl.name AS client_name
         FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id WHERE e.status != 'resolved'${scopeSql(user, "e.client_id")}${ew}${f.locationId ? " AND (e.location_id = ? OR e.location_id IS NULL)" : ""}
-        ORDER BY e.created_at LIMIT 300`, ...scopeArgs(user), ...ca, ...la))
+        ORDER BY e.created_at`, ...scopeArgs(user), ...ca, ...la))
       .map((e) => { const past = escPast(e.created_at, now), reason = past && !e.delay_reason, late = !!e.expected_on && e.expected_on < todayIst;
         return { id: e.id, client_id: e.client_id, client_name: e.client_name || "", sr: e.sr, kind: escKind(e), dept: e.dept, claim_no: e.claim_no || "", by: e.created_by_name || "", at: e.created_at,
           open_hours: Math.floor(workingHoursBetween(e.created_at, now)), past_24: past, needs_reason: reason, past_expected: late, red: reason || late }; })
@@ -5427,7 +5428,7 @@ const OPS = {
     const flagged = (await all(env, `SELECT c.id, c.client_id, c.claim_no, c.escalated_at, cl.name AS client_name, COALESCE(fb.name, u.name) AS by_name,
         EXISTS (SELECT 1 FROM tat_holds t WHERE t.kind = 'flag' AND t.ref_id = c.id AND t.cleared_at IS NULL AND t.until >= ? AND (t.since IS NULL OR t.since = c.escalated_at)) AS held
         FROM claims c LEFT JOIN users fb ON fb.id = c.escalated_by LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN clients cl ON cl.id = c.client_id
-        WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")}${cw}${lw} ORDER BY c.escalated_at LIMIT 300`,
+        WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")}${cw}${lw} ORDER BY c.escalated_at`,
       todayIst, ...scopeArgs(user), ...ca, ...la))
       .map((r) => { const late = !!r.escalated_at && addWorkingHours(r.escalated_at, ATTN_TAT_HOURS) < now && !r.held;
         return { id: r.id, client_id: r.client_id, client_name: r.client_name || "", claim_no: r.claim_no || "", by: r.by_name || "", at: r.escalated_at,
