@@ -349,11 +349,14 @@ const FIELDS = [
   { key: "file_bucket", label: "Aging bucket (from file)" },
   { key: "location", label: "Location (from file)", hint: "optional: split one file across locations" },
 ];
-const normHeader = (h) => String(h || "").replace(/^﻿/, "").toLowerCase().replace(/#/g, " number ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+// the columns a file must have recognised to load at once (the others are optional, or shown on the column check)
+const UPLOAD_KEYS = ["claim_no", "patient", "dos", "balance"];
+// a header as words: lower case, # as "number", a camelCase name split (ClaimNo is Claim No), anything else a space
+const normHeader = (h) => String(h || "").replace(/^﻿/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().replace(/#/g, " number ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 const HEADER_RULES = {
   claim_no: [["ig claim id number charge id number", "claim id", "claim number", "claim no", "claim num", "claimid", "claim ref", "claim reference", "claim control number", "icn", "tcn", "charge id", "encounter id", "encounter number", "invoice number", "invoice no", "claim"], ["invoice", "encounter", "charge id"]],
   account_no: [["account number", "account no", "acct number", "acct no", "account", "acct", "mrn", "patient id", "patient account", "patient account number", "chart number", "medical record number", "account id"], ["chart", "record"]],
-  patient: [["patient name", "patient", "pt name", "patient full name", "member name", "guarantor", "guarantor name"], ["name"]],
+  patient: [["patient name", "patient", "pt name", "patient full name", "member name", "guarantor", "guarantor name", "name"], ["name"]],
   payer: [["payer", "payer name", "payor", "payor name", "insurance", "insurance name", "insurance company", "carrier", "primary insurance", "primary payer", "plan name", "financial class", "ins"], ["plan"]],
   dos: [["date of service", "dos", "service date", "svc date", "dos from", "from date", "date of svc", "encounter date", "visit date", "from dos"], []],
   cpt: [["cpt", "cpt code", "cpt codes", "procedure", "procedure code", "procedure codes", "proc code", "hcpcs", "cpt hcpcs", "service code"], []],
@@ -369,11 +372,38 @@ const HEADER_RULES = {
   file_bucket: [["bucket responsibility", "bucket", "aging bucket", "age bucket", "aging", "ar bucket", "age"], []],
   location: [["location", "location name", "facility", "site", "practice location", "office", "service location"], []],
 };
+/* The key columns (claim number, account, patient, date of service, balance): claims are told apart and valued by them, so a
+   longer header is taken for one only when it really is one. Inside a longer header a name counts only as whole words (Claim No
+   is not Claim Notes); claim, account, acct, name and amount count only as the whole header (Claim Type, Account Balance,
+   Associate Name and Paid Amount are no claim number, account, patient or balance); a header that also says it holds something else is not taken (Claim
+   Submitted Date is a date, Patient DOB a date of birth, Next Visit Date not the date of service, Patient Balance not the AR
+   balance); and a generic word (name, invoice, chart) only in a header made of the column's own words (Last Name, First Name).
+   A file whose key columns are not all recognised stops at the column check (UploadWizard's afterPick). */
+const hdrWords = (s) => s.split(" ");
+const KEY_WHOLE_ONLY = { claim_no: ["claim"], account_no: ["account", "acct"], patient: ["name"], balance: ["amount"] };
+const NOT_AN_ID = hdrWords("date dt dob birth day days month year time submitted received sent posted paid amount amt balance bal payment payments charges fee total due status state type kind class category reason code flag stage frequency age aging bucket note notes comment comments remark remarks memo description desc name count qty quantity lines");
+const KEY_NOT = {
+  claim_no: NOT_AN_ID, account_no: NOT_AN_ID,
+  patient: hdrWords("date dt dob birth day days month year time age aging amount amt balance bal paid pay payment due responsibility resp portion copay deductible coinsurance status state type class category reason code flag note notes comment comments remark remarks id number no num mrn ssn account acct chart record address addr phone mobile email city zip gender sex relationship relation count"),
+  dos: hdrWords("next last coverage eligibility eligible auth authorization birth dob submitted submission billed billing paid payment posted posting received entry created denial denied follow followup appeal admit admission discharge to thru through end amount balance status type note notes comment comments count"),
+  balance: hdrWords("paid payment payments pmt allowed adjustment adjustments adj contractual expected contract copay deductible coinsurance writeoff write billed charge charges fee patient pt unapplied prior previous beginning starting original date dt day days month age aging bucket status type class category reason code note notes comment comments name count id number no"),
+};
+const KEY_GENERIC_WORDS = { claim_no: hdrWords("invoice encounter charge id number no num ref visit ticket"), account_no: hdrWords("chart record medical number no id mrn"), patient: hdrWords("name last first full middle given family surname") };
 function autoMap(headers) {
   const normed = headers.map((h) => ({ h, n: normHeader(h) }));
   const used = new Set();
   const map = {};
   const claim = (f, hit) => { if (hit && !used.has(hit.h)) { map[f] = hit.h; used.add(hit.h); return true; } return false; };
+  // a name inside a longer header: anywhere for the other columns; for a key column as whole words (a plural s allowed), in a
+  // header whose other words say nothing else (KEY_NOT)
+  const inside = (key, n, name) => {
+    if (!KEY_NOT[key]) return n.includes(name);
+    const w = " " + n + " ";
+    if (!w.includes(" " + name + " ") && !w.includes(" " + name + "s ")) return false;
+    const own = hdrWords(name);
+    return !hdrWords(n).some((x) => !own.includes(x) && !own.includes(x.replace(/s$/, "")) && KEY_NOT[key].includes(x));
+  };
+  const onlyOwn = (key, n) => !KEY_GENERIC_WORDS[key] || hdrWords(n).every((x) => KEY_GENERIC_WORDS[key].includes(x) || KEY_GENERIC_WORDS[key].includes(x.replace(/s$/, "")));
   for (const f of FIELDS) { // pass 1: exact names
     const names = (HEADER_RULES[f.key] || [[], []])[0];
     const hit = normed.find((x) => !used.has(x.h) && names.includes(x.n));
@@ -381,14 +411,15 @@ function autoMap(headers) {
   }
   for (const f of FIELDS) { // pass 2: header contains a confident name
     if (map[f.key]) continue;
-    const names = (HEADER_RULES[f.key] || [[], []])[0].filter((n) => n.length >= 4);
-    const hit = normed.find((x) => !used.has(x.h) && names.some((n) => x.n === n || x.n.split(" ").join(" ").includes(n)));
+    const whole = KEY_WHOLE_ONLY[f.key] || [];
+    const names = (HEADER_RULES[f.key] || [[], []])[0].filter((n) => n.length >= 4 && !whole.includes(n));
+    const hit = normed.find((x) => !used.has(x.h) && names.some((n) => x.n === n || inside(f.key, x.n, n)));
     claim(f.key, hit);
   }
   for (const f of FIELDS) { // pass 3: generic words
     if (map[f.key]) continue;
     const names = (HEADER_RULES[f.key] || [[], []])[1];
-    const hit = normed.find((x) => !used.has(x.h) && names.some((n) => x.n.includes(n)));
+    const hit = normed.find((x) => !used.has(x.h) && onlyOwn(f.key, x.n) && names.some((n) => inside(f.key, x.n, n)));
     claim(f.key, hit);
   }
   return map;
@@ -4008,8 +4039,11 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const today = todayISO();
   const applySheet = (sheets, i) => { const t = tableFromSheet(sheets[i].rows); const m = autoMap(t.headers); setSheetIdx(i); setTable(t); setMapping(m); return m; };
   const pickSheet = (sheets, i) => { applySheet(sheets, i); };
-  /* Columns recognised and the client already chosen: load at once. Otherwise ask where it goes (and show the columns if they were not recognised). */
-  const afterPick = (m) => { const ok = !!(m.claim_no || (m.patient && m.dos)) && !(locMode === "file" && !m.location); setShowCols(!ok); if (ok && clientId) setAutoGo(true); else setStep(2); };
+  /* Columns recognised and the client already chosen: load at once. Otherwise ask where it goes (and show the columns if they were not recognised).
+     Only a file whose key columns (claim number, patient, date of service, balance) were all recognised loads at once: one with no
+     column Brahmastra can trust for the claim number or the balance stops at the column check, so claims are never merged by a
+     wrong column or loaded at $0 without the team lead seeing it. */
+  const afterPick = (m) => { const ok = UPLOAD_KEYS.every((k) => m[k]) && !(locMode === "file" && !m.location); setShowCols(!ok); if (ok && clientId) setAutoGo(true); else setStep(2); };
   const [showCols, setShowCols] = useState(false);
   const onFile = async (f) => {
     if (!f) return;
@@ -4043,6 +4077,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   useEffect(() => { if (autoGo && built && file) { setAutoGo(false); load(); } }, [autoGo, built, file]);
   const backToStart = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setStopped(null); };
   const mappingOk = !!(mapping.claim_no || (mapping.patient && mapping.dos));
+  const keysMissing = FIELDS.filter((f) => UPLOAD_KEYS.includes(f.key) && f.key !== "balance" && !mapping[f.key]);
   const samples = (h) => { if (!h || !table) return ""; const vals = []; for (const r of table.rows) { const v = r[h]; if (v !== "" && v != null) vals.push(String(v).slice(0, 28)); if (vals.length >= 3) break; } return vals.join(" · "); };
   const load = async () => {
     if (!built) return;
@@ -4161,6 +4196,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           {!table.rows.length && <div className="alert warn">This file has no claim rows (it is empty, or has only the header row). Pick another file.</div>}
           {table.rows.length > 0 && built && !built.summary.included && mappingOk && <div className="alert warn">No claims to load from this file: every row was left out. Check the columns below.</div>}
           {table.rows.length > 0 && !mappingOk && <div className="alert warn">The claim column was not recognised. Point at the <b>Claim #</b> column below (or Patient name and Date of service) so claims can be told apart.</div>}
+          {table.rows.length > 0 && mappingOk && keysMissing.length > 0 && <div className="alert warn">Not recognised in this file: <b>{keysMissing.map((f) => f.label).join(", ")}</b>. Point at {keysMissing.length === 1 ? "that column" : "those columns"} below; leave {keysMissing.length === 1 ? "it" : "one"} at "(not in file)" only when the file has no such column.{!mapping.claim_no ? " With no Claim # column, claims are told apart by patient name and date of service." : ""}</div>}
           {mappingOk && !showCols && <div className="small muted">Columns were recognised by name. <button className="btn link sm" onClick={() => setShowCols(true)}>Check the columns</button></div>}
           {showCols && (
             <div className="table-wrap"><table className="t"><thead><tr><th>Brahmastra field</th><th>Column in your file</th><th>Sample values</th></tr></thead>

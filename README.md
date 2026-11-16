@@ -1250,9 +1250,10 @@ host the app elsewhere, add that address as a single-page application redirect
 URI on the registration and update `MS_REDIRECT_URI`.
 
 One screen: pick the client (and location), choose the file from the Purview
-Automate OneDrive or from the computer, done. When the file's columns are
-recognised the claims load at once; only a file with unfamiliar column names
-stops at a column check. As soon as the claims load they are handed to the
+Automate OneDrive or from the computer, done. When the file's claim number,
+patient, date of service and balance columns are recognised the claims load at
+once; a file where any of them is not recognised stops at a column check, which
+names the ones not found. As soon as the claims load they are handed to the
 billers mapped to that location (evenly, each up to their daily target, highest
 priority first, patients and payers kept together inside each share) unless you
 untick "Allocate after loading"; a team lead
@@ -1274,7 +1275,9 @@ and the upload says how many dates it could not read (the EV upload leaves such 
 (`IG Claim ID#/Charge ID#`, `Claim ID`, `Patient Name`, `Payer`, `DOS`, `CPT`,
 `Provider`, `Balance Amount($)`, `Status`, `Sub Status`, `Action`,
 `Comments/Notes`, `Date Worked`, and the usual variants); when a claim column
-cannot be found the column check lets you point at the right ones. A claim is recognised across uploads by its claim number, or,
+cannot be found the column check lets you point at the right ones. A longer header is taken for a key column only
+when it really is one: Claim Submitted Date or Claim Type is no claim number, Account Balance no account number,
+Patient DOB no patient name, Next Visit Date no date of service and Paid Amount or Patient Balance no balance. A claim is recognised across uploads by its claim number, or,
 without one, by patient + date of service + payer + provider. A claim that came without a claim number gets a
 BR-... number from Brahmastra; when a later file carries its real number it is found by patient + date of service
 (and payer, when both files have one), refreshed, and takes the real number. Two different claim numbers are always
