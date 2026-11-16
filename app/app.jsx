@@ -306,11 +306,20 @@ const dateReader = (values, { dob = false } = {}) => { const order = dateOrderOf
 
 /* ---------- reading spreadsheets ---------- */
 /* A CSV / text file is read as text, cell for cell: claim and account numbers keep every digit and their leading zeros, and
-   "12/14" or 05/06/2026 stay as written (parseMoney and parseDateAny read the money and date columns from the text). */
+   "12/14" or 05/06/2026 stay as written (parseMoney and parseDateAny read the money and date columns from the text). In an
+   Excel file, a number shown with leading zeros by its cell format (a claim or account number the PM system pads: Excel shows
+   00012) is read as Excel shows it, so the zeros stay too; every other cell keeps its value (money and dates as numbers). */
+function zeroPaddedAsShown(ws) {
+  for (const k of Object.keys(ws || {})) {
+    const c = k[0] === "!" ? null : ws[k];
+    if (c && c.t === "n" && typeof c.w === "string" && /^0\d+$/.test(c.w) && Number(c.w) === c.v) { c.t = "s"; c.v = c.w; }
+  }
+  return ws;
+}
 function readWorkbook(buffer, fileName) {
   const isText = /\.(csv|txt|tsv)$/i.test(fileName || "");
   const wb = isText ? XLSX.read(new TextDecoder("utf-8").decode(buffer), { type: "string", cellDates: false, raw: true }) : XLSX.read(buffer, { type: "array", cellDates: false });
-  return wb.SheetNames.map((name) => ({ name, rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" }) })).filter((s) => s.rows.length);
+  return wb.SheetNames.map((name) => ({ name, rows: XLSX.utils.sheet_to_json(isText ? wb.Sheets[name] : zeroPaddedAsShown(wb.Sheets[name]), { header: 1, raw: true, defval: "" }) })).filter((s) => s.rows.length);
 }
 function detectHeaderRow(rows) {
   for (let i = 0; i < Math.min(rows.length, 40); i++) {

@@ -1268,7 +1268,8 @@ can move them afterwards on Allocate or Claims.
   follow-up date (date worked + the client's follow-up days, or the file's own
   follow-up column) and comes back into the pool when it is due.
 
-Excel (`.xlsx`, `.xls`) and CSV are accepted. Dates are read month first (05/06/2026 is 6 May) unless a date in
+Excel (`.xlsx`, `.xls`) and CSV are accepted. A claim or account number keeps its leading zeros, also in an Excel
+file where a cell format shows them (Excel shows 00012: Brahmastra reads 00012). Dates are read month first (05/06/2026 is 6 May) unless a date in
 the same column, such as 13/06/2026, shows the column is written day first: then the whole column is read day first
 (05/06/2026 is 5 June). A date without its year or day (26-Oct, October 2026) is not read: the cell is left empty
 and the upload says how many dates it could not read (the EV upload leaves such a row out and says so). Columns are matched by name

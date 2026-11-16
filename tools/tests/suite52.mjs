@@ -215,6 +215,18 @@ S("W-05, W-08: Undo after Load the file again, and after the upload's own automa
   ok("W-08: the biller is told the claims were taken off their list", (await q("SELECT id FROM user_notices WHERE user_id = ?", mid[0].assigned_to)).length > bell0 && /taken off your list: the upload they came from was undone/.test((bell || {}).text || ""), bell);
 }
 
+S("W-13: an Excel number shown with leading zeros keeps them");
+{
+  const ws = XLSX.utils.aoa_to_sheet([["Claim Number", "Account Number", "Patient Name", "DOS", "Payer", "Balance"], [12, 345, "Testpatient, Z1", 46265, "Aetna", 1234.5], [7711041, 99, "Testpatient, Z2", 46266, "Cigna", 80]]);
+  ws.A2.z = "00000"; ws.B2.z = "000000"; ws.D2.z = "mm/dd/yyyy"; ws.F2.z = "#,##0.00"; ws.D3.z = "mm/dd/yyyy";
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Inv"); const b = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  const sheets = app.readWorkbook(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), "W-13 zeros.xlsx");
+  const t = app.tableFromSheet(sheets[0].rows); const built = app.buildClaims({ rows: t.rows, mapping: app.autoMap(t.headers), kind: "fresh", today: todayIST() });
+  const [c1, c2] = built.claims;
+  ok("W-13: Excel shows claim 00012 and account 000345: Brahmastra reads 00012 and 000345", c1.claim_no === "00012" && c1.account_no === "000345", [c1.claim_no, c1.account_no]);
+  ok("W-13: numbers with no such format, money and dates are read as before", c2.claim_no === "7711041" && c2.account_no === "99" && c1.balance === 1234.5 && c1.dos === "2026-08-31" && c2.dos === "2026-09-01", [c2.claim_no, c2.account_no, c1.balance, c1.dos, c2.dos]);
+}
+
 S("W-07: assigning a claim to the biller who already has it changes nothing");
 {
   const pool = await poolOf(4);
