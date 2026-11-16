@@ -1456,7 +1456,7 @@ function SettingsView({ me, setMe, ctx }) {
           <div className="card set-sec" id="set-profile">
             <h2>My profile</h2><div className="sub">From the Purview Shastra roster. If something is wrong, {me.is_admin ? "correct it in Purview Shastra" : me.role === "supervisor" ? "ask your manager or the admin to correct it on the roster" : "ask your team lead or the admin to correct it on the roster"}.</div>
             <dl className="cv-kv">
-              <dt>Name</dt><dd>{me.name}</dd><dt>Email</dt><dd>{me.email}</dd>
+              <dt>Name</dt><dd>{me.name}</dd><dt>Email</dt><dd>{me.email_missing ? <span className="muted">{NO_EMAIL}</span> : me.email}</dd>
               <dt>Emp ID</dt><dd>{me.emp_id || dash}</dd><dt>Designation</dt><dd>{me.designation || me.position || dash}</dd>
               <dt>Department</dt><dd>{me.department || dash}{me.departments_also ? <span className="muted" style={{ fontWeight: 400 }}> · also {me.departments_also}</span> : null}</dd><dt>Brahmastra role</dt><dd>{roleLabel(me)}</dd>
               <dt>Reports to</dt><dd>{me.reports_to_name || dash}</dd><dt>Shift</dt><dd>{me.shift || dash}</dd>
@@ -1562,6 +1562,9 @@ const navFor = (me, ho, fb, at, tk) => {
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
 const navItems = (nav) => nav.flatMap((x) => (Array.isArray(x) ? [x] : x.items));
 // every project: the Vice President, or an Assistant Vice President under their own title
+/* A person's email as the page shows it: never the made-up address Brahmastra keeps for someone the roster has no email for. */
+const NO_EMAIL = "no email in Purview Shastra";
+const emailOf = (u) => (!u ? "" : u.email_missing ? NO_EMAIL : u.email || "");
 const roleLabel = (me) => (me.is_admin ? "Admin" : me.access_all ? (me.designation || "Vice President") : me.roster_kind === "manager" ? (me.designation || "Manager") : me.role === "supervisor" ? (/^(sme|subject matter)/i.test(me.designation || "") ? "SME" : "Team lead") : "Biller");
 /* ---------- Ctrl+K: jump to a page, a client, a person or a claim from anywhere ---------- */
 const CMDK_ORDER = ["Page", "Client", "Person", "Claim"];
@@ -1863,7 +1866,7 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
         <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
           <button className="btn sm" onClick={() => setMenu(!menu)}><span className="me-name">{me.name || me.email}</span> ▾</button>
           {menu && <div className="menu">
-            <div className="small muted" style={{ padding: "6px 10px" }}>{me.email}<br />{roleLabel(me)}{me.access_all ? " · every project" : me.scope_projects && me.scope_projects.length && me.role === "supervisor" ? " · " + me.scope_projects.join(", ") : ""}</div>
+            <div className="small muted" style={{ padding: "6px 10px" }}>{emailOf(me)}<br />{roleLabel(me)}{me.access_all ? " · every project" : me.scope_projects && me.scope_projects.length && me.role === "supervisor" ? " · " + me.scope_projects.join(", ") : ""}</div>
             <div className="tiny muted" style={{ padding: "0 10px 6px" }}>{me.designation ? me.designation + " · " : ""}signed in with {me.via === "otp" ? "a code" : "password"}</div>
             <button onClick={() => { setMenu(false); setView("settings"); }}>Settings</button>
             <button onClick={() => { setMenu(false); onSignOut(); }}>Sign out</button>
@@ -6885,7 +6888,7 @@ function TeamView({ ctx, reload, me }) {
   const days = useMemo(() => { const out = []; let d = range.from; let guard = 0; while (d <= range.to && guard++ < 62) { out.push(d); d = addDaysISO(d, 1); } return out; }, [range.from, range.to]);
   const prodBy = useMemo(() => { const m = {}; (prod.data ? prod.data.rows : []).forEach((r) => { m[r.user_id] = m[r.user_id] || { name: r.user_name, days: {}, n: 0, amt: 0, resolved: 0 }; m[r.user_id].days[r.day] = r; m[r.user_id].n += r.n; m[r.user_id].amt += r.amt; m[r.user_id].resolved += r.resolved; }); return m; }, [prod.data]);
   const info = useRpc("meta.info", {}, []);
-  const [testTo, setTestTo] = useState(me.email);
+  const [testTo, setTestTo] = useState(me.email_missing ? "" : me.email);
   const [testing, setTesting] = useState(false);
   const sendTest = async () => { setTesting(true); try { const r = await rpc("email.test", { to: testTo }); toast(`Test email sent to ${r.to} through ${r.provider}. Check the inbox (and spam).`); } catch (e) { toast(e.message, "err"); } setTesting(false); };
   const PROVIDER_LABEL = { graph: "Microsoft 365 (Graph)", resend: "Resend", brevo: "Brevo", sendgrid: "SendGrid", webhook: "webhook" };
@@ -6945,7 +6948,7 @@ function TeamView({ ctx, reload, me }) {
       {tempPw && (
         <Modal title="Temporary password" onClose={() => setTempPw(null)} narrow footer={<button className="btn primary" onClick={() => setTempPw(null)}>Done</button>}>
           <div className="stack">
-            <div>Share this with <b>{tempPw.user.name}</b> ({tempPw.user.email}). It is shown only once; they will be asked to choose their own password at sign in.</div>
+            <div>Share this with <b>{tempPw.user.name}</b> ({emailOf(tempPw.user)}). It is shown only once; they will be asked to choose their own password at sign in.</div>
             <div className="pre" style={{ fontSize: 18, textAlign: "center" }}>{tempPw.pw}</div>
             <button className="btn sm" onClick={() => { navigator.clipboard && navigator.clipboard.writeText(tempPw.pw).then(() => toast("Copied.")); }}>Copy</button>
           </div>
@@ -6955,7 +6958,9 @@ function TeamView({ ctx, reload, me }) {
       {codeFor && (
         <Modal title={"Sign-in code for " + codeFor.user.name} onClose={() => setCodeFor(null)} narrow footer={<button className="btn primary" onClick={() => setCodeFor(null)}>Done</button>}>
           <div className="stack">
-            <div>Pass this to <b>{codeFor.user.name}</b> ({codeFor.email}). On the sign-in screen they choose "Sign in with a code", enter their email, then this code. It works for {codeFor.expires_in_min} minutes, once.</div>
+            <div>Pass this to <b>{codeFor.user.name}</b> ({codeFor.no_email ? NO_EMAIL : codeFor.email}). {codeFor.no_email
+              ? <>On the sign-in screen they type their name, pick themselves{codeFor.has_password ? <>, press <b>Forgot it? Reset with a one-time code</b></> : null} and enter this code, then choose {codeFor.has_password ? "a new password" : "their password"}.</>
+              : <>On the sign-in screen they choose <b>Email code</b>, enter their email and press <b>Send me a code</b>, then type this code (or the one emailed to them).</>} It works for {codeFor.expires_in_min} minutes, once.</div>
             <div className="pre mono" style={{ fontSize: 26, textAlign: "center", letterSpacing: 8 }}>{codeFor.code}</div>
             <button className="btn sm" onClick={() => { navigator.clipboard && navigator.clipboard.writeText(codeFor.code).then(() => toast("Copied.")); }}>Copy</button>
           </div>
@@ -10332,7 +10337,7 @@ function App() {
   if (me === undefined) return <div className="login"><Spinner label="Starting…" /></div>;
   if (!me) return <><LoginScreen onSignedIn={(u) => { setMe(u); rpc("auth.me").then((r) => { if (r && Array.isArray(r.holidays)) APP_HOLIDAYS = new Set(r.holidays); }).catch(() => {}); go(u.role === "supervisor" ? "dashboard" : "queue"); }} /><Toaster /></>;
   if (me.must_change) return (
-    <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
+    <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email_missing ? me.name : me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
   const allowed = [...navItems(navFor(me, handoffs, fb, attention, tasks)).map((x) => x[0]), "settings", "mytasks", ...(me.role === "supervisor" ? ["digest", "client"] : []), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
   // an old Past TAT link (#/tat) opens Posting & submission, where the reminders are now (Needs attention when that tab is not there)

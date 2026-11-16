@@ -977,7 +977,14 @@ at most 93 days a call, so longer dates are asked for in parts and joined. Until
   their email each time) and **Email & password** work too.
 - A team lead can give someone on their team a sign-in code when an email is
   slow, or reset their password, from the Team list (**Sign-in code**, **Reset
-  password**).
+  password**). The code's pop-up says how to use it: someone with an email
+  chooses **Email code**, enters it and presses **Send me a code** (it goes out at
+  once: the team lead's code holds nothing back), then types this code or the
+  emailed one; someone with no email types their name on **Sign in**, picks
+  themselves (with a password already: **Forgot it?**) and enters the code. No
+  code is given for an email that is not a Purview address (no sign-in screen
+  takes one for it): the pop-up says why. Someone with no email in Purview
+  Shastra is shown as having none, never with a made-up address.
 - **Deleting accounts**: only the admin deletes an account, from the Team list
   (**Delete**); nobody deletes their own account. Claims on that person's desk go
   back to the pool and their open hand-offs go to the backup, as when someone is
