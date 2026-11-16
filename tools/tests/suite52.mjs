@@ -90,7 +90,10 @@ const REJECTED = { saag: { status: "Claim Rejected", sub_status: "COB Issue", ac
 for (const [dept, who] of [["posting", "Paula Post"], ["submission", "Sam Sub"], ["rejection", "Rex Rej"]]) await A("clients.saveResponsibility", { client_id: sun.id, dept, mode: "person", lead: U(who) });
 const poolOf = async (n, clientId = sun.id) => (await q("SELECT id FROM claims WHERE client_id = ? AND state = 'open' AND assigned_to IS NULL ORDER BY id LIMIT ?", clientId, n)).map((x) => x.id);
 const give = (ids, who, by = TI, clientId = sun.id) => by("alloc.apply", { client_id: clientId, strategy: "smart", assignments: ids.map((id) => ({ id, user_id: U(who), priority: 50, tier: "Medium" })) });
-const made = (prefix, n, extra = {}) => Array.from({ length: n }, (_, i) => { const no = prefix + String(100001 + i); return { match_key: "claim:" + no.toLowerCase(), claim_no: no, patient: "Testpatient, " + prefix + (i + 1),
+// made-up claims of a file: the same prefix gives the same claims; each prefix its own numbers (Brahmastra reads one long run of
+// digits as the claim number, whatever letters are around it)
+const madeBase = new Map(), baseOf = (p) => { if (!madeBase.has(p)) madeBase.set(p, 7100000 + madeBase.size * 1000); return madeBase.get(p); };
+const made = (prefix, n, extra = {}) => Array.from({ length: n }, (_, i) => { const no = prefix + "-" + String(baseOf(prefix) + i + 1); return { match_key: "claim:" + no.toLowerCase(), claim_no: no, patient: "Testpatient, " + prefix + (i + 1),
   payer: i % 2 ? "Aetna" : "Cigna", dos: "2026-09-" + String(1 + (i % 28)).padStart(2, "0"), balance: 100 + (i % 300), status_class: "denied", tier: "Medium", priority: 50, file_status: "Denied", cpt: "99213", ...extra }; });
 
 S("W-01, W-02: a key column is taken only when it really is one; a file whose key columns are not all recognised stops at the column check");
@@ -126,6 +129,90 @@ S("W-01, W-02: a key column is taken only when it really is one; a file whose ke
   // the patient details report uses the same guess: a Patient DOB column is its date of birth, not the patient's name
   const dm = app.detailAutoMap(["Claim Number", "Patient DOB", "Member ID"]);
   ok("W-01 (sibling, patient details report): Patient DOB is the date of birth there, not the patient name", !dm.patient && dm.patient_dob === "Patient DOB", dm);
+}
+
+S("W-03, W-04: a file split across locations: a stop between two locations says so; one location written two ways is one upload");
+{
+  ok("W-04: Downtown, DOWNTOWN and ' downtown ' are one location (the key the upload groups by and matches with)", app.locKey("Downtown") === app.locKey("DOWNTOWN") && app.locKey(" down   town ") === app.locKey("Down Town") && app.locKey("Downtown") !== app.locKey("Westside"));
+  const westside = sun.locations.find((l) => l.name === "Westside");
+  const up = (loc, claims, extra) => { app.setToken(TOK["Tina Lead"]); return app.uploadClaims({ client_id: sun.id, location_id: loc.id, kind: "fresh", file_name: "W-03 two locations.xlsx", claims, summary: {}, rows_read: claims.length, ...extra }); };
+  const st = async (id) => (await TI("inventory.batches", { client_id: sun.id })).batches.find((x) => x.id === id);
+  // the page loads Downtown (held), then the page stops before Westside starts
+  const r1 = await up(downtown, made("WT3A", 5), { hold: true });
+  const b1 = await st(r1.batch_id);
+  ok("W-03: a location's upload that is not the file's last stays unfinished after its last part (still loading, not finished)", b1 && b1.unfinished && !b1.stopped && r1.inserted === 5, b1);
+  const realNow = Date.now; Date.now = () => realNow() + 4 * 60000;
+  try { const b1b = await st(r1.batch_id); ok("W-03: with no next location coming, it shows as stopped part way after three minutes", b1b.unfinished && b1b.stopped, b1b); }
+  finally { Date.now = realNow; }
+  // the whole file again: Downtown held, Westside last: Westside's last part finishes both
+  const r2 = await up(downtown, made("WT3A", 5), { hold: true });
+  const mid = await st(r2.batch_id);
+  const r3 = await up(westside, made("WT3B", 4), { held: [r2.batch_id] });
+  const [a, b] = [await st(r2.batch_id), await st(r3.batch_id)];
+  ok("W-03: while the next location loads the earlier one is still loading; the last location's last part finishes both", mid.unfinished && !a.unfinished && !b.unfinished && r3.inserted === 4, [mid.unfinished, a.unfinished, b.unfinished, r3.inserted]);
+  // another person's upload is never finished by someone else's held list
+  const other = await R["Leo Lead"]("inventory.upload", { client_id: lake.id, location_id: null, kind: "fresh", file_name: "W-03 Leo.xlsx", rows_read: 1, claims: made("WT3L", 1), final: true, hold: true, summary: {} });
+  await up(downtown, made("WT3C", 1), { held: [other.batch_id] });
+  ok("W-03: a held list finishes only the uploader's own uploads of that client", (await LEO("inventory.batches", { client_id: lake.id })).batches.find((x) => x.id === other.batch_id).unfinished);
+}
+
+S("W-05, W-08: Undo after Load the file again, and after the upload's own automatic allocation");
+{
+  const file = made("WU5", 600);
+  app.setToken(TOK["Tina Lead"]);
+  let parts = 0;
+  const r1 = await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-05 wrong file.xlsx", claims: file, summary: {}, rows_read: 600, onProgress: () => { if (++parts === 1) throw new Error("page closed"); } }).then(() => "finished", (e) => e.message);
+  const b1 = await q1("SELECT id, inserted, finished FROM batches WHERE file_name = 'W-05 wrong file.xlsx' ORDER BY uploaded_at LIMIT 1");
+  app.setToken(TOK["Tina Lead"]);
+  const r2 = await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-05 wrong file.xlsx", claims: file, summary: {}, rows_read: 600 });
+  ok("W-05: set-up: the first load stopped after 250, Load the file again added 350 and refreshed 250", r1 === "page closed" && b1.inserted === 250 && !b1.finished && r2.inserted === 350 && r2.updated === 250, [r1, b1, r2.inserted, r2.updated]);
+  // a claim of the stopped part that a biller opened stays
+  const kept = (await q1("SELECT id FROM claims WHERE first_batch_id = ? ORDER BY claim_no LIMIT 1", b1.id)).id;
+  await give([kept], "Arun Agent"); await AR("queue.open", { id: kept });
+  const u1 = await TI("inventory.undoBatch", { batch_id: b1.id });
+  const u2 = await TI("inventory.undoBatch", { batch_id: r2.batch_id });
+  const left = (await q1("SELECT COUNT(*) AS n FROM claims WHERE claim_no LIKE 'WU5%'")).n;
+  ok("W-05: Undo of the stopped upload, then of the load that finished it, removes all 599 untouched claims; the one Arun opened stays", left === 1 && u1.removed + u2.removed === 599 && !!(await q1("SELECT id FROM claims WHERE id = ?", kept)), [u1, u2, left]);
+  // the other order: Undo of the finishing load alone takes the stopped part's untouched claims with it
+  const f2 = made("WU6", 300);
+  app.setToken(TOK["Tina Lead"]); parts = 0;
+  await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-05 second.xlsx", claims: f2, summary: {}, rows_read: 300, onProgress: () => { if (++parts === 1) throw new Error("cut off"); } }).catch(() => {});
+  app.setToken(TOK["Tina Lead"]);
+  const r4 = await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-05 second.xlsx", claims: f2, summary: {}, rows_read: 300 });
+  const u4 = await TI("inventory.undoBatch", { batch_id: r4.batch_id });
+  ok("W-05: Undo of the load that finished a stopped one removes the whole file's untouched claims (300)", u4.removed === 300 && (await q1("SELECT COUNT(*) AS n FROM claims WHERE claim_no LIKE 'WU6%'")).n === 0, u4);
+  // a later, different load of a same-named file never takes a stopped upload's claims it did not refresh
+  const f3 = made("WU7", 260);
+  app.setToken(TOK["Tina Lead"]); parts = 0;
+  await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-05 monthly.xlsx", claims: f3, summary: {}, rows_read: 260, onProgress: () => { if (++parts === 1) throw new Error("cut off"); } }).catch(() => {});
+  app.setToken(TOK["Tina Lead"]);
+  const r6 = await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-05 monthly.xlsx", claims: made("WU8", 3), summary: {}, rows_read: 3 });
+  const u6 = await TI("inventory.undoBatch", { batch_id: r6.batch_id });
+  ok("W-05: Undo of a later file of the same name removes only what it added or refreshed (the other file's claims stay)", u6.removed === 3 && (await q1("SELECT COUNT(*) AS n FROM claims WHERE claim_no LIKE 'WU7%'")).n === 250, u6);
+
+  // W-08: the next file reopens two claims the team lead closed; the upload's own allocation hands them out; Undo puts them back
+  await sql("UPDATE claims SET state = 'excluded' WHERE client_id = ? AND location_id = ? AND state = 'open'", sun.id, downtown.id);
+  const rows = made("WH8", 6);
+  app.setToken(TOK["Tina Lead"]);
+  await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-08 Nov.xlsx", claims: rows, summary: {}, rows_read: 6 });
+  const ids = (await q("SELECT id FROM claims WHERE claim_no IN (?, ?, ?) ORDER BY claim_no", ...rows.slice(0, 3).map((r) => r.claim_no))).map((x) => x.id);
+  await TI("claims.setState", { ids, state: "closed" });
+  app.setToken(TOK["Tina Lead"]);
+  const up = await app.uploadClaims({ client_id: sun.id, location_id: downtown.id, kind: "fresh", file_name: "W-08 Dec.xlsx", claims: rows, summary: {}, rows_read: 6 });
+  app.setToken(TOK["Tina Lead"]);
+  const al = await app.autoAllocate({ client: (await TI("clients.list")).clients.find((c) => c.id === sun.id), loc: downtown });
+  const mid = await q("SELECT id, state, assigned_to FROM claims WHERE id IN (?, ?, ?) ORDER BY claim_no", ...ids);
+  // one of the three is opened by its biller before the Undo: it stays with them
+  const biller = mid[2].assigned_to; const opened = mid[2].id;
+  await as(TOK[users.find((u) => u.id === biller).name])("queue.open", { id: opened });
+  const bell0 = (await q("SELECT id FROM user_notices WHERE user_id = ?", mid[0].assigned_to)).length;
+  const u = await TI("inventory.undoBatch", { batch_id: up.batch_id });
+  const end = await q("SELECT id, state, assigned_to, state_reason FROM claims WHERE id IN (?, ?, ?) ORDER BY claim_no", ...ids);
+  const bell = await q1("SELECT text FROM user_notices WHERE user_id = ? ORDER BY at DESC LIMIT 1", mid[0].assigned_to);
+  ok("W-08: set-up: the upload reopened 3 closed claims and its automatic allocation handed them out", up.reopened === 3 && al.applied >= 3 && mid.every((x) => x.state === "assigned" && x.assigned_to), [up.reopened, al.applied, mid]);
+  ok("W-08: Undo closes again the two nobody opened (off the biller's list) and counts them", end[0].state === "closed" && !end[0].assigned_to && end[1].state === "closed" && !end[1].assigned_to && u.reverted === 2, [end, u]);
+  ok("W-08: the claim its biller opened stays open with them", end[2].state === "in_progress" && end[2].assigned_to === biller, end[2]);
+  ok("W-08: the biller is told the claims were taken off their list", (await q("SELECT id FROM user_notices WHERE user_id = ?", mid[0].assigned_to)).length > bell0 && /taken off your list: the upload they came from was undone/.test((bell || {}).text || ""), bell);
 }
 
 const fails = results.filter((x) => !x.pass);

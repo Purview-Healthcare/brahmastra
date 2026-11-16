@@ -790,15 +790,19 @@ function maskPhi(doc) {
 function signedOut() { setToken(null); try { localStorage.removeItem("drishti:token:v1"); } catch (e) {} try { window.dispatchEvent(new CustomEvent("brahmastra:signedout")); } catch (e) {} }
 
 /* Upload mapped claims in chunks; the first chunk opens the batch. A part the server refuses (or a lost connection) stops the
-   upload: the error carries how many claims the parts before it loaded (they stay loaded). */
-async function uploadClaims({ client_id, location_id, kind, file_name, claims, summary, rows_read, source, web_url, onProgress }) {
+   upload: the error carries how many claims the parts before it loaded (they stay loaded). hold: one location of a file split
+   across locations, left unfinished after its last part; held: the uploads of the file's locations loaded before this one, kept
+   "still loading" while this one loads and finished with its last part. */
+// a location's name as the server tells locations apart: case and extra spaces do not matter
+function locKey(s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim().toLowerCase(); }
+async function uploadClaims({ client_id, location_id, kind, file_name, claims, summary, rows_read, source, web_url, onProgress, hold = false, held = [] }) {
   const totals = { inserted: 0, updated: 0, reopened: 0, closed: 0, excluded: 0, skipped: 0 };
   const parts = chunk(claims, 250);
   let batch_id = null;
   if (!parts.length) parts.push([]);
   for (let i = 0; i < parts.length; i++) {
     let r;
-    try { r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, source: source || "file", web_url: web_url || "", claims: parts[i], final: i === parts.length - 1, summary }); }
+    try { r = await rpc("inventory.upload", { batch_id, client_id, location_id: location_id || null, kind, file_name, rows_read, source: source || "file", web_url: web_url || "", claims: parts[i], final: i === parts.length - 1, summary, ...(hold ? { hold: true } : {}), ...(held.length ? { held } : {}) }); }
     catch (e) { e.loaded = totals.inserted + totals.updated + totals.reopened + totals.closed + totals.excluded; throw e; }
     batch_id = r.batch_id;
     for (const k in totals) totals[k] += r[k] || 0;
@@ -4088,14 +4092,15 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       // the client's locations as they are now (one may have been switched off since this page loaded)
       const locsNow = ((await rpc("clients.list")).clients.find((x) => x.id === client.id) || client).locations || [];
       if (locMode === "file" && mapping.location) {
-        // a location is the same whatever its case or extra spaces (as the server tells them apart)
-        const m = by(built.claims, (c) => (c.location || "").replace(/\s+/g, " ").trim());
-        for (const [name, list] of m) {
+        // a location is the same whatever its case or extra spaces (as the server tells them apart): Downtown and DOWNTOWN are one
+        // group, loaded and allocated once
+        const m = by(built.claims, (c) => locKey(c.location));
+        for (const [key, list] of m) {
           let loc = null, note = "";
-          if (name) {
-            loc = locsNow.find((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase() === name.toLowerCase());
-            // a name the client does not have yet becomes a new location
-            if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name }); loc = r.location; note = "a new location"; }
+          if (key) {
+            loc = locsNow.find((l) => locKey(l.name) === key);
+            // a name the client does not have yet becomes a new location, written as the file first writes it
+            if (!loc) { const r = await rpc("locations.save", { client_id: client.id, name: String(list[0].location).replace(/\s+/g, " ").trim() }); loc = r.location; note = "a new location"; }
           }
           groups.push({ loc, claims: list, note });
         }
@@ -4106,8 +4111,14 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       const live = groups.filter((g) => !(g.loc && !g.loc.active));
       const results = [];
       let done = 0;
+      // A file split across locations loads one location after another, each its own upload. All but the last stay unfinished
+      // (hold) until the last one's final part finishes them (held), so a load that stops between two locations shows in Upload
+      // history and on this screen as still loading, then stopped part way: never as finished with locations missing.
+      const held = [];
       for (const g of live) {
-        const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, source: file.source || "file", web_url: file.webUrl || "", claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / live.length) });
+        const r = await uploadClaims({ client_id: client.id, location_id: g.loc ? g.loc.id : null, kind, file_name: file.name, source: file.source || "file", web_url: file.webUrl || "", claims: g.claims, summary: { ...summarizeClaims(g.claims), mapping, sheet: file.sheets[sheetIdx].name }, rows_read: locMode === "file" ? g.claims.length : table.rows.length, onProgress: (p) => setProgress((done + p) / live.length),
+          hold: g !== live[live.length - 1], held: held.slice() });
+        held.push(r.batch_id);
         const row = { ...r, location: g.loc ? g.loc.name : "(no location)", note: g.note || "", total: g.claims.length, assigned: null };
         const team = g.loc && g.loc.team && g.loc.team.length ? g.loc.team : (client.team || []);
         const wants = g.loc ? g.loc.auto_allocate !== false : client.auto_allocate !== false;

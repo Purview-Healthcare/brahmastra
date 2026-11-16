@@ -1293,12 +1293,18 @@ Claims already in a switched-off location stay as they are.
 
 **Upload history** lists every batch. **Undo** removes the claims that upload added which nobody has
 opened or worked yet (no entry, never opened, no note, attachment or hand-off), also when the upload had already
-handed them to a biller, who is told in the bell; claims already opened or worked stay, so no work is lost. An
-upload is undone once.
+handed them to a biller, who is told in the bell; claims already opened or worked stay, so no work is lost. A claim
+the file closed, excluded or reopened goes back to how it was, also one it reopened that its own automatic
+allocation then gave to a biller, while nobody has opened it (it leaves their list and they are told). Undo of the
+load that finished an upload stopped part way (**Load the file again**) also removes the untouched claims the
+stopped one added: the two are one file. An upload is undone once.
 
 A big file loads in parts of 250 claims. An upload that stops part way (the page was closed or reloaded, or the
 connection dropped, before its last part) keeps the claims that arrived and says so: Upload history marks it
-"stopped part way: upload it again", and the upload screen tells the person who uploaded it. An error half way
+"stopped part way: upload it again", and the upload screen tells the person who uploaded it. A file split across
+locations loads one location after another and is finished only when its last location is in, so a load that stops
+between two locations says so too. One location written two ways in the file (Downtown and DOWNTOWN, or with extra
+spaces) is one location: loaded and allocated once. An error half way
 shows on the upload screen with how many claims loaded before it stopped, and **Load the file again**. Loading the
 file again refreshes the claims already loaded (none is added twice) and adds the rest. Two loads of the same file at
 the same moment (two team leads, or the same file picked again while it still loads) also add each claim once: the

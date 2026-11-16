@@ -7191,11 +7191,18 @@ const OPS = {
         else again = await OPS["inventory.upload"]({ env, user, payload: { ...payload, batch_id: bid, final: false, again: true, claims: lost.map((x) => ({ ...x.c, claim_no: x.c._gen ? "" : x.c.claim_no })) } });
       }
     }
-    // the last part marks the upload finished: one stopped half way (the page closed, reloaded or cut off) says so in Upload history
+    // the last part marks the upload finished: one stopped half way (the page closed, reloaded or cut off) says so in Upload history.
+    // A file split across locations is one upload per location, loaded one after another: each but the last is held unfinished
+    // (hold) and the last one's final part finishes them all (held: the earlier ones), so a load that stops between two locations
+    // shows as stopped part way, never as finished; while a later location loads, the earlier ones are still loading, not stopped.
+    const done = final && !payload.hold ? 1 : 0;
     await run(env, `UPDATE batches SET inserted = inserted + ?, updated = updated + ?, reopened = reopened + ?, closed = closed + ?, excluded = excluded + ?, skipped = skipped + ?,
         rows_read = CASE WHEN ? > 0 THEN ? ELSE rows_read END, summary_json = CASE WHEN ? = 1 THEN ? ELSE summary_json END, finished = CASE WHEN ? = 1 THEN 1 ELSE finished END, part_at = ? WHERE id = ?`,
       counts.inserted, counts.updated, counts.reopened, counts.closed, counts.excluded, counts.skipped,
-      Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), final ? 1 : 0, Date.now(), bid);
+      Math.round(num(rows_read, 0)), Math.round(num(rows_read, 0)), final ? 1 : 0, str(JSON.stringify(summary || {}), 20000), done, Date.now(), bid);
+    const held = (Array.isArray(payload.held) ? payload.held : []).map((x) => str(x, 60)).filter((x) => x && x !== bid).slice(0, 200);
+    if (held.length) await run(env, `UPDATE batches SET part_at = ?, finished = CASE WHEN ? = 1 THEN 1 ELSE finished END WHERE id IN ${IN_LIST} AND client_id = ? AND uploaded_by = ? AND finished = 0 AND undone_at IS NULL`,
+      Date.now(), done, listArg(held), client.id, user.id);
     // An empty file (headers only, or every row skipped) does not count as the month's inventory.
     const loaded = final ? await one(env, "SELECT inserted + updated + reopened + closed + excluded AS n FROM batches WHERE id = ?", bid) : null;
     if (final && loaded && loaded.n > 0) { try { await monthendAuto(env, client.id, istISO(Date.now()).slice(0, 7), "inventory", user.name); await snapshotClients(env); await setSetting(env, "snap_at", Date.now()); } catch (e) {} }
@@ -7288,21 +7295,57 @@ const OPS = {
     if (b.undone_at) throw bad("This batch was already undone.");
     // Only claims nobody has touched go: never opened or worked, no notes, files or hand-offs, and not refreshed by a later file.
     // A claim that was only handed to a biller (the upload allocates by itself) is untouched until someone opens it.
-    const UNTOUCHED = `first_batch_id = ? AND batch_id = ? AND touches = 0 AND state IN ('open','assigned','completed','closed','excluded')
+    // An upload that stopped part way and was then loaded again ("Load the file again", or the same file picked again) is one file
+    // with the load that finished it: the claims the stopped upload added and this load refreshed are this load's to undo too.
+    // (The stopped uploads of the same client, file and location before this one, undone already or not, that no other finished
+    // load came between.)
+    const stopped = b.finished ? (await all(env, `SELECT s.id FROM batches s WHERE s.client_id = ? AND s.file_name = ? AND COALESCE(s.location_id, '') = COALESCE(?, '') AND s.finished = 0
+        AND s.uploaded_at < ? AND NOT EXISTS (SELECT 1 FROM batches f WHERE f.client_id = s.client_id AND f.file_name = s.file_name
+        AND COALESCE(f.location_id, '') = COALESCE(s.location_id, '') AND f.finished = 1 AND f.uploaded_at > s.uploaded_at AND f.uploaded_at < ?)`,
+      b.client_id, b.file_name, b.location_id, b.uploaded_at, b.uploaded_at)).map((x) => x.id) : [];
+    const UNTOUCHED = `(first_batch_id = ? OR first_batch_id IN ${IN_LIST}) AND batch_id = ? AND touches = 0 AND state IN ('open','assigned','completed','closed','excluded')
       AND NOT EXISTS (SELECT 1 FROM claim_events e WHERE e.claim_id = claims.id AND e.kind = 'opened')
       AND id NOT IN (SELECT claim_id FROM attachments) AND id NOT IN (SELECT claim_id FROM notes) AND id NOT IN (SELECT claim_id FROM handoffs)`;
-    const added = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE first_batch_id = ?", b.id);
-    const gone = await all(env, `SELECT id, assigned_to FROM claims WHERE ${UNTOUCHED}`, b.id, b.id);
+    const mineArgs = [b.id, listArg(stopped), b.id];
+    const added = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE first_batch_id = ? OR (first_batch_id IN ${IN_LIST} AND batch_id = ?)`, ...mineArgs);
+    const gone = await all(env, `SELECT id, assigned_to FROM claims WHERE ${UNTOUCHED}`, ...mineArgs);
     let removed = 0;
     const off = new Map();   // how many claims left each biller's list
     for (const part of chunks(gone, 80)) {
       const ids = part.map((x) => x.id), qs = ids.map(() => "?").join(",");
       // the claims first (a claim opened this very moment stays, with its history), then the history of the ones that went
-      const res = await batchAll(env, [env.DB.prepare(`DELETE FROM claims WHERE id IN (${qs}) AND ${UNTOUCHED}`).bind(...ids, b.id, b.id),
+      const res = await batchAll(env, [env.DB.prepare(`DELETE FROM claims WHERE id IN (${qs}) AND ${UNTOUCHED}`).bind(...ids, ...mineArgs),
         env.DB.prepare(`DELETE FROM claim_events WHERE claim_id IN (${qs}) AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.id = claim_events.claim_id)`).bind(...ids)]);
       removed += changesOf(res[0]);
       const left = new Set((await all(env, `SELECT id FROM claims WHERE id IN (${qs})`, ...ids)).map((x) => x.id));
       for (const x of part) if (x.assigned_to && !left.has(x.id)) off.set(x.assigned_to, (off.get(x.assigned_to) || 0) + 1);
+    }
+    // Claims this file refreshed: a state the file changed (closed, excluded, reopened) goes back, when nothing changed it since.
+    // A claim the file reopened that the upload's own automatic allocation then handed to a biller is part of the upload too: when
+    // nothing else happened to it since (only that allocation: never opened, no note, file or hand-off), it goes back as well, off
+    // that biller's list.
+    let reverted = 0;
+    const evs = await all(env, `SELECT e.claim_id, e.at, e.data_json, c.state, c.assigned_to FROM claim_events e JOIN claims c ON c.id = e.claim_id
+      WHERE e.kind = 'refreshed' AND e.at >= ? AND c.batch_id = ? AND e.data_json LIKE ?`, b.uploaded_at, b.id, `%"batch":"${b.id}"%`);
+    const onlyAutoSince = async (id, at) => (await all(env, "SELECT kind, data_json FROM claim_events WHERE claim_id = ? AND at >= ? AND kind NOT IN ('refreshed','file_work')", id, at)).every((x) => x.kind === "assigned" && jsonObj(x.data_json).via === "auto")
+      && !(await one(env, "SELECT 1 AS x FROM notes WHERE claim_id = ? AND created_at >= ? UNION ALL SELECT 1 FROM attachments WHERE claim_id = ? AND created_at >= ? UNION ALL SELECT 1 FROM handoffs WHERE claim_id = ? AND created_at >= ? LIMIT 1", id, at, id, at, id, at));
+    const now = Date.now(), back = [], backOff = [];
+    for (const e of evs) {
+      const d = jsonObj(e.data_json), st = d.changes && d.changes.state;
+      if (d.batch !== b.id || !Array.isArray(st) || !["open", "assigned", "completed", "closed", "excluded"].includes(st[0])) continue;
+      if (e.state === st[1]) {
+        back.push(env.DB.prepare("UPDATE claims SET state = ?, state_reason = 'Upload undone', updated_at = ? WHERE id = ? AND state = ? RETURNING id").bind(st[0], now, e.claim_id, st[1]));
+        back.push(claimEvent(env, e.claim_id, user, "state", "Upload undone", { changes: { state: [st[1], st[0]] } })); backOff.push(null);
+      } else if (st[1] === "open" && e.state === "assigned" && e.assigned_to && (await onlyAutoSince(e.claim_id, e.at))) {
+        back.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = 'Upload undone', assigned_to = NULL, assigned_at = NULL, started_at = NULL, skipped_at = NULL, first_up = 0, updated_at = ?
+          WHERE id = ? AND state = 'assigned' AND assigned_to = ? RETURNING id`).bind(st[0], now, e.claim_id, e.assigned_to));
+        back.push(claimEvent(env, e.claim_id, user, "state", "Upload undone", { changes: { state: ["assigned", st[0]] } })); backOff.push(e.assigned_to);
+      }
+    }
+    // the claims put back (RETURNING), not D1's changes: one put back to closed would count twice (the closed_at trigger)
+    if (back.length) {
+      const res = await batchAll(env, back, 40);
+      res.filter((_, i) => i % 2 === 0).forEach((x, i) => { const n = ((x && x.results) || []).length; reverted += n; if (n && backOff[i]) off.set(backOff[i], (off.get(backOff[i]) || 0) + 1); });
     }
     // the billers who had been given those claims are told (the bell), so a shorter list is no surprise
     if (off.size) {
@@ -7310,19 +7353,6 @@ const OPS = {
       await batchAll(env, [...off.entries()].map(([uid, n]) => env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)")
         .bind(uuid(), uid, Date.now(), `${n} claim${n === 1 ? " was" : "s were"} taken off your list: the upload they came from was undone${cname ? " (" + cname + ")" : ""}.`, "queue", b.client_id)), 50);
     }
-    // Claims this file refreshed: a state the file changed (closed, excluded, reopened) goes back, when nothing changed it since.
-    let reverted = 0;
-    const evs = await all(env, `SELECT e.claim_id, e.data_json, c.state FROM claim_events e JOIN claims c ON c.id = e.claim_id
-      WHERE e.kind = 'refreshed' AND e.at >= ? AND c.batch_id = ? AND e.data_json LIKE ?`, b.uploaded_at, b.id, `%"batch":"${b.id}"%`);
-    const now = Date.now(), back = [];
-    for (const e of evs) {
-      const d = jsonObj(e.data_json), st = d.changes && d.changes.state;
-      if (d.batch !== b.id || !Array.isArray(st) || e.state !== st[1] || !["open", "assigned", "completed", "closed", "excluded"].includes(st[0])) continue;
-      back.push(env.DB.prepare("UPDATE claims SET state = ?, state_reason = 'Upload undone', updated_at = ? WHERE id = ? AND state = ? RETURNING id").bind(st[0], now, e.claim_id, st[1]));
-      back.push(claimEvent(env, e.claim_id, user, "state", "Upload undone", { changes: { state: [st[1], st[0]] } }));
-    }
-    // the claims put back (RETURNING), not D1's changes: one put back to closed would count twice (the closed_at trigger)
-    if (back.length) { const res = await batchAll(env, back, 40); reverted = res.filter((_, i) => i % 2 === 0).reduce((n, x) => n + ((x && x.results) || []).length, 0); }
     const refreshed = await one(env, "SELECT COUNT(*) AS n FROM claims WHERE batch_id = ? AND first_batch_id <> ?", b.id, b.id);
     await run(env, "UPDATE batches SET undone_at = ? WHERE id = ?", now, b.id);
     // Month-end "inventory loaded" was ticked by itself: it goes when no other file with claims is left for that month.
