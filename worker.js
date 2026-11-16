@@ -3011,15 +3011,18 @@ async function digestData(env, ids, wk) {
     const steps = MONTHEND_STEPS.map(([key, label, due]) => { const r = done.get(key); return { key, label, due: monthendDue(mon, due), done: !!(r && r.done_at) }; });
     const pct = a.balp ? Math.round(a.o90p / a.balp * 1000) / 10 : 0;
     const oldest = ws.length ? Math.floor((now - (ws[0].client_sent_at || ws[0].paused_at || now)) / 86400000) : 0;
-    const hh = healthOf({ pct, sla: slaRow, tfl, escLate: e.late, waitingN: ws.length, oldest, missed: m.ar + m.posting + m.submission });
     const wa = weekAgo.get(id), endSnap = endSnaps.get(id), co = coll.get(id) || { amt: 0, n: 0 }, wo = worked.get(id);
+    // that week's money owed (credits left out); a reading kept before the money owed was kept falls back to the net figures
+    const arW = endSnap ? (() => { const owed = endSnap.ar_owed != null ? endSnap.ar_owed : endSnap.ar_balance, o90 = endSnap.over90_owed != null ? endSnap.over90_owed : endSnap.over90_balance;
+        return { now: endSnap.ar_balance, over90: o90, week_ago: wa ? wa.ar_balance : null, over90_pct: owed ? Math.round(o90 / owed * 1000) / 10 : 0, target: OVER90_TARGET, owed, over90_owed: o90, as_of: endSnap.day }; })()
+      : { now: a.bal, over90: a.o90p || 0, week_ago: wa ? wa.ar_balance : null, over90_pct: pct, target: OVER90_TARGET, owed: a.balp || 0, over90_owed: a.o90p || 0 };
+    // Client 360's health rules, on the week's over-90 share (the Sunday reading, as the totals and the client's line): one
+    // over-90 figure a client in the whole digest, the same whenever it is sent or opened
+    const hh = healthOf({ pct: arW.over90_pct, sla: slaRow, tfl, escLate: e.late, waitingN: ws.length, oldest, missed: m.ar + m.posting + m.submission });
     return {
       client: { id: c.id, name: c.name, code: c.code, active: !!c.active, created_at: c.created_at, team: parseTeam(c.team_json).length, locations: locs.get(id) },
       health: hh.health, reasons: hh.reasons.slice(0, 4),
-      // that week's money owed (credits left out); a reading kept before the money owed was kept falls back to the net figures
-      ar: endSnap ? (() => { const owed = endSnap.ar_owed != null ? endSnap.ar_owed : endSnap.ar_balance, o90 = endSnap.over90_owed != null ? endSnap.over90_owed : endSnap.over90_balance;
-          return { now: endSnap.ar_balance, over90: o90, week_ago: wa ? wa.ar_balance : null, over90_pct: owed ? Math.round(o90 / owed * 1000) / 10 : 0, target: OVER90_TARGET, owed, over90_owed: o90, as_of: endSnap.day }; })()
-        : { now: a.bal, over90: a.o90p || 0, week_ago: wa ? wa.ar_balance : null, over90_pct: pct, target: OVER90_TARGET, owed: a.balp || 0, over90_owed: a.o90p || 0 },
+      ar: arW,
       collected: { amount: co.amt, n: co.n, prev: (collPrev.get(id) || { amt: 0 }).amt }, worked: { n: (wo && wo.n) || 0, people: (wo && wo.people) || 0, prev: (prevWorked.get(id) || { n: 0 }).n || 0 }, team: team.get(id),
       sla: slaRow ? { score: slaRow.score, month: slaRow.month, prev: slaPrev ? slaPrev.score : null } : null,
       escalations: { open: e.n || 0, late: e.late || 0, raised: (raised.get(id) || { n: 0 }).n || 0 }, missed: m,
@@ -3050,7 +3053,9 @@ function digestRollup(ds) {
     const worst = d.card && d.card.band !== "ok" && d.card.drags.length ? "worst: " + d.card.drags.slice(0, 2).map((i) => `${i.name} ${i.shown}${i.target ? " (" + i.target + ")" : ""}`).join(", ") : "";
     let slaSaid = false;
     // with Drishti's card for the month, its score is the one named (not a month-end score typed in): one SLA figure per client
-    d.reasons.forEach((r) => { if (d.card && /\bSLA \d/.test(r.text)) return; const isSla = /\bSLA\b/.test(r.text) && worst && !slaSaid; if (isSla) slaSaid = true; attention.push([r.tone, d.client.name, isSla ? r.text + "; " + worst : r.text]); });
+    // the escalations open over 24 hours are named once: by the digest's own line below, when it has one
+    d.reasons.forEach((r) => { if ((d.card && /\bSLA \d/.test(r.text)) || (d.esc && d.esc.over24 && /\bclient escalations? (is|are) open over 24 hours\b/.test(r.text))) return;
+      const isSla = /\bSLA\b/.test(r.text) && worst && !slaSaid; if (isSla) slaSaid = true; attention.push([r.tone, d.client.name, isSla ? r.text + "; " + worst : r.text]); });
     if (d.card && d.card.band !== "ok" && !slaSaid) attention.push([d.card.band === "miss" ? "red" : "amber", d.client.name, `SLA ${d.card.score}% for ${d.card.period.label} (${d.card.band === "miss" ? "red" : "amber"})` + (worst ? "; " + worst : "")]);
     if (d.esc && d.esc.over24) attention.push([d.esc.over24 > d.esc.over24_reason ? "red" : "amber", d.client.name, `${d.esc.over24} escalation${d.esc.over24 > 1 ? "s" : ""} open over 24 h` + (d.esc.over24_reason ? ` (${d.esc.over24_reason} with a reason)` : ", no reason yet")]);
     if (d.monthend.late.length) attention.push(["amber", d.client.name, `month-end for ${monthName(d.monthend.month)} past due: ${d.monthend.late.join(", ")}`]);

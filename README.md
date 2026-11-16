@@ -664,7 +664,8 @@ client, three otherwise), and a button to the SLA scorecards. Clients Drishti ha
 
 It covers last week (Monday to Sunday): how many clients are at risk, on watch and on track; span totals for AR
 (as it stood at the end of that Sunday, against a week before, whenever the digest is sent or opened), over 90 (against the 15% target), collected and entries; what needs attention, client by
-client (the Client 360 health rules, month-end steps past due, missed tasks) with one piece of good news; a row
+client (the Client 360 health rules, on the same Sunday's over 90 as the totals; month-end steps past due, missed tasks;
+each escalation open over 24 hours named once) with one piece of good news; a row
 per client (health, AR and its change, over 90, collected, entries, SLA, month-end, escalations over 24 hours,
 requests waiting on the client); who worked how much; and the denials worked. Clients, staff and figures only:
 no patient names, claim or account numbers.
