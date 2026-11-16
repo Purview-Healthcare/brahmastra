@@ -186,6 +186,42 @@ S("U-07: extra production: a row's Emp ID is never ignored in favour of a person
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-02: a month is over (and can be locked) once its last working day is: 05:00 India time on the 1st, later for a night shift");
+{
+  // Mona's teams: Arun (day shift) and Nia (18:30 to 03:30) on Tina's, Nora (22:30 to 07:30) on Leo's; Mark's: Zed (day shift)
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-A2", "Nia Night", "Tina Lead", SUN, { shift: "18:30-03:30" }),
+    AS("PHC-B1", "Nora Late", "Leo Lead", LAKE, { shift: "22:30-07:30" }), AS("PHC-C1", "Zed Agent", "Lila Lead", HARBOR)];
+  const NOV = dayList(D(11, 1), D(11, 30)).filter(isWeekday);   // 21 working days; Nov 30 is a Monday
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-A2", "PHC-B1", "PHC-C1"], NOV), holidays: [], now: IST(2026, 12, 1, 0, 30) });
+  const MO = await F.who("Mona Manager"), MK = await F.who("Mark Manager");
+  for (const d of NOV) { const [y, m, dd] = d.split("-").map(Number); await F.work("Arun Agent", d, 10); await F.work("Zed Agent", d, 10); await F.work("Nia Night", d, 10, IST(y, m, dd, 20)); await F.work("Nora Late", d, 10, IST(y, m, dd, 23)); }
+  await F.work("Nia Night", D(11, 30), 5, IST(2026, 12, 1, 0, 10));   // her Nov 30 shift, after midnight
+  let mo = await F.month(MO, "2026-11"), r = await F.T(() => MO("stack.lock", { month: "2026-11" }));
+  ok("U-02: at 00:30 on Dec 1 November is still under way for Mona (night shifts at work): no Lock, and a lock is refused", mo.current && !mo.over && !mo.can_lock && !r.ok && r.status === 400, { current: mo.current, can_lock: mo.can_lock, r });
+  ok("U-02: the refusal says when: from Dec 1, 9:00 AM India time (the 22:30 to 07:30 shift's day ends then)", !r.ok && /November 2026 can be locked once it is over, from Dec 1, 9:00 AM India time/.test(r.e), r.e);
+  await F.work("Nia Night", D(11, 30), 3, IST(2026, 12, 1, 2, 0));   // she works on until 03:30
+  await F.work("Nora Late", D(11, 30), 4, IST(2026, 12, 1, 6, 0));    // and Nora until 07:30
+  F.clock(IST(2026, 12, 1, 4, 59));
+  r = await F.T(() => MK("stack.lock", { month: "2026-11" }));
+  ok("U-02: at 04:59 a day-shift team (Mark's) still waits for Shastra's day: from Dec 1, 5:00 AM", !r.ok && /from Dec 1, 5:00 AM India time/.test(r.e) && !(await F.month(MK, "2026-11")).can_lock, r);
+  F.clock(IST(2026, 12, 1, 5, 0));
+  const mk = await F.month(MK, "2026-11"); r = await F.T(() => MK("stack.lock", { month: "2026-11" }));
+  ok("U-02: at 05:00 Mark's November is over and locks", mk.over && !mk.current && mk.can_lock && r.ok && r.r.people === 1, r);
+  mo = await F.month(MO, "2026-11"); r = await F.T(() => MO("stack.lock", { month: "2026-11" }));
+  ok("U-02: at 05:00 Mona's still waits for the 22:30 to 07:30 shift: no Lock until 9:00 AM", !mo.can_lock && !r.ok && /from Dec 1, 9:00 AM/.test(r.e), r);
+  F.clock(IST(2026, 12, 1, 9, 0));
+  mo = await F.month(MO, "2026-11"); r = await F.T(() => MO("stack.lock", { month: "2026-11" }));
+  ok("U-02: at 09:00 Mona's November is over and locks: 2 teams, 3 people", mo.can_lock && r.ok && r.r.locked === 2 && r.r.people === 3, r);
+  F.clock(IST(2026, 12, 1, 15, 0));
+  const locked = await F.month(MO, "2026-11"), ts = await F.ts(MO, D(11, 1), D(11, 30));
+  for (const n of ["Nia Night", "Nora Late", "Arun Agent"]) {
+    const a = F.row(locked, n), t = ts.rows.find((x) => x.name === n);
+    ok(`U-02: the locked November has ${n}'s whole last day: ${a.achieved} done of ${a.expected}, as Team status (${t.count_done} of ${t.target_done})`, a.locked && a.achieved === t.count_done && a.expected === t.target_done && a.working === 21, { stack: [a.achieved, a.expected], ts: [t.count_done, t.target_done] });
+  }
+  ok("U-02: Nia's night shift counts to the day it began: 218 of 210 (10 a day, and 8 after midnight on Nov 30)", F.row(locked, "Nia Night").achieved === 218 && F.row(locked, "Nia Night").expected === 210, F.row(locked, "Nia Night").achieved);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

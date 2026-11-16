@@ -4213,13 +4213,18 @@ async function stackLocks(env, month) {
   return out;
 }
 const stackSpan = async (env, user) => new Set((await visibleUsers(env, user, "span")).map((u) => u.id));
+/* When a month is over, so it can be locked: once its last working day is, not at midnight. The day rolls at 05:00 India time
+   (Shastra's day, as Team status counts it), later for a night shift whose working day runs on past it (dayRollMin, 09:00 for
+   22:30 to 07:30). Until then the last day is still being worked, and a lock would leave it out. shifts: the people's shifts. */
+const stackOverAt = (month, shifts) => Date.parse(stackMonthAdd(month, 1) + "-01T00:00:00Z") - IST_MIN * 60000 + Math.max(300, ...shifts.map(dayRollMin)) * 60000;
 /* The month as one viewer sees it: locked teams from their snapshot, the rest worked out now. */
 async function stackView(env, user, span, month, today) {
   const mgr = isManagerUp(user), admin = !!user.is_admin, locks = await stackLocks(env, month);
   const first = month + "-01", last = stackMonthEnd(month), through = last < today ? last : addDays(today, -1);
   const lockedIds = new Set(); for (const L of locks.values()) for (const r of L.data.rows || []) lockedIds.add(r.id);
   // worked out now only when someone the viewer sees is still on a draft team
-  const seen = (await all(env, "SELECT id, reports_to, doj FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > through));
+  const seen = (await all(env, "SELECT id, reports_to, doj, shift FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > through));
+  const over = Date.now() >= stackOverAt(month, seen.map((u) => u.shift));
   const live = seen.some((u) => !lockedIds.has(u.id) && !locks.has(u.reports_to || "p:" + u.id)) ? await stackLive(env, month, today) : null;
   const rows = [], tls = [];
   for (const L of locks.values()) {
@@ -4248,9 +4253,9 @@ async function stackView(env, user, span, month, today) {
     for (const r of jsonObj(x.rows_json).rows || []) if (span.has(r.id) && r.s) { const h = history[r.id] || (history[r.id] = []); if (!h.some((y) => y.month === x.month)) h.push({ month: x.month, stack: r.s.stack, pct: r.s.pct, total: r.s.total }); }
   }
   const snap = [...locks.values()][0];
-  return { month, label: stackMonthLabel(month), first, last, through, current: last >= today, over: last < today, rows, tls, history, to_enter: te,
+  return { month, label: stackMonthLabel(month), first, last, through, current: !over, over, rows, tls, history, to_enter: te,
     lock: { teams: scopes.size, locked: lockedShown.length, by: lockers.sort((a, b) => b.teams - a.teams) },
-    manager: mgr, admin, me: user.id, can_lock: mgr && last < today && lockable > 0, lockable, can_unlock: admin && locks.size > 0,
+    manager: mgr, admin, me: user.id, can_lock: mgr && over && lockable > 0, lockable, can_unlock: admin && locks.size > 0,
     floor: live ? live.floor : snap && snap.data.floor ? snap.data.floor : { state: "off", error: "", unknown: 0 }, ticks: STACK_TICKS, criteria: stackCriteria(), lines: stackLines() };
 }
 // the percentage each Stack starts at (5, 4, 3, 2, 1), for "N points short of Stack k"
@@ -5539,8 +5544,9 @@ const OPS = {
     const today = istISO(Date.now()), month = str(payload.month, 10);
     if (!stackMonthOk(month)) throw bad("Pick a month.");
     const label = stackMonthLabel(month);
-    if (stackMonthEnd(month) >= today) throw bad(label + " can be locked once it is over, from " + stackShort(addDays(stackMonthEnd(month), 1)) + ".");
-    const span = await stackSpan(env, user), locks = await stackLocks(env, month), live = await stackLive(env, month, today);
+    const span = await stackSpan(env, user), overAt = stackOverAt(month, (await all(env, "SELECT id, shift FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id)).map((u) => u.shift));
+    if (Date.now() < overAt) throw bad(label + " can be locked once it is over, from " + istWhen(overAt) + " India time, when its last working day ends (night shifts too).");
+    const locks = await stackLocks(env, month), live = await stackLive(env, month, today);
     const teams = new Map();
     for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) teams.set(t.scope, { lead: t, rows: [] });
     for (const r of live.rows) { if (teams.has(r.scope)) teams.get(r.scope).rows.push(r); else if (!r.lead_id && span.has(r.id) && !locks.has(r.scope)) teams.set(r.scope, { lead: null, rows: [r] }); }

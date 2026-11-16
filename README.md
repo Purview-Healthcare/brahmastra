@@ -457,7 +457,8 @@ how it was worked out: each parameter, what Brahmastra found, the band that appl
 from (Brahmastra, Shastra, or typed by whom and when), with their last months. A month still under way counts its
 finished days (up to yesterday), as Team status does.
 
-**Lock the month** (managers and above, once the month is over): it lists what is still empty (PKT scores, ticks)
+**Lock the month** (managers and above, once the month is over: from 05:00 India time on the 1st, when its last working
+day ends, or later when a night shift's day runs on past that, as Team status counts it): it lists what is still empty (PKT scores, ticks)
 and asks first. Then each draft team of the manager's span is saved as it is (a snapshot a team), and from then on
 the month shows those numbers and its typed cells are closed. The admin can **unlock** it (written in the audit
 trail, as the lock is); it is then a draft again. On **My day**, an associate's **My stack** shows their last locked
