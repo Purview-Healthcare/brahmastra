@@ -520,7 +520,9 @@ const refused = (r, re) => !r.ok && (r.status === 403 || r.status === 400) && (!
     for (let i = 0; i < 8; i++) { step(); await anon("auth.sendOtp", { email: "bela" + D }); }   // 10 in the hour, with wrong codes typed in it
     step(11 * 60);
     r = await T(() => anon("auth.sendOtp", { email: "bela" + D }));
-    ok("D-07: after ten codes and a wrong guess in the hour no more are sent until the hour is over", !r.ok && r.status === 429 && /Too many codes requested/.test(r.e), r);
+    // X-01 (suite50): this asserted the old rule, under which a stranger's ten requests and one wrong code stopped every code
+    // for the rest of the hour; codes are now only paced (one every five minutes after ten in the hour), never stopped
+    ok("D-07: after ten codes and a wrong guess in the hour a code still goes out, five minutes after the last (X-01)", r.ok && /^\d{6}$/.test(r.r.demo_code), r);
     step(50 * 60);
     r = await T(() => anon("auth.sendOtp", { email: "bela" + D }));
     ok("D-07: after the hour a code goes out again", r.ok, r);

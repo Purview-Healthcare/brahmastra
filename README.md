@@ -991,20 +991,24 @@ Accounts are limited to email domains with "purview" in them (`*purview*` in
 Worker's `ALLOWED_DOMAINS` variable can tighten it). Passwords are hashed in
 the browser and hashed again on the server with a per-user salt and the
 `PEPPER` secret. Codes are six digits, hashed on the server, valid for ten
-minutes, at most one per 45 seconds and ten per hour per email. Asking for a
-new code does not cancel one that is still valid: any of them works, once, and
-signing in uses them all up. After ten in an hour a new one is still sent when
-none is valid any more and nobody typed a wrong code in that hour, so nobody
-can lock a person (or the admin) out by asking for codes in their name. Wrong
+minutes. Asking for a new code does not cancel one that is still valid: any of
+them works, once, and signing in uses them all up. Codes to one email are paced,
+never stopped: at most one per 45 seconds, and once ten went out in the last
+hour, one per five minutes. Whoever asks gets a code within five minutes, and a
+code someone else asked for in a person's name lands in the person's own
+mailbox and works for them, so nobody can lock a person (or the admin) out by
+asking for codes in their name, nor by typing a wrong code as well. Wrong
 codes are counted for each email per caller (the network address Cloudflare
 gives) and in all, on every screen that takes a code (Email code, Access Admin,
 sign in by name): five wrong codes from one network in an hour stop that network
 trying codes for that email for the hour, but the person's codes keep working
 from anywhere else, so typing wrong codes in someone's name no longer locks them
 out. A code ends only after ten wrong codes in all, from every network: twice one
-network's five, so guessing stays hopeless (at most 100 tries an hour against at
-most ten codes of 900,000 possible, and only by someone using several networks
-who also fills the person's mailbox with codes). People on one office network
+network's five, so guessing stays hopeless (with the pace, at most about twenty
+codes go to an email in any hour, and twelve an hour after that, so at most 210
+tries in an hour and 120 an hour after against codes of 900,000 possible, and only
+by someone using dozens of networks who also fills the person's mailbox with
+codes). People on one office network
 share one address: there, five wrong codes stop everyone in that office from
 typing codes for that email for the hour (a password, or another network, still
 works). No Cloudflare setting is needed. Sessions last at least 24 hours after the last use and extend while in use.
