@@ -129,7 +129,9 @@ ok("with no projects they still see everything (bootstrap accounts keep working)
 r = await T(async () => TI("clients.accessRemove", { client_id: sun.id, user_id: U("Bela Agent").id }));
 ok("Tina takes Bela's share back", r.ok, r);
 ok("Bela is back to her own client", String(await namesOf(BE)) === lake.name, await namesOf(BE));
-ok("but keeps working the claim already allocated to her", (await BE("queue.list", {})).rows.some((c) => c.id === sunOpen[1].id));
+// (round 3, X-07: this check used to assert she keeps working it; someone who no longer works a client gives its claims back)
+ok("and the claim allocated to her goes back to the pool: she no longer works that client", !(await BE("queue.list", {})).rows.some((c) => c.id === sunOpen[1].id)
+  && (await TI("claims.list", { client_id: sun.id, state: "open", assigned_to: "__none", page_size: 500 })).rows.some((c) => c.id === sunOpen[1].id));
 
 S("Missed tasks in the RACI tracker");
 const sql = (q, ...a) => rig.backend.env.DB.prepare(q).bind(...a).run();
