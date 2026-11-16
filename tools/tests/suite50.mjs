@@ -497,6 +497,51 @@ S("X-01: nobody can keep someone (or the admin) from getting a sign-in code: cod
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("X-02: a joiner with no email: never shown a made-up address, and the team lead's code works the way the pop-up says");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), P({ emp_id: "PHC-NM", name: "Nil Nomail", project: SUN, reports_to: "Tina Lead", email: "" }),
+    P({ emp_id: "PHC-OX", name: "Oxa Outside", project: SUN, reports_to: "Tina Lead", email: "oxa.outside@example.org" })];
+  const F = await floor({ feed });
+  const TI = await F.who("Tina Lead"), anon = F.rig.as(null), sha = F.rig.sha;
+  const nil = F.U("Nil Nomail"), arun = F.U("Arun Agent");
+  let r = await F.T(() => TI("users.loginCode", { id: nil.id }));
+  ok("X-02: the team lead's code for Nil (no email in Shastra) says so: no address, never the made-up one", r.ok && r.r.email === "" && r.r.no_email === true && r.r.has_password === false && /^\d{6}$/.test(r.r.code) && !/no-email\.invalid/.test(JSON.stringify(r.r)), r);
+  const code1 = r.r.code;
+  // the pop-up's steps: Sign in, type the name, pick yourself, enter the code, choose a password
+  let s = await anon("auth.setupCode", { user_id: nil.id });
+  ok("X-02: picking his name asks for the team lead's code (no email to send one to)", s.via === "lead", s);
+  const ph1 = await sha("nil-first-password"), ph2 = await sha("nil-new-password");
+  r = await F.T(() => anon("auth.completeSetup", { user_id: nil.id, code: code1, passHash: ph1 }));
+  ok("X-02: the code and a new password sign Nil in", r.ok && r.r.user.id === nil.id && r.r.user.email_missing === true, r);
+  // later, with a password: Forgot it? Reset with a one-time code takes the team lead's code the same way
+  F.clock(IST(2026, 11, 16, 15, 30));
+  r = await F.T(() => TI("users.loginCode", { id: nil.id }));
+  ok("X-02: a second code for Nil says he has a password now (the pop-up then names Forgot it?)", r.ok && r.r.has_password === true && r.r.no_email === true, r);
+  s = await anon("auth.setupCode", { user_id: nil.id });
+  const code2 = r.r.code, again = await F.T(() => anon("auth.completeSetup", { user_id: nil.id, code: code2, passHash: ph2 }));
+  ok("X-02: Forgot it? (a code, then a new password) signs him in with it", s.via === "lead" && again.ok && again.r.user.id === nil.id, again);
+  // a person with an email: right after the team lead's code, Send me a code goes out at once, and the team lead's code works
+  F.clock(IST(2026, 11, 16, 16, 0));
+  const tl = await TI("users.loginCode", { id: arun.id });
+  r = await F.T(() => anon("auth.sendOtp", { email: mail("Arun Agent") }));
+  ok("X-02: Arun presses Send me a code right after his team lead made a code: it is sent (no 45-second wait for a code that was never emailed)", tl.no_email === false && tl.email === mail("Arun Agent") && r.ok, r);
+  r = await F.T(() => anon("auth.verifyOtp", { email: mail("Arun Agent"), code: tl.code }));
+  ok("X-02: and on the Email code screen the team lead's code signs him in", r.ok && r.r.user.id === arun.id, r);
+  r = await F.T(() => anon("auth.sendOtp", { email: mail("Arun Agent") }));
+  ok("X-02: (the 45-second pause between emailed codes stays)", !r.ok && r.status === 429 && /less than a minute ago/.test(r.e), r);
+  // an email that is not a Purview address: no sign-in screen takes a code for it, so none is handed out, and the lead is told why
+  r = await F.T(() => TI("users.loginCode", { id: F.U("Oxa Outside").id }));
+  ok("X-02: a code for someone whose email is not a Purview address is refused with the reason (it could sign them in nowhere)", !r.ok && r.status === 400 && /Oxa Outside's email is not a Purview address, so a sign-in code cannot sign them in/.test(r.e), r);
+  // the page: the account menu, Settings › My profile, the Set your password screen and the two pop-ups use emailOf / NO_EMAIL
+  const emailOf = vm.runInContext("emailOf", F.app), NO = vm.runInContext("NO_EMAIL", F.app);
+  ok("X-02: the page writes 'no email in Purview Shastra' for such a person, and the real address otherwise", emailOf({ email: "nil.nomail@no-email.invalid", email_missing: true }) === "no email in Purview Shastra" && NO === "no email in Purview Shastra" && emailOf({ email: "arun@x.com" }) === "arun@x.com");
+  const page = (await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  ok("X-02: no page shows me.email, a pop-up's email or the code's email without the no-email check; the pop-up names the real tab (Email code) or the name way",
+    !/<dd>\{me\.email\}<\/dd>/.test(page) && /\{emailOf\(me\)\}<br \/>/.test(page) && /\(\{emailOf\(tempPw\.user\)\}\)/.test(page) && /\(\{codeFor\.no_email \? NO_EMAIL : codeFor\.email\}\)/.test(page)
+    && !/"Sign in with a code", enter their email/.test(page) && /they choose <b>Email code<\/b>/.test(page) && /they type their name, pick themselves/.test(page) && /Signed in as \{me\.email_missing \? me\.name : me\.email\}/.test(page));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

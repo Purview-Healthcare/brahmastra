@@ -1533,11 +1533,12 @@ const otpHash = (env, email, code) => sha256Hex(`otp:${email}:${code}:${env.PEPP
 const OTP_PACE_MS = 45000, OTP_SLOW_AFTER = 10, OTP_SLOW_PACE_MS = 5 * 60000;
 async function issueOtp(env, email, purpose, data, { byTeamLead = false } = {}) {
   const now = Date.now();
-  const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM otps WHERE email = ? AND created_at > ?", email, now - 3600000);
-  // the 45-second pause protects the mailbox (a team lead reading the code off the screen does not need it); the five-minute pace
-  // once ten went out in the hour keeps the number of guesses down, for every code
+  const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last, MAX(CASE WHEN COALESCE(via, '') <> 'lead' THEN created_at END) AS last_mail FROM otps WHERE email = ? AND created_at > ?", email, now - 3600000);
+  // the 45-second pause protects the mailbox: a team lead reading a code off the screen neither needs it nor holds back the
+  // person's own emailed code (they may press Send me a code right after); the five-minute pace once ten went out in the hour
+  // keeps the number of guesses down, for every code
   if (recent && recent.last) {
-    const slow = recent.n >= OTP_SLOW_AFTER, wait = (slow ? OTP_SLOW_PACE_MS : OTP_PACE_MS) - (now - recent.last);
+    const slow = recent.n >= OTP_SLOW_AFTER, wait = slow ? OTP_SLOW_PACE_MS - (now - recent.last) : recent.last_mail ? OTP_PACE_MS - (now - recent.last_mail) : 0;
     if (wait > 0 && slow) { const mins = Math.ceil(wait / 60000);
       throw new ApiError(429, "Ten codes went to this email in the last hour, so a new one goes out at most every five minutes: try again in " + mins + (mins === 1 ? " minute" : " minutes") + "."
         + (byTeamLead ? "" : " A code sent in the last ten minutes still works: use the newest one (check spam too).")); }
@@ -4910,16 +4911,20 @@ const OPS = {
   },
   /* A team lead can fetch a sign-in code for someone whose email has not arrived (or when email is not set up). */
   "users.loginCode": async ({ env, user, payload }) => {
-    const ex = await one(env, "SELECT id, email, active, name, locked_at FROM users WHERE id = ?", payload.id);
+    const ex = await one(env, "SELECT id, email, email_missing, pass_hash, role, source, active, name, locked_at FROM users WHERE id = ?", payload.id);
     if (!ex) throw bad("Unknown user.");
     if (ex.locked_at && !user.is_admin) throw denied("This account is locked after wrong passwords. Only the admin, or a code to the person's own official email (Forgot it?), can open it.");
     if (!(await inSpan(env, user, ex.id))) throw notYours();
     if (!(await mayActAs(env, user, ex.id))) throw denied("Only an admin, or the person they report to, can do this for a team lead, manager or admin.");
     if (!ex.active) throw bad("This account is switched off.");
+    // a code no sign-in screen would take is not handed out: an email that is not a Purview address (nor allowed by the admin)
+    // blocks the code ways of signing in (signInBlock); someone with no email at all signs in by name with it (nameSignInOk)
+    if (!ex.email_missing && (await signInBlock(env, ex))) throw bad(ex.name + "'s email is not a Purview address, so a sign-in code cannot sign them in. Ask the admin to allow it, or to set their Purview email in Purview Shastra.");
     const code = await issueOtp(env, ex.email, "login", {}, { byTeamLead: true });
     // whoever holds the code can sign in as this person: who asked for it is kept (never the code itself)
     await audit(env, user, "user.code", null, `${ex.name}: sign-in code given`);
-    return { email: ex.email, code, expires_in_min: OTP_TTL_MS / 60000 };
+    // never the made-up address kept for someone with no email: the page says they have none, and how they use the code
+    return { email: ex.email_missing ? "" : ex.email, no_email: !!ex.email_missing, has_password: !!ex.pass_hash, code, expires_in_min: OTP_TTL_MS / 60000 };
   },
   "users.resetPassword": async ({ env, user, payload }) => {
     if (!isHash(payload.passHash)) throw bad("Set a temporary password.");
