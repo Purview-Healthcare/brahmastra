@@ -432,6 +432,26 @@ S("U-09: Team status suggestions name the extra production in the count, as the 
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-06: the audit trail names every change in plain words (the Stack report's too), and its filter can pick them");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN)];
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1"]) });
+  const MO = await F.who("Mona Manager");
+  await F.work("Arun Agent", D(10, 5), 200);
+  await MO("stack.lock", { month: "2026-10" }); await F.AD("stack.unlock", { month: "2026-10" });
+  const LABEL = vm.runInContext("AUDIT_LABEL", F.app), fs = await import("fs");
+  const src = fs.readFileSync(new URL("../../worker.js", import.meta.url), "utf8");
+  const acts = [...new Set([...src.matchAll(/audit(?:Many)?\(env, [^,()]+, "([a-zA-Z]+\.[a-zA-Z]+)"/g)].map((m) => m[1]))];
+  ok("U-06: every audit line the server writes has a plain name on the page (" + acts.length + " kinds), none shows as a program code", acts.length > 30 && acts.every((a) => LABEL[a] && !/^[a-z]+\.[a-zA-Z]+$/.test(LABEL[a])), acts.filter((a) => !LABEL[a]));
+  ok("U-06: the Stack report's: locked, unlocked, a typed value, and extra production counted, edited and removed",
+    LABEL["stack.lock"] === "Locked the Stack report" && LABEL["stack.unlock"] === "Unlocked the Stack report" && LABEL["stack.save"] === "Typed a Stack report value"
+    && LABEL["stack.extra"] === "Counted an extra production file" && LABEL["stack.extraEdit"] === "Edited extra production by hand" && LABEL["stack.extraRemove"] === "Removed an extra production file");
+  const pick = (await F.AD("audit.list", { action: "stack" })).rows.map((x) => x.action);
+  const page = fs.readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  ok("U-06: the filter has a Stack report choice, which lists the lock and the unlock and nothing else", /<option value="stack">Stack report<\/option>/.test(page) && pick.length === 2 && pick.includes("stack.lock") && pick.includes("stack.unlock"), pick);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

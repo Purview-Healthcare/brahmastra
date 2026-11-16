@@ -7643,18 +7643,23 @@ const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took 
   "user.save": "Changed a team member", "client.log": "Logged a client call", "client.logRemove": "Removed a client call log entry", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL",
   "project.map": "Matched a roster project to a client", "user.code": "Gave a sign-in code", "user.reset": "Reset a password", "user.email": "Changed an email address",
-  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails", "roster.dupEmp": "The same Emp ID on two Shastra rows" };
+  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails", "roster.dupEmp": "The same Emp ID on two Shastra rows",
+  "stack.save": "Typed a Stack report value", "stack.lock": "Locked the Stack report", "stack.unlock": "Unlocked the Stack report", "stack.extra": "Counted an extra production file",
+  "stack.extraEdit": "Edited extra production by hand", "stack.extraRemove": "Removed an extra production file", "attention.review": "Reviewed a claim and gave it to a biller",
+  "client.folders": "Made a client's OneDrive folders", "client.location": "Changed a location", "client.team": "Changed a client's billers", "escalation.reason": "Gave why an escalation is still open",
+  "roster.sync": "Synced the roster", "task.create": "Gave a team task", "task.close": "Closed a team task", "team.alert": "Dismissed a not logged in alert", "team.note": "Changed a Team status note",
+  "team.rebalance": "Shared out a person's claims" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
   const q = useRpc("audit.list", { client_id: f.client_id || undefined, action: f.action || undefined }, [f.client_id, f.action]);
   const rows = (q.data && q.data.rows) || [];
   return (
     <div className="stack">
-      <div><h1>Audit trail</h1><div className="sub">Who changed access, the RACI, who gets feedback, client settings, responsibilities, team members and month-end, newest first (last 500).</div></div>
+      <div><h1>Audit trail</h1><div className="sub">Who changed access, the RACI, who gets feedback, client settings, responsibilities, team members, month-end and the Stack report, newest first (last 500).</div></div>
       <div className="card tight row" style={{ gap: 10, flexWrap: "wrap" }}>
         <span style={{ minWidth: 240 }}><Combo sm value={f.client_id} onChange={(v) => setF({ ...f, client_id: v })} placeholder="Every client" options={ctx.clients.map((c) => ({ id: c.id, label: c.name }))} /></span>
         <select className="input sm" style={{ width: "auto" }} value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })}>
-          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="feedback">Feedback</option><option value="settings">Settings</option></select>
+          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="stack">Stack report</option><option value="feedback">Feedback</option><option value="settings">Settings</option></select>
         <span className="small muted" style={{ marginLeft: "auto" }}>{rows.length} changes</span></div>
       {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No changes recorded yet. They are recorded from now on.</Empty></div> :
         <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Client</th><th>Detail</th></tr></thead>
