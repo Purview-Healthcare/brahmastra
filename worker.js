@@ -4130,14 +4130,15 @@ async function stackLeavers(env, users, first, last, cutoff) {
   return out;
 }
 const stackAvg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-/* The month's rows for the whole floor, worked out now. today: India's date. */
-async function stackLive(env, month, today) {
+/* The month's rows for the whole floor, worked out now. today: India's date. skip: the people already locked for the month (in a
+   snapshot, whichever team they were locked with): left out of the rows and of every team's numbers, so nobody counts twice. */
+async function stackLive(env, month, today, skip) {
   const first = month + "-01", last = stackMonthEnd(month), through = last < today ? last : addDays(today, -1);
   const out = { month, first, last, through, current: last >= today, rows: [], tls: [], floor: { state: "off", error: "", unknown: 0 } };
   if (through < first) return out;
   const users = await all(env, "SELECT * FROM users");
   const byId = new Map(users.map((u) => [u.id, u]));
-  const people = users.filter((u) => u.role === "user" && u.active && !(isoDate(u.doj) && u.doj > through));
+  const people = users.filter((u) => u.role === "user" && u.active && !(isoDate(u.doj) && u.doj > through) && !(skip && skip.has(u.id)));
   if (!people.length) return out;
   // Productivity: Team status's own figures for these dates (the finished days of a month under way)
   const ts = await OPS["team.status"]({ env, user: stackSys(), payload: { from: first, to: last, today, tz_offset_min: IST_MIN } });
@@ -4212,6 +4213,21 @@ async function stackLocks(env, month) {
   for (const x of await all(env, "SELECT scope, rows_json, by_id, by_name, at FROM stack_locks WHERE month = ?", month)) out.set(x.scope, { by: x.by_name, by_id: x.by_id, at: x.at, data: jsonObj(x.rows_json) });
   return out;
 }
+/* Who is locked for a month: the people whose row is in one of its snapshots, whichever team it was locked with. Someone who
+   changed team lead after their team was locked stays there (one row, counted once); someone in no snapshot (moved into a team
+   already locked) is still a draft, and is locked on their own by the next lock of their span. */
+const stackLockedIds = (locks) => { const ids = new Set(); for (const L of locks.values()) for (const r of L.data.rows || []) ids.add(r.id); return ids; };
+/* What a lock by this viewer saves: each draft team of their span (its team lead's row and its people's rows), and on their own
+   ("p:" and their id) the people of their span with no team lead, or whose team is already locked without them. */
+function stackLockPlan(live, span, locks) {
+  const teams = new Map();
+  for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) teams.set(t.scope, { lead: t, rows: [] });
+  for (const r of live.rows) {
+    if (teams.has(r.scope)) teams.get(r.scope).rows.push(r);
+    else if (span.has(r.id) && (!r.lead_id || locks.has(r.scope)) && !locks.has("p:" + r.id)) teams.set("p:" + r.id, { lead: null, rows: [{ ...r, scope: "p:" + r.id }] });
+  }
+  return teams;
+}
 const stackSpan = async (env, user) => new Set((await visibleUsers(env, user, "span")).map((u) => u.id));
 /* When a month is over, so it can be locked: once its last working day is, not at midnight. The day rolls at 05:00 India time
    (Shastra's day, as Team status counts it), later for a night shift whose working day runs on past it (dayRollMin, 09:00 for
@@ -4221,18 +4237,19 @@ const stackOverAt = (month, shifts) => Date.parse(stackMonthAdd(month, 1) + "-01
 async function stackView(env, user, span, month, today) {
   const mgr = isManagerUp(user), admin = !!user.is_admin, locks = await stackLocks(env, month);
   const first = month + "-01", last = stackMonthEnd(month), through = last < today ? last : addDays(today, -1);
-  const lockedIds = new Set(); for (const L of locks.values()) for (const r of L.data.rows || []) lockedIds.add(r.id);
-  // worked out now only when someone the viewer sees is still on a draft team
+  const lockedIds = stackLockedIds(locks);
+  // worked out now only when someone the viewer sees is not locked yet (in no snapshot of the month)
   const seen = (await all(env, "SELECT id, reports_to, doj, shift FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > through));
   const over = Date.now() >= stackOverAt(month, seen.map((u) => u.shift));
-  const live = seen.some((u) => !lockedIds.has(u.id) && !locks.has(u.reports_to || "p:" + u.id)) ? await stackLive(env, month, today) : null;
+  const live = seen.some((u) => !lockedIds.has(u.id)) ? await stackLive(env, month, today, lockedIds) : null;
   const rows = [], tls = [];
   for (const L of locks.values()) {
     for (const r of L.data.rows || []) if (span.has(r.id)) rows.push({ ...r, locked: true });
     const t = L.data.lead; if (t && ((mgr && span.has(t.id)) || t.id === user.id)) tls.push({ ...t, locked: true });
   }
   if (live) {
-    for (const r of live.rows) if (span.has(r.id) && !lockedIds.has(r.id) && !locks.has(r.scope)) rows.push({ ...r, locked: false });
+    // everyone in no snapshot is a draft row, also when their team of today is locked (they moved in after it was)
+    for (const r of live.rows) if (span.has(r.id)) rows.push({ ...r, scope: locks.has(r.scope) ? "p:" + r.id : r.scope, locked: false });
     if (mgr) for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) tls.push({ ...t, locked: false });
   }
   // ranked by percentage, ties: higher productivity first
@@ -4243,7 +4260,7 @@ async function stackView(env, user, span, month, today) {
   const scopes = new Set([...rows.map((r) => r.scope), ...tls.map((t) => t.scope)]), lockedShown = [...scopes].filter((s) => locks.has(s));
   const lockers = []; for (const s of lockedShown) { const L = locks.get(s), x = lockers.find((y) => y.name === L.by); if (x) { x.teams++; x.at = Math.max(x.at, L.at); } else lockers.push({ name: L.by, at: L.at, teams: 1 }); }
   // what a manager can still lock: the draft teams of their span
-  const lockable = live && mgr ? live.tls.filter((t) => span.has(t.id) && !locks.has(t.scope)).length + live.rows.filter((r) => !r.lead_id && span.has(r.id) && !locks.has(r.scope)).length : 0;
+  const lockable = live && mgr ? stackLockPlan(live, span, locks).size : 0;
   const te = { pkt: 0, quality: 0, prod: 0, ticks: 0, attrition: 0 };
   for (const r of rows) if (!r.locked) for (const k of r.to_enter) te[k]++;
   for (const t of tls) if (!t.locked) for (const k of t.to_enter) te[k === "attrition" ? "attrition" : "ticks"]++;
@@ -4320,15 +4337,16 @@ const extraTyped = (v) => { const t = typeof v === "number" ? String(v) : typeof
 const extraDay = (iso) => stackShort(iso) + ", " + iso.slice(0, 4);
 const extraDays = (a, b) => (a === b ? extraDay(a) : a.slice(0, 4) === b.slice(0, 4) ? stackShort(a) + " to " + extraDay(b) : extraDay(a) + " to " + extraDay(b));
 const EXTRA_WHY = { none: "left out: not found", same: "left out: two people share the name" };
-// the months' locks: a month is locked for a person when their team's snapshot is kept, or any snapshot of it has them (as stack.save)
+// the months' locks: a month is locked for a person once a snapshot of it has their row, whichever team it was locked with (as
+// stack.save and the Stack report: stackLockedIds); someone who moved into a team already locked is still a draft there
 async function extraLocks(env, months) {
   const by = new Map();
   if (months.length) for (const x of await all(env, `SELECT month, scope, rows_json FROM stack_locks WHERE month IN ${IN_LIST}`, listArg(months))) {
-    const L = by.get(x.month) || { scopes: new Set(), ids: new Set() };
-    L.scopes.add(x.scope); for (const r of jsonObj(x.rows_json).rows || []) L.ids.add(r.id);
+    const L = by.get(x.month) || { ids: new Set() };
+    for (const r of jsonObj(x.rows_json).rows || []) L.ids.add(r.id);
     by.set(x.month, L);
   }
-  return { of: (u, month) => { const L = by.get(month); return !!(L && u && (L.scopes.has(u.reports_to || "p:" + u.id) || L.ids.has(u.id))); } };
+  return { of: (u, month) => { const L = by.get(month); return !!(L && u && L.ids.has(u.id)); } };
 }
 // several audit lines in one statement (one line for each hand edit)
 async function auditMany(env, user, action, details) {
@@ -5470,9 +5488,10 @@ const OPS = {
     if (month && !stackMonthOk(month)) throw bad("Pick a month.");
     if (month > cur) throw bad(stackMonthLabel(month) + " has not started yet.");
     if (!month) {
-      const prev = stackMonthAdd(cur, -1), locked = new Set((await all(env, "SELECT scope FROM stack_locks WHERE month = ?", prev)).map((x) => x.scope));
-      const mine = (await all(env, "SELECT id, reports_to FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id)).map((u) => u.reports_to || "p:" + u.id);
-      month = mine.length && mine.every((s) => locked.has(s)) ? cur : prev;
+      // everyone the viewer sees on the month before is locked (in a snapshot of it): then this month
+      const prev = stackMonthAdd(cur, -1), locked = stackLockedIds(await stackLocks(env, prev)), end = stackMonthEnd(prev);
+      const mine = (await all(env, "SELECT id, doj FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > end));
+      month = mine.length && mine.every((u) => locked.has(u.id)) ? cur : prev;
     }
     const v = await stackView(env, user, span, month, today);
     const lockedMonths = new Map((await all(env, "SELECT month, COUNT(*) AS n FROM stack_locks GROUP BY month")).map((x) => [x.month, x.n]));
@@ -5495,20 +5514,20 @@ const OPS = {
     if (!who) throw bad("Unknown person.");
     if (!(await stackSpan(env, user)).has(id)) throw denied("That person is not in your span.");
     const label = stackMonthLabel(month), locks = await stackLocks(env, month), first = month + "-01", last = stackMonthEnd(month);
-    // locked: the team's snapshot, or any snapshot of the month with this person in it
-    const isLocked = (scope) => locks.has(scope) || [...locks.values()].some((L) => (L.data.rows || []).some((r) => r.id === id));
     if (field === "attrition" || /^(th|cf)[1-5]$/.test(field)) {
       if (!isManagerUp(user)) throw denied("The ticks and the attrition are typed by the manager.");
       if (id === user.id && !user.is_admin) throw denied("Your own ticks are typed by your manager.");
       if (!(await one(env, "SELECT 1 AS x FROM users WHERE role = 'user' AND active = 1 AND reports_to = ? LIMIT 1", id))) throw bad(who.name + " has no team on the Stack report.");
-      if (isLocked(id)) throw bad(label + " is locked for " + who.name + "'s team: ask the admin to unlock it first.");
+      // a team lead's row is locked with their team's snapshot
+      if (locks.has(id)) throw bad(label + " is locked for " + who.name + "'s team: ask the admin to unlock it first.");
       if (field === "attrition") {
         const lv = (await stackLeavers(env, await all(env, "SELECT * FROM users"), first, last, last < today ? last : today)).get(id);
         if (!lv || !lv.unknown.length) throw bad("Brahmastra counts who left " + who.name + "'s team itself (" + (lv ? lv.n : 0) + " in " + label + "), so it is not typed.");
       }
     } else {
       if (who.role !== "user" || !who.active) throw bad(who.name + " is not an associate on the Stack report.");
-      if (isLocked(who.reports_to || "p:" + who.id)) throw bad(label + " is locked for " + who.name + ": ask the admin to unlock it first.");
+      // an associate is locked once their row is in a snapshot of the month, whichever team it was locked with (stackLockedIds)
+      if (stackLockedIds(locks).has(id)) throw bad(label + " is locked for " + who.name + ": ask the admin to unlock it first.");
       if ((field === "achieved" || field === "expected") && isArBiller(who)) throw bad("Brahmastra works out " + who.name + "'s productivity (the same numbers as Team status), so it is not typed.");
     }
     const raw = payload.value == null ? "" : str(payload.value, 40).trim();
@@ -5546,10 +5565,9 @@ const OPS = {
     const label = stackMonthLabel(month);
     const span = await stackSpan(env, user), overAt = stackOverAt(month, (await all(env, "SELECT id, shift FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id)).map((u) => u.shift));
     if (Date.now() < overAt) throw bad(label + " can be locked once it is over, from " + istWhen(overAt) + " India time, when its last working day ends (night shifts too).");
-    const locks = await stackLocks(env, month), live = await stackLive(env, month, today);
-    const teams = new Map();
-    for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) teams.set(t.scope, { lead: t, rows: [] });
-    for (const r of live.rows) { if (teams.has(r.scope)) teams.get(r.scope).rows.push(r); else if (!r.lead_id && span.has(r.id) && !locks.has(r.scope)) teams.set(r.scope, { lead: null, rows: [r] }); }
+    // nobody already locked for the month is locked again (with their team of today), and nobody is left out of it
+    const locks = await stackLocks(env, month), live = await stackLive(env, month, today, stackLockedIds(locks));
+    const teams = stackLockPlan(live, span, locks);
     if (!teams.size) throw bad(locks.size ? "Every team you see is already locked for " + label + "." : "Nobody on the Stack report for " + label + ".");
     const at = Date.now(), meta = { month, through: live.through, floor: live.floor };
     await batchAll(env, [...teams].map(([scope, x]) => env.DB.prepare("INSERT OR IGNORE INTO stack_locks (month, scope, rows_json, by_id, by_name, at) VALUES (?,?,?,?,?,?)")

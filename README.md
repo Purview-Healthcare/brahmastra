@@ -460,7 +460,9 @@ finished days (up to yesterday), as Team status does.
 **Lock the month** (managers and above, once the month is over: from 05:00 India time on the 1st, when its last working
 day ends, or later when a night shift's day runs on past that, as Team status counts it): it lists what is still empty (PKT scores, ticks)
 and asks first. Then each draft team of the manager's span is saved as it is (a snapshot a team), and from then on
-the month shows those numbers and its typed cells are closed. The admin can **unlock** it (written in the audit
+the month shows those numbers and its typed cells are closed. Each person has one row a month: someone who moves to
+another team lead after their team was locked stays in that snapshot (counted once, with that team), and someone who
+moves into a team already locked is a draft until the next lock of their span saves them on their own. The admin can **unlock** it (written in the audit
 trail, as the lock is); it is then a draft again. On **My day**, an associate's **My stack** shows their last locked
 month (Stack, total, percentage), their earlier locked months as a small trend, and opens how it was worked out.
 

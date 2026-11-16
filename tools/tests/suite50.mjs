@@ -1,5 +1,5 @@
-/* Suite 50: the Stack report and Extra production, the fixes of the third bug test (tester U) and the extra production
-   builder's EP-1. Each check names the finding it guards:
+/* Suite 50: the Stack report and Extra production, the fixes of the third bug test (tester U). Each check names the finding it
+   guards:
    U-10: a team lead's averages (and every band of the report) judged without the computer's float error: three members typed
          at 99% are 99%, Quality 10. U-04 and U-05 are the same family: a typed percentage is kept at two decimals, cut, never
          rounded up over a line, and the Excel writes its percentages cut too. The one rounding rule: two decimals of a percent,
@@ -12,7 +12,6 @@
    only when everyone they see is locked.   U-08: the check names rows a file gained for people the uploader does not see.
    U-09: Team status suggestions name the extra production.   U-06: the audit trail names the Stack report's changes.
    U-12 and U-13 are the page's (the reason box, the check before saving): see the browser walk-through.
-   EP-1: the inventory upload's date order: a date that is no date either way (31/31/2026) says nothing about the column.
    A stand-in for Purview Shastra's roster, holiday and floor feeds; made-up people only. */
 import vm from "vm";
 import { makeRig } from "./rig.mjs";
@@ -219,6 +218,73 @@ S("U-02: a month is over (and can be locked) once its last working day is: 05:00
     ok(`U-02: the locked November has ${n}'s whole last day: ${a.achieved} done of ${a.expected}, as Team status (${t.count_done} of ${t.target_done})`, a.locked && a.achieved === t.count_done && a.expected === t.target_done && a.working === 21, { stack: [a.achieved, a.expected], ts: [t.count_done, t.target_done] });
   }
   ok("U-02: Nia's night shift counts to the day it began: 218 of 210 (10 a day, and 8 after midnight on Nov 30)", F.row(locked, "Nia Night").achieved === 218 && F.row(locked, "Nia Night").expected === 210, F.row(locked, "Nia Night").achieved);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+S("U-01: someone who changes team lead between two locks of one month has exactly one row in it");
+{
+  const base = (moLead, moProject) => [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-B1", "Bela Agent", "Leo Lead", LAKE), AS("PHC-C1", "Zed Agent", "Lila Lead", HARBOR),
+    AS("PHC-C2", "Mo Mover", moLead, moProject)];
+  const rowsOf = presentAll(["PHC-A1", "PHC-B1", "PHC-C1", "PHC-C2"]);
+  const setUp = async (from, to) => {
+    const F = await floor({ feed: base(...from), floorRows: rowsOf });
+    const X = { F, MO: await F.who("Mona Manager"), MK: await F.who("Mark Manager"), TI: await F.who("Tina Lead"), LI: await F.who("Lila Lead"), MOVER: await F.who("Mo Mover") };
+    for (const n of ["Arun Agent", "Bela Agent", "Zed Agent", "Mo Mover"]) await F.work(n, D(10, 5), 200);
+    X.first = await X.MO("stack.lock", { month: "2026-10" });            // Mona locks her two teams
+    F.st.feed = F.st.feed.map((f) => (f.name === "Mo Mover" ? { ...f, reports_to: to[0], project: to[1] } : f)); await F.sync();   // then the roster moves Mo
+    return X;
+  };
+  // (a) Mo was on Lila's team (Mark's) and moves to Tina's, after Mona locked Tina's
+  let X = await setUp(["Lila Lead", HARBOR], ["Tina Lead", SUN]), F = X.F;
+  let r = await F.T(() => X.MK("stack.lock", { month: "2026-10" }));
+  ok("U-01: moved into a locked team: Mark's lock saves his own team only (Mo is not in his span any more)", r.ok && r.r.locked === 1 && r.r.people === 1, r);
+  let mo = await F.month(X.MO, "2026-10"), moRow = F.row(mo, "Mo Mover");
+  ok("U-01: Mona sees Mo as a draft row under Tina's team, in no snapshot: open to type, and Lock is offered again", moRow && !moRow.locked && moRow.can_edit && moRow.lead_name === "Tina Lead" && mo.can_lock && mo.lockable === 1, { row: moRow && [moRow.locked, moRow.can_edit, moRow.lead_name], can_lock: mo.can_lock, lockable: mo.lockable });
+  ok("U-01: her chip is a draft: 2 of 3 locked (Tina's and Leo's teams, and Mo on his own still to lock)", mo.lock.locked === 2 && mo.lock.teams === 3, mo.lock);
+  ok("U-01: with Mo still a draft, her page opens on October, not November", (await X.MO("stack.month", {})).month === "2026-10");
+  r = await F.save(X.TI, "2026-10", "Mo Mover", "pkt", "97");
+  ok("U-01: Tina can type Mo's PKT (it is no longer refused as locked)", r.ok, r);
+  ok("U-01: Tina's locked team lead row is as it was locked (Arun only), Mo is not counted in it", F.tl(mo, "Tina Lead").locked && F.tl(mo, "Tina Lead").team_n === 1, F.tl(mo, "Tina Lead"));
+  r = await F.T(() => X.MO("stack.lock", { month: "2026-10" }));
+  ok("U-01: Mona locks again: Mo on his own, 1 person", r.ok && r.r.locked === 1 && r.r.people === 1, r);
+  let ad = await F.month(F.AD, "2026-10");
+  const ours = (d) => d.rows.filter((x) => /^PHC-/.test(x.emp_id));
+  ok("U-01: the admin sees our 4 people's rows for October, Mo once and locked, with the PKT typed", ours(ad).length === 4 && ours(ad).every((x) => x.locked) && ad.rows.filter((x) => x.name === "Mo Mover").length === 1 && F.row(ad, "Mo Mover").pkt === 0.97, ours(ad).map((x) => [x.name, x.locked]));
+  let mine = await X.MOVER("stack.mine", {});
+  ok("U-01: Mo's My stack has October", mine.months.length === 1 && mine.months[0].month === "2026-10" && mine.months[0].row.id === F.U("Mo Mover").id, mine.months.map((m) => m.month));
+  r = await F.T(() => X.MO("stack.lock", { month: "2026-10" })); ok("U-01: nothing is left to lock", !r.ok && /already locked/.test(r.e), r);
+  ok("U-01: and her page now opens on November", (await X.MO("stack.month", {})).month === "2026-11");
+  // (b) Mo was on Tina's team (locked with it) and moves to Lila's (Mark's)
+  X = await setUp(["Tina Lead", SUN], ["Lila Lead", HARBOR]); F = X.F;
+  let mk = await F.month(X.MK, "2026-10");
+  ok("U-01: moved out of a locked team: Mark sees Mo's row as locked with Tina's team, and Lila's draft team without him", F.row(mk, "Mo Mover").locked && F.row(mk, "Mo Mover").lead_name === "Tina Lead" && F.tl(mk, "Lila Lead").team_n === 1 && !F.tl(mk, "Lila Lead").locked, { mo: F.row(mk, "Mo Mover").lead_name, lila: F.tl(mk, "Lila Lead").team_n });
+  r = await F.save(X.LI, "2026-10", "Mo Mover", "pkt", "90");
+  ok("U-01: Mo's October stays locked for his new team lead too", !r.ok && /October 2026 is locked for Mo Mover/.test(r.e), r);
+  r = await F.T(() => X.MK("stack.lock", { month: "2026-10" }));
+  ok("U-01: Mark's lock saves Lila's team with Zed only: Mo is not locked twice", r.ok && r.r.locked === 1 && r.r.people === 1, r);
+  ad = await F.month(F.AD, "2026-10");
+  ok("U-01: the admin sees our 4 people's rows, Mo once; the teams are Tina 2 (as locked), Leo 1, Lila 1", ad.rows.filter((x) => /^PHC-/.test(x.emp_id)).length === 4 && ad.rows.filter((x) => x.name === "Mo Mover").length === 1
+    && ad.tls.map((t) => t.name.split(" ")[0] + " " + t.team_n).sort().join(", ") === "Leo 1, Lila 1, Tina 2", ad.tls.map((t) => [t.name, t.team_n]));
+  mine = await X.MOVER("stack.mine", {}); ok("U-01: Mo's My stack has October once", mine.months.length === 1, mine.months.length);
+  // extra production follows the same rule: a month is locked for a person once their row is in a snapshot of it
+  const xfile = (rowsIn) => F.read(F.xlsx([["S", [["DOW", "Emp ID", "User Name"], ...rowsIn]]]), "Extra October.xlsx");
+  const pv = await X.LI("stack.extraPreview", F.body(xfile(rep(3, [serial(D(10, 20)), "PHC-C2", "Mo Mover"])), { month: "2026-10" }));
+  ok("U-01: extra production for October is not counted for Mo (locked with Tina's team)", pv.counted === 0 && pv.left_out.locked.length === 1, { counted: pv.counted, locked: pv.left_out.locked });
+}
+{
+  // (a) again, for extra production: Mo moved into Tina's locked team, in no snapshot: his October is still a draft
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-C2", "Mo Mover", "Lila Lead", HARBOR)];
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-C2"]) });
+  const MO = await F.who("Mona Manager"), TI = await F.who("Tina Lead");
+  await F.work("Arun Agent", D(10, 5), 200); await F.work("Mo Mover", D(10, 5), 200);
+  await MO("stack.lock", { month: "2026-10" });
+  F.st.feed = feed.map((f) => (f.name === "Mo Mover" ? { ...f, reports_to: "Tina Lead", project: SUN } : f)); await F.sync();
+  const file = F.read(F.xlsx([["S", [["DOW", "Emp ID", "User Name"], ...rep(3, [serial(D(10, 20)), "PHC-C2", "Mo Mover"]), ...rep(2, [serial(D(10, 20)), "PHC-A1", "Arun Agent"])]]]), "Extra October.xlsx");
+  const pv = await TI("stack.extraPreview", F.body(file, { month: "2026-10" }));
+  ok("U-01: extra production: Mo's 3 October rows count (his October is a draft), Arun's 2 do not (locked)", pv.counted === 3 && pv.lines.length === 1 && pv.lines[0].person === "Mo Mover" && pv.left_out.locked[0].rows === 2, { counted: pv.counted, locked: pv.left_out.locked });
+  await TI("stack.extraSave", F.body(file, { month: "2026-10" }));
+  const moRow = F.row(await F.month(MO, "2026-10"), "Mo Mover");
+  ok("U-01: and they show in Mo's draft October row: 203 done, incl. 3 extra", moRow && !moRow.locked && moRow.achieved === 203 && moRow.extra === 3, moRow && [moRow.achieved, moRow.extra]);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
