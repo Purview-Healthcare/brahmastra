@@ -837,12 +837,12 @@ function typedLayerFor(cur, h) {
 function useLayer(onClose, guard = true, unsaved = false) {
   const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose), held = useRef(unsaved);
   closeFn.current = onClose; held.current = !!unsaved;
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState(false), [askKind, setAskKind] = useState("typed");
   const after = useRef(null);   // what follows a Discard asked for by Back or Forward: going where the person was going
   const [opener] = useState(() => document.activeElement);
   // "typed": text typed in a box of it; "changes": only changes made otherwise
   const lose = () => (!guard || !ref.current ? "" : typedIn(seen.current, ref.current) ? "typed" : held.current ? "changes" : "");
-  const close = () => { const f = closeFn.current; if (!f) return; const k = lose(); if (k) setAsking(k); else f(); };
+  const close = () => { const f = closeFn.current; if (!f) return; const k = lose(); if (k) { setAskKind(k); setAsking(true); } else f(); };
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
@@ -861,7 +861,7 @@ function useLayer(onClose, guard = true, unsaved = false) {
       if (to) { e.preventDefault(); (to === "box" ? box.current || el : to).focus(); }
     };
     window.addEventListener("keydown", key);
-    const g = { typed: () => !!(closeFn.current && el.isConnected && lose()), ask: (then) => { after.current = then; setAsking(lose() || "typed"); } };
+    const g = { typed: () => !!(closeFn.current && el.isConnected && lose()), ask: (then) => { after.current = then; setAskKind(lose() || "typed"); setAsking(true); } };
     const unload = (e) => { if (g.typed()) { e.preventDefault(); e.returnValue = ""; } };
     LAYER_GUARDS.add(g); window.addEventListener("beforeunload", unload);
     return () => {
@@ -876,7 +876,7 @@ function useLayer(onClose, guard = true, unsaved = false) {
     if (e.target !== s || e.clientX >= r.left + s.clientWidth || e.clientY >= r.top + s.clientHeight) return;
     e.preventDefault(); close();
   };
-  const ask = asking ? <DiscardAsk changes={asking === "changes"} onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
+  const ask = asking ? <DiscardAsk changes={askKind === "changes"} onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
   return { ref, box, close, shade, ask };
 }
 function DiscardAsk({ onKeep, onDiscard, changes }) {
