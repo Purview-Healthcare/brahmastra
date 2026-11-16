@@ -685,6 +685,101 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("the upload and the removal are in the audit trail", au.join() === "stack.extra,stack.extraRemove", au);
   });
 
+  S("Stack report: extra production edited by hand (a day's count, Pick the person, a counted file, the same file again)");
+  await step("extra-production-edit", async () => {
+    const XLSX = require("xlsx");
+    const ist = new Date(Date.now() + 330 * 60000); let dd = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - 1));
+    while (dd.getUTCDay() === 0 || dd.getUTCDay() === 6) dd = new Date(dd.getTime() - 86400000);
+    const DOW = dd.toISOString().slice(0, 10), XM = DOW.slice(0, 7), serial = Math.round((Date.parse(DOW + "T00:00:00Z") - Date.UTC(1899, 11, 30)) / 86400000);
+    // a second made-up file in the same OneDrive folder: 3 rows for Arun, 2 for Cara, 2 under a name nobody has (Sona Sample).
+    // Its changed copy is the same file after the team lead corrected it in OneDrive: Arun has 4 rows.
+    const NAME2 = "Extra production week 2 - Tina Lead.xlsx";
+    const fileOf = (arun) => { const wbx = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wbx, XLSX.utils.aoa_to_sheet([["DOW", "Emp ID", "User Name"], ...Array(arun).fill([serial, "A1", "Arun Agent"]),
+      ...Array(2).fill([serial, "A3", "Cara Agent"]), ...Array(2).fill([serial, "", "Sona Sample"])]), "Week 2"); return Buffer.from(XLSX.write(wbx, { type: "buffer", bookType: "xlsx" })).toString("base64"); };
+    await p.addInitScript(({ F2, F2B, NAME2 }) => {
+      const m = window.__BRAHMASTRA_MS_MOCK; if (!m) return;   // the stand-in OneDrive of the step before, with one more file in its folder
+      const base = m.fetch, J = (o) => new Response(JSON.stringify(o), { status: 200, headers: { "Content-Type": "application/json" } });
+      const it = { id: "xp2", name: NAME2, size: 9000, file: { mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, lastModifiedDateTime: "2026-11-12T11:00:00Z", lastModifiedBy: { user: { displayName: "Tina Lead" } },
+        parentReference: { driveId: "b!wfDrive" }, webUrl: "https://purviewhealthcare-my.sharepoint.com/personal/tina_lead/Documents/" + encodeURIComponent(NAME2) };
+      m.fetch = async (url) => { const u = String(url);
+        if (/\/items\/fold1\/children/.test(u)) { const j = await (await base(url)).json(); return J({ value: [...j.value, it] }); }
+        if (/\/items\/xp2\?/.test(u)) return J({ ...it, "@microsoft.graph.downloadUrl": "https://download.invalid/xp2" });
+        if (/download\.invalid\/xp2/.test(u)) return new Response(Uint8Array.from(atob(window.__xpChanged ? F2B : F2), (c) => c.charCodeAt(0)), { status: 200 });
+        return base(url); };
+    }, { F2: fileOf(3), F2B: fileOf(4), NAME2 });
+    const check = () => p.locator(".overlay .modal").first(), top = () => p.locator(".overlay .modal").last();
+    const pickIt = async () => { await p.locator(".stk-xbtn").first().click(); await t(1500); await p.locator('.overlay tr:has-text("Production files")').first().click(); await t(1500);
+      await p.locator(`.overlay tr:has-text("${NAME2}")`).first().click(); await t(3000); };
+    const lineRow = (who) => p.locator(`.overlay .xp-lines tr:has-text("${who}")`);
+    const extraOf = async (n) => (await rpc("team.status", { from: DOW, to: DOW })).rows.find((x) => x.name === n).extra || 0;
+    await as("tina"); await open("#/dashboard?tab=stack&month=" + XM); await t(500); await p.reload(); await t(4500);
+    await pickIt();
+    let tx = await check().innerText();
+    ok("the check before saving: each name on a line with Edit, the left-out name with Pick the person", /To count\s*5\b/i.test(tx) && (await lineRow("Arun Agent").locator('button:has-text("Edit")').count()) === 1 && (await lineRow("Cara Agent").locator('button:has-text("Edit")').count()) === 1
+      && (await p.locator('.overlay .xp-name:has-text("Sona Sample") button:has-text("Pick the person")').count()) === 1, tx.slice(0, 500));
+    ok("and the one plain line: to add work, add it to the file in OneDrive and load it again", /To add work, add it to the file in OneDrive and load it again\./.test(tx));
+    // a day's count, edited in the check before saving: Arun's 3 become 5
+    await lineRow("Arun Agent").locator('button:has-text("Edit")').first().click(); await t(800);
+    ok("Edit opens the line: who it counts for, each day with the file's own number and the count", /In the file: Arun Agent \(A1\)/.test(await top().innerText()) && (await top().locator("input.xp-n").count()) === 1 && (await top().locator("input.xp-n").first().inputValue()) === "3", await top().innerText());
+    await top().locator("input.xp-n").first().fill("5"); await t(400);
+    ok("the edited count keeps the file's own number beside it, in the typed look: 5 (file: 3)", /5 \(file: 3\)/.test(await top().locator(".typed").first().innerText()), await top().innerText());
+    await top().locator('button.primary:has-text("Save")').click(); await t(2500);
+    tx = await check().innerText();
+    ok("the check now counts 7 (the file has 5), Arun's line marked 5 (file: 3)", /To count\s*7\b/i.test(tx) && /the file has 5/.test(tx) && /5 \(file: 3\)/.test(await lineRow("Arun Agent").locator(".typed").first().innerText()), tx.slice(0, 400));
+    ok("nothing is saved yet", (await extraOf("Arun Agent")) === 0);
+    // Pick the person for the name nobody has
+    await p.locator('.overlay .xp-name:has-text("Sona Sample") button:has-text("Pick the person")').first().click(); await t(800);
+    ok("Pick the person opens for the left-out name", /Pick the person/.test(await top().innerText()) && /In the file: Sona Sample/.test(await top().innerText()), await top().innerText());
+    // a short list (7 people or fewer) has no search box, so the person is clicked in it; typing the name at its button would close
+    // the list at the space (the pick() helper above is for the long, searchable lists)
+    await top().locator(".combo-ctl").first().click(); await t(400);
+    ok("the list offers the team lead's own people who are counted on Team status", (await p.locator(".combo-item").allInnerTexts()).map((x) => x.split(" · ")[0]).sort().join("|") === "Arun Agent (A1)|Cara Agent (A3)", await p.locator(".combo-item").allInnerTexts());
+    await p.locator('.combo-item:has-text("Cara Agent")').first().click(); await t(400);
+    ok("the person picked shows, and the rows can now be counted for them", /Cara Agent \(A3\)/.test(await top().locator(".combo-val").first().innerText()) && !(await top().locator('button.primary:has-text("Count for this person")').isDisabled()), await top().innerText());
+    await top().locator('button.primary:has-text("Count for this person")').click(); await t(2500);
+    tx = await check().innerText();
+    ok("Sona Sample's rows count for Cara now: her name in the typed look, the name in the file beside it; nothing left out", /To count\s*9\b/i.test(tx) && /in the file: Sona Sample/.test(tx) && (await p.locator('.overlay .xp-lines tr:has-text("in the file: Sona Sample") .typed b').innerText()) === "Cara Agent"
+      && /Left out\s*0\b/i.test(tx) && !(await p.locator(".overlay .xp-name").count()), tx.slice(0, 500));
+    await p.locator('.overlay button:has-text("Count 9 rows")').first().click(); await t(4000);
+    ok("counted with the edits: Team status has the edited figures (Arun 5, not the file's 3; Cara her 2 and Sona Sample's 2)", (await extraOf("Arun Agent")) === 5 && (await extraOf("Cara Agent")) === 4, [await extraOf("Arun Agent"), await extraOf("Cara Agent")]);
+    ok("the Stack report's Productivity shows them too", /incl\. 5 extra/.test(await p.locator('.main table.stk-t tr:has-text("Arun Agent")').first().innerText()) && /incl\. 4 extra/.test(await p.locator('.main table.stk-t tr:has-text("Cara Agent")').first().innerText()),
+      await p.locator('.main table.stk-t tr:has-text("Arun Agent")').first().innerText());
+    const lrow = p.locator(`.stk-extra tr:has-text("${NAME2}")`).first();
+    ok("the month's list marks the file as edited by hand: 9 (file: 7), 1 count edited, 1 name given a person", /9 \(file: 7\)/.test(await lrow.innerText()) && /1 count edited by hand · 1 name given a person by hand/.test(await lrow.innerText()) && (await lrow.locator(".typed").count()) === 2, await lrow.innerText());
+    await p.locator('.dash-subtabs button:has-text("Team status")').first().click(); await t(3000);
+    await p.locator('.drange button:has-text("Custom")').first().click(); await t(500);
+    await p.locator(".drange-c input").nth(0).fill(DOW); await p.locator(".drange-c input").nth(1).fill(DOW); await t(3000);
+    const tsRow = await p.locator('.main table.ts tr:has-text("Arun Agent")').first().innerText();
+    ok("the Team status page shows the edited figure (N claims + 5 extra)", /claims? \+ 5 extra/.test(tsRow), tsRow);
+    // the file opened from the month's list: a count edited there, saved at once
+    await open("#/dashboard?tab=stack&month=" + XM); await t(500); await p.reload(); await t(4500);
+    await p.locator(`.stk-extra tr:has-text("${NAME2}") button:has-text("Open")`).first().click(); await t(2500);
+    tx = await check().innerText();
+    ok("Open shows the file's people, each with Edit, and what was changed by hand", (await p.locator('.overlay .xp-lines button:has-text("Edit")').count()) === 3 && /5 \(file: 3\)/.test(tx) && /in the file: Sona Sample/.test(tx), tx.slice(0, 500));
+    await lineRow("Arun Agent").locator('button:has-text("Edit")').first().click(); await t(800);
+    await top().locator("input.xp-n").first().fill("6"); await t(300);
+    await top().locator('button.primary:has-text("Save")').click(); await t(2500);
+    ok("a count edited on the counted file is saved at once: Arun 6 (file: 3), on Team status too", /6 \(file: 3\)/.test(await lineRow("Arun Agent").locator(".typed").first().innerText()) && (await extraOf("Arun Agent")) === 6, await check().innerText());
+    await lineRow("Arun Agent").locator('button:has-text("Edit")').first().click(); await t(800);
+    await top().locator("input.xp-n").first().fill("2.5"); await t(300);
+    ok("a count that is not a whole number cannot be saved", await top().locator('button.primary:has-text("Save")').isDisabled() && /a whole number, 0 or more/.test(await top().innerText()));
+    await top().locator("input.xp-n").first().fill("6"); await t(200);
+    await top().locator('button:has-text("Cancel")').click(); await t(600);
+    await check().locator('button:has-text("Close")').first().click(); await t(3500);
+    ok("back on the Stack report, Arun's Productivity has the 6", /incl\. 6 extra/.test(await p.locator('.main table.stk-t tr:has-text("Arun Agent")').first().innerText()), await p.locator('.main table.stk-t tr:has-text("Arun Agent")').first().innerText());
+    // the same file again, changed in OneDrive (Arun has 4 rows now): the edit on his count cannot be kept, the picked person is
+    await p.evaluate(() => { window.__xpChanged = true; });
+    await pickIt();
+    tx = await check().innerText();
+    ok("the same file loaded again with a changed number: the check lists the hand edit that was dropped (the file had 3, edited to 6, the file now has 4)", /1 hand edit could not be kept/.test(tx) && /Arun Agent, [A-Z][a-z]{2} \d+, \d{4}: the file had 3, edited to 6 by Tina Lead/.test(tx) && /the file now has 4, so 4 is counted/.test(tx), tx.slice(0, 700));
+    ok("the file's new number is used for Arun (4, unmarked), and the person picked for Sona Sample is applied again", (await lineRow("Arun Agent").locator(".typed").count()) === 0 && /\b4\b/.test(await lineRow("Arun Agent").locator("td").nth(3).innerText())
+      && (await p.locator('.overlay .xp-lines tr:has-text("in the file: Sona Sample") .typed b').innerText()) === "Cara Agent" && !(await p.locator(".overlay .xp-name").count()), await lineRow("Arun Agent").innerText());
+    await p.locator('.overlay button:has-text("Count 8 rows")').first().click(); await t(4000);
+    ok("counted again in place of the earlier counts: Arun 4, Cara 4", (await extraOf("Arun Agent")) === 4 && (await extraOf("Cara Agent")) === 4, [await extraOf("Arun Agent"), await extraOf("Cara Agent")]);
+    const au = await p.evaluate(async () => (await (await getLocalBackend()).env.DB.prepare("SELECT detail FROM audit_log WHERE action = 'stack.extraEdit' ORDER BY at, rowid").all()).results.map((x) => x.detail.replace(/^.*\.xlsx: /, "")));
+    ok("every hand edit is in the audit trail with the old and the new value", au.length === 3 && /^Arun Agent, .*: 3 → 5$/.test(au[0]) && au[1] === '"Sona Sample" in the file counts for Cara Agent (was left out: not found)' && /^Arun Agent, .*: 5 → 6 \(the file has 3\)$/.test(au[2]), au);
+  });
+
   ok("no script errors on any page", !errs.length, errs);
   await b.close(); srv.close();
   const failed = results.filter((x) => !x.pass);
