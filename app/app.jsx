@@ -1638,6 +1638,11 @@ const navFor = (me, ho, fb, at, tk) => {
 };
 /* Every page in the bar, the ones inside the Work and Manage menus included. */
 const navItems = (nav) => nav.flatMap((x) => (Array.isArray(x) ? [x] : x.items));
+/* Every page this person may open: the menu, Settings, My tasks, the Monday digest and Client 360 (team leads and up: off the
+   menu), and the pages the menu reaches under another name. The app's pages and the bell read this one list, so a bell line
+   (the month-end steps past due open Client 360) shows for everyone who can open its page. */
+const openableViews = (me, nav, handoffs) => [...navItems(nav).map((x) => x[0]), "settings", "mytasks", ...(me.role === "supervisor" ? ["digest", "client"] : []),
+  ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
 // every project: the Vice President, or an Assistant Vice President under their own title
 /* A person's email as the page shows it: never the made-up address Brahmastra keeps for someone the roster has no email for. */
 const NO_EMAIL = "no email in Purview Shastra";
@@ -1912,7 +1917,7 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
   // Client 360 is off the menu (it opens from Dashboard › Client 360 report): the Dashboard tab stays lit on it
   const navKey = view === "client" ? "dashboard" : NAV_ALIAS[view] && me.role === "supervisor" ? NAV_ALIAS[view] : view;
   useEffect(() => { document.title = pageLabel + " · Brahmastra"; }, [pageLabel]);
-  const allowedViews = [...navItems(nav).map(([k]) => k), "mytasks", ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
+  const allowedViews = openableViews(me, nav, handoffs);
   useEffect(() => { if (!menu && !openG) return; const h = () => { setMenu(false); setOpenG(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [menu, openG]);
   // Live status carries what its two lists show: the open escalations (Escalation tracker) and the claims flagged by billers waiting
   // for an answer, red once one is past its time; Needs attention, and the Work group while it is closed, carry the whole attention count
@@ -10493,7 +10498,7 @@ function App() {
   if (me.must_change) return (
     <div className="login"><div className="box stack"><div style={{ display: "flex", justifyContent: "center" }}><Wordmark size={28} /></div><div className="card"><h2>Set your password</h2><div className="sub mb">Signed in as {me.email_missing ? me.name : me.email}</div><ChangePasswordForm forced me={me} onDone={() => setMe({ ...me, must_change: false, has_password: true })} /><div className="mt"><button className="btn link sm" onClick={signOut}>Sign out</button></div></div></div><Toaster /></div>
   );
-  const allowed = [...navItems(navFor(me, handoffs, fb, attention, tasks)).map((x) => x[0]), "settings", "mytasks", ...(me.role === "supervisor" ? ["digest", "client"] : []), ...(me.role === "supervisor" && !deskOf(me, handoffs) ? Object.keys(NAV_ALIAS) : [])];
+  const allowed = openableViews(me, navFor(me, handoffs, fb, attention, tasks), handoffs);
   // an old Past TAT link (#/tat) opens Posting & submission, where the reminders are now (Needs attention when that tab is not there)
   const asked = nav.view === "tat" ? (allowed.includes("handoffs") ? "handoffs" : "attention") : nav.view;
   const view = allowed.includes(asked) ? asked : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
