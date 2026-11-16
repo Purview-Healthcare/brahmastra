@@ -7704,12 +7704,15 @@ const OPS = {
     const now = Date.now();
     let changed = 0;
     const evs = [], evIds = [];
-    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE}${editScopeSql(user, "c.client_id")}`, ...part, ...editScopeArgs(user))) {
+    // A claim already on this person's list (given to them, or open on their desk) stays exactly as it is: no history line, no
+    // notice, not counted, and an open claim stays open, so the entry they are typing still saves.
+    const onList = (p) => `(COALESCE(${p}assigned_to, '') = ? AND ${p}state IN ('assigned','in_progress'))`;
+    for (const part of chunks(ids, 80)) for (const r of await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN (${part.map(() => "?").join(",")}) AND c.state IN ${WORKABLE} AND NOT ${onList("c.")}${editScopeSql(user, "c.client_id")}`, ...part, u.id, ...editScopeArgs(user))) {
       evs.push(claimEvent(env, r.id, user, "assigned", u.name, { from: r.prev || "", via: "reassign" })); evIds.push(r.id); }
     const moved = new Set();   // the claims the UPDATE changed: the history names only these
     for (const chunk of chunks(ids, 60)) {
       const r = await all(env, `UPDATE claims SET assigned_to = ?, assigned_at = ?, state = CASE WHEN state IN ('open','completed','in_progress') THEN 'assigned' ELSE state END, skipped_at = NULL, updated_at = ?
-        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE}${editScopeSql(user, "client_id")} RETURNING id`, u.id, now, now, ...chunk, ...editScopeArgs(user));
+        WHERE id IN (${chunk.map(() => "?").join(",")}) AND state IN ${WORKABLE} AND NOT ${onList("")}${editScopeSql(user, "client_id")} RETURNING id`, u.id, now, now, ...chunk, u.id, ...editScopeArgs(user));
       r.forEach((x) => moved.add(x.id)); changed += r.length;
     }
     const evsMoved = evs.filter((e, i) => moved.has(evIds[i]));

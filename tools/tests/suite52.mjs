@@ -215,6 +215,37 @@ S("W-05, W-08: Undo after Load the file again, and after the upload's own automa
   ok("W-08: the biller is told the claims were taken off their list", (await q("SELECT id FROM user_notices WHERE user_id = ?", mid[0].assigned_to)).length > bell0 && /taken off your list: the upload they came from was undone/.test((bell || {}).text || ""), bell);
 }
 
+S("W-07: assigning a claim to the biller who already has it changes nothing");
+{
+  const pool = await poolOf(4);
+  await give(pool.slice(0, 3), "Bela Agent");
+  const open = await R["Bela Agent"]("queue.next", {});
+  const id = open.claim.id;
+  const lines = async (cid) => (await q1("SELECT COUNT(*) AS n FROM claim_events WHERE claim_id = ? AND kind = 'assigned'", cid)).n;
+  const bells = async () => (await q1("SELECT COUNT(*) AS n FROM user_notices WHERE user_id = ? AND text LIKE '%allocated to you%'", U("Bela Agent"))).n;
+  const [l0, b0] = [await lines(id), await bells()];
+  // a page of claims: Bela's three (one open on her desk) and one from the pool
+  const rs = await TI("alloc.reassign", { ids: pool, user_id: U("Bela Agent") });
+  const st = await q1("SELECT state, assigned_to FROM claims WHERE id = ?", id);
+  ok("W-07: only the claim that moved counts (1 of 4); the three already hers are not counted", rs.changed === 1, rs);
+  ok("W-07: no new history line on a claim already on her list", (await lines(id)) === l0 && (await lines(pool.find((x) => x !== id && pool.indexOf(x) < 3))) === 1);
+  ok("W-07: her bell gets one notice, for the one new claim", (await bells()) === b0 + 1 && /^1 new claim was allocated to you/.test((await q1("SELECT text FROM user_notices WHERE user_id = ? ORDER BY at DESC LIMIT 1", U("Bela Agent"))).text));
+  ok("W-07: the claim open on her desk stays open", st.state === "in_progress" && st.assigned_to === U("Bela Agent"), st);
+  const save = await T(() => R["Bela Agent"]("queue.complete", { id, ...FOLLOW, desk: true }));
+  ok("W-07: her Save on My day goes through", save.ok, save.e);
+  // the claim profile's Assign of one claim already hers: nothing changed, and the profile says so
+  const other = pool.find((x) => x !== id && pool.indexOf(x) < 3);
+  const one1 = await TI("alloc.reassign", { ids: [other], user_id: U("Bela Agent") });
+  ok("W-07: Assign of one claim already on her list changes nothing", one1.changed === 0 && (await lines(other)) === 1, one1);
+  // a real move still moves: the claim to Cara, with history and her bell
+  const mv = await TI("alloc.reassign", { ids: [other], user_id: U("Cara Agent") });
+  ok("W-07: assigning it to someone else still moves it (history line, counted)", mv.changed === 1 && (await lines(other)) === 2 && (await q1("SELECT assigned_to FROM claims WHERE id = ?", other)).assigned_to === U("Cara Agent"), mv);
+  // a worked claim of hers waiting for its follow-up comes back on her list when assigned to her (it is not on her list now)
+  const done = (await q1("SELECT state, assigned_to FROM claims WHERE id = ?", id));
+  const back = await TI("alloc.reassign", { ids: [id], user_id: U("Bela Agent") });
+  ok("W-07: a claim she worked (waiting for its follow-up) is put back on her list when assigned to her", done.state === "completed" && back.changed === 1 && (await q1("SELECT state FROM claims WHERE id = ?", id)).state === "assigned", [done, back]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
