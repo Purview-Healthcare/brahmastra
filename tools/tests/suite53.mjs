@@ -197,6 +197,71 @@ S("V-03: a name two people in Shastra have is never guessed for who reports to w
   ok("V-03: \"reports to\" given as an Emp ID or an email is used as it is", F.U("Kim Agent").reports_to === tina1 && F.U("Lara Agent").reports_to === tina1, [F.U("Kim Agent").reports_to, F.U("Lara Agent").reports_to]);
 }
 
+S("V-01: a week off, a holiday or not joined yet in Shastra is a day off on Live status, never 'Not logged in'");
+{
+  const feed = stdFeed();
+  feed.push(AG("E3", "Gita Agent", "Tina Lead", SUN), AG("E4", "Hari Agent", "Tina Lead", SUN), AG("E5", "Jai Agent", "Tina Lead", SUN), AG("E6", "Ola Agent", "Tina Lead", SUN),
+    AG("E7", "Nila Agent", "Tina Lead", SUN, { doj: "2026-11-23" }), AG("E8", "Pari Agent", "Tina Lead", SUN));
+  // Wednesday 18 Nov 2026, 10:30 IST; shifts 09:00-18:00
+  const F = await floor({ now: IST(2026, 11, 18, 10, 30), feed });
+  F.S.live = [LV("E3", {}), LV("E4", { status: "week_off" }), LV("E5", { status: "holiday" }), LV("E6", { status: "not_joined" }), LV("E7", {}), LV("E8", { status: "wo" }),
+    LV("A1", { status: "present", in_at: new Date(IST(2026, 11, 18, 9)).toISOString() })];
+  const TI = await F.who("Tina Lead");
+  const h = await F.hud(TI), st = (n) => (F.row(h, n) || {}).shastra || {};
+  const nt = await F.bell(TI), pop = (nt.alerts || []).map((a) => a.name);
+  ok("V-01: a week off marked on the person's own attendance is 'Week off', not 'Not logged in'", st("Hari Agent").state === "leave" && st("Hari Agent").label === "Week off" && st("Pari Agent").label === "Week off", [st("Hari Agent"), st("Pari Agent")]);
+  ok("V-01: a holiday marked on the person's attendance is 'Holiday'", st("Jai Agent").state === "leave" && st("Jai Agent").label === "Holiday", st("Jai Agent"));
+  ok("V-01: 'not joined' in Shastra, and a date of joining still ahead, are 'Not joined yet'", st("Ola Agent").label === "Not joined yet" && st("Nila Agent").label === "Not joined yet" && /joins 2026-11-23/.test(st("Nila Agent").sub), [st("Ola Agent"), st("Nila Agent")]);
+  ok("V-01: none of them raises the not-logged-in alert or is in the bell", !["Hari Agent", "Jai Agent", "Ola Agent", "Nila Agent", "Pari Agent"].some((n) => pop.includes(n)), pop);
+  ok("V-01: someone really not logged in still raises it", st("Gita Agent").state === "missing" && (nt.alerts || []).some((a) => a.name === "Gita Agent" && a.popup), st("Gita Agent"));
+  ok("V-01: and Live status counts the days off as out, not in", ["Hari Agent", "Jai Agent", "Ola Agent", "Nila Agent", "Pari Agent"].every((n) => F.row(h, n).status === "out" && F.row(h, n).out.shastra) && F.row(h, "Gita Agent").status !== "out", h.rows.map((r) => [r.name, r.status]));
+  // on the day of joining the person is expected in like anyone else
+  F.clock(IST(2026, 11, 23, 10, 30)); await F.freshLive(); F.S.live = [LV("E7", {})];
+  const h2 = await F.hud(TI);
+  ok("V-01: on the date of joining itself, no punch an hour in is 'Not logged in' again", (F.row(h2, "Nila Agent").shastra || {}).state === "missing", F.row(h2, "Nila Agent").shastra);
+}
+
+S("V-02: people Shastra has on leave or comp off today count as out on Live status and Team status");
+{
+  const F = await floor({ now: IST(2026, 11, 16, 15, 0) });   // Monday 16 Nov 2026, 15:00 IST; target 10 a day each
+  F.S.live = [LV("A1", { status: "present", in_at: new Date(IST(2026, 11, 16, 8, 58)).toISOString() }), LV("A2", { status: "approved_leave", leave: "Approved Leave" }),
+    LV("A3", { status: "sick_leave", leave: "Sick Leave" }), LV("A4", { status: "comp_off" })];
+  F.S.floorRows = [FL("A1", "2026-11-16", "present", 360, 0, { open: true }), FL("A2", "2026-11-16", "approved_leave", 0, 0), FL("A3", "2026-11-16", "sick_leave", 0, 0), FL("A4", "2026-11-16", "comp_off", 0, 0)];
+  for (let hh = 9; hh < 15; hh++) await F.workAt("Arun Agent", IST(2026, 11, 16, hh, 15));
+  // Bela has 4 high priority claims allocated on Friday
+  await F.give("Bela Agent", 4, /Sunrise/, IST(2026, 11, 13, 12), "High");
+  const TI = await F.who("Tina Lead");
+  const h = await F.hud(TI), mine = h.rows.filter((r) => ["Arun Agent", "Bela Agent", "Cara Agent", "Dev Agent"].includes(r.name));
+  const tt = { people: mine.length, out: mine.filter((r) => r.status === "out").length };
+  ok("V-02: Live status: In today 1 of 4 (Bela, Cara and Dev are out per Shastra)", tt.people === 4 && tt.out === 3 && F.row(h, "Arun Agent").status !== "out", mine.map((r) => [r.name, r.status]));
+  ok("V-02: the day's target leaves them out (10 for Arun alone), and the floor's totals agree", h.totals.capacity === 10 && h.totals.out === 3 && h.totals.worked === 6, h.totals);
+  ok("V-02: nobody on leave is marked behind", !mine.some((r) => r.status === "out" && r.behind) && h.totals.behind === 0, mine.map((r) => [r.name, r.behind]));
+  const b = F.row(h, "Bela Agent"), d = F.row(h, "Dev Agent");
+  ok("V-02: their row says why, from Shastra, with no 'In after all' to undo", b.out && b.out.shastra && b.out.reason === "On leave" && b.out.by === "Purview Shastra" && d.out.reason === "Comp off", [b.out, d.out]);
+  // Team status, today
+  const ts = await F.ts(TI, "2026-11-16", "2026-11-16"), bt = F.row(ts, "Bela Agent");
+  ok("V-02: Team status today: Bela, Cara and Dev are out today (from Shastra), Arun is not", bt.out_today === "out" && F.row(ts, "Cara Agent").out_today === "out" && F.row(ts, "Dev Agent").out_today === "out" && F.row(ts, "Arun Agent").out_today === "", ts.rows.map((r) => [r.name, r.out_today]));
+  const sg = [...ts.suggestions.today, ...ts.suggestions.week].filter((x) => x.who === "Bela Agent");
+  ok("V-02: the suggestion for Bela's 4 high priority claims is to rebalance them, not to have her work them", sg.length && sg.every((x) => !/Have them work/.test(x.do)) && sg.some((x) => /Rebalance the 4 high priority claims/.test(x.do)), sg);
+  // Rebalance works for someone out per Shastra, without marking them out by hand
+  const rb = await TI("team.rebalance", { user_id: F.id("Bela Agent") });
+  ok("V-02: Rebalance shares Bela's 4 claims to the one person in (Arun)", rb.moved === 4 && rb.to.length === 1 && rb.to[0].name === "Arun Agent", rb);
+  // someone on leave in Shastra who works here today anyway is counted in
+  await F.workAt("Cara Agent", IST(2026, 11, 16, 14, 50), 2);
+  const h2 = await F.hud(TI);
+  ok("V-02: someone Shastra has on leave who works here today counts in", F.row(h2, "Cara Agent").status !== "out" && h2.totals.capacity === 20, [F.row(h2, "Cara Agent").status, h2.totals.capacity]);
+  // a half day in Shastra is half on Team status today
+  F.S.floorRows.push(FL("B1", "2026-11-16", "half_day", 240, 0));
+  await F.sql("DELETE FROM settings WHERE key = 'floor_sync'");
+  const MO = await F.who("Mona Manager"), ts2 = await F.ts(MO, "2026-11-16", "2026-11-16");
+  ok("V-02: a half day in Shastra shows as a half day today", F.row(ts2, "Kim Agent").out_today === "half", F.row(ts2, "Kim Agent"));
+  // the weekend: a week off for everyone is not 'out today' on Live status (nobody is expected in)
+  F.clock(IST(2026, 11, 21, 11)); await F.freshLive();
+  F.S.live = [LV("A1", { week_off: true }), LV("A2", { week_off: true })];
+  const hw = await F.hud(TI);
+  ok("V-02: on a Saturday the week off is not counted as out (the weekend says nobody is expected in)", hw.weekend && !hw.rows.some((r) => r.status === "out"), hw.rows.map((r) => [r.name, r.status]));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -295,8 +295,11 @@ entries before the shift time too, as Team status and My day do (a night shift's
 - **Shastra**: each person's attendance in Purview Shastra now, read every 2 minutes with Shastra's own rules
   (the day rolls at 05:00 IST, late is 10 minutes past the shift start, Saturday and Sunday are the week off unless
   Shastra says otherwise): **Present** or **Late** with the time in, **On break**, **Logged out**, **Not in yet**,
-  **On leave** (or week off, holiday, comp off) and **Not logged in** in red once someone has no punch in an hour after their
-  shift began. Needs `dev/shastra-live-feed.sql` run once in Shastra's Supabase (the same key as the roster feed).
+  **On leave** (or week off, holiday, comp off, also when marked on the person's own attendance), **Not joined yet** (marked
+  so, or a date of joining still ahead) and **Not logged in** in red once someone has no punch in an hour after their
+  shift began. On a working day someone Shastra has out (any of those days off, or marked absent) who has done nothing
+  here today counts as out, as with Out today: not in today, not in the day's target, never behind, and **Rebalance**
+  shares their claims. Needs `dev/shastra-live-feed.sql` run once in Shastra's Supabase (the same key as the roster feed).
 - **Not logged in** alert: the person's team lead (and the team leads of their clients) get a pop-up on whatever page
   they have open, a red line on Live status, an entry in the bell and, once they allow it, a notification on their
   computer while Brahmastra is open. Managers, the VP and admins see the bell. The pop-up shows the claims on their
@@ -360,7 +363,8 @@ roster, grouped by team lead (no Emp ID):
 - **Left over** now, with how many are high priority, and a **note** per person: start, due in production (or plan
   end) and a comment, seen by every lead who sees that person and kept in the audit trail.
 - **Suggestions** in plain pointers, from the same figures: **Do today** (past the ramp-up date; 3 or more high
-  priority claims left over, or rebalance them when the person is out today; attainment under 60% on the finished
+  priority claims left over, or rebalance them when the person is out today, by Shastra's attendance for today or an
+  Out today mark; attainment under 60% on the finished
   days; on the floor under 75% of the time needed), **This week** (attainment 60 to 89%; due in production within 7
   days; floor time short; idle 1 hour or more and at least 10% of their floor time; absent, sick or marked out 2 days
   or more; 1 or 2 high priority left over) and **Keep going** (100% or more with nothing flagged, and a teammate they could help). Each

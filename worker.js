@@ -2532,13 +2532,20 @@ function liveState(x, u, now) {
   if (x.in && x.out) return L("out", "Logged out", "at " + hhmmIST(x.out), { in_at: x.in });
   if (x.in) { const late = !!(win && !x.lok && x.in > win.start + SH_GRACE_MS && x.in < win.end); return L(late ? "late" : "present", late ? "Late" : "Present", "in " + hhmmIST(x.in), { in_at: x.in }); }
   if (SH_PRESENT.has(x.st)) return L("present", "Present", "marked in Shastra");
+  // off: a day Shastra has them out (Live status counts them out, as an Out today mark, and never alerts about them)
+  const OFF = { off: true };
   // a comp off is a day off (planned like a leave; Team status counts it with week off and holiday): never in, never given claims
-  if (x.st === "comp_off") return L("leave", "Comp off", "a day off in Shastra");
-  if (SH_OFF.has(x.st) || x.lv) return L("leave", "On leave", String(x.lv || x.st).replace(/_/g, " "));
-  if (x.hol) return L("leave", "Holiday", "");
-  if (x.wo) return L("leave", "Week off", "");
+  if (x.st === "comp_off" || x.st === "co") return L("leave", "Comp off", "a day off in Shastra", OFF);
+  if (SH_OFF.has(x.st) || x.lv) return L("leave", "On leave", String(x.lv || x.st).replace(/_/g, " "), OFF);
+  // a week off, a holiday or "not joined yet" marked on the person's own attendance count as Shastra's Live view and Team status
+  // count them (V-01), as does a date of joining still ahead (Shastra's day rolls at 05:00 IST)
+  if (x.hol || ["holiday", "h", "ho"].includes(x.st)) return L("leave", "Holiday", "", OFF);
+  if (x.wo || ["week_off", "wo"].includes(x.st)) return L("leave", "Week off", "", OFF);
+  if (["not_joined", "nj"].includes(x.st)) return L("leave", "Not joined yet", "marked in Shastra", OFF);
+  const doj = isoDate(u && u.doj);
+  if (doj && doj > istISO(now - 5 * 3600000)) return L("leave", "Not joined yet", "joins " + doj, OFF);
   if (x.ap) return L("present", "Present", "contract");
-  if (x.st === "absent") return L("absent", "Absent", "marked in Shastra");
+  if (x.st === "absent") return L("absent", "Absent", "marked in Shastra", OFF);
   if (!win) return L("notin", "Not in yet", "no shift on the roster");
   // the business day starts at 05:00 IST: a shift that began before it and is over was yesterday's (today's is still to come)
   const istNow = now + IST_MIN * 60000, bizStart = istNow - ((istNow - 5 * 3600000) % 86400000 + 86400000) % 86400000 - IST_MIN * 60000;
@@ -5317,8 +5324,12 @@ const OPS = {
       const inShift = win ? now >= win.start && now <= win.end : !!first;
       // Saturday and Sunday: nobody is expected in (as on Team status); whoever works is counted, with no target
       const offDay = !workDay && !mine.length && !onDesk.some((c) => c.state === "in_progress");
+      // Shastra has them out on a working day (leave, comp off, week off, a holiday, not joined yet, marked absent) and they have
+      // done nothing here today: out, as with an Out today mark (In today, the day's target, the pace; Rebalance) (V-02)
+      const sh = live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null;
+      const shOff = workDay && !!(sh && sh.off) && !mine.length && !(cur && cur.started_at && now - cur.started_at < 2 * 3600000);
       let status = "not_started";
-      if (a && a.status === "out") status = "out";
+      if ((a && a.status === "out") || shOff) status = "out";
       else if (cur && cur.started_at && now - cur.started_at < 2 * 3600000) status = "working";
       else if (!onDesk.length && work.length) status = "done";
       else if (last && now - last > 30 * 60000 && inShift) status = "idle";
@@ -5332,8 +5343,8 @@ const OPS = {
           minutes: cur.started_at ? Math.floor((now - cur.started_at) / 60000) : null } : null,
         // the same rule for the claim last worked: its number and client only when the client is one of the viewer's
         last_claim: lastWork.has(u.id) ? (({ claim_id, claim_no, client_id, client_name, at }) => ({ at, ...(inScope(user, client_id) ? { id: claim_id, claim_no: claim_no || "", client: client_name || "" } : { id: null, claim_no: "", client: "", elsewhere: true }) }))(lastWork.get(u.id)) : null,
-        status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : null, off_day: offDay, in_shift: inShift,
-        untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: live.state === "ok" ? liveState(live.byUser.get(u.id), u, now) : null };
+        status, out: a && a.status === "out" ? { reason: a.reason, by: a.by_name } : shOff ? { reason: sh.label, by: "Purview Shastra", shastra: true } : null, off_day: offDay, in_shift: inShift,
+        untouched: onDesk.filter((c) => c.state === "assigned").length, shastra: sh };
     });
     const rank = { idle: 0, not_started: 1, working: 2, done: 3, out: 4 };
     rows.sort((x, y) => rank[x.status] - rank[y.status] || (y.behind ? 1 : 0) - (x.behind ? 1 : 0) || x.name.localeCompare(y.name));
@@ -5532,7 +5543,9 @@ const OPS = {
         left: mine.length, left_high: leftHigh, left_other: mine.length - leftHigh, ramp,
         // judged against the production mark: production only, on finished days; Training and OJT are in ramp-up
         perf: ramp.kind === "ramp" ? "ramp" : st !== "Production" ? "other" : attain == null ? (worked + taskItems + extra > 0 ? "notarget" : "none") : basis === "today" ? "pending" : attain < PERF_MARK ? "below" : "ok",
-        out_today: outToday.get(u.id) || "",
+        // out today: Shastra's attendance for the person's day when it has it (as for the target: leave, comp off, week off,
+        // a holiday, absent: out; a half day: half), else the Out today mark here (V-02)
+        out_today: (() => { const x = fd && fd.get(myDay), sd = x ? shastraDay(x.status) : null; return doj && myDay < doj ? "" : sd ? (sd.kind === "half" ? "half" : sd.share ? "" : "out") : outToday.get(u.id) || ""; })(),
         escalations: escBy.get(u.id) || [], esc_n: (escBy.get(u.id) || []).length,
         esc_ext: (escBy.get(u.id) || []).filter((e) => e.kind === "external").length, esc_int: (escBy.get(u.id) || []).filter((e) => e.kind === "internal").length,
         start_date: n.start_date || "", end_date: n.end_date || "", comment: n.comment || "", comment_by: n.by_name || "", comment_at: n.at || null };

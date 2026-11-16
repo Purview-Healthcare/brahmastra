@@ -7441,7 +7441,7 @@ function LiveFloor({ ctx, me, go, q, clientId, locId, grouped, filtered }) {
                 <td className="num">{r.closed || <span className="muted">0</span>}</td>
                 <td>{leftCell(r)}</td>
                 <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  {r.can_act === false ? null : r.status === "out" ? <><button className="btn sm" disabled={busy} onClick={() => setOut(r, false)}>In after all</button> {r.untouched > 0 && <button className="btn sm primary" disabled={busy} title="Share the untouched claims equally between the people in today on the same clients" onClick={() => rebalance(r)}>Rebalance {r.untouched}</button>}</>
+                  {r.can_act === false ? null : r.status === "out" ? <>{!(r.out && r.out.shastra) && <button className="btn sm" disabled={busy} onClick={() => setOut(r, false)}>In after all</button>} {r.untouched > 0 && <button className="btn sm primary" disabled={busy} title="Share the untouched claims equally between the people in today on the same clients" onClick={() => rebalance(r)}>Rebalance {r.untouched}</button>}</>
                     : <>{r.shastra && r.shastra.state === "missing" && r.untouched > 0 && <button className="btn sm primary" disabled={busy} onClick={() => shareOut(r)}>Reallocate {r.untouched}</button>}{" "}<button className="btn sm" disabled={busy} onClick={() => setOutFor({ r, reason: "" })}>Out today</button></>}
                 </td>
               </tr>))}
