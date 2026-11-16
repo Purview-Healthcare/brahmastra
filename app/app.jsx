@@ -5822,6 +5822,8 @@ const handoffToast = (h) => (!h ? "" : h.mode === "person" ? ` Sent to ${h.label
 const fmtDue = (h) => { const ms = h.due_at - Date.now(); const a = Math.abs(ms); const t = a >= 86400000 ? Math.floor(a / 86400000) + "d " + Math.floor((a % 86400000) / 3600000) + "h" : Math.floor(a / 3600000) + "h " + Math.floor((a % 3600000) / 60000) + "m"; return ms < 0 ? "TAT missed · " + t : "due in " + t; };
 /* Client profile: who does payment posting and submission for this client. */
 const isSmeUI = (u) => /\bsme\b|subject matter/i.test((u && u.designation) || "");
+/* A share taken back or made view only: the client's claims on that person's list went back to the pool (the server says how many). */
+const backToPool = (r) => (r && r.returned ? ` ${plural(r.returned, "claim")} on their list went back to the pool.` : "");
 /* Who else a client is shared with (crossover spans): chips with view / edit, and the share form for team leads and up. */
 function AccessRow({ c, ctx, me, onSaved, dir }) {
   const [open, setOpen] = useState(false);
@@ -5832,8 +5834,8 @@ function AccessRow({ c, ctx, me, onSaved, dir }) {
   const rows = c.access || [];
   const opts = (dir && dir.length ? dir : ctx.users.filter((u) => u.active)).filter((u) => u.id !== me.id && !rows.some((r) => r.user_id === u.id))
     .map((u) => ({ id: u.id, label: u.name, sub: [u.designation, u.department].filter(Boolean).join(" · ") }));
-  const add = async () => { if (!pick) return; setBusy(true); try { await rpc("clients.accessSave", { client_id: c.id, user_id: pick, level }); toast("Shared."); setPick(""); setOpen(false); onSaved && onSaved(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
-  const rm = async (r) => { setBusy(true); try { await rpc("clients.accessRemove", { client_id: c.id, user_id: r.user_id }); toast("Access removed."); onSaved && onSaved(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const add = async () => { if (!pick) return; setBusy(true); try { const r = await rpc("clients.accessSave", { client_id: c.id, user_id: pick, level }); toast("Shared." + backToPool(r)); setPick(""); setOpen(false); onSaved && onSaved(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const rm = async (r) => { setBusy(true); try { const x = await rpc("clients.accessRemove", { client_id: c.id, user_id: r.user_id }); toast("Access removed." + backToPool(x)); onSaved && onSaved(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   return (
     <div className="small mt8" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
       <b>Shared with:</b>
@@ -6865,8 +6867,8 @@ function PersonClientAccess({ userId, ctx, me }) {
   const [busy, setBusy] = useState(false);
   const canShare = !isSmeUI(me);
   const opts = ctx.clients.filter((c) => c.active && c.can_edit !== false && !rows.some((r) => r.client_id === c.id)).map((c) => ({ id: c.id, label: c.name }));
-  const add = async () => { if (!pick) return; setBusy(true); try { await rpc("clients.accessSave", { client_id: pick, user_id: userId, level }); toast("Shared."); setPick(""); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
-  const rm = async (r) => { setBusy(true); try { await rpc("clients.accessRemove", { client_id: r.client_id, user_id: userId }); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const add = async () => { if (!pick) return; setBusy(true); try { const r = await rpc("clients.accessSave", { client_id: pick, user_id: userId, level }); toast("Shared." + backToPool(r)); setPick(""); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const rm = async (r) => { setBusy(true); try { const x = await rpc("clients.accessRemove", { client_id: r.client_id, user_id: userId }); if (x && x.returned) toast("Access removed." + backToPool(x)); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   return (
     <Field label="Extra client access" hint="Clients outside this person's own span that are shared with them (crossovers)">
       <div className="pill-list" style={{ gap: 4 }}>

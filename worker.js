@@ -2324,6 +2324,9 @@ async function importRoster(env, user, payload) {
   await recomputeScopes(env);
   await autoMapProjects(env);
   await syncTeams(env);
+  // Shastra moved someone to other projects (another client, another team lead): the claims of a client they no longer work go
+  // back to the pool, as when someone leaves or moves off AR.
+  for (const p of plan) if (p.id && p.match && p.match.active && p.next.active && p.changes.includes("projects")) await releaseLostClaims(env, user, p.id);
   // An Emp ID on more than one Shastra row goes in the audit trail when it first shows (the hourly sync does not repeat it).
   const dupLast = (await getSetting(env, "roster_dup_emp", [])) || [];
   if (JSON.stringify(dupEmp) !== JSON.stringify(dupLast)) {
@@ -3390,6 +3393,9 @@ const editableOr = (user, clientId) => { if (!inScope(user, clientId)) throw out
 // whatever else they are on a claim (who last worked it, whose list it is on, who wrote an entry). Every claim write checks it.
 const viewOnlyOf = (user, clientId) => !!(user && user.scope_view_only && user.scope_view_only.has(clientId));
 const writableOr = (user, clientId) => { if (viewOnlyOf(user, clientId)) throw viewOnly(); };
+// Work on a claim of a client the person no longer works (a share taken back, Shastra moved them) is refused, whatever is left on
+// their list or whoever wrote the entry: the claim is not theirs to open or change.
+const ownClientOr = (user, clientId) => { if (!inScope(user, clientId)) throw denied("This claim is not in your queue."); };
 // The clients someone may change: their scope minus the view-only shares (null means everything).
 const editScope = (user) => (!user || !user.scope ? null : (user.scope_view_only && user.scope_view_only.size ? user.scope.filter((id) => !user.scope_view_only.has(id)) : user.scope));
 const editScopeSql = (user, col) => (editScope(user) == null ? "" : ` AND ${col} IN ${IN_LIST}`);
@@ -3665,6 +3671,29 @@ async function autoMapProjects(env) {
     await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", c.roster_names_json, c.id);
   }
 }
+/* Someone who no longer works a client (a share of it taken back or made view only, or Purview Shastra moved them to another
+   client) gives that client's claims on their list back to the pool, as when someone leaves (README): each claim's history says
+   so and their bell tells them. clientId: only that client; none: every client they no longer work. Returns how many. */
+async function releaseLostClaims(env, by, userId, clientId) {
+  const row = userId ? await one(env, "SELECT * FROM users WHERE id = ?", userId) : null;
+  if (!row) return 0;
+  const u = publicUser(row), scope = await scopeOf(env, u);
+  if (scope == null) return 0;
+  const held = await all(env, `SELECT c.id, c.client_id, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
+    WHERE c.assigned_to = ? AND c.state IN ('assigned','in_progress')${clientId ? " AND c.client_id = ?" : ""}`, userId, ...(clientId ? [clientId] : []));
+  const lost = held.filter((c) => !scope.includes(c.client_id) || viewOnlyOf(u, c.client_id));
+  const who = { id: (by && by.id) || null, name: (by && by.name) || "" }, per = new Map();
+  for (const part of chunks(lost, 80)) {
+    const back = new Set((await all(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, first_up = 0, updated_at = ?
+      WHERE id IN ${IN_LIST} AND assigned_to = ? AND state IN ('assigned','in_progress') RETURNING id`, Date.now(), listArg(part.map((c) => c.id)), userId)).map((x) => x.id));
+    const went = part.filter((c) => back.has(c.id));
+    if (went.length) await batchAll(env, went.map((c) => claimEvent(env, c.id, who, "unassigned", u.name || "")), 50);
+    for (const c of went) { const k = per.get(c.client_id) || { name: c.client_name || "", n: 0 }; k.n++; per.set(c.client_id, k); }
+  }
+  if (per.size) await batchAll(env, [...per.entries()].map(([cid, k]) => env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)")
+    .bind(uuid(), userId, Date.now(), `${k.n} claim${k.n === 1 ? " was" : "s were"} taken off your list: you no longer work ${k.name || "that client"}, so ${k.n === 1 ? "it went" : "they went"} back to the pool.`, "queue", cid)), 50);
+  return [...per.values()].reduce((t, k) => t + k.n, 0);
+}
 async function unassignOpen(env, userId) {
   await run(env, "UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', updated_at = ? WHERE assigned_to = ? AND state IN ('assigned','in_progress')", Date.now(), userId);
   await rerouteHandoffs(env, userId);
@@ -3899,7 +3928,9 @@ async function canSeeClaim(env, user, c) {
     if (await handoffRole(env, user, c.id)) return true;
     return leadFor(user, c.client_id) && !!(await one(env, `SELECT 1 AS x FROM handoffs WHERE claim_id = ? AND dept IN (${dd.map(() => "?").join(",")}) LIMIT 1`, c.id, ...dd));
   }
-  if (leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id) return true;
+  // whose list it is on, or who last worked it, counts only while the client is still theirs: someone who no longer works the
+  // client (a share taken back, Shastra moved them) does not open or change its claims, whatever is left on their list
+  if (leadFor(user, c.client_id) || (inScope(user, c.client_id) && (c.assigned_to === user.id || c.last_worked_by === user.id))) return true;
   if (user.resp_clients && user.resp_clients.has(c.client_id)) return true;
   return !!(await handoffRole(env, user, c.id));
 }
@@ -5026,7 +5057,9 @@ const OPS = {
       ON CONFLICT (client_id, user_id) DO UPDATE SET level = excluded.level, granted_by = excluded.granted_by, granted_by_name = excluded.granted_by_name, at = excluded.at`,
       uuid(), clientId, t.id, level, user.id, user.name, Date.now());
     await audit(env, user, "access.share", clientId, t.name + " · " + (level === "edit" ? "can edit" : "view only"));
-    return { ok: true };
+    // view only: the client's claims on their list go back to the pool (a view-only share never puts them on anyone's list)
+    const returned = level === "view" ? await releaseLostClaims(env, user, t.id, clientId) : 0;
+    return { ok: true, returned };
   },
   "clients.accessRemove": async ({ env, user, payload }) => {
     editableOr(user, str(payload.client_id, 60));
@@ -5034,7 +5067,9 @@ const OPS = {
     await run(env, "DELETE FROM client_access WHERE client_id = ? AND user_id = ?", str(payload.client_id, 60), str(payload.user_id, 60));
     const who = await one(env, "SELECT name FROM users WHERE id = ?", str(payload.user_id, 60));
     await audit(env, user, "access.remove", str(payload.client_id, 60), who ? who.name : str(payload.user_id, 60));
-    return { ok: true };
+    // taken back: unless the client is still theirs another way (their own projects or team), its claims on their list go back to the pool
+    const returned = await releaseLostClaims(env, user, str(payload.user_id, 60), str(payload.client_id, 60));
+    return { ok: true, returned };
   },
 
   /* ---- feedback: anyone signed in sends it (with a screenshot and snippets); it is emailed to the feedback people
@@ -5914,7 +5949,7 @@ const OPS = {
     for (const c of rows) {
       if (ok.length >= 8) break;
       const may = deskOf(user) ? postedClosed(c) || (await canSeeClaim(env, user, c))
-        : sup ? leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c) : true;
+        : sup ? leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c) : inScope(user, c.client_id) || postedClosed(c);
       if (may) ok.push(c);
     }
     return { claims: ok.map(({ assigned_to, last_worked_by, handoff_status, ...c }) => ({ ...c, posted: handoff_status === "posted" && c.state === "closed" })) };
@@ -7745,13 +7780,15 @@ const OPS = {
   "queue.summary": async ({ env, user, payload }) => {
     const today = isoDate(payload.today) || isoToday();
     const from = num(payload.day_from_ms, 0), to = num(payload.day_to_ms, Date.now());
+    // only the claims they may work (as Next claim opens them): never a view-only share's, or a client they no longer work
+    const mine = editScopeSql(user, "client_id"), mineArgs = editScopeArgs(user);
     const [ready, waiting, current, done, skipped, byClient] = await Promise.all([
-      one(env, "SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on <= ?)", user.id, today),
-      one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND follow_up_on > ?", user.id, today),
-      one(env, "SELECT id FROM claims WHERE assigned_to = ? AND state = 'in_progress' LIMIT 1", user.id),
+      one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on <= ?)${mine}`, user.id, today, ...mineArgs),
+      one(env, `SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND follow_up_on > ?${mine}`, user.id, today, ...mineArgs),
+      one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'in_progress'${mine} LIMIT 1`, user.id, ...mineArgs),
       one(env, "SELECT COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.user_id = ? AND nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?", user.id, from, to),
-      one(env, "SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND skipped_at IS NOT NULL", user.id),
-      all(env, "SELECT cl.name AS client_name, l.name AS location_name, COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt FROM claims c JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE c.assigned_to = ? AND c.state = 'assigned' GROUP BY c.client_id, c.location_id ORDER BY n DESC", user.id),
+      one(env, `SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND skipped_at IS NOT NULL${mine}`, user.id, ...mineArgs),
+      all(env, `SELECT cl.name AS client_name, l.name AS location_name, COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt FROM claims c JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE c.assigned_to = ? AND c.state = 'assigned'${editScopeSql(user, "c.client_id")} GROUP BY c.client_id, c.location_id ORDER BY n DESC`, user.id, ...mineArgs),
     ]);
     return { ready, waiting: waiting ? waiting.n : 0, in_progress_id: current ? current.id : null, done_today: done, skipped: skipped ? skipped.n : 0, by_client: byClient };
   },
@@ -7760,8 +7797,8 @@ const OPS = {
     const now = Date.now();
     // "Next" while a claim is open: that claim goes back to the list (nothing saved) and the following one opens.
     const skipId = str(payload.skip_id, 60);
-    // a claim of a client this person only has a view-only share of is never opened for work (it is read only to them)
-    const vo = [...(user.scope_view_only || [])], voSql = vo.length ? ` AND client_id NOT IN ${IN_LIST}` : "", voa = vo.length ? [listArg(vo)] : [];
+    // a claim of a client this person only has a view-only share of, or no longer works at all, is never opened for work
+    const voSql = editScopeSql(user, "client_id"), voa = editScopeArgs(user);
     if (skipId) await run(env, `UPDATE claims SET state = 'assigned', started_at = NULL, updated_at = ? WHERE id = ? AND assigned_to = ? AND state = 'in_progress'${voSql}`, now, skipId, user.id, ...voa);
     let c = await one(env, `SELECT * FROM claims WHERE assigned_to = ? AND state = 'in_progress'${voSql} LIMIT 1`, user.id, ...voa);
     // Pick the top claim in two plain steps (no RETURNING / subquery update), retrying once if it was taken meanwhile.
@@ -7779,7 +7816,7 @@ const OPS = {
   "queue.skip": async ({ env, user, payload }) => {
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", payload.id);
     if (!c || c.assigned_to !== user.id) throw denied("This claim is not in your queue.");
-    writableOr(user, c.client_id);
+    ownClientOr(user, c.client_id); writableOr(user, c.client_id);
     if (c.state !== "in_progress") throw bad("This claim is not open on your desk.");
     const now = Date.now();
     const reason = str(payload.reason, 500).trim();
@@ -7795,7 +7832,7 @@ const OPS = {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
     if (c.assigned_to !== user.id && !leadFor(user, c.client_id)) throw denied("This claim is not on your desk.");
-    writableOr(user, c.client_id);
+    ownClientOr(user, c.client_id); writableOr(user, c.client_id);
     if (!["in_progress", "assigned", "completed"].includes(c.state)) throw bad("This claim is not open for work (it is " + c.state + ").");
     // Saved from My day (the claim open on the desk): a second save from another tab or a double click adds nothing.
     if (payload.desk && !(c.state === "in_progress" && c.assigned_to === user.id)) throw bad("This claim was already saved, or it is no longer open on your desk.");
@@ -7861,7 +7898,7 @@ const OPS = {
     const c = await one(env, "SELECT * FROM claims WHERE id = ?", payload.id);
     if (!c) throw bad("Claim not found.");
     if (c.assigned_to !== user.id && !leadFor(user, c.client_id)) throw denied("This claim is not on your desk.");
-    writableOr(user, c.client_id);
+    ownClientOr(user, c.client_id); writableOr(user, c.client_id);
     if (!["assigned", "in_progress", "completed"].includes(c.state)) throw bad("This claim is " + c.state + " and cannot be opened for work.");
     const now = Date.now();
     await env.DB.batch([
@@ -7877,6 +7914,8 @@ const OPS = {
     const from = num(payload.day_from_ms, 0);
     const where = ["c.assigned_to = ?", "(c.state IN ('assigned','in_progress') OR (c.state IN ('completed','closed','in_process') AND c.completed_at >= ?))"];
     const params = [user.id, from];
+    // only claims of a client they may work (as Next claim opens them)
+    if (editScope(user) != null) { where.push(`c.client_id IN ${IN_LIST}`); params.push(...editScopeArgs(user)); }
     if (payload.q) { const q = likeAny(str(payload.q, 80).trim()); where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ?)"); params.push(q, q, q); }
     if (payload.payer) { where.push("c.payer LIKE ?"); params.push(likeAny(str(payload.payer, 80).trim())); }
     if (payload.provider) { where.push("c.provider LIKE ?"); params.push(likeAny(str(payload.provider, 80).trim())); }
@@ -7902,7 +7941,7 @@ const OPS = {
     const c = await one(env, "SELECT c.*, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", n.claim_id);
     if (n.user_id !== user.id && !(c && leadFor(user, c.client_id))) throw denied("Only the author or a team lead can edit this note.");
     if (!c) throw bad("Claim not found.");
-    writableOr(user, c.client_id);
+    ownClientOr(user, c.client_id); writableOr(user, c.client_id);
     if (deskOf(user) && !(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
     if (postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): its notes can no longer be edited.");
     const saag = validateWork(payload);
@@ -8037,7 +8076,7 @@ const OPS = {
     const ac = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", a.claim_id);
     if (deskOf(user) && !(ac && (await canSeeClaim(env, user, ac)))) throw denied("This claim is not in your queue.");
     if (!(ac && leadFor(user, ac.client_id)) && (a.user_id !== user.id || Date.now() - a.created_at > EDIT_WINDOW_MS)) throw denied("Only the person who attached it (within 24 hours) or a team lead can remove this file.");
-    if (ac) writableOr(user, ac.client_id);
+    if (ac) { ownClientOr(user, ac.client_id); writableOr(user, ac.client_id); }
     // a claim Posting closed is read only: the EOB and the proof its posting rests on stay with it (files can still be added)
     if (postedClosed(ac)) throw bad("Posting closed this claim (the payment is posted): its files can no longer be removed.");
     await env.DB.batch([

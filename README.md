@@ -163,7 +163,8 @@ it must be fixed in Shastra.
   and the claim profile give them the claims sent to their own desk (and every
   claim of a client they are set responsible for), the Past TAT list and its
   reminder emails their own desk's tasks only. Someone Shastra moves off AR gives
-  their AR claims back to the pool, as when someone leaves.
+  their AR claims back to the pool, as when someone leaves; someone Shastra moves to another client (another
+  project) gives back the claims of the client they no longer work.
 
 #### Client 360
 
@@ -683,7 +684,10 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
   Needs attention, keep its RACI. A shared biller can be picked in allocation.
 
 Shares are personal (one person, one client), show who shared and when, and can
-be taken back any time. SMEs cannot share; a view-only share cannot be passed on.
+be taken back any time. SMEs cannot share; a view-only share cannot be passed on. When a share is taken back or made
+view only, the client's claims on that person's list go back to the pool, as when someone leaves (each claim's history
+and their bell say so), unless the client is still theirs through their own projects. Someone who no longer works a
+client cannot open or work its claims, whatever was left on their list.
 
 A share is about the client, never about its people. Sign-in codes, password
 resets, changes to a person's account, switching them off and 1:1 coaching notes

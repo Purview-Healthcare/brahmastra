@@ -258,6 +258,66 @@ S("W-07: assigning a claim to the biller who already has it changes nothing");
   ok("W-07: a claim she worked (waiting for its follow-up) is put back on her list when assigned to her", done.state === "completed" && back.changed === 1 && (await q1("SELECT state FROM claims WHERE id = ?", id)).state === "assigned", [done, back]);
 }
 
+S("W-12, X-07, V-04: someone who no longer works a client gives its claims back to the pool, and cannot open or work them");
+{
+  const onList = async (who, cid = sun.id) => (await q1("SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND client_id = ? AND state IN ('assigned','in_progress')", U(who), cid)).n;
+  const bellOf = async (who) => ((await q1("SELECT text FROM user_notices WHERE user_id = ? ORDER BY at DESC LIMIT 1", U(who))) || {}).text || "";
+  // W-12: Dev (Lakeview) gets Sunrise to edit, is given 3 Sunrise claims; the share becomes view only
+  await TI("clients.accessSave", { client_id: sun.id, user_id: U("Dev Agent"), level: "edit" });
+  const p1 = await poolOf(3); await give(p1, "Dev Agent");
+  const vo = await TI("clients.accessSave", { client_id: sun.id, user_id: U("Dev Agent"), level: "view" });
+  const st = await q("SELECT state, assigned_to FROM claims WHERE id IN (?, ?, ?)", ...p1);
+  ok("W-12: made view only, his 3 Sunrise claims go back to the pool (open, nobody's) and the answer says 3", vo.returned === 3 && st.every((x) => x.state === "open" && !x.assigned_to) && (await onList("Dev Agent")) === 0, [vo, st]);
+  ok("W-12: each claim's history says it was taken off his list", (await q1("SELECT COUNT(*) AS n FROM claim_events WHERE claim_id IN (?, ?, ?) AND kind = 'unassigned'", ...p1)).n === 3);
+  ok("W-12: his bell tells him", /3 claims were taken off your list: you no longer work Sunrise Eye Care/.test(await bellOf("Dev Agent")), await bellOf("Dev Agent"));
+  const el = (await TI("claims.eligible", { client_id: sun.id })).claims.filter((c) => p1.includes(c.id)).length;
+  ok("W-12: they are in Sunrise's pool for the team", el === 3, el);
+  // any left on a view-only list (put there before this fix) are not counted or listed as ready, as Next claim does not open them
+  await sql("UPDATE claims SET assigned_to = ?, state = 'assigned' WHERE id = ?", U("Dev Agent"), p1[0]);
+  const sm = await DEV("queue.summary", {}), ls = (await DEV("queue.list", { day_from_ms: Date.now() - 3600000 })).rows.filter((r) => r.client_id === sun.id);
+  ok("W-12: My day neither counts nor lists a claim of a view-only client as ready", sm.ready.n === 0 && ls.length === 0 && !(await DEV("queue.next", {})).claim, [sm.ready, ls.length]);
+  await sql("UPDATE claims SET assigned_to = NULL, state = 'open' WHERE id = ?", p1[0]);
+
+  // X-07: the share is made "can edit" again, Dev is given 2 claims, works one and opens the other; then the share is taken back
+  await TI("clients.accessSave", { client_id: sun.id, user_id: U("Dev Agent"), level: "edit" });
+  const p2 = await poolOf(3); await give(p2, "Dev Agent");
+  const w1 = (await DEV("queue.next", {})).claim.id; await DEV("queue.complete", { id: w1, ...FOLLOW, desk: true });
+  const note = (await q1("SELECT id FROM notes WHERE claim_id = ? AND kind = 'work'", w1)).id;
+  const w2 = (await DEV("queue.next", {})).claim.id;
+  const rm = await TI("clients.accessRemove", { client_id: sun.id, user_id: U("Dev Agent") });
+  ok("X-07: taken back, the 2 Sunrise claims still on his list (one open on his desk) go back to the pool", rm.returned === 2 && (await onList("Dev Agent")) === 0 && (await q1("SELECT state FROM claims WHERE id = ?", w2)).state === "open", rm);
+  const nx = await DEV("queue.next", {});
+  ok("X-07: Next claim gives him no Sunrise claim", !nx.claim || nx.claim.client_id !== sun.id, nx.claim && nx.claim.client_id);
+  const tries = { get: await T(() => DEV("claims.get", { id: w1 })), complete: await T(() => DEV("queue.complete", { id: w2, ...FOLLOW })), open: await T(() => DEV("queue.open", { id: w2 })),
+    note: await T(() => DEV("notes.add", { claim_id: w1, comment: "Called the payer again about this made-up claim." })), edit: await T(() => DEV("notes.update", { id: note, ...FOLLOW })),
+    file: await T(() => DEV("attachments.add", { claim_id: w1, name: "eob.pdf", type: "application/pdf", data: Buffer.from("%PDF-1.4 made-up").toString("base64") })) };
+  ok("X-07: he cannot open the claim he worked, nor open, save, note, edit or attach on Sunrise claims", Object.values(tries).every((x) => !x.ok), Object.fromEntries(Object.entries(tries).map(([k, x]) => [k, x.ok ? "allowed" : x.e])));
+  const cno = (await q1("SELECT claim_no FROM claims WHERE id = ?", w1)).claim_no;
+  ok("X-07: Search finds no Sunrise claim for him (no patient shown)", !(await DEV("search.global", { q: cno })).claims.some((c) => c.client_id === sun.id));
+  ok("X-07: the team lead still opens it and its history keeps his entry", !!(await TI("claims.get", { id: w1 })).claim && (await q1("SELECT user_id FROM notes WHERE id = ?", note)).user_id === U("Dev Agent"));
+  // a share of a client that is the person's own anyway: taking it back leaves their claims
+  await TI("clients.accessSave", { client_id: sun.id, user_id: U("Arun Agent"), level: "edit" });
+  const p3 = await poolOf(2); await give(p3, "Arun Agent");
+  const rm2 = await TI("clients.accessRemove", { client_id: sun.id, user_id: U("Arun Agent") });
+  ok("X-07: a share taken back from someone whose own project is the client leaves their claims", rm2.returned === 0 && (await q("SELECT assigned_to FROM claims WHERE id IN (?, ?)", ...p3)).every((x) => x.assigned_to === U("Arun Agent")), rm2);
+  const vo2 = await TI("clients.accessSave", { client_id: sun.id, user_id: U("Arun Agent"), level: "view" });
+  ok("X-07: a view-only share of his own client changes nothing for him either", vo2.returned === 0 && (await q("SELECT assigned_to FROM claims WHERE id IN (?, ?)", ...p3)).every((x) => x.assigned_to === U("Arun Agent")), vo2);
+  await TI("clients.accessRemove", { client_id: sun.id, user_id: U("Arun Agent") });
+
+  // V-04: Shastra moves Esha from Tina's team (Sunrise) to Leo's (Lakeview); Bela moves to another team lead on Sunrise
+  const p4 = await poolOf(6); await TI("alloc.reassign", { ids: p4, user_id: U("Esha Agent") });
+  const p5 = await poolOf(2); await give(p5, "Bela Agent");
+  const e = FEED.find((x) => x.emp_id === "A5"); e.reports_to = "Leo Lead"; e.project = LAKE;
+  const b = FEED.find((x) => x.emp_id === "A2"); b.reports_to = "Mona Manager";
+  await A("roster.syncShastra");
+  ok("V-04: after the sync her 6 Sunrise claims are back in the pool", (await onList("Esha Agent")) === 0 && (await q("SELECT state, assigned_to FROM claims WHERE id IN (" + p4.map(() => "?").join(",") + ")", ...p4)).every((x) => x.state === "open" && !x.assigned_to));
+  const enx = await ESHA("queue.next", {});
+  ok("V-04: Next claim gives her no Sunrise claim; her bell says why", (!enx.claim || enx.claim.client_id !== sun.id) && Number(((await bellOf("Esha Agent")).match(/^(\d+) claims were taken off your list: you no longer work Sunrise Eye Care/) || [])[1]) >= 6, await bellOf("Esha Agent"));
+  ok("V-04: the history names who ran the sync", (await q1("SELECT COUNT(*) AS n FROM claim_events WHERE claim_id = ? AND kind = 'unassigned' AND user_name <> ''", p4[0])).n === 1);
+  ok("V-04: someone who moves to another team lead on the same client keeps the claims", (await onList("Bela Agent")) >= 2);
+  users = (await A("users.list")).users;
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
