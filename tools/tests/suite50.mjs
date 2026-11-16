@@ -452,6 +452,51 @@ S("U-06: the audit trail names every change in plain words (the Stack report's t
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("X-01: nobody can keep someone (or the admin) from getting a sign-in code: codes are paced, never stopped");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN)];
+  const T0 = IST(2026, 11, 16, 10, 0);
+  const F = await floor({ feed, now: T0 });
+  // a call as Cloudflare passes it: the caller's network address in CF-Connecting-IP
+  const from = async (ip, op, payload = {}) => { const res = await F.rig.backend.fetch("https://demo.brahmastra.local/api", { method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip }, body: JSON.stringify({ op, payload }) });
+    let data = null; try { data = await res.json(); } catch (e) { /* none */ } return res.ok ? { ok: true, r: data } : { ok: false, e: (data && data.error) || "", status: res.status }; };
+  const STRANGER = "203.0.113.9", HOME = "198.51.100.7", at = (min, sec = 0) => F.clock(T0 + min * 60000 + sec * 1000);
+  const admin = (await F.rows("SELECT id FROM users WHERE role = 'admin' AND active = 1 ORDER BY created_at LIMIT 1"))[0];
+  // the stranger asks for the admin's code ten times, 46 seconds apart, then types one wrong code
+  let codes = [];
+  for (let i = 0; i < 10; i++) { at(0, i * 46); codes.push((await from(STRANGER, "auth.adminCode", {})).r); }
+  at(7, 40); let r = await from(STRANGER, "auth.adminVerify", { user_id: admin.id, code: "000000" });
+  ok("X-01: ten codes went out at the stranger's asking (to the admin's mailbox), and the stranger's wrong code is refused", codes.every((c) => c && /^\d{6}$/.test(c.demo_code)) && !r.ok && r.status === 401, r);
+  at(9, 0); r = await from(HOME, "auth.adminCode", {});
+  ok("X-01: within five minutes of the tenth an eleventh is paced: it says when, and that the newest code still works", !r.ok && r.status === 429 && /at most every five minutes: try again in 3 minutes\. A code sent in the last ten minutes still works/.test(r.e), r);
+  r = await from(HOME, "auth.adminVerify", { user_id: admin.id, code: codes[9].demo_code });
+  ok("X-01: and the newest code in the mailbox signs the admin in from their own network", r.ok && r.r.user.is_admin === true, r);
+  // all over again: the stranger asks ten more times (with ten already in the hour the pace lets one through) and types a wrong
+  // code; 25 minutes later every code has run out
+  codes = [];
+  for (let i = 0; i < 10; i++) { at(30, i * 46); codes.push((await from(STRANGER, "auth.adminCode", {})).r); }
+  at(37, 40); await from(STRANGER, "auth.adminVerify", { user_id: admin.id, code: "000000" });
+  at(55); r = await from(HOME, "auth.adminCode", {});
+  ok("X-01: 25 minutes later, every code run out, the admin's own request is sent (it was refused for the rest of the hour)", r.ok && /^\d{6}$/.test(r.r.demo_code), r);
+  const fresh = r.r.demo_code; r = await from(HOME, "auth.adminVerify", { user_id: admin.id, code: fresh });
+  ok("X-01: and it signs the admin in", r.ok && r.r.user.is_admin === true, r);
+  // the same for a person's Email code: a stranger asking every 46 seconds for an hour gets at most about twenty codes sent
+  // (the pace never runs out: every fifth minute one more goes to the person's mailbox, where it works for them)
+  const ARUN = mail("Arun Agent"); let sent = 0, last = null;
+  for (let s = 0; s < 3600; s += 46) { F.clock(IST(2026, 11, 16, 12, 0) + s * 1000); const x = await from(STRANGER, "auth.sendOtp", { email: ARUN }); if (x.ok) { sent++; last = x.r.demo_code; } }
+  ok("X-01: a stranger asking every 46 seconds for an hour gets about twenty codes sent: ten, then one every five minutes (guessing stays bounded)", sent >= 18 && sent <= 21, sent);
+  F.clock(IST(2026, 11, 16, 13, 0)); r = await from(HOME, "auth.verifyOtp", { email: ARUN, code: last });
+  ok("X-01: and the last of them signs Arun in from his own network", r.ok && r.r.user.name === "Arun Agent", r);
+  // DA's caps on wrong codes stay: five wrong codes from one network stop that network, not the person
+  F.clock(IST(2026, 11, 16, 14, 0)); const mine = (await from(HOME, "auth.sendOtp", { email: ARUN })).r.demo_code;
+  const wrong = mine === "123456" ? "654321" : "123456";
+  const five = []; for (let i = 0; i < 5; i++) five.push(await from(STRANGER, "auth.verifyOtp", { email: ARUN, code: wrong }));
+  const sixth = await from(STRANGER, "auth.verifyOtp", { email: ARUN, code: mine });
+  r = await from(HOME, "auth.verifyOtp", { email: ARUN, code: mine });
+  ok("X-01: the caps on wrong codes stay: five from one network stop that network (even with the right code), the person signs in from theirs", five.every((x) => !x.ok) && !sixth.ok && sixth.status === 429 && r.ok, [five.map((x) => x.status), sixth, r.ok]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

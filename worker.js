@@ -1523,19 +1523,25 @@ async function syncEntryToWorkbook(env, claimId, by, extra) {
 }
 const otpCode = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0] % 900000)); };
 const otpHash = (env, email, code) => sha256Hex(`otp:${email}:${code}:${env.PEPPER || DEFAULT_PEPPER}`);
-/* Anyone can ask for a code in someone's name without signing in (Access Admin, Sign in with a code), so asking must never take a
-   code away from the person or lock them out: a new code does not cancel the ones still valid (checkOtp takes any of them, once),
-   and the hourly limit below still lets a code out when none is valid any more. */
+/* Anyone can ask for a code in someone's name without signing in (Access Admin, Email code, sign in by name), so asking must never
+   take a code away from the person or lock them out: a new code does not cancel the ones still valid (checkOtp takes any of them,
+   once), and nothing anyone else asks or types can stop codes going out. They are only paced, per email: one every 45 seconds,
+   and once ten went out in the last hour, one every five minutes. A pace is never used up the way a cap is (a stranger asking ten
+   times and typing one wrong code once stopped every code for the rest of the hour): whoever asks gets a code within five
+   minutes, and a code asked for by someone else lands in the person's own mailbox and works for them. The pace also keeps
+   guessing hopeless (at most about twenty codes in any hour, twelve an hour after that; see checkOtp). */
+const OTP_PACE_MS = 45000, OTP_SLOW_AFTER = 10, OTP_SLOW_PACE_MS = 5 * 60000;
 async function issueOtp(env, email, purpose, data, { byTeamLead = false } = {}) {
   const now = Date.now();
-  const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last, COALESCE(SUM(tries), 0) AS tries, COALESCE(SUM(CASE WHEN consumed = 0 AND expires_at >= ? THEN 1 ELSE 0 END), 0) AS live FROM otps WHERE email = ? AND created_at > ?", now, email, now - 3600000);
-  // The 45-second pause protects the mailbox; a team lead reading the code off the screen does not need it.
-  if (!byTeamLead && recent && recent.last && now - recent.last < 45000) throw new ApiError(429, "A code was sent less than a minute ago. Check your inbox (and spam), then try again.");
-  // At most 10 an hour. After that a new one goes out only when none is still valid and nobody typed a wrong code in the hour: the
-  // person always has a code that works or can get one, and the number of guesses an hour stays what it was.
-  if (recent && recent.n >= 10) {
-    if (recent.live > 0) throw new ApiError(429, "A code sent to this email in the last few minutes still works. Use the newest one (check spam too).");
-    if (recent.tries > 0) throw new ApiError(429, "Too many codes requested for this email in the last hour. Try again later.");
+  const recent = await one(env, "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM otps WHERE email = ? AND created_at > ?", email, now - 3600000);
+  // the 45-second pause protects the mailbox (a team lead reading the code off the screen does not need it); the five-minute pace
+  // once ten went out in the hour keeps the number of guesses down, for every code
+  if (recent && recent.last) {
+    const slow = recent.n >= OTP_SLOW_AFTER, wait = (slow ? OTP_SLOW_PACE_MS : OTP_PACE_MS) - (now - recent.last);
+    if (wait > 0 && slow) { const mins = Math.ceil(wait / 60000);
+      throw new ApiError(429, "Ten codes went to this email in the last hour, so a new one goes out at most every five minutes: try again in " + mins + (mins === 1 ? " minute" : " minutes") + "."
+        + (byTeamLead ? "" : " A code sent in the last ten minutes still works: use the newest one (check spam too).")); }
+    if (wait > 0 && !byTeamLead) throw new ApiError(429, "A code was sent less than a minute ago. Check your inbox (and spam), then try again.");
   }
   const code = otpCode();
   // how it reaches the person: a team lead hands it over, the demo (no email) shows it on screen, otherwise it is emailed to the
@@ -1562,9 +1568,10 @@ async function deliverOtp(env, email, code, purpose) {
    - a code ends only after ten wrong codes in all, from every caller (each wrong code counts against every code still valid, so
      more codes never mean more guesses).
    Ten is twice one caller's five, so one caller alone can never end the person's codes, and guessing stays hopeless: a code is
-   one of 900,000, and at most ten are sent to an email in an hour (none more after a wrong code), so even someone with many
-   callers, filling the person's mailbox with codes, gets at most 100 tries an hour against them (under 1 in 9,000); one caller
-   gets five tries an hour against at most ten codes (under 1 in 18,000, as before). */
+   one of 900,000, codes go to an email at most one every 45 seconds and one every five minutes once ten went out in the hour
+   (issueOtp: at most 21 in any hour, 12 an hour after that), and each takes at most ten wrong codes, so even someone with dozens
+   of callers, filling the person's mailbox with codes, gets at most 210 tries in an hour against them (under 1 in 4,000) and 120
+   an hour after that (under 1 in 7,500); one caller gets five tries an hour against at most ten codes (under 1 in 18,000). */
 const CALLER_STOPPED = "Too many wrong codes were typed here, so codes for this email are not checked from here for an hour. The codes already sent still work from another network.";
 async function checkOtp(env, email, code, caller) {
   const now = Date.now(), who = str(caller, 64) || "local";
