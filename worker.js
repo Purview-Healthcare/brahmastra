@@ -2554,7 +2554,8 @@ async function noticeAlloc(env, pairs, textOf) {
    not dismissed today. popup: the person's own team lead, or a team lead of a client they are on (managers, the VP and
    admins see it in the bell). */
 async function missingAlerts(env, user) {
-  if (user.role !== "supervisor") return { state: "off", alerts: [] };
+  // the AR floor's alert: never a Payment posting or Submission person's (team leads too), who have only their desk
+  if (user.role !== "supervisor" || deskOf(user)) return { state: "off", alerts: [] };
   const live = await shastraLive(env);
   if (live.state !== "ok") return { state: live.state, alerts: [] };
   const now = Date.now(), day = live.day, today = istISO(now);
@@ -3975,8 +3976,9 @@ const deskOf = (user) => (user && !user.is_admin ? userDesk(user) : null);
 const deskDepts = (user) => { const d = deskOf(user); return d ? DESK_DEPTS[d] : null; };
 /* What is AR's and never a desk person's (team leads too), whatever the call: inventory, allocation and the claims pool, excluding or
    reprioritising claims and their log, Needs attention, My day, Live status and the day's team, the AR entries, Team allocations,
-   repeat denials, the Client 360 report and the AR Inventory report. */
-const DESK_NOT = /^(inventory\.|alloc\.|attention\.|queue\.|creport\.|denials\.|claims\.(eligible|setState|setPriority|priorityLog)$|reports\.(arInventory|saveArInventory|work|desk)$|supervisor\.allocations$|team\.(huddle|today|saveToday)$)/;
+   repeat denials, the Client 360 report and the AR Inventory report; and the AR floor's people: Team status (its rows, dates and
+   note, the claims activity), Out today, Rebalance, Reallocate equally, the not-logged-in alert and the coaching cards. */
+const DESK_NOT = /^(inventory\.|alloc\.|attention\.|queue\.|creport\.|denials\.|coach\.|claims\.(eligible|setState|setPriority|priorityLog)$|reports\.(arInventory|saveArInventory|work|desk)$|supervisor\.allocations$|team\.(huddle|today|saveToday|status|range|activity|saveNote|setOut|shareOut|rebalance|alertSnooze|alertDismiss)$)/;
 const unreadable = (v, depth = 0) => v !== null && typeof v === "object" && depth < 10
   && (Object.prototype.hasOwnProperty.call(v, "toString") || Object.prototype.hasOwnProperty.call(v, "valueOf") || Object.values(v).some((x) => unreadable(x, depth + 1)));
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
@@ -6007,8 +6009,9 @@ const OPS = {
       const missed = await missedByClient(env, payload);
       let m = 0; for (const [cid, v] of missed) if (leadFor(user, cid)) m += v.ar + v.posting + v.submission;
       add("missed", "amber", m, plural(m, "missed task", "missed tasks") + " on your clients (allocated or handed off, not worked)", "raci");
-      const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
-      const outIds = new Set((await all(env, "SELECT user_id FROM attendance WHERE day = ? AND status = 'out'", today)).map((r) => r.user_id));
+      // claims on the desks of people out today (Live status's Rebalance): the AR floor's, never a desk person's (team leads too)
+      const team = deskOf(user) ? [] : (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
+      const outIds = new Set(team.length ? (await all(env, "SELECT user_id FROM attendance WHERE day = ? AND status = 'out'", today)).map((r) => r.user_id) : []);
       const absent = team.filter((u) => outIds.has(u.id));
       if (absent.length) {
         const r = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE state = 'assigned' AND assigned_to IN ${IN_LIST}`, listArg(absent.map((u) => u.id)));

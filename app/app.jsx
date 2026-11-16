@@ -1885,7 +1885,7 @@ function Shell({ me, view, setView, onSignOut, onChangePassword, onDeleteAccount
       {handoffs && !handoffs.overdue && handoffs.due_soon > 0 && view !== "handoffs" && !(me.role === "supervisor" && notify && notify.past_tat > 0 && view !== "attention") && (
         <div className="tat-bar soon" onClick={() => setView("handoffs")}>⏱ {handoffs.due_soon} posting / submission hand-off{handoffs.due_soon > 1 ? "s have" : " has"} under 4 hours left on the TAT. Open {(DESK[deskOf(me, handoffs)] || { tab: "Posting & submission" }).tab} to finish {handoffs.due_soon > 1 ? "them" : "it"} on time.</div>
       )}
-      {me.role === "supervisor" && notify && <MissingAlertPopup alerts={notify.alerts} onChanged={onRefreshNotify} />}
+      {me.role === "supervisor" && !deskOf(me, handoffs) && notify && <MissingAlertPopup alerts={notify.alerts} onChanged={onRefreshNotify} />}
       <div className="main">{notify && (notify.alloc_new || []).length > 0 && view !== "settings" && <AllocBanner items={notify.alloc_new} onGo={onGo} onSeen={onRefreshNotify} />}{children}</div>
       <button type="button" className="fb-tab" onClick={() => setFbOpen(true)} title="Tell Shreya and Sweety what is wrong or what would help, with a screenshot">Feedback</button>
       {fbOpen && <FeedbackModal page={pageLabel} onClose={() => setFbOpen(false)} />}

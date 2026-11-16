@@ -151,8 +151,10 @@ result (and, the first time, the audit trail) names them.
   gets the AR screens; Posting and / or Submission people (team leads too) get
   only their desk: dashboard, hand-offs, the claims sent to them, no SAAG,
   inventory or allocation. The server holds them to it whatever the screen: no AR
-  Inventory report, claims pool, Needs attention, My day, Live status, AR entries
-  or Client 360 report, and no excluding or reprioritising claims; Search, Claims
+  Inventory report, claims pool, Needs attention, My day, Live status (nor its
+  not-logged-in alert, Out today, Rebalance or Reallocate equally), Team status,
+  coaching cards, AR entries or Client 360 report, and no excluding or
+  reprioritising claims; Search, Claims
   and the claim profile give them the claims sent to their own desk (and every
   claim of a client they are set responsible for), the Past TAT list and its
   reminder emails their own desk's tasks only. Someone Shastra moves off AR gives
