@@ -919,6 +919,24 @@ function useLayer(onClose, guard = true) {
   const ask = asking ? <DiscardAsk onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
   return { ref, box, close, shade, ask };
 }
+/* A form on the page itself, not in a pop-up (My day's work form), held the same way: with typed text in it the browser's Back
+   and Forward (or a new address) ask "Discard what you typed?" first, and a reload or closing the tab gets the browser's own
+   "Leave site?", so a typed entry is never lost silently. ref: the form's root; ask: the question, rendered with it. */
+function useTypedGuard() {
+  const ref = useRef(null), seen = useRef(new Map()), after = useRef(null);
+  const [asking, setAsking] = useState(false);
+  useEffect(() => {
+    const el = ref.current; if (!el) return undefined;
+    const note = (e) => { const t = e.target; if (t && t.matches && t.matches(TYPED_SEL) && !t.closest(".combo-list") && !seen.current.has(t)) seen.current.set(t, t.value); };
+    el.addEventListener("focusin", note); el.addEventListener("beforeinput", note, true);
+    const g = { typed: () => el.isConnected && typedIn(seen.current, el), ask: (then) => { after.current = then; setAsking(true); } };
+    const unload = (e) => { if (g.typed()) { e.preventDefault(); e.returnValue = ""; } };
+    LAYER_GUARDS.add(g); window.addEventListener("beforeunload", unload);
+    return () => { LAYER_GUARDS.delete(g); window.removeEventListener("beforeunload", unload); el.removeEventListener("focusin", note); el.removeEventListener("beforeinput", note, true); };
+  }, []);
+  const ask = asking ? <DiscardAsk onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (then) then(); }} /> : null;
+  return { ref, ask };
+}
 function DiscardAsk({ onKeep, onDiscard }) {
   const L = useLayer(onKeep, false);
   return (
@@ -10203,6 +10221,8 @@ function WorkPanel({ bundle, ctx, me, onDone, onPatient }) {
   const [skipReason, setSkipReason] = useState("");
   const [sub, setSub] = useState("");
   const [ver, setVer] = useState(0);
+  // Back, Forward and reload ask before the typed entry is dropped (the claim stays open on the desk either way)
+  const TG = useTypedGuard();
   // The claim was removed or moved while it was open (upload undone, deleted, reassigned): close the panel and say so.
   const gone = (e) => /not in your queue|not on your desk|not found|no longer open on your desk/i.test((e && e.message) || "");
   const leave = (e) => { toast(/already saved/i.test((e && e.message) || "") ? e.message : "This claim is no longer on your desk: it was removed or moved while it was open.", "err"); onDone(false); };
@@ -10222,7 +10242,8 @@ function WorkPanel({ bundle, ctx, me, onDone, onPatient }) {
     setBusy(false);
   };
   return (
-    <div className="stack" style={{ gap: 14, paddingRight: 36 }}>
+    <div className="stack" style={{ gap: 14, paddingRight: 36 }} ref={TG.ref}>
+      {TG.ask}
       <ClaimHeader c={c}><button className="btn sm" onClick={() => skip(false)} disabled={busy} title="Put this claim back on your list and return to your day">← Back to my day</button>{onPatient && <button className="btn sm" onClick={onPatient} title="Every claim of this patient on one screen">All claims of this patient</button>}<span className="tiny muted">opened {fmtWhen(c.started_at)}</span></ClaimHeader>
       <ClaimInfo c={c} siblings={bundle.siblings} />
       <HandoffCard handoffs={bundle.handoffs} role={bundle.handoff_role} compact />

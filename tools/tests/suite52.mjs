@@ -318,6 +318,15 @@ S("W-12, X-07, V-04: someone who no longer works a client gives its claims back 
   users = (await A("users.list")).users;
 }
 
+S("W-11: My day's work form asks before Back, Forward or a reload drops a typed entry (the browser walk is the proof; here the wiring)");
+{
+  const fs = await import("fs");
+  const code = fs.readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  const panel = code.slice(code.indexOf("function WorkPanel("), code.indexOf("function HandoffCell("));
+  ok("W-11: the page has the guard for forms on the page (useTypedGuard: the same Discard question and Leave site?)", typeof app.useTypedGuard === "function" && /LAYER_GUARDS\.add\(g\); window\.addEventListener\("beforeunload", unload\)/.test(code.slice(code.indexOf("function useTypedGuard("), code.indexOf("function DiscardAsk("))));
+  ok("W-11: My day's work panel holds its typed entry with it (its root and the question)", /const TG = useTypedGuard\(\)/.test(panel) && /ref=\{TG\.ref\}/.test(panel) && /\{TG\.ask\}/.test(panel));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
