@@ -936,7 +936,9 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   (Roster). Every match is in the audit trail.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
   when it has one), each up to their daily target, minus anyone marked **Out today** on Live status. Automatic
-  allocation after an upload and the Allocate screen both use that; there is no daily ticking.
+  allocation after an upload and the Allocate screen both use that; there is no daily ticking. Someone on a
+  location's own team who no longer works the client (Shastra moved them to another client, or a share of it was
+  taken back or made view only) is left out, so every claim goes to the people who do.
 - Roster people sign in only with a Purview email, or an address the admin
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in
   Shastra, or past their exit date, are switched off and their open claims go back

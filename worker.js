@@ -9666,7 +9666,12 @@ const OPS = {
     const day = isoDate(payload.day) || isoToday();
     const loc = payload.location_id ? await one(env, "SELECT team_json FROM locations WHERE id = ? AND client_id = ?", str(payload.location_id, 60), c.id) : null;
     const ids = loc && parseTeam(loc.team_json).length ? parseTeam(loc.team_json) : parseTeam(c.team_json);
-    const users = ids.length ? await all(env, `SELECT * FROM users WHERE active = 1 AND id IN ${IN_LIST} ORDER BY name`, listArg(ids)) : [];
+    const listed = ids.length ? await all(env, `SELECT * FROM users WHERE active = 1 AND id IN ${IN_LIST} ORDER BY name`, listArg(ids)) : [];
+    // A location's own team is kept by hand and the roster sync leaves it as it is: someone on it who no longer works the client
+    // (Purview Shastra moved them, a share was taken back or made view only) is left out, as the server would refuse them the
+    // claims (alloc.apply) and the allocation would promise claims nobody gets. The client's own team is the roster's, kept current.
+    const onClient = new Set(parseTeam(c.team_json)), users = [];
+    for (const u of listed) if (onClient.has(u.id) || (await billerFor(env, u.id, c.id))) users.push(u);
     const caps = jsonObj(c.caps_json);
     const saved = await one(env, "SELECT a.on_json, a.at, u.name AS by_name FROM availability a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? AND a.day = ?", c.id, day);
     const on = saved ? jsonList(saved.on_json) : null;
