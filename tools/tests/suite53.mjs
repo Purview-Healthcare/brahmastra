@@ -140,6 +140,63 @@ S("V-07: a Payment posting or Submission team lead has only their desk, never th
   ok("V-07: Tina's Reallocate equally still shares Bela's 6 claims", sh.ok && sh.r.moved === 6, sh);
 }
 
+S("V-03: a name two people in Shastra have is never guessed for who reports to whom");
+{
+  const feed = stdFeed();
+  const F = await floor({ now: IST(2026, 11, 16, 11), feed });
+  const tina1 = F.id("Tina Lead"), mona1 = F.id("Mona Manager"), team = ["Arun Agent", "Bela Agent", "Cara Agent", "Dev Agent", "Sima Expert"];
+  ok("V-03: before, Tina's four billers and her SME report to her", team.every((n) => F.U(n).reports_to === tina1));
+  // a second Tina Lead joins (another Emp ID, email and client) with her own agent who reports to "Tina Lead"
+  const T2MAIL = "tina.lead.two@purview-healthcare.com";
+  feed.push(P({ emp_id: "T3", name: "Tina Lead", position: "Team Lead", project: LAKE, reports_to: "Mona Manager", email: T2MAIL, doj: "2026-11-16" }), AG("B7", "Zara Agent", "Tina Lead", LAKE));
+  F.clock(IST(2026, 11, 16, 11, 5));
+  const r = await F.sync();
+  const tina2 = F.id("Tina Lead", T2MAIL);
+  ok("V-03: after the namesake joins, every one of the first Tina's people still reports to her", team.every((n) => F.U(n).reports_to === tina1), team.map((n) => [n, F.U(n).reports_to === tina2 ? "tina2" : F.U(n).reports_to === tina1 ? "tina1" : F.U(n).reports_to]));
+  ok("V-03: the newcomer's own agent is not guessed either: no team lead until Shastra is fixed", F.U("Zara Agent").reports_to == null, F.U("Zara Agent").reports_to);
+  const w = (r.warnings || []).filter((x) => x.clash);
+  ok("V-03: the sync's warnings name each of the six people, the shared name and both Emp IDs", w.length === 6 && w.every((x) => x.issues.some((i) => /Tina Lead, a name 2 people have in Shastra \(Emp ID T1, T3\)/.test(i) && /fixed in Shastra/.test(i))), w);
+  const arunW = w.find((x) => x.name === "Arun Agent"), zaraW = w.find((x) => x.name === "Zara Agent");
+  ok("V-03: a warning says who the person still reports to (by Emp ID), or that nobody is set", arunW && arunW.issues.some((i) => /still reports to Tina Lead \(Emp ID T1\) here/.test(i)) && zaraW && zaraW.issues.some((i) => /no team lead set here/.test(i)), [arunW, zaraW]);
+  ok("V-03: the sync counts them as warnings and lists the clash once", r.summary.warnings >= 6 && r.clashes.length === 1 && r.clashes[0].name === "Tina Lead" && r.clashes[0].emp_ids.join() === "T1,T3" && r.clashes[0].people.length === 6, r.clashes);
+  const meta = await F.AD("roster.meta");
+  ok("V-03: the Roster page has the clash and the warnings from the last sync", meta.shastra.last.clashes.length === 1 && meta.shastra.last.emails.filter((x) => x.clash).length === 6, meta.shastra.last.clashes);
+  const aud = await F.rows("SELECT detail FROM audit_log WHERE action = 'roster.nameClash'");
+  ok("V-03: the audit trail says so once", aud.length === 1 && /Tina Lead \(Emp ID T1, T3\)/.test(aud[0].detail), aud);
+  // what the newcomer can do with the first Tina's people: nothing
+  const T2 = await F.who("Tina Lead", T2MAIL);
+  const code = await F.T(() => T2("users.loginCode", { id: F.id("Arun Agent") }));
+  const hud = await F.hud(T2), ts = await F.ts(T2, "2026-11-02", "2026-11-13");
+  ok("V-03: the newcomer gets no sign-in code for the first Tina's biller", !code.ok && code.status === 403, code);
+  ok("V-03: the newcomer's Live status and Team status have none of the first Tina's billers", !hud.rows.some((x) => /^(Arun|Bela|Cara|Dev) Agent$/.test(x.name)) && !ts.rows.some((x) => /^(Arun|Bela|Cara|Dev) Agent$/.test(x.name)), hud.rows.map((x) => x.name));
+  const TI = await F.who("Tina Lead");
+  const tts = await F.ts(TI, "2026-11-02", "2026-11-13");
+  ok("V-03: the first Tina still sees her four billers grouped under her", ["Arun Agent", "Bela Agent", "Cara Agent", "Dev Agent"].every((n) => { const x = F.row(tts, n); return x && x.lead_id === tina1; }), tts.rows.map((x) => [x.name, x.lead_name]));
+  // the next hourly sync: nothing written again, no second audit line
+  F.clock(IST(2026, 11, 16, 12, 5));
+  const r2 = await F.sync();
+  ok("V-03: the next sync keeps it all as it is, and does not repeat the audit line", team.every((n) => F.U(n).reports_to === tina1) && r2.summary.updated === 0 && (await F.rows("SELECT 1 FROM audit_log WHERE action = 'roster.nameClash'")).length === 1, r2.summary);
+  // a manager's name twice: the team leads keep their manager, so the manager's span does not move
+  feed.push(P({ emp_id: "M2", name: "Mona Manager", position: "Manager", reports_to: "Vera Vice", project: LAKE, email: "mona.manager.two@purview-healthcare.com" }));
+  F.clock(IST(2026, 11, 16, 13, 5));
+  await F.sync();
+  ok("V-03: two managers with one name: Tina and Leo keep reporting to the first Mona", F.U("Tina Lead", mail("Tina Lead")).reports_to === mona1 && F.U("Leo Lead").reports_to === mona1);
+  const MO1 = await F.who("Mona Manager"), mts = await F.ts(MO1, "2026-11-02", "2026-11-13");
+  ok("V-03: the first Mona's Team status still has both teams", ["Arun Agent", "Kim Agent"].every((n) => F.row(mts, n)), mts.rows.map((x) => x.name));
+  // once the names differ in Shastra, Shastra decides again: the second Tina is "Tina Lead Two" and Zara reports to her
+  const t3 = feed.find((x) => x.emp_id === "T3"); t3.name = "Tina Lead Two"; feed.find((x) => x.emp_id === "B7").reports_to = "Tina Lead Two";
+  feed.find((x) => x.emp_id === "M2").name = "Mona Manager Two";
+  F.clock(IST(2026, 11, 16, 14, 5));
+  const r3 = await F.sync();
+  ok("V-03: fixed in Shastra: Zara reports to the second Tina, the first Tina's team stays hers, no clash left", F.U("Zara Agent").reports_to === tina2 && team.every((n) => F.U(n).reports_to === tina1) && !r3.clashes.length && !(r3.warnings || []).some((x) => x.clash), r3.clashes);
+  // an Emp ID or an email in "reports to" decides by itself, whatever the names
+  feed.find((x) => x.emp_id === "B1").reports_to = "T1";
+  feed.find((x) => x.emp_id === "B2").reports_to = mail("Tina Lead");
+  F.clock(IST(2026, 11, 16, 15, 5));
+  await F.sync();
+  ok("V-03: \"reports to\" given as an Emp ID or an email is used as it is", F.U("Kim Agent").reports_to === tina1 && F.U("Lara Agent").reports_to === tina1, [F.U("Kim Agent").reports_to, F.U("Lara Agent").reports_to]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -130,6 +130,11 @@ roster load, but only the admin can make someone a team lead or change an SME's 
 Two Shastra rows with the same Emp ID (or the same email) are both skipped until Shastra is
 fixed: neither takes an account, nobody they point to is switched off meanwhile, and the sync
 result (and, the first time, the audit trail) names them.
+Who someone reports to is Shastra's "reports to" name (an Emp ID or email there is used as it
+is). A name that two people in Shastra have is never guessed: whoever reports to it keeps the
+team lead or manager they had (someone new gets none), the sync's warnings name each of them,
+and the Roster page (and, the first time, the audit trail) says two people share that name, so
+it must be fixed in Shastra.
 
 - Agents become billers; SMEs, Team Leads and Sr Team Leads become team leads
   for their own projects; Assistant Managers, Managers and Sr Managers become

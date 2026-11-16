@@ -2179,6 +2179,19 @@ async function importRoster(env, user, payload) {
   const empKey = (r) => String(r.emp_id || "").trim().toUpperCase();
   const rowsByEmp = new Map(); rows.forEach((r) => { const k = empKey(r); if (k) rowsByEmp.set(k, [...(rowsByEmp.get(k) || []), r]); });
   const dupEmp = [...rowsByEmp].filter(([, rs]) => rs.length > 1).map(([k]) => k).sort();
+  // Who a row reports to: Shastra sends the name of their team lead (or manager). An Emp ID or email there, or in a column of its
+  // own, decides by itself. A name that two people in Shastra have is never guessed (V-03): whoever reports to it keeps the team
+  // lead they have here (none for someone new), with a warning, until it is fixed in Shastra.
+  const rowsByName = new Map(); rows.forEach((r) => rowsByName.set(nameKey(r), [...(rowsByName.get(nameKey(r)) || []), r]));
+  const rowsByMail = new Map(); rows.forEach((r) => { if (mailOk(r.email)) rowsByMail.set(r.email, [...(rowsByMail.get(r.email) || []), r]); });
+  const bossRows = (row) => {
+    const t = String(row.reports_to || "").trim(), e = String(row.reports_to_emp || "").trim().toUpperCase() || (rowsByEmp.has(t.toUpperCase()) ? t.toUpperCase() : "");
+    if (e) return rowsByEmp.get(e) || [];
+    const m = row.reports_to_email || (mailOk(mailClean(t)) ? mailClean(t) : "");
+    if (m) return rowsByMail.get(m) || [];
+    return t ? rowsByName.get(t.toLowerCase()) || [] : [];
+  };
+  const existingById = new Map(existing.map((u) => [u.id, u])), clashes = new Map();
   for (const row of rows) {
     if (dupEmp.includes(empKey(row))) {
       // (N-16) the accounts this row points to (by that Emp ID, its email or its name) are kept, not switched off
@@ -2235,11 +2248,18 @@ async function importRoster(env, user, payload) {
     }
     planMail.set(next.email, row.name);
     if (cls.unknownPos) issues.push("position not recognised (" + row.position + "): kept their current access; check it in Shastra");
+    const boss = bossRows(row);
+    if (boss.length > 1 && next.active) {
+      const kept = match && match.reports_to ? existingById.get(match.reports_to) : null, ids = boss.map((r) => r.emp_id || "none");
+      issues.push(`reports to ${row.reports_to}, a name ${boss.length} people have in Shastra (Emp ID ${ids.join(", ")}): ` + (kept ? `still reports to ${kept.name}${kept.emp_id ? " (Emp ID " + kept.emp_id + ")" : ""} here` : "no team lead set here") + " until it is fixed in Shastra");
+      const k = String(row.reports_to).trim().toLowerCase(), c = clashes.get(k) || { name: boss[0].name, emp_ids: ids, people: [] };
+      c.people.push(row.name); clashes.set(k, c);
+    }
     const changes = [];
     if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "doj", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
     if (match && next.free_email_from && !changes.includes("email")) changes.push("email");
-    plan.push({ row, cls, match, next, issues, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
-    if (issues.length) warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues });
+    plan.push({ row, cls, match, next, issues, boss, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
+    if (issues.length) warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues, ...(boss.length > 1 && next.active ? { clash: true } : {}) });
   }
   const leaving = existing.filter((u) => u.source === "roster" && u.active && !used.has(u.id) && !dropped.has(u.id));
   const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients");
@@ -2253,7 +2273,7 @@ async function importRoster(env, user, payload) {
     excluded: excluded.length, warnings: warnings.length, leads: plan.filter((p) => p.cls.kind !== "agent" && p.next.active).length, agents: plan.filter((p) => p.cls.kind === "agent" && p.next.active).length };
   const people = plan.filter((p) => p.action !== "skip").map((p) => ({ name: p.row.name, emp_id: p.row.emp_id, action: p.action, changes: p.changes, access: p.cls.kind, position: p.row.position, department: p.row.department,
     projects: p.cls.projects, reports_to: p.row.reports_to, status: p.row.status, active: !!p.next.active, email: p.next.email_missing ? "" : p.next.email, issues: p.issues }));
-  const out = { summary, people, excluded, warnings, projects, leaving: leaving.map((u) => ({ name: u.name, emp_id: u.emp_id })) };
+  const out = { summary, people, excluded, warnings, projects, leaving: leaving.map((u) => ({ name: u.name, emp_id: u.emp_id })), clashes: [...clashes.values()] };
   if (payload.dry_run) return out;
 
   // Apply: people first, then who reports to whom, then project access and teams.
@@ -2288,8 +2308,10 @@ async function importRoster(env, user, payload) {
   }
   const off = [...leaving.map((u) => u.id), ...dropped];
   for (const id of off) { await run(env, "UPDATE users SET active = 0, off_at = ? WHERE id = ?", now, id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
-  const idByName = new Map(); plan.forEach((p) => { if (p.id) idByName.set(p.row.name.toLowerCase(), p.id); });
-  for (const p of plan) { if (!p.id) continue; const to = idByName.get(String(p.row.reports_to || "").toLowerCase()) || null;
+  const idOfRow = new Map(); plan.forEach((p) => { if (p.id) idOfRow.set(p.row, p.id); });
+  for (const p of plan) { if (!p.id) continue;
+    // a name two people in Shastra have: who they report to stays as it is here (V-03)
+    const to = p.boss.length > 1 ? (p.match && p.match.reports_to) || null : (p.boss.length === 1 && idOfRow.get(p.boss[0])) || null;
     if (!p.match || freed.has(p.match.id) || p.match.reports_to !== to) await run(env, "UPDATE users SET reports_to = ? WHERE id = ?", to, p.id); }
   await recomputeScopes(env);
   await autoMapProjects(env);
@@ -2300,6 +2322,13 @@ async function importRoster(env, user, payload) {
     const fresh = dupEmp.filter((k) => !dupLast.includes(k));
     if (fresh.length) await audit(env, user, "roster.dupEmp", null, "The same Emp ID on more than one row in Shastra: " + fresh.map((k) => `${k} (${rowsByEmp.get(k).map((r) => r.name).join(", ")})`).join("; ") + ". Neither row took an account by it; fix it in Shastra.");
     await setSetting(env, "roster_dup_emp", dupEmp);
+  }
+  // A name two people in Shastra have, that others report to: in the audit trail when it first shows (not repeated every hour).
+  const clashLast = (await getSetting(env, "roster_name_clash", [])) || [], clashNow = [...clashes.keys()].sort();
+  if (JSON.stringify(clashNow) !== JSON.stringify(clashLast)) {
+    const fresh = [...clashes].filter(([k]) => !clashLast.includes(k)).map(([, c]) => c);
+    if (fresh.length) await audit(env, user, "roster.nameClash", null, "Two or more people in Shastra have the same name: " + fresh.map((c) => `${c.name} (Emp ID ${c.emp_ids.join(", ")})`).join("; ") + ". Whoever reports to that name keeps the team lead they had; fix it in Shastra.");
+    await setSetting(env, "roster_name_clash", clashNow);
   }
   await setSetting(env, "roster_meta", { at: now, by: user.name || user.email, file: str(payload.file_name, 200), summary });
   return { ...out, applied: true };
@@ -2346,7 +2375,7 @@ async function syncShastra(env, by) {
     await setSetting(env, "shastra_log", log.slice(0, 30));
   }
   await setSetting(env, "shastra_sync", { at: now, ok: true, by, people: sm.people, new: sm.new, updated: sm.updated, deactivated: sm.deactivated, warnings: sm.warnings, removed,
-    emails: res.warnings.slice(0, 200), no_access: res.excluded.length });
+    emails: res.warnings.slice(0, 200), no_access: res.excluded.length, clashes: res.clashes.slice(0, 20) });
   // someone new, or with a changed Emp ID or email, may have floor days in Shastra that matched nobody: Team status asks again
   if (sm.new + sm.updated) { const fl = await getSetting(env, "floor_sync", null); if (fl && fl.days && Object.keys(fl.days).length) await setSetting(env, "floor_sync", { ...fl, days: {} }); }
   try { await syncWfm(env); } catch (e) {}
@@ -3540,7 +3569,7 @@ function rosterRow(r) {
   const g = (...keys) => { for (const k of keys) if (get[k]) return get[k]; return ""; };
   return { emp_id: g("empid", "employeeid", "id"), name: g("name", "employeename", "fullname"), hierarchy: g("hierarchy", "level"), position: g("position", "designation", "role"),
     func: g("function"), department: g("department"), departments_also: g("alsoindepartments"), status: g("status"), project: g("project"), also_projects: g("alsoonprojects"),
-    reports_to: g("reportsto", "manager", "supervisor"), shift: g("shift"), exit_date: rosterDate(g("exitdate")), doj: rosterDate(g("doj", "dateofjoining", "joiningdate")), email: mailClean(g("email", "emailid", "workemail")),
+    reports_to: g("reportsto", "manager", "supervisor"), reports_to_emp: g("reportstoempid", "supervisorempid", "managerempid"), reports_to_email: mailClean(g("reportstoemail", "supervisoremail", "manageremail")), shift: g("shift"), exit_date: rosterDate(g("exitdate")), doj: rosterDate(g("doj", "dateofjoining", "joiningdate")), email: mailClean(g("email", "emailid", "workemail")),
     city: ((v) => (/pune/i.test(v) ? "Pune" : /hyd/i.test(v) ? "Hyderabad" : v))(g("location", "worklocation", "city", "site", "baselocation")) };
 }
 const NOT_IN_BRAHMASTRA = /^(eligibility verification|ev|pcc|credentialing|reporting)$/i;
@@ -3991,7 +4020,7 @@ const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\
 // settings.get / settings.save: who reads and writes which keys (see the two ops).
 const SETTINGS_OPEN = ["onedrive_folder"], SETTINGS_LEAD = ["onedrive_folder", "digest_enabled"], SETTINGS_LEAD_SAVE = ["onedrive_folder"];
 const SETTINGS_ADMIN_OWN = ["extra_emails", "roster_meta", "feedback_to"];
-const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$|roster_dup_emp$)/;
+const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$|roster_dup_emp$|roster_name_clash$)/;
 
 /* ---- stack scoring rules: begin ----
    The Stack report's scores, to the digit, exactly as the owner's April sheet works them out (do not "improve" them).
