@@ -2325,6 +2325,7 @@ function ExtraPreviewModal({ x, label, onClose, onSaved }) {
     L.same_name.length ? ["More than one person you see has this name, so Brahmastra does not guess (an Emp ID column tells them apart)", L.same_name, (n) => n.people + " people", true] : null,
     L.not_counted.length ? ["Not on Team status, so not counted", L.not_counted, (n) => n.why] : null,
     L.elsewhere && L.elsewhere.length ? ["Already counted from an earlier upload of this file, for people you do not see (it stays counted there, and is not counted twice)", L.elsewhere] : null,
+    L.elsewhere_new && L.elsewhere_new.length ? ["New rows of this file for people you do not see: counted for nobody until their team lead or a manager loads the file again", L.elsewhere_new] : null,
   ].filter(Boolean);
   return (<>
     <Modal wide title="Extra production" sub={"Check what this file from OneDrive would count, for " + label + " and any other month it has rows for, then count it."} onClose={onClose}

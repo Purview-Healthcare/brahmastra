@@ -385,6 +385,34 @@ S("U-12: the Team player reason is never cut: over 200 characters it is refused 
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-08: a file counted before by a manager: the check says what stays counted for people the uploader does not see");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-B1", "Bela Agent", "Leo Lead", LAKE)];
+  const NOV = dayList(D(11, 2), D(11, 13)).filter(isWeekday);
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-B1"], NOV), holidays: [] });
+  const TI = await F.who("Tina Lead"), MO = await F.who("Mona Manager"), LE = await F.who("Leo Lead");
+  const bela = F.U("Bela Agent"), arun = F.U("Arun Agent");
+  const fileOf = (nov5, nov12) => F.read(F.xlsx([["Both", [["DOW", "Emp ID", "User Name"], ...rep(2, [serial(D(11, 10)), "PHC-A1", "Arun Agent"]), ...rep(nov5, [serial(D(11, 5)), "PHC-B1", "Bela Agent"]),
+    ...rep(nov12, [serial(D(11, 12)), "PHC-B1", "Bela Agent"])]]]), "Both teams.xlsx");
+  await MO("stack.extraSave", F.body(fileOf(4, 0), { item: "both" }));   // the manager counts it: Bela 4 on Nov 5
+  // the file in OneDrive gains 3 rows for Bela on Nov 12 and 1 more on Nov 5; Tina loads it for her team
+  const pv = await TI("stack.extraPreview", F.body(fileOf(5, 3), { item: "both" }));
+  const there = pv.left_out.elsewhere.find((x) => x.name === "Bela Agent"), fresh = (pv.left_out.elsewhere_new || []).find((x) => x.name === "Bela Agent");
+  ok("U-08: Tina's check says Bela's 4 rows stay counted there (what the manager's upload counts), not the file's 8", there && there.rows === 4, pv.left_out.elsewhere);
+  ok("U-08: and names the 4 rows the file gained since (Nov 12's 3 and one more on Nov 5) apart: counted for nobody until Bela's team lead or a manager loads it", fresh && fresh.rows === 4, pv.left_out.elsewhere_new);
+  ok("U-08: Left out is still all 8 of Bela's rows of the file; To count Arun's 2", pv.left_out.rows === 8 && pv.counted === 2, { left: pv.left_out.rows, counted: pv.counted });
+  await TI("stack.extraSave", F.body(fileOf(5, 3), { item: "both" }));
+  let ts = await F.ts(MO, D(11, 1), D(11, 16)), ex = (u) => (ts.rows.find((r) => r.id === u.id) || {}).extra;
+  ok("U-08: what the check said is what Team status counts: Bela 4, Arun 2", ex(bela) === 4 && ex(arun) === 2, { bela: ex(bela), arun: ex(arun) });
+  const lv = await LE("stack.extraPreview", F.body(fileOf(5, 3), { item: "both" }));
+  ok("U-08: Leo loads it: Bela's 8 count for him; Arun's 2 stay counted for Tina's Arun (2 rows there), nothing new", lv.counted === 8 && lv.left_out.elsewhere.length === 1 && lv.left_out.elsewhere[0].name === "Arun Agent"
+    && lv.left_out.elsewhere[0].rows === 2 && !lv.left_out.elsewhere_new.length, { counted: lv.counted, left: lv.left_out });
+  await LE("stack.extraSave", F.body(fileOf(5, 3), { item: "both" }));
+  ts = await F.ts(MO, D(11, 1), D(11, 16));
+  ok("U-08: Team status: Bela 8, Arun 2, nothing twice", ex(bela) === 8 && ex(arun) === 2, { bela: ex(bela), arun: ex(arun) });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

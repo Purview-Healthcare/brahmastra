@@ -4421,11 +4421,13 @@ async function extraPlan(env, user, payload) {
     FROM extra_uploads x JOIN extra_lines w ON w.upload_id = x.id WHERE x.file_key = ?`, fileKey);
   const months = [...new Set([...[...lines.values()].flatMap((L) => [...L.file.keys()].map((d) => d.slice(0, 7))), ...before.map((r) => r.day.slice(0, 7))])];
   const lk = await extraLocks(env, months);
-  const elsewhere = new Set(), oldPick = new Map(), oldEdit = new Map(), ups = new Map(); let replaces = 0, keeps = 0;
+  // elsewhere: the names this file counts for people the uploader does not see, day by day (what is counted there, and the file's
+  // number it was counted from), so the check says what really stays counted there, and which rows of the file are new
+  const elsewhere = new Map(), oldPick = new Map(), oldEdit = new Map(), ups = new Map(); let replaces = 0, keeps = 0;
   for (const r of before) {
     if (!r.user_id) continue;   // a name left out before counts nothing: it is read afresh
     const u = spanById.get(r.user_id), goes = !!u && !lk.of(u, r.day.slice(0, 7));
-    if (!u) elsewhere.add(r.line);
+    if (!u) { const m = elsewhere.get(r.line) || new Map(), x = m.get(r.day) || { n: 0, file_n: 0 }; x.n += r.n; x.file_n += r.file_n; m.set(r.day, x); elsewhere.set(r.line, m); }
     if (goes) replaces += r.n; else keeps += r.n;
     const up = ups.get(r.id) || { id: r.id, by: r.by_name, at: r.at, rows: 0 }; up.rows += r.n; ups.set(r.id, up);
     if (r.pick_at != null && (!oldPick.has(r.line) || oldPick.get(r.line).at < r.pick_at)) oldPick.set(r.line, { user_id: r.user_id, by: r.pick_by, at: r.pick_at });
@@ -4438,7 +4440,11 @@ async function extraPlan(env, user, payload) {
     const asked = picks.has(L.line) || days.some((d) => counts.has(L.line + "|" + d));
     if (elsewhere.has(L.line)) {
       if (asked) throw bad(L.name + " is already counted from an earlier upload of this file, for people you do not see: it cannot be counted twice.");
-      o.why = "elsewhere"; for (const d of days) { if (d > today) future += L.file.get(d); else o.days.push({ day: d, file_n: L.file.get(d), n: 0, state: "out" }); }
+      // there: what the earlier upload counts for them now; fresh: the file's rows it never counted (a day it did not have, or a
+      // day with more rows now), which wait for their team lead or a manager to load the file again
+      const there = elsewhere.get(L.line);
+      o.why = "elsewhere"; o.there = [...there.values()].reduce((t, x) => t + x.n, 0); o.fresh = 0;
+      for (const d of days) { const fn = L.file.get(d), was = there.get(d); if (d > today) future += fn; else { o.fresh += Math.max(0, fn - (was ? was.file_n : 0)); o.days.push({ day: d, file_n: fn, n: 0, state: "out" }); } }
       continue;
     }
     // the file's own match: the Emp ID first; the name only when the row has no Emp ID, or one nobody in Brahmastra has
@@ -4514,15 +4520,21 @@ async function extraSummary(env, P) {
   let from = "", to = ""; for (const x of people) { if (!from || x.from < from) from = x.from; if (!to || x.to > to) to = x.to; }
   const byMonth = new Map(), mo = (m) => { if (!byMonth.has(m)) byMonth.set(m, { month: m, label: stackMonthLabel(m), rows: 0, locked_rows: 0, people: new Set() }); return byMonth.get(m); };
   for (const o of counted) for (const d of o.days) { if (d.state === "counted") mo(d.day.slice(0, 7)).rows += d.n; else if (d.state === "locked") { const m = mo(d.day.slice(0, 7)); m.locked_rows += d.file_n; m.people.add(o.p.id); } }
-  const fileRows = (o) => o.days.reduce((t, d) => t + d.file_n, 0), names = (why) => P.lines.filter((o) => o.why === why && !o.p && fileRows(o) > 0)
-    .map((o) => ({ line: o.line, name: why === "noton" ? o.other.name : o.name, emp_id: o.emp_id, rows: fileRows(o), ...(why === "same" ? { people: o.people } : {}),
+  // a name counted for people the uploader does not see: the rows that stay counted there (the earlier upload's), not the file's
+  const fileRows = (o) => o.days.reduce((t, d) => t + d.file_n, 0), names = (why) => P.lines.filter((o) => o.why === why && !o.p && (why === "elsewhere" ? o.there : fileRows(o)) > 0)
+    .map((o) => ({ line: o.line, name: why === "noton" ? o.other.name : o.name, emp_id: o.emp_id, rows: why === "elsewhere" ? o.there : fileRows(o), ...(why === "same" ? { people: o.people } : {}),
       ...(why === "noton" ? { why: o.other.role === "user" ? (o.other.department || "another department") + ", not AR" : "a team lead, SME or manager" } : {}),
       ...(why === "none" || why === "same" ? { days: o.days.map((d) => ({ day: d.day, file_n: d.file_n })) } : {}) }))
     .sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
   const locked = [...byMonth.values()].filter((m) => m.locked_rows).map((m) => ({ month: m.month, label: m.label, rows: m.locked_rows, people: m.people.size }));
-  const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: names("none"), same_name: names("same"), not_counted: names("noton"), elsewhere: names("elsewhere"), locked };
+  // and the rows of this file that the earlier upload never counted for them: counted nowhere until their team lead or a manager
+  // loads the file again
+  const elsewhereNew = P.lines.filter((o) => o.why === "elsewhere" && o.fresh > 0).map((o) => ({ line: o.line, name: o.name, emp_id: o.emp_id, rows: o.fresh }))
+    .sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
+  const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: names("none"), same_name: names("same"), not_counted: names("noton"), elsewhere: names("elsewhere"),
+    elsewhere_new: elsewhereNew, locked };
   const sumRows = (xs) => xs.reduce((t, x) => t + x.rows, 0);
-  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + sumRows(left.elsewhere) + sumRows(left.locked);
+  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + P.lines.filter((o) => o.why === "elsewhere").reduce((t, o) => t + fileRows(o), 0) + sumRows(left.locked);
   return { file: { name: P.name, web_url: P.webUrl }, sheets: P.sheets, rows: P.rowsRead, counted: total, file_counted: lines.reduce((t, l) => t + l.file_rows, 0), people, lines, from, to,
     months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)).map((m) => ({ month: m.month, label: m.label, rows: m.rows, locked_rows: m.locked_rows })), left_out: left,
     pickable: extraPickable(P.act, leads), dropped: P.dropped, dropped_picks: P.droppedPicks, edits: { counts: lines.reduce((t, l) => t + l.edits, 0), picks: lines.filter((l) => l.picked).length },

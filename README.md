@@ -501,7 +501,9 @@ counts it as the person's work done on that day, the same way a claim worked cou
   guesses between two people with the same name: those rows are left out, and an Emp ID column tells them apart. A
   name not found, and someone Team status does not count (a team lead, an SME, a desk person), are named with how many
   rows each, and not counted. When the same file was loaded before by someone with a wider span, a name it already
-  counts for a person the uploader does not see is said to be so: it stays counted there and is never counted twice.
+  counts for a person the uploader does not see is said to be so, with the rows counted there: they stay counted there
+  and are never counted twice. Rows the file gained since for such a person are named apart: they are counted once
+  their team lead or a manager loads the file again.
 - **Before anything is saved**, the check shows the rows read and to count, each name of the file on a line (who it
   counts for, Emp ID, team lead, rows, days, from and to), the dates, the months, what is left out and why, the months
   already locked, and what the same file counted before. **Count** saves it. Hand edits made in the check are kept
