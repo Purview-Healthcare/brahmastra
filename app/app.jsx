@@ -3226,7 +3226,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved, initialName }) {
         <Step n="1" title="Client">
           <div className="grid g3">
             <Field label="Client name"><input className="input" value={f.name} onChange={(e) => set({ name: e.target.value })} autoFocus={isNew} placeholder="e.g. Dr. Montella Eye Care" /></Field>
-            <Field label="Short code" hint="Shown on badges and reports"><input className="input" value={f.code} maxLength={12} onChange={(e) => set({ code: e.target.value.toUpperCase() })} /></Field>
+            <Field label={<>Short code <TextLimit v={f.code} max={12} /></>} hint="Shown on badges and reports"><input className="input" value={f.code} onChange={(e) => set({ code: e.target.value.toUpperCase() })} /></Field>
             <Field label="Default follow-up (days)" hint={wholeIn(f.follow_up_days, 1, 365) ? "1 to 365" : <span className="red-ink">A whole number of days from 1 to 365.</span>}><input className="input" type="number" min={1} max={365} step={1} value={f.follow_up_days} onChange={(e) => set({ follow_up_days: e.target.value })} /></Field>
           </div>
           {!isNew && <label className="check mt8"><input type="checkbox" checked={!!f.active} onChange={(e) => set({ active: e.target.checked })} /> Active (inactive clients are hidden from uploads and allocation)</label>}
@@ -3465,7 +3465,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
           <div className="stack">
             <Field label="Client name"><input className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus /></Field>
             <div className="grid g2">
-              <Field label="Short code" hint="Shown on badges and reports"><input className="input" value={edit.code} onChange={(e) => setEdit({ ...edit, code: e.target.value.toUpperCase() })} maxLength={12} /></Field>
+              <Field label={<>Short code <TextLimit v={edit.code} max={12} /></>} hint="Shown on badges and reports"><input className="input" value={edit.code} onChange={(e) => setEdit({ ...edit, code: e.target.value.toUpperCase() })} /></Field>
               <Field label="Default follow-up (days)" hint="Used when a status code has no follow-up of its own"><input className="input" type="number" min={1} max={365} value={edit.follow_up_days} onChange={(e) => setEdit({ ...edit, follow_up_days: e.target.value })} /></Field>
             </div>
             <Field label="OneDrive workbook where billers' work is copied (optional)" hint="Leave empty and Brahmastra saves it by itself in Brahmastra Reports › team lead › client › Production, one file a month. Paste a link only to keep using an existing workbook."><input className="input" value={edit.workbook_link || ""} onChange={(e) => setEdit({ ...edit, workbook_link: e.target.value })} placeholder="https://…/Billers-work.xlsx" /></Field>
@@ -4867,7 +4867,7 @@ function TaskFormModal({ ctx, clientId, task, onClose, onDone }) {
             <FieldGroup label="Received from" hint="Optional"><div className="seg2">{["Client", "Manager", "Internal"].map((s) => <button key={s} type="button" className={f.source === s ? "on" : ""} onClick={() => set("source", f.source === s ? "" : s)}>{s}</button>)}</div></FieldGroup>
           </div>
           <FieldGroup label="Scope"><div className="seg2" style={{ flexWrap: "wrap" }}>{TASK_SCOPES_UI.map((s) => <button key={s} type="button" className={f.scope === s ? "on" : ""} onClick={() => set("scope", s)}>{s}</button>)}</div></FieldGroup></>}
-        <Field label="Task"><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="What is to be done, in a few words" maxLength={160} /></Field>
+        <Field label={<>Task <TextLimit v={f.title} max={160} /></>}><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="What is to be done, in a few words" /></Field>
         <Field label="Description" hint={f.description.length > 3600 ? f.description.length + " of 4,000 characters" : "What, where, how; never patient details you don't need"}><textarea className="textarea" style={{ minHeight: 76 }} value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Details, the list or the portal, what to note…" /></Field>
         <div className="grid g2">
           <FieldGroup label="TAT" hint={(dueHint ? "Due about " + dueHint + " · " : "") + (edit && (f.tat === "24" || f.tat === "72" || f.tat === "hours") ? "counted from when it was given · " : "") + "Monday to Friday, Shastra holidays skipped"}>

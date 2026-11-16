@@ -318,6 +318,61 @@ S("W-12, X-07, V-04: someone who no longer works a client gives its claims back 
   users = (await A("users.list")).users;
 }
 
+S("W-10, X-05, X-08: typed text over a box's limit is refused with a message naming the box, never cut");
+{
+  const long = (label, n) => (label + " " + "x".repeat(n)).slice(0, n);
+  const pool = await poolOf(3); await give(pool, "Arun Agent");
+  await AR("queue.open", { id: pool[0] });
+  const tooLong = { ref: [long("Call reference 4471-55", 120), "REF"], denial: [long("CO-197 Precertification absent; RARC N54", 260), "Denial"], clm: [long("CLM", 100), "CLM#"], source: [long("Payer's provider services line", 70), "Source"], precheck_text: [long("Also verified the referral dates", 380), "Pre call check"] };
+  for (const [k, [v, label]] of Object.entries(tooLong)) {
+    const r = await T(() => AR("queue.complete", { id: pool[0], ...FOLLOW, note: { ...FOLLOW.note, [k]: v }, desk: true }));
+    ok(`W-10: the work entry's ${label} box over its limit is refused, naming it (nothing saved)`, !r.ok && r.e.startsWith(label) && /too long/.test(r.e) && (await q1("SELECT state FROM claims WHERE id = ?", pool[0])).state === "in_progress", r.e);
+  }
+  const fits = { ref: long("Call reference 4471-55", 80), denial: long("CO-197 Precertification absent", 200), source: long("Payer's provider services", 40), precheck_text: long("Also verified", 300) };
+  const saved = await AR("queue.complete", { id: pool[0], ...FOLLOW, note: { ...FOLLOW.note, ...fits }, desk: true });
+  const f = JSON.parse((await q1("SELECT fields_json FROM notes WHERE claim_id = ? AND kind = 'work'", pool[0])).fields_json);
+  ok("W-10: text up to each limit is kept whole", saved && f.ref === fits.ref && f.denial === fits.denial && f.source === fits.source && f.precheck_text === fits.precheck_text, f);
+  const nid = (await q1("SELECT id FROM notes WHERE claim_id = ? AND kind = 'work'", pool[0])).id;
+  const ed = await T(() => AR("notes.update", { id: nid, ...FOLLOW, note: { ...FOLLOW.note, denial: long("Denied", 201) } }));
+  ok("W-10: editing the entry with a Denial over 200 is refused too", !ed.ok && /^Denial is too long: 201 characters, and it takes up to 200/.test(ed.e), ed.e);
+  const na = await T(() => AR("notes.add", { claim_id: pool[0], note: { ...FOLLOW.note, ref: long("Ref", 81) } }));
+  ok("W-10: a note in the standard format with a REF over 80 is refused", !na.ok && /^REF is too long/.test(na.e), na.e);
+  // the desks' Completed form
+  await AR("queue.open", { id: pool[1] }); await AR("queue.complete", { id: pool[1], ...SUBMIT, desk: true });
+  const hs = await q1("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'submission'", pool[1]);
+  const subTry = async (proof) => T(() => R["Sam Sub"]("handoffs.close", { id: hs.id, outcome: "complete", seen: "pending", proof: { date: todayIST(), ref: "BATCH-1", mode: "Electronic", ...proof } }));
+  for (const [k, n, label] of [["inv_status", 81, "Inventory Status"], ["bucket", 61, "Bucket"], ["claim_type", 61, "Claim Type"], ["type", 61, "Type"], ["ref", 81, "The check / EFT number or batch ID"]]) {
+    const r = await subTry({ [k]: long("Text", n) });
+    ok(`W-10: Submission's Completed form: ${label} over its limit is refused (the hand-off stays open)`, !r.ok && r.e.startsWith(label) && (await q1("SELECT status FROM handoffs WHERE id = ?", hs.id)).status !== "complete", r.e);
+  }
+  const subOk = await subTry({ inv_status: long("Corrected claim resubmitted", 80), bucket: long("Payer", 60) });
+  const p2 = JSON.parse((await q1("SELECT proof_json FROM handoffs WHERE id = ?", hs.id)).proof_json);
+  ok("W-10: Submission's text up to the limits is kept whole", subOk.ok && p2.inv_status.length === 80 && p2.bucket.length === 60, subOk.e || p2);
+  await AR("queue.open", { id: pool[2] });
+  await AR("attachments.add", { claim_id: pool[2], name: "eob.pdf", type: "application/pdf", data: Buffer.from("%PDF-1.4 made-up").toString("base64") });
+  await AR("queue.complete", { id: pool[2], ...POST, desk: true });
+  const hp = await q1("SELECT id FROM handoffs WHERE claim_id = ? AND dept = 'posting'", pool[2]);
+  for (const [k, n, label] of [["pay_type", 41, "Payment type"], ["adj_reason", 61, "Adjustment reason"], ["ref", 81, "The check / EFT number or batch ID"]]) {
+    const r = await T(() => R["Paula Post"]("handoffs.close", { id: hp.id, outcome: "complete", seen: "pending", proof: { date: todayIST(), ref: "EFT-1", allowed: "100", paid: "100", [k]: long("Text", n) } }));
+    ok(`W-10: Payment posting's Completed form: ${label} over its limit is refused`, !r.ok && r.e.startsWith(label), r.e);
+  }
+  // X-08: a first or last name on Team › Edit
+  const nia = users.find((u) => u.name === "Cara Agent");
+  const fn = await T(() => A("users.save", { id: nia.id, first_name: "Cara" + "-Made-Up-Double-Barrelled-Name".repeat(2), last_name: "Agent", designation: nia.designation, role: nia.role, capacity: nia.capacity, active: true, projects: nia.projects, reports_to: nia.reports_to || "", emp_id: nia.emp_id }));
+  ok("X-08: a first name over 60 characters is refused, naming the box (not cut)", !fn.ok && /^The first name is too long: 64 characters, and it takes up to 60/.test(fn.e) && (await q1("SELECT first_name FROM users WHERE id = ?", nia.id)).first_name === "Cara", fn.e);
+  const ln = await T(() => A("users.save", { id: nia.id, first_name: "Cara", last_name: "L".repeat(61), designation: nia.designation, role: nia.role, capacity: nia.capacity, active: true, projects: nia.projects, reports_to: nia.reports_to || "", emp_id: nia.emp_id }));
+  ok("X-08: a last name over 60 characters is refused too", !ln.ok && /^The last name is too long/.test(ln.e), ln.e);
+  // X-05: the team task's name; the client's short code
+  const tk = await T(() => TI("tasks.create", { client_id: sun.id, title: "Recheck the made-up denials " + "and note each portal reference ".repeat(6), description: "Made-up task", scope: "AR", count: 1, tat: "24", shares: [{ user_id: U("Arun Agent"), count: 1 }] }));
+  ok("X-05: a task name over 160 characters is refused with a message naming it", !tk.ok && /^The task name is too long/.test(tk.e), tk.e);
+  const sc = await T(() => TI("clients.save", { id: sun.id, code: "SUNRISEEYECARE" }));
+  ok("X-05 (sibling): a client's short code over 12 characters is refused with a message, not cut", !sc.ok && /^The short code is too long: 14 characters/.test(sc.e), sc.e);
+  const fs = await import("fs");
+  const code = fs.readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  ok("X-05: the Task box and the Short code boxes no longer cut what is typed (no maxLength); they count near the limit", !/placeholder="What is to be done, in a few words" maxLength=/.test(code) && !/code: e\.target\.value\.toUpperCase\(\) \}\)\} maxLength=\{12\}/.test(code) && !/maxLength=\{12\} onChange=\{\(e\) => set\(\{ code:/.test(code)
+    && /<TextLimit v=\{f\.title\} max=\{160\} \/>/.test(code) && /<TextLimit v=\{f\.code\} max=\{12\} \/>/.test(code) && /<TextLimit v=\{edit\.code\} max=\{12\} \/>/.test(code));
+}
+
 S("W-11: My day's work form asks before Back, Forward or a reload drops a typed entry (the browser walk is the proof; here the wiring)");
 {
   const fs = await import("fs");

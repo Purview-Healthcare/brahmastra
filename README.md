@@ -1446,7 +1446,9 @@ any other filter, selected and assigned, or downloaded.
   a little longer.
 - Typed text is never cut without a word. Each box takes up to a set length (an escalation's description, comment,
   root cause and actions 2,000 characters; a claim note or feedback 4,000; a desk comment 2,000; a Team status
-  comment 500; names 120 to 160). The longer boxes count the characters as the text nears the limit, and text over
+  comment 500; names 120 to 160; a work entry's Denial 200, REF and CLM# 80, a typed Source 40 and the pre call
+  check's own words 300; a desk's check / EFT number or batch ID and Inventory Status 80, Bucket, Claim Type, Type and
+  Adjustment reason 60, Payment type 40; a first or last name 60; a team task's name 160; a client's short code 12). The longer boxes count the characters as the text nears the limit, and text over
   it is refused with a message naming the box, so nothing is saved until it is shortened. A file name over its limit
   (200 characters) is shortened before its ending, so a .pdf stays a .pdf.
 - Timely filing is modelled with the common 90-day window; the appeal filing
