@@ -3387,11 +3387,15 @@ function teamSuggestions(rows) {
   const nWord = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   const hm = (m) => { m = Math.round(m || 0); const h = Math.floor(m / 60), mm = m % 60; return h ? h + " h" + (mm ? " " + String(mm).padStart(2, "0") + " m" : "") : mm + " m"; };
   const floorSeen = (r) => `On the floor ${hm(r.on_floor_done_min)} of ${hm(r.floor_needed_done_min)} needed up to yesterday (short ${hm(r.floor_short_min)})`;
-  // claims worked and team task items done both count toward the attainment
-  const what = (claims, items) => (items ? `${nWord(claims, "claim")} + ${nWord(items, "task item")}` : "claims");
-  const attainSeen = (r) => r.attain_basis === "done"
-    ? `Attainment ${r.attain}% (${r.count_done != null ? r.count_done : r.worked_done} of ${Math.round(r.target_done)}${r.task_items_done ? "" : " claims"} up to yesterday${r.task_items_done ? ": " + what(r.worked_done, r.task_items_done) : ""})`
-    : `Attainment ${r.attain}% today (${r.count_today != null ? r.count_today : r.worked_today} of ${Math.round(r.target_today)}${r.task_items_today ? ": " + what(r.worked_today, r.task_items_today) : " claims"})`;
+  // claims worked, team task items done and extra production all count toward the attainment: its parts named as the table
+  // writes them ("70 claims + 3 task items + 7 extra"), and "claims" after the count only when it is claims alone
+  const parts = (claims, items, extra) => [nWord(claims, "claim"), items ? nWord(items, "task item") : "", extra ? extra + " extra" : ""].filter(Boolean).join(" + ");
+  const attainSeen = (r) => {
+    const done = r.attain_basis === "done", items = (done ? r.task_items_done : r.task_items_today) || 0, extra = (done ? r.extra_done : r.extra_today) || 0;
+    const n = done ? (r.count_done != null ? r.count_done : r.worked_done) : (r.count_today != null ? r.count_today : r.worked_today), of = Math.round(done ? r.target_done : r.target_today);
+    const more = items || extra ? ": " + parts(done ? r.worked_done : r.worked_today, items, extra) : "";
+    return done ? `Attainment ${r.attain}% (${n} of ${of}${more ? "" : " claims"} up to yesterday${more})` : `Attainment ${r.attain}% today (${n} of ${of}${more || " claims"})`;
+  };
   for (const r of rows) {
     const away = r.out_today === "out";
     if (r.esc_n) {

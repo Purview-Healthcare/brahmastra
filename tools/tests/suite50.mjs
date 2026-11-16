@@ -413,6 +413,25 @@ S("U-08: a file counted before by a manager: the check says what stays counted f
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-09: Team status suggestions name the extra production in the count, as the table does");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-A2", "Cara Agent", "Tina Lead", SUN), AS("PHC-A3", "Dev Agent", "Tina Lead", SUN)];
+  const NOV = dayList(D(11, 2), D(11, 13)).filter(isWeekday);   // 10 working days before Monday Nov 16
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-A2", "PHC-A3"], NOV), holidays: [] });
+  const TI = await F.who("Tina Lead");
+  const cara = F.U("Cara Agent");
+  await F.work("Arun Agent", D(11, 3), 70); await F.work("Cara Agent", D(11, 3), 50); await F.work("Dev Agent", D(11, 3), 75);
+  await F.sql("INSERT INTO team_task_updates (id, task_id, person_id, user_id, user_name, kind, done_n, delta, status, comment, at) VALUES ('s50tu', 's50task', 's50tp', ?, 'Cara Agent', 'update', 3, 3, '', '', ?)", cara.id, IST(2026, 11, 4, 12));
+  const file = F.read(F.xlsx([["S", [["DOW", "User Name"], ...rep(7, [serial(D(11, 5)), "Arun Agent"]), ...rep(7, [serial(D(11, 5)), "Cara Agent"])]]]), "Extra production Nov.xlsx");
+  await TI("stack.extraSave", F.body(file));
+  const ts = await F.ts(TI, D(11, 1), D(11, 16));
+  const seen = (n) => ([...ts.suggestions.today, ...ts.suggestions.week, ...ts.suggestions.good].find((x) => x.who === n) || {}).seen || "";
+  ok("U-09: claims and extra production: \"Attainment 77% (77 of 100 up to yesterday: 70 claims + 7 extra)\"", seen("Arun Agent") === "Attainment 77% (77 of 100 up to yesterday: 70 claims + 7 extra)", seen("Arun Agent"));
+  ok("U-09: claims, task items and extra production: \"... (60 of 100 up to yesterday: 50 claims + 3 task items + 7 extra)\"", seen("Cara Agent") === "Attainment 60% (60 of 100 up to yesterday: 50 claims + 3 task items + 7 extra)", seen("Cara Agent"));
+  ok("U-09: claims alone, as before: \"Attainment 75% (75 of 100 claims up to yesterday)\"", seen("Dev Agent") === "Attainment 75% (75 of 100 claims up to yesterday)", seen("Dev Agent"));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);
