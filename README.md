@@ -389,7 +389,8 @@ bar to narrow the charts), then:
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
   with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
   address or an Emp ID, added or deleted an account, changed the extra sign-in emails, matched a roster project
-  to a client, or counted, edited or removed an extra production file. A code or a password is never written there:
+  to a client, or counted, edited or removed an extra production file; and on the Stack report, each value typed, typed
+  over or cleared (with the old and the new value, and who typed the old one), each lock and unlock. A code or a password is never written there:
   only who did it, for whom and when.
 
 #### Dashboard › Stack report

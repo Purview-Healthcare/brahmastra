@@ -340,6 +340,33 @@ S("U-11: a leaver who never signed in stays for the Stack report: counted in the
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-03: typed Stack values are in the audit trail: typed, typed over and cleared, with the old and the new value");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-A10", "Paula Poster", "Tina Lead", SUN, { department: "Posting" })];
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-A10"]) });
+  const MO = await F.who("Mona Manager"), TI = await F.who("Tina Lead");
+  await F.work("Arun Agent", D(10, 5), 200);
+  const steps = [[TI, "Arun Agent", "pkt", "100"], [TI, "Arun Agent", "tp", "no", "Did not help the team"], [TI, "Arun Agent", "tp", "no", "Did not help with the backlog"], [MO, "Tina Lead", "th1", "yes"],
+    [MO, "Arun Agent", "pkt", "50"], [MO, "Arun Agent", "pkt", "50"], [MO, "Arun Agent", "pkt", ""], [TI, "Arun Agent", "tp", ""], [TI, "Paula Poster", "achieved", "180"], [TI, "Arun Agent", "quality", "98.999"]];
+  for (const [X, n, f, v, note] of steps) { const r = await F.save(X, "2026-10", n, f, v, note); if (!r.ok) console.log("  save refused", n, f, v, r.e); }
+  const aud = (await F.rows("SELECT user_name, detail FROM audit_log WHERE action = 'stack.save' ORDER BY at, rowid")).map((x) => x.user_name + ": " + x.detail);
+  const want = [
+    "Tina Lead: October 2026, Arun Agent: PKT score empty → 100%",
+    'Tina Lead: October 2026, Arun Agent: Team player Yes (as it starts) → No: "Did not help the team"',
+    'Tina Lead: October 2026, Arun Agent: Team player No → No: "Did not help with the backlog"',
+    'Mona Manager: October 2026, Tina Lead: tick "4 Quality sessions, with email" not ticked → Yes',
+    "Mona Manager: October 2026, Arun Agent: PKT score 100% → 50% (100% was typed by Tina Lead)",
+    "Mona Manager: October 2026, Arun Agent: PKT score 50% → cleared",
+    "Tina Lead: October 2026, Arun Agent: Team player No → Yes",
+    "Tina Lead: October 2026, Paula Poster: Achieved empty → 180",
+    "Tina Lead: October 2026, Arun Agent: Quality % empty → 98.99%",
+  ];
+  ok("U-03: each typed value is one audit line with who, the old and the new value (the same value typed again adds none)", JSON.stringify(aud) === JSON.stringify(want), aud);
+  const list = (await F.AD("audit.list", { action: "stack" })).rows;
+  ok("U-03: the audit trail's Stack report choice lists them (with the admin's filter)", list.filter((x) => x.action === "stack.save").length === want.length, list.length);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

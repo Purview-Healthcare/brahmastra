@@ -5566,9 +5566,18 @@ const OPS = {
       if (value !== "yes" && value !== "no") throw bad(STACK_FIELDS[field] + " is Yes or No.");
     }
     const note = field === "tp" && value ? str(payload.note, 200).trim() : "", at = Date.now();
+    const was = await one(env, "SELECT value, note, by_name FROM stack_typed WHERE subject_id = ? AND month = ? AND field = ?", id, month, field);
     if (!value) await run(env, "DELETE FROM stack_typed WHERE subject_id = ? AND month = ? AND field = ?", id, month, field);
     else await run(env, `INSERT INTO stack_typed (subject_id, month, field, value, note, by_id, by_name, at) VALUES (?,?,?,?,?,?,?,?)
       ON CONFLICT(subject_id, month, field) DO UPDATE SET value = excluded.value, note = excluded.note, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, month, field, value, note, user.id, user.name || "", at);
+    // the audit trail keeps every typed value, typed over or cleared, with the old and the new value and who typed the old one
+    if (value !== (was ? was.value : "") || note !== (was ? was.note || "" : "")) {
+      const tick = /^(th|cf)[1-5]$/.test(field);
+      const txt = (v) => (field === "pkt" || field === "quality" ? STACK_FMT.pct(Number(v)) : field === "tp" || tick ? (v === "yes" ? "Yes" : "No") : v);
+      const old = was ? txt(was.value) : field === "tp" ? "Yes (as it starts)" : tick ? "not ticked" : "empty", now = value ? txt(value) : field === "tp" ? "Yes" : tick ? "not ticked" : "cleared";
+      await audit(env, user, "stack.save", null, label + ", " + who.name + ": " + (tick ? 'tick "' + STACK_FIELDS[field] + '"' : STACK_FIELDS[field]) + " " + old + " → " + now + (note ? ': "' + note + '"' : "")
+        + (was && was.by_name && was.by_name !== (user.name || "") ? " (" + old + " was typed by " + was.by_name + ")" : ""));
+    }
     return { ok: true, field, value, note, by: user.name || "", at };
   },
   /* Lock the month (managers and above): every draft team of their span is saved as it is now (one snapshot per team), and from
