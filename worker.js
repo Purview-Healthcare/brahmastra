@@ -2008,7 +2008,7 @@ const TYPED_MAX = {
   "locations.save": { name: [160, "The location's name"] },
   "tat.hold": { note: [500, "The note"] },
   "tasks.hold": { note: [500, "The note"] },
-  "stack.save": { note: [200, "The note"] },
+  "stack.save": { note: [200, "The reason"] },
   "inventory.enrich": { note: [500, "The note"] },
   "users.save": { name: [120, "The name"] },
 };

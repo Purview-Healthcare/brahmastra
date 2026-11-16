@@ -418,7 +418,7 @@ grouped by team lead as on Team status, ranked by percentage (a tie: the higher 
   shrinkage is 1 less present / working.
 - **Others (5)**: **Late login** (the days Shastra marks the person late) and **Breaks over** (the days their breaks
   added up to more than 60 minutes, the owner's daily limit): none: 1; 1 or 2: 0.5; more: 0 each. **Team player**,
-  typed Yes or No by the team lead with an optional reason (it starts as Yes): 1 or 0. **PKT score**, typed by the
+  typed Yes or No by the team lead with an optional reason (up to 200 characters: a longer one is refused, never cut; it starts as Yes): 1 or 0. **PKT score**, typed by the
   team lead: 99.51% and above: 2; 94.51%: 1; 89.51%: 0.5; less: 0. An empty PKT counts as 0 and is listed to enter.
 - **Time on system (5)**: the average On floor time a day from Shastra, over the finished days that have some:
   7 h 59 min and above: 5; 7 h 30 min: 3; less: 0.

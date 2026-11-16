@@ -2633,7 +2633,9 @@ function StackLeadModal({ t, label, lines, ticks, onTick, onClose }) {
     </Modal>
   );
 }
-/* Typing one of an associate's yellow cells: PKT, Quality, Team player (with a reason), or Achieved and Expected. */
+/* Typing one of an associate's yellow cells: PKT, Quality, Team player (with a reason), or Achieved and Expected. The reason is
+   never cut: over its limit the box says so, and the server refuses it with a message naming the box. */
+const STACK_NOTE_MAX = 200;
 function StackEditModal({ month, label, r, field, onClose, onSaved }) {
   const pctOf = (v) => (v == null ? "" : String(Math.round(v * 1e4) / 100));
   const [v1, setV1] = useState(() => (field === "pkt" ? pctOf(r.pkt) : field === "quality" ? pctOf(r.quality) : field === "prod" ? (r.achieved == null ? "" : String(r.achieved)) : r.tp ? "yes" : "no"));
@@ -2659,7 +2661,7 @@ function StackEditModal({ month, label, r, field, onClose, onSaved }) {
         <input className="input" type="number" min="0" max="100" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
         : field === "tp" ? <div className="stack">
           <div className="seg2" role="radiogroup">{[["yes", "Yes"], ["no", "No"]].map(([k, l]) => <button key={k} type="button" role="radio" aria-checked={v1 === k} className={v1 === k ? "on" : ""} onClick={() => setV1(k)}>{l}</button>)}</div>
-          <Field label="Reason (optional)"><input className="input" type="text" maxLength={200} value={v2} onChange={(e) => setV2(e.target.value)} placeholder="For example: covered the team's backlog" /></Field></div>
+          <Field label="Reason (optional)"><input className="input" type="text" value={v2} onChange={(e) => setV2(e.target.value)} placeholder="For example: covered the team's backlog" /><TextLimit v={v2} max={STACK_NOTE_MAX} /></Field></div>
         : <div className="grid g2"><Field label="Achieved"><input className="input" type="number" min="0" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
           <Field label="Expected"><input className="input" type="number" min="0" step="0.01" value={v2} onChange={(e) => setV2(e.target.value)} /></Field>
           <div className="tiny muted" style={{ gridColumn: "1 / -1" }}>Brahmastra has no work numbers for {r.name}'s role, so the team lead types the month's work done and the work expected.</div></div>}
@@ -4796,7 +4798,7 @@ function TaskFormModal({ ctx, clientId, task, onClose, onDone }) {
             <FieldGroup label="Received from" hint="Optional"><div className="seg2">{["Client", "Manager", "Internal"].map((s) => <button key={s} type="button" className={f.source === s ? "on" : ""} onClick={() => set("source", f.source === s ? "" : s)}>{s}</button>)}</div></FieldGroup>
           </div>
           <FieldGroup label="Scope"><div className="seg2" style={{ flexWrap: "wrap" }}>{TASK_SCOPES_UI.map((s) => <button key={s} type="button" className={f.scope === s ? "on" : ""} onClick={() => set("scope", s)}>{s}</button>)}</div></FieldGroup></>}
-        <Field label="Task"><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="What is to be done, in a few words" maxLength={160} /></Field>
+        <Field label="Task"><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="What is to be done, in a few words" /><TextLimit v={f.title} max={160} /></Field>
         <Field label="Description" hint={f.description.length > 3600 ? f.description.length + " of 4,000 characters" : "What, where, how; never patient details you don't need"}><textarea className="textarea" style={{ minHeight: 76 }} value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Details, the list or the portal, what to note…" /></Field>
         <div className="grid g2">
           <FieldGroup label="TAT" hint={(dueHint ? "Due about " + dueHint + " · " : "") + (edit && (f.tat === "24" || f.tat === "72" || f.tat === "hours") ? "counted from when it was given · " : "") + "Monday to Friday, Shastra holidays skipped"}>

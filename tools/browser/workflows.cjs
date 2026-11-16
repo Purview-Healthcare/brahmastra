@@ -780,6 +780,43 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("every hand edit is in the audit trail with the old and the new value", au.length === 3 && /^Arun Agent, .*: 3 → 5$/.test(au[0]) && au[1] === '"Sona Sample" in the file counts for Cara Agent (was left out: not found)' && /^Arun Agent, .*: 5 → 6 \(the file has 3\)$/.test(au[2]), au);
   });
 
+  S("Stack report: what is typed or edited by hand is never cut, or dropped without asking (U-12, U-13)");
+  await step("stack-keep-typed", async () => {
+    const ist = new Date(Date.now() + 330 * 60000); let dd = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - 1));
+    while (dd.getUTCDay() === 0 || dd.getUTCDay() === 6) dd = new Date(dd.getTime() - 86400000);
+    const DOW = dd.toISOString().slice(0, 10), XM = DOW.slice(0, 7), NAME2 = "Extra production week 2 - Tina Lead.xlsx";
+    const top = () => p.locator(".overlay .modal").last(), ask = () => p.locator(".ask-overlay");
+    const lineRow = (who) => p.locator(`.overlay .xp-lines tr:has-text("${who}")`);
+    const extraOf = async (n) => (await rpc("team.status", { from: DOW, to: DOW })).rows.find((x) => x.name === n).extra || 0;
+    await as("tina"); await open("#/dashboard?tab=stack&month=" + XM); await t(500); await p.reload(); await t(4500);
+    // U-12: the Team player reason, pasted longer than its 200 characters
+    const long = "Helped the team clear the backlog every day this month. ".repeat(5).trim();   // 279 characters
+    await p.locator('.main table.stk-t tbody tr.click:has-text("Arun Agent") td:nth-child(13) button.typed').first().click(); await t(800);
+    await top().locator('.seg2 button:text-is("No")').click(); await top().locator('input[type="text"]').fill(long); await t(300);
+    ok("U-12: the reason box keeps all 279 characters and says they are too many", (await top().locator('input[type="text"]').inputValue()).length === 279 && /279 of 200 characters: too long, shorten it/.test(await top().innerText()), await top().innerText());
+    await top().locator('button.primary:has-text("Save")').click(); await t(1500);
+    const tp = await p.evaluate(async (m) => (await (await getLocalBackend()).env.DB.prepare("SELECT note FROM stack_typed WHERE field = 'tp' AND month = ?").bind(m).all()).results, XM);
+    ok("U-12: Save is refused with a message naming the box; nothing is cut or saved, and the box stays open", !tp.length && /The reason is too long: 279 characters/.test(await p.innerText("body")) && (await top().locator('input[type="text"]').count()) === 1, tp);
+    await p.keyboard.press("Escape"); await t(600);
+    ok("U-12: Escape asks before dropping the reason typed", (await ask().count()) === 1 && /Discard what you typed\?/.test(await ask().innerText()));
+    await ask().locator('button:has-text("Discard")').click(); await t(600);
+    // U-13: a hand edit in the check before saving, then Escape and a click outside it (the file as it was counted last: Arun 4)
+    await p.evaluate(() => { window.__xpChanged = true; });
+    await p.locator(".stk-xbtn").first().click(); await t(1500); await p.locator('.overlay tr:has-text("Production files")').first().click(); await t(1500);
+    await p.locator(`.overlay tr:has-text("${NAME2}")`).first().click(); await t(3000);
+    await lineRow("Arun Agent").locator('button:has-text("Edit")').first().click(); await t(800);
+    await top().locator("input.xp-n").first().fill("6"); await top().locator('button.primary:has-text("Save")').click(); await t(2500);
+    ok("U-13: the check before saving holds the hand edit: Arun 6 (file: 4)", /6 \(file: 4\)/.test(await lineRow("Arun Agent").innerText()), await lineRow("Arun Agent").innerText());
+    await p.keyboard.press("Escape"); await t(700);
+    ok("U-13: Escape asks first: Discard your changes?", (await ask().count()) === 1 && /Discard your changes\?/.test(await ask().innerText()), (await ask().count()) ? await ask().innerText() : "no question");
+    await ask().locator('button:has-text("Keep editing")').click(); await t(500);
+    ok("U-13: Keep editing: the check is still open, with the edit", !(await ask().count()) && /6 \(file: 4\)/.test(await lineRow("Arun Agent").innerText()));
+    await p.mouse.click(6, 6); await t(700);
+    ok("U-13: a click outside it asks too", (await ask().count()) === 1 && /Discard your changes\?/.test(await ask().innerText()));
+    await ask().locator('button:has-text("Discard")').click(); await t(800);
+    ok("U-13: Discard closes it, and nothing was counted (Arun still 4)", !(await p.locator(".overlay .modal").count()) && (await extraOf("Arun Agent")) === 4, await extraOf("Arun Agent"));
+  });
+
   ok("no script errors on any page", !errs.length, errs);
   await b.close(); srv.close();
   const failed = results.filter((x) => !x.pass);

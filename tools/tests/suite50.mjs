@@ -367,6 +367,24 @@ S("U-03: typed Stack values are in the audit trail: typed, typed over and cleare
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-12: the Team player reason is never cut: over 200 characters it is refused with a message naming the box");
+{
+  const feed = [...stdFeed(), AS("PHC-A1", "Arun Agent", "Tina Lead", SUN)];
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1"]) });
+  const TI = await F.who("Tina Lead");
+  await F.work("Arun Agent", D(10, 5), 200);
+  const long = "Helped the team clear the backlog every day this month. ".repeat(5).trim();   // 279 characters
+  let r = await F.save(TI, "2026-10", "Arun Agent", "tp", "no", long);
+  ok("U-12: a 279-character reason is refused, nothing saved: \"The reason is too long: 279 characters, and it takes up to 200. Shorten it.\"", !r.ok && r.e === "The reason is too long: 279 characters, and it takes up to 200. Shorten it."
+    && !(await F.rows("SELECT 1 FROM stack_typed WHERE field = 'tp'")).length, r);
+  r = await F.save(TI, "2026-10", "Arun Agent", "tp", "no", long.slice(0, 200));
+  ok("U-12: 200 characters are taken whole", r.ok && (await F.rows("SELECT note FROM stack_typed WHERE field = 'tp'"))[0].note === long.slice(0, 200), r);
+  const src = (await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  ok("U-12: the page's reason box has no maxLength (it counts the characters with TextLimit instead), nor the team task's name", /<Field label="Reason \(optional\)"><input className="input" type="text" value=\{v2\}[^\n]*<TextLimit v=\{v2\} max=\{STACK_NOTE_MAX\} \/>/.test(src)
+    && /placeholder="What is to be done, in a few words" \/><TextLimit v=\{f\.title\} max=\{160\} \/>/.test(src));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);
