@@ -1211,26 +1211,31 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
 const DENIED_SQL = "COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Denied', 'Claim Rejected')";
 const PAID_SQL = "COALESCE(NULLIF(n.status, ''), n.status_code) IN ('Claim Paid', 'Partially Paid')";
 const reasonKey = (r) => String(r || "Other").trim().toLowerCase().replace(/\s+/g, " ");
-/* Every denial and payment entry of these clients in the last year, per claim in time order. */
-async function denialHistory(env, clientIds, payer = null) {
-  const ids = [...new Set(clientIds || [])].filter(Boolean); if (!ids.length) return [];
-  return await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status, c.client_id, c.payer
-    FROM notes n JOIN claims c ON c.id = n.claim_id
-    WHERE n.kind = 'work' AND c.client_id IN ${IN_LIST}${payer != null ? " AND c.payer = ?" : ""} AND n.created_at > ? AND (${DENIED_SQL} OR ${PAID_SQL})
-    ORDER BY n.claim_id, n.created_at LIMIT 50000`, listArg(ids), ...(payer != null ? [payer] : []), Date.now() - 365 * 86400000);
-}
-/* What worked for a denial reason: per (client, payer, reason) and per (client, reason), each action tried and how often a payment followed. */
-function whatWorked(rows) {
-  const tally = new Map(), add = (k, action, paid) => { if (!action) return; const m = tally.get(k) || new Map(); const t = m.get(action) || { action, tried: 0, paid: 0 }; t.tried++; if (paid) t.paid++; m.set(action, t); tally.set(k, m); };
-  for (let i = 0; i < rows.length; i++) {
-    const d = rows[i]; if (d.status !== "Claim Denied" && d.status !== "Claim Rejected") continue;
-    const rk = reasonKey(d.sub_status); let paid = false;
-    for (let j = i + 1; j < rows.length && rows[j].claim_id === d.claim_id; j++) {
-      const x = rows[j];
-      if (x.status === "Claim Paid" || x.status === "Partially Paid") { paid = true; break; }
-      if (reasonKey(x.sub_status) === rk) break; // denied again for the same reason: this action did not work
-    }
-    add(d.client_id + "|" + d.payer + "|" + rk, d.action, paid); add(d.client_id + "||" + rk, d.action, paid);
+/* What worked for a denial reason: per (client, payer, reason) and per (client, reason), each action tried and how often a payment
+   followed on the same claim (with no new denial for the same reason in between), over every denial and payment entry of these
+   clients in the last year. Counted in the database: reading the entries out stopped at 50,000 taken by claim id, so on a floor's
+   year it counted whichever claims sorted first and could cut a claim's entries part way. Equal results keep the order the entries
+   came in (claim, then time). */
+async function whatWorkedOf(env, clientIds, payer = null) {
+  const ids = [...new Set(clientIds || [])].filter(Boolean), tally = new Map();
+  if (ids.length) {
+    const args = [listArg(ids), ...(payer != null ? [payer] : []), Date.now() - 365 * 86400000];
+    const from = "FROM notes n JOIN claims c ON c.id = n.claim_id", where = `WHERE n.kind = 'work' AND c.client_id IN ${IN_LIST}${payer != null ? " AND c.payer = ?" : ""} AND n.created_at > ? AND (${DENIED_SQL} OR ${PAID_SQL})`;
+    // each sub-status's reason key as reasonKey writes it (capitals and spaces aside), for the database to compare
+    const keys = (await all(env, `SELECT DISTINCT COALESCE(n.sub_status, '') AS s ${from} ${where}`, ...args)).map((r) => [r.s, reasonKey(r.s)]);
+    // each denial's next payment and next denial for the same reason on its claim (pos: the claim's entries in time order)
+    const rows = await all(env, `WITH rk AS (SELECT json_extract(value, '$[0]') AS s, json_extract(value, '$[1]') AS k FROM json_each(?)),
+      h AS (SELECT n.rowid AS rid, n.claim_id, n.created_at, n.action, c.client_id, c.payer, CASE WHEN ${PAID_SQL} THEN 1 ELSE 0 END AS pay, rk.k
+        ${from} LEFT JOIN rk ON rk.s = COALESCE(n.sub_status, '') ${where}),
+      o AS (SELECT h.*, ROW_NUMBER() OVER (PARTITION BY claim_id ORDER BY created_at, rid) AS pos FROM h),
+      d AS (SELECT o.*, MIN(CASE WHEN pay = 1 THEN pos END) OVER (PARTITION BY claim_id ORDER BY pos ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) AS next_pay,
+        LEAD(pos) OVER (PARTITION BY claim_id, pay, k ORDER BY pos) AS next_same FROM o)
+      SELECT client_id, payer, k, action, COUNT(*) AS tried, SUM(next_pay IS NOT NULL AND (next_same IS NULL OR next_pay < next_same)) AS paid,
+        MIN(claim_id || char(1) || printf('%015d.%012d', created_at, rid)) AS first
+      FROM d WHERE pay = 0 AND action IS NOT NULL AND action <> '' GROUP BY client_id, payer, k, action`, JSON.stringify(keys), ...args);
+    rows.sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
+    const add = (k, r) => { const m = tally.get(k) || new Map(); const t = m.get(r.action) || { action: r.action, tried: 0, paid: 0 }; t.tried += r.tried; t.paid += r.paid; m.set(r.action, t); tally.set(k, m); };
+    for (const r of rows) { add(r.client_id + "|" + r.payer + "|" + r.k, r); add(r.client_id + "||" + r.k, r); }
   }
   const best = (k) => { const m = tally.get(k); if (!m) return []; return [...m.values()].filter((t) => t.paid > 0).sort((a, b) => b.paid - a.paid || b.paid / b.tried - a.paid / a.tried).slice(0, 3); };
   return (clientId, payer, reason) => { const rk = reasonKey(reason), own = best(clientId + "|" + payer + "|" + rk); return own.length ? { any_payer: false, top: own } : { any_payer: true, top: best(clientId + "||" + rk) }; };
@@ -1254,17 +1259,18 @@ function denialEpisodes(rows) {
   }
   return by;
 }
-async function repeatDenialClaims(env, ids, now = Date.now()) {
+async function repeatDenialClaims(env, ids, now = Date.now(), since = 0) {
   if (!ids.length) return [];
   const IN = IN_LIST;
-  // claims still being worked with 2 or more denial entries in the year, then every work entry of those claims in time order
+  // claims still being worked with 2 or more denial entries in the year (the last of them after `since`): every one of them, not
+  // a first 2,000 picked by no rule; then every work entry of those claims in time order, 500 claims a query (the list as one value)
   const cand = await all(env, `SELECT n.claim_id FROM notes n JOIN claims c ON c.id = n.claim_id
       WHERE n.kind = 'work' AND ${DENIED_SQL} AND c.client_id IN ${IN} AND c.state IN ('open','assigned','in_progress','completed','in_process') AND n.created_at > ?
-      GROUP BY n.claim_id HAVING COUNT(*) >= 2 LIMIT 2000`, listArg(ids), now - 365 * 86400000);
+      GROUP BY n.claim_id HAVING COUNT(*) >= 2 AND MAX(n.created_at) > ? ORDER BY n.claim_id`, listArg(ids), now - 365 * 86400000, since);
   const out = [];
-  for (const part of chunks(cand.map((r) => r.claim_id), 80)) {
+  for (const part of chunks(cand.map((r) => r.claim_id), 500)) {
     const rows = await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status FROM notes n
-        WHERE n.kind = 'work' AND n.claim_id IN (${part.map(() => "?").join(",")}) AND n.created_at > ? ORDER BY n.claim_id, n.created_at`, ...part, now - 365 * 86400000);
+        WHERE n.kind = 'work' AND n.claim_id IN ${IN} AND n.created_at > ? ORDER BY n.claim_id, n.created_at`, listArg(part), now - 365 * 86400000);
     for (let i = 0; i < rows.length;) {
       let j = i; while (j < rows.length && rows[j].claim_id === rows[i].claim_id) j++;
       for (const e of denialEpisodes(rows.slice(i, j)).values()) if (e.times >= 2) out.push({ claim_id: rows[i].claim_id, reason: e.reason, times: e.times, last_at: e.last_at });
@@ -1276,9 +1282,9 @@ async function repeatDenialClaims(env, ids, now = Date.now()) {
 async function repeatDenials(env, clientIds, now = Date.now()) {
   const ids = [...new Set(clientIds || [])].filter(Boolean); if (!ids.length) return { claims: [], patterns: [] };
   const IN = IN_LIST;
-  const worked = whatWorked(await denialHistory(env, ids));
-  // the same claim denied again for the same reason, still being worked and not paid since
-  const reps = (await repeatDenialClaims(env, ids, now)).sort((a, b) => b.last_at - a.last_at).slice(0, 500);
+  const worked = await whatWorkedOf(env, ids);
+  // the same claim denied again for the same reason, still being worked and not paid since: all of them counted, the latest 500 listed
+  const every = (await repeatDenialClaims(env, ids, now)).sort((a, b) => b.last_at - a.last_at), reps = every.slice(0, 500);
   const info = new Map();
   for (const part of chunks([...new Set(reps.map((r) => r.claim_id))], 80))
     for (const r of await all(env, `SELECT c.id, c.client_id, cl.name AS client_name, c.claim_no, c.payer, c.balance, c.state, u.name AS biller,
@@ -1293,14 +1299,16 @@ async function repeatDenials(env, clientIds, now = Date.now()) {
         WHERE n.kind = 'work' AND ${DENIED_SQL} AND c.client_id IN ${IN} AND n.created_at > ? GROUP BY c.client_id, c.payer, n.claim_id, rk)
       GROUP BY client_id, payer, rk HAVING COUNT(*) >= 3 ORDER BY claims DESC, bal DESC LIMIT 200`, listArg(ids), now - 30 * 86400000))
     .map((r) => ({ ...r, worked: worked(r.client_id, r.payer, r.reason) }));
-  return { claims, patterns };
+  return { claims, patterns, total: every.length };
 }
 /* Payer tips for one claim: how long this payer usually takes to pay after an action, what worked for this status, and a follow-up
    date to suggest. From the client's own entries at this payer in the last year; nothing shows on fewer than 3 cases. */
 async function payerTips(env, c, { status, sub_status, action } = {}, now = Date.now()) {
-  const rows = await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status
-    FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND c.client_id = ? AND c.payer = ? AND n.created_at > ? ORDER BY n.claim_id, n.created_at LIMIT 30000`,
-    c.client_id, c.payer || "", now - 365 * 86400000);
+  // the newest 30,000 entries at this payer, then per claim in time order: a big client's year can hold more, and the oldest are
+  // the ones left out (taking the claims first by id left out whichever claims sorted last, this one's own entries too)
+  const rows = (await all(env, `SELECT n.claim_id, n.created_at, n.action, n.sub_status, COALESCE(NULLIF(n.status, ''), n.status_code) AS status, n.rowid AS rid
+    FROM notes n JOIN claims c ON c.id = n.claim_id WHERE n.kind = 'work' AND c.client_id = ? AND c.payer = ? AND n.created_at > ? ORDER BY n.created_at DESC LIMIT 30000`,
+    c.client_id, c.payer || "", now - 365 * 86400000)).sort((a, b) => (a.claim_id < b.claim_id ? -1 : a.claim_id > b.claim_id ? 1 : a.created_at - b.created_at || a.rid - b.rid));
   const st = status || c.last_status_code || "", act = action || c.last_action_code || "", sub = sub_status || (status ? "" : c.last_sub_status || "");
   const isPaid = (x) => x.status === "Claim Paid" || x.status === "Partially Paid";
   // days from an entry with this action to the payment that followed on the same claim
@@ -6258,7 +6266,7 @@ const OPS = {
     if (!c) throw notFound("Claim not found.");
     if (!(await canViewClaim(env, user, c))) throw denied("This claim is not in your queue.");
     const tips = await payerTips(env, c, { status: str(payload.status, 60).trim(), sub_status: str(payload.sub_status, 160).trim(), action: str(payload.action, 160).trim() });
-    if (tips.repeat) tips.repeat.worked = whatWorked(await denialHistory(env, [c.client_id], c.payer || ""))(c.client_id, c.payer || "", tips.repeat.reason);
+    if (tips.repeat) tips.repeat.worked = (await whatWorkedOf(env, [c.client_id], c.payer || ""))(c.client_id, c.payer || "", tips.repeat.reason);
     const today = isoDate(payload.today) || istISO(Date.now()), d = isoDate(c.dos);
     const age = d ? Math.round((Date.parse(today) - Date.parse(d)) / 86400000) : c.age_days;
     tips.turn90 = age != null && age >= 77 && age <= 90 && !["closed"].includes(c.state) ? { age, days_left: 91 - age } : null;
@@ -6363,7 +6371,7 @@ const OPS = {
       }
       // claims denied again for the same reason in the last 14 days, on this person's clients
       if (tcl.length) {
-        const rd = { n: new Set((await repeatDenialClaims(env, tcl.map((c) => c.id), now)).filter((r) => r.last_at > now - 14 * 86400000).map((r) => r.claim_id)).size };
+        const rd = { n: new Set((await repeatDenialClaims(env, tcl.map((c) => c.id), now, now - 14 * 86400000)).filter((r) => r.last_at > now - 14 * 86400000).map((r) => r.claim_id)).size };
         if (rd && rd.n) items.push({ key: "repeat_denials", cat: "attention", tone: "amber", n: rd.n, text: plural(rd.n, "claim was", "claims were") + " denied again for the same reason in the last 14 days", sub: "See what worked before for the same payer and reason", view: "attention", params: { tab: "denials" } });
       }
       const at = await OPS["attention.count"]({ env, user });
