@@ -71,7 +71,10 @@ ok("another span's team lead cannot preview it", !r.ok, r);
 await TI("clients.accessSave", { client_id: sun.id, user_id: U("Leo Lead").id, level: "view" });
 ok("a view-only share does not add someone", !names(span(await SA("digest.spans"), /Joseph/)).includes("Leo Lead"));
 await TI("clients.accessSave", { client_id: sun.id, user_id: U("Leo Lead").id, level: "edit" });
-ok("an edit share does", names(span(await SA("digest.spans"), /Joseph/)).includes("Leo Lead"));
+// one digest email a person (Z-SPAN, the owner's rule): an edit share puts the span on their list, their email stays their manager's
+{ const sp2 = await SA("digest.spans"), leoSees = (await LE("digest.spans")).spans.filter((s) => s.visible).map((s) => s.title);
+  ok("an edit share puts the span on their list (they can open it); their one email stays their own manager's span", leoSees.includes("Joseph Manager's clients") && !names(span(sp2, /Joseph/)).includes("Leo Lead") && names(span(sp2, /Sandesh/)).includes("Leo Lead"),
+    { leoSees, joseph: names(span(sp2, /Joseph/)), sandesh: names(span(sp2, /Sandesh/)) }); }
 await TI("clients.accessRemove", { client_id: sun.id, user_id: U("Leo Lead").id }).catch(() => {});
 await KI("auth.savePrefs", { digest: "off" });
 ok("someone who turned it off in Settings shows as off", span(await SA("digest.spans"), /Sweety/).recipients.find((p) => p.name === "Kiran Lead").off);
