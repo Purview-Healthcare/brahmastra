@@ -85,8 +85,10 @@ S("The team lead's alert: not logged in an hour after the shift began");
 let nt = await TI("notify.list", {});
 let al = (nt.alerts || []).find((a) => a.name === "Arun Agent");
 ok("the team lead gets the pop-up for Arun", al && al.popup === true, nt.alerts);
-ok("it carries the claims not started (2 high) and the plan: shared equally between the two people logged in", al && al.n === 6 && al.high === 2 && al.plan.length === 2 && al.plan.every((x) => x.count === 3) && al.plan.map((x) => x.name).sort().join() === "Dev Agent,Gita Agent", al);
-ok("people not in are named with why (on leave, not in yet)", al && al.skipped.some((x) => x.name === "Cara Agent" && x.why === "on leave") && al.skipped.some((x) => x.name === "Kim Agent" && x.why === "not in yet"), al && al.skipped);
+// the bell carries who and how many; the pop-up asks for the plan of the person it shows (V-11)
+const pl = await TI("team.sharePlan", { user_id: U("Arun Agent").id });
+ok("it carries the claims not started (2 high), and the pop-up's plan: shared equally between the two people logged in", al && al.n === 6 && al.high === 2 && pl.n === 6 && pl.high === 2 && pl.plan.length === 2 && pl.plan.every((x) => x.count === 3) && pl.plan.map((x) => x.name).sort().join() === "Dev Agent,Gita Agent", [al, pl]);
+ok("people not in are named with why (on leave, not in yet)", pl.skipped.some((x) => x.name === "Cara Agent" && x.why === "on leave") && pl.skipped.some((x) => x.name === "Kim Agent" && x.why === "not in yet"), pl.skipped);
 ok("the bell says it too", nt.items.some((x) => x.key === "shastra_missing" && x.n === 1 && x.view === "live"), nt.items.map((x) => x.key));
 nt = await LE("notify.list", {}); ok("another team's lead is not told", !(nt.alerts || []).some((a) => a.name === "Arun Agent"));
 nt = await SA("notify.list", {}); al = (nt.alerts || []).find((a) => a.name === "Arun Agent");

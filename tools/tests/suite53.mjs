@@ -304,6 +304,42 @@ S("V-05: a night shift's Out today mark and a dismissed alert hold for the shift
   ok("V-05: Tuesday night's shift is a new one: Vik's alert comes again at 22:30", L.al("Vik Agent") && L.al("Vik Agent").day === "2026-11-17" && L.al("Vik Agent").popup, L.al("Vik Agent"));
 }
 
+S("V-11: the bell names who has not logged in in a fixed number of reads; the plan is worked out for one person when shown");
+{
+  // statements one call makes, counted where the rig's D1 stand-in runs each one (a batch counts each statement)
+  const counted = async (F, fn) => { const ST = Object.getPrototypeOf(F.rig.backend.env.DB.prepare("SELECT 1")), ex = ST._exec; let n = 0;
+    ST._exec = function () { n++; return ex.call(this); }; try { const r = await fn(); return { r, n }; } finally { ST._exec = ex; } };
+  const sizes = {};
+  for (const N of [20, 200]) {
+    const feed = stdFeed();
+    for (let i = 1; i <= N; i++) feed.push(AG("X" + i, "Biller " + String(i).padStart(3, "0") + " Made", "Tina Lead", SUN, { email: "biller" + i + ".made@purview-healthcare.com" }));
+    const F = await floor({ now: IST(2026, 11, 16, 10, 30), feed });
+    F.S.live = Array.from({ length: N }, (_, i) => LV("X" + (i + 1), {}));   // no punch in for any of them at 10:30 (shift 09:00)
+    await F.give("Biller 001 Made", 5, /Sunrise/, null, "High"); await F.give("Biller 001 Made", 3);
+    const MO = await F.who("Mona Manager"), TI = await F.who("Tina Lead");
+    await F.freshLive(); await F.bell(MO);   // the live feed read once (kept two minutes), as on every page
+    const bell = await counted(F, () => F.bell(MO));
+    const one = (bell.r.alerts || []).find((a) => a.name === "Biller 001 Made");
+    const plan = await counted(F, () => TI("team.sharePlan", { user_id: F.id("Biller 001 Made") }));
+    const db = (await F.rows("SELECT COUNT(*) AS n, SUM(CASE WHEN tier = 'High' THEN 1 ELSE 0 END) AS high FROM claims WHERE assigned_to = ? AND state = 'assigned'", F.id("Biller 001 Made")))[0];
+    sizes[N] = { bell: bell.n, plan: plan.n, alerts: (bell.r.alerts || []).length, one, p: plan.r, db };
+    if (N === 200) {
+      const PIA = await (async () => { F.S.feed.push(P({ emp_id: "D1", name: "Pia Poster", position: "Team Lead", department: "Posting", project: SUN, reports_to: "Mona Manager", email: mail("Pia Poster") })); await F.sync(); return F.who("Pia Poster"); })();
+      const r1 = await F.T(() => PIA("team.sharePlan", { user_id: F.id("Biller 001 Made") }));
+      const LEO = await F.who("Leo Lead"), r2 = await F.T(() => LEO("team.sharePlan", { user_id: F.id("Biller 001 Made") }));
+      ok("V-11: the plan is refused to a desk lead and to another team's lead", !r1.ok && r1.status === 403 && !r2.ok && r2.status === 403, [r1, r2]);
+    }
+  }
+  ok("V-11: with 200 billers not logged in, one bell refresh names all 200 in well under D1's 1,000 queries", sizes[200].alerts === 200 && sizes[200].bell < 300, sizes[200].bell);
+  ok("V-11: the bell's reads do not grow with the number not logged in (20 or 200)", sizes[200].bell - sizes[20].bell <= 2, [sizes[20].bell, sizes[200].bell]);
+  const x = sizes[200], db = x.db;
+  ok("V-11: each alert still says how many claims are not started and how many are high priority, without a plan", x.one && db.n === 8 && x.one.n === db.n && x.one.high === db.high && !("plan" in x.one), [x.one, db]);
+  ok("V-11: the pop-up's plan for one person is worked out on its own: the same 8 claims, 2 each to the four people in, the others on the client named as not logged in",
+    x.p.n === db.n && x.p.high === db.high && x.p.left === 0 && x.p.clients.join() === SUN && x.p.plan.length === 4 && x.p.plan.every((y) => y.count === 2) && x.p.skipped.length > 0 && x.p.skipped.every((y) => y.why === "not logged in"),
+    { n: x.p.n, high: x.p.high, left: x.p.left, clients: x.p.clients, plan: x.p.plan.length, skipped: x.p.skipped.length, whys: [...new Set(x.p.skipped.map((y) => y.why))] });
+  ok("V-11: and in a fixed number of reads too (20 or 200 not logged in)", sizes[200].plan - sizes[20].plan <= 2 && sizes[200].plan < 40, [sizes[20].plan, sizes[200].plan]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

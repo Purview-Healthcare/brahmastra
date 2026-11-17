@@ -1820,8 +1820,13 @@ function MissingAlertPopup({ alerts, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [idx, setIdx] = useState(0);
   const list = (alerts || []).filter((a) => a.popup && !hidden[a.user_id]);
-  if (!list.length) return null;
-  const a = list[Math.min(idx, list.length - 1)], first = a.name.split(" ")[0], share = a.n - a.left;
+  const shown = list.length ? list[Math.min(idx, list.length - 1)] : null;
+  // how their claims would be shared: worked out for the person shown, when they are shown (the bell carries only who and how many)
+  const pq = useRpc("team.sharePlan", { user_id: shown ? shown.user_id : "" }, [shown ? shown.user_id : "", shown ? shown.late_min : 0], !!shown);
+  if (!shown) return null;
+  const pl = pq.data && pq.data.user_id === shown.user_id ? pq.data : null;
+  const a = pl ? { ...shown, n: pl.n, high: pl.high, plan: pl.plan, skipped: pl.skipped, left: pl.left, clients: pl.clients } : { ...shown, plan: [], skipped: [], left: 0, clients: [] };
+  const first = a.name.split(" ")[0], share = a.n - a.left;
   const act = async (fn, msg) => { setBusy(true); try { const x = await fn(); toast(msg(x)); setHidden((h) => ({ ...h, [a.user_id]: true })); if (onChanged) onChanged(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
   const shareOut = () => act(() => rpc("team.shareOut", { user_id: a.user_id, today: todayISO() }), (x) => (x.moved ? `Shared ${x.moved} of ${a.name}'s claims: ` + x.to.map((y) => y.name + " " + y.count).join(", ") + "." + (x.left ? ` ${x.left} stayed (nobody in on that client).` : "") : "No untouched claims to share.") + ` ${first} is marked out today.`);
   const markOut = () => act(() => rpc("team.setOut", { user_id: a.user_id, out: true, reason: "Not logged in to Shastra", today: todayISO() }), () => `${a.name} is marked out today. Rebalance on Live status shares their claims equally.`);
@@ -1837,7 +1842,8 @@ function MissingAlertPopup({ alerts, onChanged }) {
           <div className="card" style={{ margin: 0, padding: "12px 14px" }}>
             {a.n ? <>
               <div><b>{fmtInt(a.n)} claim{a.n === 1 ? "" : "s"}</b> on their desk {a.n === 1 ? "is" : "are"} not started{a.high ? ` (${fmtInt(a.high)} high priority)` : ""}{a.clients.length ? " · " + a.clients.join(", ") : ""}</div>
-              {a.plan.length ? <><div className="small muted" style={{ marginTop: 6 }}>Shared equally between the people logged in on {where}, high priority first:</div>
+              {!pl ? <div className="small muted" style={{ marginTop: 6 }}>{pq.error ? "The plan could not be worked out just now: " + pq.error : "Working out how they would be shared…"}</div>
+                : a.plan.length ? <><div className="small muted" style={{ marginTop: 6 }}>Shared equally between the people logged in on {where}, high priority first:</div>
                 <div>{a.plan.map((x) => <span key={x.id} className="miss-chip">{x.name} <em>+{x.count}</em></span>)}{a.skipped.map((x) => <span key={x.name} className="miss-chip off">{x.name} · {x.why}</span>)}</div></>
                 : <div className="small amber-ink" style={{ marginTop: 6 }}>Nobody on {where} is logged in to share them with yet.</div>}
               {a.left > 0 && a.plan.length > 0 && <div className="tiny muted" style={{ marginTop: 4 }}>{fmtInt(a.left)} stay with {first}: nobody on that client is logged in.</div>}

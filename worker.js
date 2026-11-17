@@ -2677,7 +2677,9 @@ async function noticeAlloc(env, pairs, textOf) {
 }
 /* The billers a supervisor should hear about: no punch in Shastra an hour after their shift began, not marked out,
    not dismissed today. popup: the person's own team lead, or a team lead of a client they are on (managers, the VP and
-   admins see it in the bell). */
+   admins see it in the bell). Who and how many claims only, in a fixed number of reads however many are missing: how
+   their claims would be shared is worked out for one person when the pop-up shows them (team.sharePlan), and again
+   when the team lead acts (V-11: a plan for each, on every 30-second refresh, passed D1's queries for one request). */
 async function missingAlerts(env, user) {
   // the AR floor's alert: never a Payment posting or Submission person's (team leads too), who have only their desk
   if (user.role !== "supervisor" || deskOf(user)) return { state: "off", alerts: [] };
@@ -2696,13 +2698,13 @@ async function missingAlerts(env, user) {
     .map((x) => ({ ...x, s: liveState(live.byUser.get(x.u.id), x.u, now) })).filter((x) => x.s.state === "missing");
   if (!missing.length) return { state: "ok", alerts: [] };
   const clients = await all(env, "SELECT id, team_json FROM clients WHERE active = 1");
-  const alerts = [];
-  for (const { u, s, k } of missing) {
-    const plan = await shareEqually(env, user, u, { dry: true, live, today });
-    const leadsClient = clients.some((c) => parseTeam(c.team_json).includes(u.id) && leadFor(user, c.id));
-    alerts.push({ user_id: u.id, name: u.name, shift: u.shift || "", day: dayOf(u), since: s.since, late_min: s.late_min, sub: s.sub, n: plan.n, high: plan.high, plan: plan.to, skipped: plan.skipped,
-      left: plan.left, clients: plan.clients.map((c) => c.name), popup: (u.reports_to === user.id || (leadsClient && !isManagerUp(user))) && !snoozed.has(k), snoozed: snoozed.has(k) });
-  }
+  const led = new Set(); for (const c of clients) if (leadFor(user, c.id)) parseTeam(c.team_json).forEach((id) => led.add(id));
+  // the untouched claims on each desk (of the clients this person may change, as the plan counts them), in one read
+  const cnt = new Map((await all(env, `SELECT assigned_to, COUNT(*) AS n, SUM(CASE WHEN tier = 'High' THEN 1 ELSE 0 END) AS high FROM claims
+      WHERE state = 'assigned' AND assigned_to IN ${IN_LIST}${editScopeSql(user, "client_id")} GROUP BY assigned_to`, listArg(missing.map((x) => x.u.id)), ...editScopeArgs(user))).map((r) => [r.assigned_to, r]));
+  const alerts = missing.map(({ u, s, k }) => { const c = cnt.get(u.id) || {};
+    return { user_id: u.id, name: u.name, shift: u.shift || "", day: dayOf(u), since: s.since, late_min: s.late_min, sub: s.sub, n: c.n || 0, high: c.high || 0,
+      popup: (u.reports_to === user.id || (led.has(u.id) && !isManagerUp(user))) && !snoozed.has(k), snoozed: snoozed.has(k) }; });
   return { state: "ok", alerts };
 }
 /* How many times a claim came back to AR from Posting / Submission / Rejections (Back to AR or Need assistance). */
@@ -4242,7 +4244,7 @@ const deskDepts = (user) => { const d = deskOf(user); return d ? DESK_DEPTS[d] :
    reprioritising claims and their log, Needs attention, My day, Live status and the day's team, the AR entries, Team allocations,
    repeat denials, the Client 360 report and the AR Inventory report; and the AR floor's people: Team status (its rows, dates and
    note, the claims activity), Out today, Rebalance, Reallocate equally, the not-logged-in alert and the coaching cards. */
-const DESK_NOT = /^(inventory\.|alloc\.|attention\.|queue\.|creport\.|denials\.|coach\.|claims\.(eligible|setState|setPriority|priorityLog)$|reports\.(arInventory|saveArInventory|work|desk)$|supervisor\.allocations$|team\.(huddle|today|saveToday|status|range|activity|saveNote|setOut|shareOut|rebalance|alertSnooze|alertDismiss)$)/;
+const DESK_NOT = /^(inventory\.|alloc\.|attention\.|queue\.|creport\.|denials\.|coach\.|claims\.(eligible|setState|setPriority|priorityLog)$|reports\.(arInventory|saveArInventory|work|desk)$|supervisor\.allocations$|team\.(huddle|today|saveToday|status|range|activity|saveNote|setOut|shareOut|sharePlan|rebalance|alertSnooze|alertDismiss)$)/;
 const unreadable = (v, depth = 0) => v !== null && typeof v === "object" && depth < 10
   && (Object.prototype.hasOwnProperty.call(v, "toString") || Object.prototype.hasOwnProperty.call(v, "valueOf") || Object.values(v).some((x) => unreadable(x, depth + 1)));
 const PUBLIC_OPS = new Set(["auth.login", "auth.sendOtp", "auth.verifyOtp", "auth.signup", "meta.info", "auth.lookup", "auth.setupCode", "auth.completeSetup", "auth.loginById", "auth.adminCode", "auth.adminVerify", "auth.firstPassword"]);
@@ -6128,6 +6130,15 @@ const OPS = {
     await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'dismissed',NULL,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'dismissed', at = excluded.at`, id, day, user.id, user.name || "", now);
     await audit(env, user, "team.alert", null, `${u.name}: not logged in, dismissed (${str(payload.reason, 80) || "the team lead knows"})`);
     return { ok: true };
+  },
+  /* The not-logged-in pop-up: how one person's untouched claims would be shared now (the same plan Reallocate equally
+     follows), worked out when the pop-up shows them; the bell itself carries only who and how many (V-11). */
+  "team.sharePlan": async ({ env, user, payload }) => {
+    const id = str(payload.user_id, 60), today = isoDate(payload.today) || istISO(Date.now());
+    const src = (await visibleUsers(env, user, "edit")).find((u) => u.id === id && u.role === "user");
+    if (!src) throw denied("That person is not in your team.");
+    const plan = await shareEqually(env, user, src, { dry: true, live: await shastraLive(env), today });
+    return { user_id: id, n: plan.n, high: plan.high, plan: plan.to, skipped: plan.skipped, left: plan.left, clients: plan.clients.map((c) => c.name) };
   },
   /* Not logged in: hand the person's untouched claims out equally to the people in today on the same clients, and
      (unless asked not to) mark them out today. Each person who gets claims is told. */
