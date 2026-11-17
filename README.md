@@ -737,7 +737,10 @@ resets, changes to a person's account, switching them off and 1:1 coaching notes
 stay with the person's own team lead (the people who report up to them and the
 people on their own projects), the managers above them and the admin. Holding a
 share of a client, or putting someone on a client's team, does not make that
-person yours: on the Team list they show as "on another team". With a view-only
+person yours: on the Team list they show as "on another team". A Payment posting or
+Submission team lead's own people are those of their own desk: the AR billers on the same project are never theirs
+(no sign-in code, password reset, edit or switching off, and none of their entries on the Team page's Productivity or
+on Time on calls). With a view-only
 share the client's people are there to look at only: no Out today, Team status
 note, rebalance or team task for them, and no team task on that client.
 

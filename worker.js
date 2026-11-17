@@ -3775,7 +3775,15 @@ async function visibleUsers(env, user, mode) {
   if (sc.length) for (const g of await all(env, `SELECT user_id FROM client_access WHERE client_id IN ${IN_LIST}`, listArg(sc))) teams.add(g.user_id);
   return users.filter((u) => own(u) || teams.has(u.id));
 }
-const inSpan = async (env, user, id) => !user.scope || (await visibleUsers(env, user, "span")).some((u) => u.id === id);
+/* The people whose account someone may act on (sign-in codes, password resets, edits, switching off, the Team list's "theirs"):
+   their span, except that a Payment posting or Submission person (team leads and managers of a desk too) has only their own
+   desk's people, never the AR floor's (V-07, R4-A). AR team leads, managers, the VP and the admin are as before. */
+const deskMate = (user, u) => { const d = deskOf(user); if (!d || u.id === user.id) return true; const ud = userDesk(u); return !!ud && (d === "both" || ud === "both" || ud === d); };
+const accountSpan = async (env, user) => (await visibleUsers(env, user, "span")).filter((u) => deskMate(user, u));
+const inSpan = async (env, user, id) => !user.scope || (await accountSpan(env, user)).some((u) => u.id === id);
+// " AND col IN (...)" (the people of their own desk) for a desk person who sees people, "" for everyone else; deskPeopleArgs the list.
+const deskPeopleSql = (user, col) => (deskOf(user) && user.scope ? ` AND ${col} IN ${IN_LIST}` : "");
+const deskPeopleArgs = async (env, user) => (deskOf(user) && user.scope ? [listArg((await accountSpan(env, user)).map((u) => u.id))] : []);
 
 
 /* ---- Purview Shastra roster ----
@@ -5126,7 +5134,7 @@ const OPS = {
   "users.list": async ({ env, user }) => {
     const users = await visibleUsers(env, user);
     // in_span: the people who are theirs (Edit, Sign-in code, Reset password, coaching); the rest are seen through a client only
-    const span = user.scope ? new Set((await visibleUsers(env, user, "span")).map((u) => u.id)) : null;
+    const span = user.scope ? new Set((await accountSpan(env, user)).map((u) => u.id)) : null;
     return { users: users.map((u) => ({ ...publicUser(u), in_span: !span || span.has(u.id) })) };
   },
   "users.save": async ({ env, user, payload }) => {
@@ -8804,11 +8812,13 @@ const OPS = {
       c.billed == null ? "" : c.billed, Number(c.balance) || 0, label(c.age == null ? null : Math.max(0, Math.round(c.age))), c.last_status_code || c.file_status || "", c.last_sub_status || c.file_sub_status || "",
       c.last_action_code || c.file_action || "", c.last_note || c.file_comments || "", c.last_worked_on || ""]) };
   },
+  /* Productivity and Time on calls: a Payment posting or Submission team lead gets their own desk's people only, never an AR
+     biller's entries (R4-A). */
   "supervisor.productivity": async ({ env, user, payload }) => {
     const off = Math.round(num(payload.tz_offset_min, IST_MIN)) * 60;
     const rows = await all(env, `SELECT nt.user_id, nt.user_name, date((nt.created_at / 1000) + ?, 'unixepoch') AS day, COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt,
-        SUM(c.state = 'closed') AS resolved FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${scopeSql(user, "c.client_id")} GROUP BY nt.user_id, day ORDER BY day DESC, n DESC`,
-      off, num(payload.from_ms, 0), num(payload.to_ms, Date.now()), ...scopeArgs(user));
+        SUM(c.state = 'closed') AS resolved FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${scopeSql(user, "c.client_id")}${deskPeopleSql(user, "nt.user_id")} GROUP BY nt.user_id, day ORDER BY day DESC, n DESC`,
+      off, num(payload.from_ms, 0), num(payload.to_ms, Date.now()), ...scopeArgs(user), ...(await deskPeopleArgs(env, user)));
     return { rows };
   },
   /* Time on calls: the call minutes billers entered, by person and by payer, for the dashboard. */
@@ -8816,7 +8826,7 @@ const OPS = {
     const where = ["nt.call_min IS NOT NULL", "nt.created_at BETWEEN ? AND ?"], args = [num(payload.from_ms, 0), num(payload.to_ms, Date.now())];
     if (payload.client_id) { where.push("c.client_id = ?"); args.push(str(payload.client_id, 60)); }
     if (payload.location_id) { where.push("c.location_id = ?"); args.push(str(payload.location_id, 60)); }
-    const w = `FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE ${where.join(" AND ")}${scopeSql(user, "c.client_id")}`, a = [...args, ...scopeArgs(user)];
+    const w = `FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE ${where.join(" AND ")}${scopeSql(user, "c.client_id")}${deskPeopleSql(user, "nt.user_id")}`, a = [...args, ...scopeArgs(user), ...(await deskPeopleArgs(env, user))];
     const total = await one(env, `SELECT COUNT(*) AS calls, COALESCE(SUM(nt.call_min), 0) AS minutes, COUNT(DISTINCT nt.user_id) AS people ${w}`, ...a);
     const byUser = await all(env, `SELECT nt.user_id, nt.user_name, COUNT(*) AS calls, SUM(nt.call_min) AS minutes, MAX(nt.call_min) AS longest ${w} GROUP BY nt.user_id ORDER BY minutes DESC`, ...a);
     const byPayer = await all(env, `SELECT COALESCE(NULLIF(c.payer, ''), 'Unknown') AS payer, COUNT(*) AS calls, SUM(nt.call_min) AS minutes ${w} GROUP BY 1 ORDER BY minutes DESC LIMIT 15`, ...a);
