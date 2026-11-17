@@ -204,6 +204,46 @@ ok("R4-G: two rows for the two Paula Posts (2 and 1 posted), not one row of 3", 
 ok("R4-G: each row carries the person's id, and their Emp ID to tell them apart", paulas.every((x) => x.id) && new Set(paulas.map((x) => x.id)).size === 2 && paulas.map((x) => x.emp_id).sort().join(",") === "D1,D9", paulas);
 ok("R4-G: the page keys and labels the rows by person (the Emp ID shows when two share a name)", /d\.by_person\.map\(\(p\) => <tr key=\{p\.id \|\| p\.name\}/.test(src) && /sameName\(p\)/.test(src));
 
+S("R4-H: a big floor's lists and counts are not cut at a fixed number");
+const hnow2 = Date.now(), seq = (n) => `WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < ${n})`;
+const anyClaim = (await poolOf(1, sun.id))[0];
+// Needs you now: 350 open posting tasks past their TAT, then one waiting on the client, due last, whose chase date has come
+await sql(`${seq(350)} INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, assigned_to) SELECT 'ho-r4h-' || i, ?, ?, 'posting', 'assigned', ?, ? + i, ?, ? FROM s`,
+  anyClaim, sun.id, hnow2 - 5 * 86400000, hnow2 - 4 * 86400000, U("Paula Post"), U("Paula Post"));
+await sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, chase_at, paused_at) VALUES (?,?,?,?,?,?,?,?,?,?)", "ho-r4h-chase", anyClaim, sun.id, "posting", "client", hnow2 - 86400000, hnow2 + 30 * 86400000, U("Paula Post"), hnow2 - 60000, hnow2 - 86400000);
+const dsh = await PIA("handoffs.dashboard", { dept: "posting", from_ms: hnow2 - 7 * 86400000, to_ms: hnow2 + 60000 });
+ok("R4-H: Needs you now counts every one (351), not the first 300 looked at, and lists the first 60", dsh.attention_total === 351 && dsh.attention.length === 60, [dsh.attention_total, dsh.attention.length]);
+ok("R4-H: the page says how many there are when it lists only the first 60", /The first \{fmtInt\(d\.attention\.length\)\} of \{fmtInt\(d\.attention_total\)\} by due time/.test(src));
+await sql("DELETE FROM handoffs WHERE id LIKE 'ho-r4h-%'");
+// a week of desk tasks over 20,000: the desk dashboard's days and the TAT counts take every one
+await sql(`${seq(20050)} INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, assigned_to, done_at, done_by, done_by_name) SELECT 'ho-r4w-' || i, ?, ?, 'posting', 'complete', ?, ?, ?, ?, ?, ?, 'Paula Post' FROM s`,
+  anyClaim, sun.id, hnow2 - 3 * 86400000, hnow2 + 86400000, U("Paula Post"), U("Paula Post"), hnow2 - 2 * 86400000, U("Paula Post"));
+const wk2 = await PIA("handoffs.dashboard", { dept: "posting", from_ms: hnow2 - 4 * 86400000, to_ms: hnow2 + 60000 });
+const doneByDay = wk2.by_day.reduce((t, x) => t + x.done, 0), recByDay = wk2.by_day.reduce((t, x) => t + x.received, 0);
+ok("R4-H: the desk dashboard's days count all 20,050 tasks of the week, as its totals do", doneByDay >= 20050 && doneByDay === wk2.totals.completed && recByDay >= 20050, [doneByDay, recByDay, wk2.totals.completed]);
+const istD = (ms) => new Date(ms + 330 * 60000).toISOString().slice(0, 10);
+const slaX = await TI("sla.extras", { client_id: sun.id, from: istD(hnow2 - 7 * 86400000), to: istD(hnow2 + 2 * 86400000), today: istD(hnow2) });
+ok("R4-H: the SLA scorecard's Payment posting TAT counts all 20,050 tasks due in the dates", slaX.tat.posting.due + slaX.tat.posting.open >= 20050, slaX.tat.posting);
+await sql("DELETE FROM handoffs WHERE id LIKE 'ho-r4w-%'");
+// team tasks: 2,050 open ones of another team lead, due first, then one of Tina's own, due last
+await sql(`${seq(2050)} INSERT INTO team_tasks (id, client_id, scope, title, due_at, count_total, created_by, created_by_name, created_at, updated_at) SELECT 'tt-r4h-' || i, ?, 'Other', 'Lakeview list ' || i, ? + i, 1, ?, 'Leo Lead', ?, ? FROM s`,
+  lake.id, hnow2 + 86400000, U("Leo Lead"), hnow2, hnow2);
+await sql("INSERT INTO team_tasks (id, client_id, scope, title, due_at, count_total, created_by, created_by_name, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)", "tt-r4h-tina", sun.id, "Other", "Sunrise ERA batch", hnow2 + 9 * 86400000, 1, U("Tina Lead"), "Tina Lead", hnow2, hnow2);
+const tl = await TI("tasks.list", { view: "open" });
+ok("R4-H: Tina's own team task is on her list though 2,050 others are due before it", tl.rows.some((t) => t.id === "tt-r4h-tina"), tl.rows.length);
+const cnt = await TI("attention.count", {});
+ok("R4-H: and on her Needs attention count", cnt.tasks >= 1, cnt);
+await sql("DELETE FROM team_tasks WHERE id LIKE 'tt-r4h-%'");
+// escalations: 1,050 resolved ones logged after one that is still open
+await sql("INSERT INTO escalations (id, client_id, sr, day, dept, status, created_at) VALUES (?,?,?,?,?,?,?)", "esc-r4h-open", sun.id, 1, "2026-01-05", "AR", "open", Date.parse("2026-01-05T05:00:00Z"));
+await sql(`${seq(1050)} INSERT INTO escalations (id, client_id, sr, day, dept, status, created_at, resolved_at) SELECT 'esc-r4h-' || i, ?, i + 1, '2026-02-01', 'AR', 'resolved', ?, ? FROM s`, sun.id, Date.parse("2026-02-01T05:00:00Z"), Date.parse("2026-02-02T05:00:00Z"));
+const el = await TI("escalations.list", { client_id: sun.id, status: "open", today: "2026-11-17" });
+ok("R4-H: the Escalation tracker's open list has the open one logged before 1,050 others", el.rows.some((e) => e.id === "esc-r4h-open") && el.stats.open >= 1, [el.rows.length, el.stats.open]);
+const ea = await TI("escalations.list", { client_id: sun.id, status: "", today: "2026-11-17" });
+ok("R4-H: and the whole register has all 1,051", ea.rows.filter((e) => /^esc-r4h-/.test(e.id)).length === 1051, ea.rows.length);
+await sql("DELETE FROM escalations WHERE id LIKE 'esc-r4h-%'");
+ok("R4-H: README says Live status's two lists show the red ones first, then the oldest", /picked\), the red ones first, then the oldest first/.test(readme) && /Needs attention,\s+the red ones first, then the oldest first/.test(readme) && !/picked\), oldest first/.test(readme));
+
 // ---------------------------------------------------------------------------------------------------------------------
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);

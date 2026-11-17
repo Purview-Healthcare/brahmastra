@@ -2115,7 +2115,8 @@ function DeskDashboard({ ctx, desk, go }) {
           <div className="table-wrap mt8"><table className="t"><thead><tr><th>Why</th><th>Claim</th><th>Client</th><th>With</th><th>Due</th></tr></thead>
             <tbody>{d.attention.map((x) => <tr key={x.id}><td>{{ past: <span className="badge red">Past TAT</span>, soon: <span className="badge amber">Under {d.due_soon_hours} h left</span>, chase: <span className="badge red">Chase the client</span>, bounced: <span className="badge red">Returned {x.returns}×</span> }[x.why]}{x.returns > 0 && x.why !== "bounced" ? <span className="badge amber" style={{ marginLeft: 4 }}>returned {x.returns}×</span> : null}</td>
               <td><span className="mono small">{x.claim_no || "–"}</span><div className="tiny muted">{x.patient} · {DEPT_NAME[x.dept]}</div></td><td className="small">{x.client_name}</td><td className="small">{x.who || "–"}</td><td className="small">{fmtWhen(x.due_at)}</td></tr>)}
-              {!d.attention.length && <tr><td colSpan={5} className="muted">Nothing urgent. Everything is on time.</td></tr>}</tbody></table></div></div>
+              {!d.attention.length && <tr><td colSpan={5} className="muted">Nothing urgent. Everything is on time.</td></tr>}</tbody></table></div>
+          {d.attention_total > d.attention.length && <div className="tiny muted mt8">The first {fmtInt(d.attention.length)} of {fmtInt(d.attention_total)} by due time. The rest are on the desk list.</div>}</div>
         <div className="grid g2">
           <div className="card"><h3>Why claims needed AR's help</h3><div className="small muted mb">Need assistance from AR, {rangeText(dr)}, by reason</div>
             {d.back_reasons.length ? <Bars rows={d.back_reasons} labelOf={(r) => r.reason || "No reason"} valueOf={(r) => r.n} fmt={fmtInt} /> : <Empty>Nothing came back to AR in these dates.</Empty>}</div>

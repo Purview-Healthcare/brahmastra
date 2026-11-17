@@ -289,11 +289,11 @@ entries before the shift time too, as Team status and My day do (a night shift's
   working, idle and on desks), **Expand all** / **Collapse all**, or **One list**. Click a biller's name to open
   **their claims**.
 - **Open escalations**: the Escalation tracker's open escalations on your clients (and the client, location or team lead
-  picked), oldest first: the client, the SR number (and the claim number when it has one), who logged it and how long ago, and
+  picked), the red ones first, then the oldest first: the client, the SR number (and the claim number when it has one), who logged it and how long ago, and
   the working hours it has been open. Red as in the tracker: open over 24 working hours with no reason given yet, or past
   the expected close date.
-- **Flagged by billers**: the claims billers flagged for the team lead that still wait for an answer, as in Needs attention:
-  the claim number (it opens the claim), client, who flagged it and how long ago, and the working hours waiting; red past
+- **Flagged by billers**: the claims billers flagged for the team lead that still wait for an answer, as in Needs attention,
+  the red ones first, then the oldest first: the claim number (it opens the claim), client, who flagged it and how long ago, and the working hours waiting; red past
   the 48 working hours, not while it is on hold. The **Live status** tab counts these two lists, red when one of them is red.
 - Below the floor: unassigned claims, claims with Posting / Submission and follow-ups due today.
 - Posting and Submission people are not on the floor: they have their own desks.
@@ -971,7 +971,8 @@ their Open list as **Chase the client**.
 
 **Warnings and reports.** Hand-offs with under 4 hours left are flagged at the top of the list and in an amber
 bar on every screen. A claim returned to AR 3 times is escalated to the AR team lead and listed for the
-department lead. Department dashboards show **Needs you now**, **why claims needed AR's help** (by reason and
+department lead. Department dashboards show **Needs you now** (the first 60 by due time; when there are more it says
+how many, and the rest are on the desk list), **why claims needed AR's help** (by reason and
 biller) and, for Submission, **rejections by code** (by code, client and biller). Rejected rechecks and
 resubmitted rejections carry a rejection code. Received, Submitted, Within TAT and the average count the desk's own
 tasks; the recheck after a submission is the same claim again, so it is not a second claim received and submitted

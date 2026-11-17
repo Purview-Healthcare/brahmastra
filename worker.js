@@ -859,8 +859,8 @@ async function tatReportRows(env, clientId, ym) {
   const t = (ms) => { if (!ms) return ""; const d = new Date(ms + IST_MIN * 60000); return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}/${d.getUTCFullYear()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
   // every hand-off to Payment posting, Submission (each time a claim is sent, a resubmission too) and Rejections; the recheck
   // after submitting is the biller checking the payer has it, not Submission's work, so it is left out (as in tatStats)
-  const rows = (await all(env, `SELECT h.dept, h.status, h.created_at, h.due_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
-      WHERE h.client_id = ? AND h.dept IN ('posting','submission','rejection') AND h.due_at BETWEEN ? AND ? ORDER BY h.due_at LIMIT 20000`, clientId, from, to)).map((h) => {
+  const rows = (await allParts(env, `SELECT h.dept, h.status, h.created_at, h.due_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no FROM handoffs h JOIN claims c ON c.id = h.claim_id
+      WHERE h.client_id = ? AND h.dept IN ('posting','submission','rejection') AND h.due_at BETWEEN ? AND ?`, [clientId, from, to], "h.due_at, h.rowid")).map((h) => {
     // waiting on the client keeps the clock running: still open (the README, and missedByClient, count it so)
     const open = HO_OPEN.includes(h.status), closed = open ? null : h.closed_at;
     const within = closed != null ? (closed <= h.due_at ? "Yes" : "No") : h.due_at < now ? "No" : "Open";
@@ -1213,9 +1213,9 @@ async function tatStats(env, clientIds, from, to, now = Date.now()) {
     if (closed != null && closed <= due) s.met++;
     else { s.missed++; if (who) s.who[who] = (s.who[who] || 0) + 1; if (row) row(); }
   };
-  for (const h of await all(env, `SELECT h.client_id, h.dept, h.status, h.due_at, h.created_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no, COALESCE(NULLIF(h.done_by_name, ''), u.name) AS who
+  for (const h of await allParts(env, `SELECT h.client_id, h.dept, h.status, h.due_at, h.created_at, COALESCE(h.done_at, h.paused_at) AS closed_at, c.claim_no, COALESCE(NULLIF(h.done_by_name, ''), u.name) AS who
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id)
-      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ? LIMIT 20000`, idsArg, from, to)) {
+      WHERE h.dept IN ('posting','submission','rejection') AND h.client_id IN ${IN} AND h.due_at BETWEEN ? AND ?`, [idsArg, from, to], "h.rowid")) {
     const o = out.get(h.client_id); if (!o) continue;
     const k = h.dept === "posting" ? "posting" : "submission", open = HO_OPEN.includes(h.status);
     tally(o[k], h.due_at, open ? null : h.closed_at, h.who || "", () => o.missed_list.push({ dept: k, claim_no: h.claim_no || "", sent: h.created_at, due: h.due_at, closed: open ? null : h.closed_at, who: h.who || "" }));
@@ -1388,7 +1388,7 @@ function tatMailDue(now) {
    who has it. Never the task's name or description. */
 async function lateTeamTasks(env, now) {
   const today = istISO(now);
-  const ts = (await all(env, "SELECT t.id, t.client_id, t.scope, t.created_by, t.due_at, t.hold_until, t.count_total, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE t.status = 'open' AND t.due_at < ? LIMIT 2000", now))
+  const ts = (await allParts(env, "SELECT t.id, t.client_id, t.scope, t.created_by, t.due_at, t.hold_until, t.count_total, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE t.status = 'open' AND t.due_at < ?", [now], "t.rowid"))
     .filter((t) => !(t.hold_until && t.hold_until >= today));
   const people = new Map();
   for (const part of chunks(ts.map((t) => t.id), 80)) for (const p of await all(env, `SELECT p.task_id, p.done_n, u.name FROM team_task_people p LEFT JOIN users u ON u.id = p.user_id WHERE p.task_id IN (${part.map(() => "?").join(",")})`, ...part)) {
@@ -2181,6 +2181,13 @@ const run = (env, sql, ...p) => env.DB.prepare(sql).bind(...d1Vals(p)).run();
    per item; json_each gives the same rows as the list written out. */
 const IN_LIST = "(SELECT value FROM json_each(?))";
 const listArg = (list) => JSON.stringify([...list]);
+/* Every row of a query, read in parts of `size` (R4-H): a big floor's week or month of desk tasks, its team tasks or its
+   escalations are never cut at a fixed count. q has no ORDER BY or LIMIT; order is unique (a rowid last), so the parts neither
+   skip nor repeat a row. */
+async function allParts(env, q, args, order, size = 5000) {
+  const out = [];
+  for (let off = 0; ; off += size) { const part = await all(env, `${q} ORDER BY ${order} LIMIT ? OFFSET ?`, ...args, size, off); out.push(...part); if (part.length < size) return out; }
+}
 const changesOf = (r) => (r && r.meta && Number(r.meta.changes)) || 0;
 async function batchAll(env, stmts, size = 50) {
   const out = [];
@@ -6551,7 +6558,7 @@ const OPS = {
     }
     if (user.role === "supervisor") {
       // the open tasks, and the ones everyone completed in the last 3 days (the last update closed them: the team lead still hears of it)
-      const seen3 = (await all(env, "SELECT t.id, t.title, t.client_id, t.created_by, t.due_at, t.hold_until, t.lead_seen_at, t.status, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE t.status = 'open' OR (t.status = 'done' AND t.closed_at > ?) ORDER BY t.due_at LIMIT 2000", now - 3 * 86400000))
+      const seen3 = (await allParts(env, "SELECT t.id, t.title, t.client_id, t.created_by, t.due_at, t.hold_until, t.lead_seen_at, t.status, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE (t.status = 'open' OR (t.status = 'done' AND t.closed_at > ?))", [now - 3 * 86400000], "t.due_at, t.rowid"))
         .filter((t) => taskLeadSees(user, t));
       const lt = seen3.filter((t) => t.status === "open");
       const byId = new Map(seen3.map((t) => [t.id, t]));
@@ -6961,9 +6968,9 @@ const OPS = {
       all(env, `SELECT h.claim_id, h.status, h.created_at, h.done_at, h.done_by_name, h.proof_json, h.reason, c.claim_no, c.account_no, c.dos, c.payer, c.billed, c.balance, COALESCE(c.location_id, '') AS loc
         FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.dept = 'rejection' AND h.client_id = ? AND h.created_at BETWEEN ? AND ?${lw} LIMIT 60000`, clientId, A, B, ...la),
       // every request that overlaps the two periods: asked by the end, and still waiting or answered (or done) after the start, however long ago it was asked
-      all(env, `SELECT h.claim_id, h.dept, h.status, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_answered_at, h.done_at, h.chase_at, c.claim_no, c.account_no, c.dos, c.age_days, c.payer, c.balance, COALESCE(c.location_id, '') AS loc
+      allParts(env, `SELECT h.claim_id, h.dept, h.status, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_answered_at, h.done_at, h.chase_at, c.claim_no, c.account_no, c.dos, c.age_days, c.payer, c.balance, COALESCE(c.location_id, '') AS loc
         FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.paused_at IS NOT NULL AND h.paused_at <= ?
-          AND (h.status = 'client' OR COALESCE(h.client_answered_at, h.done_at, h.paused_at) >= ?)${lw} LIMIT 20000`, clientId, B, A, ...la),
+          AND (h.status = 'client' OR COALESCE(h.client_answered_at, h.done_at, h.paused_at) >= ?)${lw}`, [clientId, B, A, ...la], "h.rowid"),
     ]);
     const no = (r) => r.claim_no || r.account_no || "";
     const HO_STATE = { complete: "Done", pending: "Pending", assigned: "Being worked", client: "Waiting on the client", back: "Back with AR", assistance: "Back with AR", rejected: "Sent back" };
@@ -8975,12 +8982,12 @@ const OPS = {
     const empOf = new Map((await all(env, `SELECT id, emp_id FROM users WHERE id IN ${IN_LIST}`, listArg(byPerson.map((p) => p.id)))).map((u) => [u.id, u.emp_id || ""]));
     for (const p of byPerson) p.emp_id = empOf.get(p.id) || "";
     // time to complete in working hours, as the TAT counts (a task sent Friday 18:00 and done Monday 10:00 took 16, not 64)
-    const comp = await all(env, `SELECT ${pKey} AS id, CASE WHEN h.dept = 'subcheck' AND h.available_at IS NOT NULL THEN h.available_at ELSE h.created_at END AS st, h.done_at
-      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? LIMIT 20000`, ...a, from, to);
+    const comp = await allParts(env, `SELECT ${pKey} AS id, CASE WHEN h.dept = 'subcheck' AND h.available_at IS NOT NULL THEN h.available_at ELSE h.created_at END AS st, h.done_at
+      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ?`, [...a, from, to], "h.rowid");
     const whAvg = (xs) => (xs.length ? Math.round(xs.reduce((t, x) => t + workingHoursBetween(x.st, x.done_at), 0) / xs.length * 10) / 10 : null);
     if (tot) tot.avg_hours = whAvg(comp);
     for (const p of byPerson) p.avg_hours = whAvg(comp.filter((x) => x.id === p.id));
-    const ev = await all(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND ${work} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?) LIMIT 20000`, ...a, from, to, from, to);
+    const ev = await allParts(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND ${work} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?)`, [...a, from, to, from, to], "h.rowid");
     const day = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10);
     const days = {};
     for (const e of ev) {
@@ -8989,13 +8996,17 @@ const OPS = {
     }
     // For the department's team lead: what needs them now (past or near the TAT, chase the client, claims returned 3+ times).
     const soonCut = addWorkingHours(now, DUE_SOON_HOURS);
+    // Picked in the query itself, every one counted (R4-H: not the first 300 open ones looked at); the first 60 by due time are listed.
+    const returnsSql = "(SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance'))";
+    const needSql = `${W} AND h.status IN ('pending','assigned','client') AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?)
+        AND ((h.due_at <= ? AND NOT ${held}) OR (h.status = 'client' AND h.chase_at IS NOT NULL AND h.chase_at <= ?) OR ${returnsSql} >= ?)`, needArgs = [...a, now, soonCut, now, BOUNCE_LIMIT];
     const attention = (await all(env, `SELECT h.id, h.claim_id, h.dept, h.status, h.due_at, h.chase_at, h.available_at, c.claim_no, c.patient, cl.name AS client_name, ${held} AS held,
-        COALESCE(a.name, l.name) AS who, (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns
+        COALESCE(a.name, l.name) AS who, ${returnsSql} AS returns
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN users a ON a.id = h.assigned_to LEFT JOIN users l ON l.id = h.lead_id
-      WHERE ${W} AND h.status IN ('pending','assigned','client') AND NOT (h.dept = 'subcheck' AND COALESCE(h.available_at, 0) > ?) ORDER BY h.due_at LIMIT 300`, ...a, now))
+      WHERE ${needSql} ORDER BY h.due_at, h.rowid LIMIT 60`, ...needArgs))
       // one on hold is not past (or near) the TAT until its expected date; it is still listed when the client must be chased or it keeps coming back
-      .map((x) => ({ ...x, held: !!x.held, why: x.due_at < now && !x.held ? "past" : x.status === "client" && x.chase_at && x.chase_at <= now ? "chase" : x.returns >= BOUNCE_LIMIT ? "bounced" : x.due_at <= soonCut && !x.held ? "soon" : "" }))
-      .filter((x) => x.why).slice(0, 60);
+      .map((x) => ({ ...x, held: !!x.held, why: x.due_at < now && !x.held ? "past" : x.status === "client" && x.chase_at && x.chase_at <= now ? "chase" : x.returns >= BOUNCE_LIMIT ? "bounced" : x.due_at <= soonCut && !x.held ? "soon" : "" }));
+    const attentionTotal = ((await one(env, `SELECT COUNT(*) AS n FROM handoffs h WHERE ${needSql}`, ...needArgs)) || {}).n || 0;
     // Why claims came back to AR, by reason and by the biller who sent them.
     const backReasons = await all(env, `SELECT h.reason, COUNT(*) AS n FROM handoffs h WHERE ${W} AND h.status IN ('back','assistance') AND h.done_at BETWEEN ? AND ? GROUP BY h.reason ORDER BY n DESC`, ...a, from, to);
     const backBillers = await all(env, `SELECT h.created_by_name AS biller, COUNT(*) AS n, GROUP_CONCAT(DISTINCT h.reason) AS reasons FROM handoffs h WHERE ${W} AND h.status IN ('back','assistance') AND h.done_at BETWEEN ? AND ?
@@ -9012,7 +9023,7 @@ const OPS = {
       : await all(env, `SELECT DISTINCT cl.posting_tat_hours, cl.submission_tat_hours FROM handoffs h JOIN clients cl ON cl.id = h.client_id WHERE ${W}`, ...a);
     const tats = new Set(tatCl.flatMap((cl) => (dept === "both" ? ["posting", "submission"] : [dept]).map((d) => tatHours(cl, d))));
     return { dept, totals: tot || {}, by_client: byClient, by_person: byPerson, by_day: Object.keys(days).sort().map((d) => ({ day: d, ...days[d] })), tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1,
-      attention, due_soon_hours: DUE_SOON_HOURS, bounce_limit: BOUNCE_LIMIT, back_reasons: backReasons, back_billers: backBillers,
+      attention, attention_total: attentionTotal, due_soon_hours: DUE_SOON_HOURS, bounce_limit: BOUNCE_LIMIT, back_reasons: backReasons, back_billers: backBillers,
       rejections: { total: rejRows.length, by_code: tally("code"), by_client: tally("client_name"), by_biller: tally("biller") } };
   },
   "handoffs.count": async ({ env, user }) => {
@@ -9477,8 +9488,8 @@ const OPS = {
     const from = isoDate(payload.from), to = isoDate(payload.to);
     if (from) { where.push("e.day >= ?"); args.push(from); }
     if (to) { where.push("e.day <= ?"); args.push(to); }
-    const rows = await all(env, `SELECT e.*, cl.name AS client_name FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
-      WHERE 1 = 1${where.map((w) => " AND " + w).join("")}${scopeSql(user, "e.client_id")} ORDER BY e.day DESC, e.created_at DESC LIMIT 1000`, ...args, ...scopeArgs(user));
+    const rows = await allParts(env, `SELECT e.*, cl.name AS client_name FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
+      WHERE 1 = 1${where.map((w) => " AND " + w).join("")}${scopeSql(user, "e.client_id")}`, [...args, ...scopeArgs(user)], "e.day DESC, e.created_at DESC, e.rowid DESC");
     const now = Date.now(), today = isoDate(payload.today) || istISO(now), month = today.slice(0, 7);
     const isTL = !isSME(user);
     const out = rows.map((e) => {
@@ -9648,7 +9659,7 @@ const OPS = {
   "tasks.list": async ({ env, user, payload }) => {
     if (user.role !== "supervisor") throw denied("Team tasks are for team leads and above.");
     const now = Date.now(), week = now - 7 * 86400000, view = ["open", "done", "all"].includes(payload.view) ? payload.view : "open", cid = payload.client_id ? str(payload.client_id, 60) : "";
-    const rows = (await all(env, `SELECT t.*, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE (t.status = 'open' OR t.closed_at > ?)${cid ? " AND t.client_id = ?" : ""} ORDER BY t.due_at LIMIT 2000`, now - 30 * 86400000, ...(cid ? [cid] : [])))
+    const rows = (await allParts(env, `SELECT t.*, cl.name AS client_name FROM team_tasks t LEFT JOIN clients cl ON cl.id = t.client_id WHERE (t.status = 'open' OR t.closed_at > ?)${cid ? " AND t.client_id = ?" : ""}`, [now - 30 * 86400000, ...(cid ? [cid] : [])], "t.due_at, t.rowid"))
       .filter((t) => taskLeadSees(user, t));
     const shaped = await shapeTasks(env, rows, now);
     const open = shaped.filter((t) => t.status === "open"), done = shaped.filter((t) => t.status !== "open"), done7 = done.filter((t) => t.closed_at > week);
@@ -9886,7 +9897,7 @@ const OPS = {
     // team tasks this person sees: open ones for the tab; past the TAT or someone asking for help count on the badge
     let tk = { open: 0, late: 0, help: 0 };
     if (user.role === "supervisor") {
-      const today = istISO(now), lt = (await all(env, `SELECT id, client_id, created_by, due_at, hold_until FROM team_tasks WHERE status = 'open'${cid ? " AND client_id = ?" : ""} LIMIT 2000`, ...cargs)).filter((t) => taskLeadSees(user, t));
+      const today = istISO(now), lt = (await allParts(env, `SELECT id, client_id, created_by, due_at, hold_until FROM team_tasks WHERE status = 'open'${cid ? " AND client_id = ?" : ""}`, cargs, "rowid")).filter((t) => taskLeadSees(user, t));
       const helpIds = new Set(); for (const part of chunks(lt.map((t) => t.id), 80)) for (const h of await all(env, `SELECT DISTINCT task_id FROM team_task_people WHERE status = 'help' AND task_id IN (${part.map(() => "?").join(",")})`, ...part)) helpIds.add(h.task_id);
       tk = { open: lt.length, late: lt.filter((t) => !(t.hold_until && t.hold_until >= today) && now > t.due_at).length, help: helpIds.size };
     }
