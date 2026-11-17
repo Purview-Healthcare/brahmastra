@@ -8147,6 +8147,15 @@ function HowDrawer({ page, onClose }) {
 /* The app itself. Its address carries embed=1 (no header of its own) and the Brahmastra theme. */
 /* Brahmastra draws the app's own tabs in its tab row: it says 'brahmastra:hello' when the page loads, the page answers
    with 'embed:tabs' (and hides its own tab bar), and a click here sends 'brahmastra:go'. */
+/* The tabs an embedded app sends, as Brahmastra's row draws them. Third Eye's Team Status tab is left out: Brahmastra's Dashboard
+   has Team status from its own data. When the app shows that tab (it opens on it), `go` is the next tab the row draws, to move it
+   there, so the page under the row is always one of the row's tabs, highlighted (Y-06). */
+const embedTabsOf = (raw) => {
+  const all = raw.slice(0, 20).map((t) => ({ id: String(t.id).slice(0, 80), label: String(t.label).slice(0, 60), on: !!t.on })), drawn = (t) => !/^team\s*status$/i.test(t.label);
+  const at = all.findIndex((t) => t.on && !drawn(t)), to = at < 0 ? null : all.slice(at + 1).find(drawn) || all.find(drawn);
+  if (to) to.on = true;
+  return { tabs: all.filter(drawn), go: to ? to.id : null };
+};
 function useFrame(base, extra) {
   const [nonce, setNonce] = useState(0);
   const [full, setFull] = useState(false);
@@ -8162,8 +8171,11 @@ function useFrame(base, extra) {
       const w = win.current && win.current.contentWindow;
       if (!w || e.source !== w) return;
       const d = e.data || {};
-      // Third Eye's Team Status tab is left out: Brahmastra's Dashboard has Team status from its own data
-      if (d.type === "embed:tabs" && Array.isArray(d.tabs)) setTabs(d.tabs.slice(0, 20).map((t) => ({ id: String(t.id).slice(0, 80), label: String(t.label).slice(0, 60), on: !!t.on })).filter((t) => !/^team\s*status$/i.test(t.label)));
+      if (d.type === "embed:tabs" && Array.isArray(d.tabs)) {
+        const x = embedTabsOf(d.tabs);
+        if (x.go != null) { try { w.postMessage({ type: "brahmastra:go", id: x.go }, e.origin || "*"); } catch (er) {} }
+        setTabs(x.tabs);
+      }
     };
     window.addEventListener("message", h);
     return () => window.removeEventListener("message", h);

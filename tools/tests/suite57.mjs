@@ -284,6 +284,17 @@ S("Y-05: the roster handed to Third Eye: statuses Third Eye reads, associates on
   await sql("UPDATE users SET roster_status = 'Working' WHERE name = 'Bela Agent'");
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-06: the Third Eye tab opens on a tab Brahmastra's row draws");
+{
+  const embedTabsOf = vm.runInContext("embedTabsOf", app);
+  const te = [{ id: "team", label: "Team Status", on: true }, { id: "prod", label: "Production", on: false }, { id: "aq", label: "Agent Quality", on: false }];
+  const x = embedTabsOf(te);
+  ok("Y-06: Team Status is not drawn, and Third Eye is moved to the next drawn tab (Production), highlighted", x.go === "prod" && x.tabs.map((t) => t.label + (t.on ? "*" : "")).join(",") === "Production*,Agent Quality", x);
+  const y = embedTabsOf(te.map((t) => ({ ...t, on: t.id === "aq" })));
+  ok("Y-06: on a drawn tab nothing is moved", y.go === null && y.tabs.find((t) => t.on).id === "aq", y);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
