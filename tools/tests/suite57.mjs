@@ -102,6 +102,61 @@ S("Y-07: the AR Inventory file for Drishti ages each claim to the day it is writ
   ok("Y-07: the rows run oldest first by today's age (the 91-120 claim before the 31-60 one)", f.rows.findIndex((r) => r[0] === "Y07-A") < f.rows.findIndex((r) => r[0] === "Y07-B"), ages.slice(0, 8));
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-01: a renamed client keeps one folder and one workbook a month; its old name is not given to another client");
+rig.liveEnv.DEMO = false;   // from here on OneDrive copies are on
+const WORK = { saag: { status: "Claim In Process", sub_status: "Need to allow some time", action: "Correction, Resubmission & Reprocessing", bucket: "Payer", effective: "Pending-Collectible Insurance" },
+  note: { source: "Portal", findings: "Claim is in process per the payer portal", action: "follow up" } };
+const arBooks = () => files().filter((x) => /^Brahmastra Clients\/[^/]+\/Production\/AR\/AR Production - /.test(x.path));
+const rowsHave = (it, no) => it.rows.some((r) => (r || []).includes(no));
+{
+  const pool = (await TI("claims.list", { client_id: sun.id, state: "open", page_size: 10 })).rows;
+  await TI("alloc.apply", { client_id: sun.id, assignments: pool.slice(0, 4).map((c) => ({ id: c.id, user_id: U("Arun Agent") })) });
+  let r = await T(() => AR("queue.complete", { id: pool[0].id, ...WORK })); await sleep(300);
+  const before = arBooks();
+  ok("Y-01: the first entry goes to the client's month workbook", r.ok && before.length === 1 && rowsHave(before[0].it, pool[0].claim_no), [r.e, before.map((x) => x.path)]);
+  const od0 = await q1("SELECT od_folder_id, od_name FROM clients WHERE id = ?", sun.id);
+  ok("Y-01: the folder's name is kept when the folder is made", od0.od_name === SUN && !!od0.od_folder_id, od0);
+  r = await T(() => A("clients.save", { id: sun.id, name: SUN + " Center" }));
+  ok("Y-01: the client can be renamed", r.ok, r.e);
+  r = await T(() => AR("queue.complete", { id: pool[1].id, ...WORK })); await sleep(300);
+  const after = arBooks();
+  ok("Y-01: after the rename the month's entries stay in one workbook (no second file under the new name)", r.ok && after.length === 1 && rowsHave(after[0].it, pool[0].claim_no) && rowsHave(after[0].it, pool[1].claim_no), after.map((x) => x.path));
+  const list = (await A("clients.list")).clients.find((c) => c.id === sun.id);
+  ok("Y-01: the client card shows the folder's own name", list.od && list.od.name === SUN, list.od);
+  // a new client may not take the old name: it is the renamed client's folder
+  r = await T(() => A("clients.save", { name: SUN, code: "SEC2", locations: ["Main Office"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: U("Tina Lead") } } } }));
+  ok("Y-01: a new client with the renamed client's old name is refused (it would share its folder)", !r.ok && /OneDrive folder/.test(r.e || ""), r.ok ? "accepted" : r.e);
+  r = await T(() => A("clients.save", { name: "sunrise eye care.", code: "SEC3", locations: ["Main Office"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: U("Tina Lead") } } } }));
+  ok("Y-01: also when it differs only in case or a final dot", !r.ok && /OneDrive folder/.test(r.e || ""), r.ok ? "accepted" : r.e);
+  const other = (await A("clients.list")).clients.find((c) => c.id !== sun.id && c.active);
+  r = await T(() => A("clients.save", { id: other.id, name: SUN }));
+  ok("Y-01: renaming another client to that old name is refused too", !r.ok && /OneDrive folder/.test(r.e || ""), r.ok ? "accepted" : r.e);
+  r = await T(() => A("clients.save", { id: sun.id, name: SUN }));
+  ok("Y-01: the renamed client itself may go back to its old name", r.ok, r.e);
+  await A("clients.save", { id: sun.id, name: SUN + " Center" });
+  // a client whose folder was made before its name was kept (od_name empty): a new client of the old name is not refused by
+  // the name check, but it never takes the other client's folder, and its entries never go to the other client's workbook
+  await sql("UPDATE clients SET od_name = '' WHERE id = ?", sun.id);
+  r = await T(() => A("clients.save", { name: SUN, code: "SEC4", locations: ["Main Office"], profile: { scope: ["ar"], targets: { ar: 40 }, resp: { ar: { lead: U("Tina Lead") } } } }));
+  if (r.ok) {
+    const nu = r.r.client;
+    await A("clients.saveTeam", { client_id: nu.id, team: [U("Arun Agent")] });
+    await sql("INSERT INTO claims (id, client_id, match_key, claim_no, account_no, patient, payer, dos, balance, state, created_at, updated_at) VALUES ('y01new', ?, 'mk-y01new', 'Y01-NEW', 'NA-Y01', 'Test Patient New', 'Aetna', '2026-09-01', 250, 'open', ?, ?)", nu.id, Date.now(), Date.now());
+    await A("alloc.apply", { client_id: nu.id, assignments: [{ id: "y01new", user_id: U("Arun Agent") }] });
+    const w = await T(() => AR("queue.complete", { id: "y01new", ...WORK })); await sleep(300);
+    const nrow = await q1("SELECT od_folder_id, od_status_json FROM clients WHERE id = ?", nu.id), srow = await q1("SELECT od_folder_id FROM clients WHERE id = ?", sun.id);
+    ok("Y-01: the entry is still saved in Brahmastra", w.ok, w.e);
+    ok("Y-01: the new client does not take the renamed client's folder", nrow.od_folder_id !== srow.od_folder_id && /cannot use it/.test(nrow.od_status_json), nrow);
+    ok("Y-01: its entry is not written into the renamed client's workbook", !arBooks().some((b) => rowsHave(b.it, "Y01-NEW")), arBooks().map((b) => b.path));
+    await A("clients.save", { id: nu.id, active: false, name: "Sunrise Eye Care Test Copy" });
+  } else ok("Y-01: (setup) a new client of the old name with no kept folder name", false, r.e);
+  // the renamed client's next entry reads its folder's name back from OneDrive and keeps writing to the same workbook
+  r = await T(() => AR("queue.complete", { id: pool[2].id, ...WORK })); await sleep(300);
+  const back = await q1("SELECT od_name FROM clients WHERE id = ?", sun.id);
+  ok("Y-01: a client whose folder name was not kept gets it back from OneDrive, and its month stays in one workbook", r.ok && back.od_name === SUN && arBooks().filter((b) => b.path.startsWith("Brahmastra Clients/" + SUN + "/")).length === 1 && rowsHave(arBooks()[0].it, pool[2].claim_no), [back, arBooks().map((b) => b.path)]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -1176,6 +1176,9 @@ Brahmastra Clients / <Client> /
 OneDrive names leave out / \ : * ? " < > | # % and a final dot, and keep the first 80 characters. A file name too long
 for that keeps its month and cuts the client's name instead, so each month still has its own file. Two clients whose
 names would be the same in OneDrive would share one folder, so such a name is refused when a client is added or renamed.
+A renamed client keeps its folder and the names of its Production and Escalation Tracker files as they were when the
+folder was made, so a month's rows stay in one workbook; that old name stays taken, so no other client can be given it
+and share the folder.
 
 Dates are written as Excel dates shown as mm/dd/yyyy and amounts as money, so the files read the same whatever OneDrive's language.
 Each desk's rows go to a tab of its own (**Payment posting**, **Submission**, **Rejections**) under that tab's header; a new

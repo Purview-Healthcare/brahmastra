@@ -3477,7 +3477,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
           </div>
           {!ro && <div className="od-box mt8">
             <div className="small od-line"><b>OneDrive:</b> {c.od && c.od.link ? <>
-                <span className="muted">Brahmastra Clients › {c.name}</span>
+                <span className="muted">Brahmastra Clients › {c.od.name || c.name}</span>
                 <a className="btn sm" href={c.od.link} target="_blank" rel="noopener">Open folder</a>
                 {c.od.inventory && <a className="btn sm" href={c.od.inventory} target="_blank" rel="noopener">Inventory</a>}</>
               : <><span className={c.od && c.od.status && c.od.status.ok === false ? "red-ink" : "muted"}>{c.od && c.od.status && c.od.status.ok === false ? "the folders could not be made: " + String(c.od.status.error || "").slice(0, 140) : DEMO ? "not made in demo mode (the live app makes them within the hour)" : "folders are being made (within the hour)"}</span>
@@ -3485,7 +3485,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
             {c.od && c.od.scopes && Object.keys(c.od.scopes).length > 0 && <table className="od-files"><tbody>
               {PROD_SCOPES.filter(([k]) => !(c.scope_of_work || []).length || (c.scope_of_work || []).includes(k)).map(([k, l]) => { const sc = c.od.scopes[k] || {}; const st = wbStatus(k === "ar" ? c.id : c.id + ":" + k); return (
                 <tr key={k}><td className="b">{l} production</td>
-                  <td className="small"><span className="mono">{sc.path || "Brahmastra Clients › " + c.name + " › Production › " + PROD_FOLDER[k]}</span>
+                  <td className="small"><span className="mono">{sc.path || "Brahmastra Clients › " + ((c.od && c.od.name) || c.name) + " › Production › " + PROD_FOLDER[k]}</span>
                     <div className="tiny muted">this month: {PROD_FOLDER[k]} Production - {c.name} - {new Date().toLocaleString("en-US", { month: "short", timeZone: "Asia/Kolkata" })} {todayISO().slice(0, 4)}.xlsx{st ? (st.ok ? " · last row " + fmtWhen(st.at) : "") : " · no rows yet"}{st && !st.ok ? <span className="red-ink"> · last copy failed: {String(st.error || "").slice(0, 120)}</span> : null}</div></td>
                   <td style={{ textAlign: "right" }}>{sc.link && <a className="btn sm" href={sc.link} target="_blank" rel="noopener">Open</a>}</td></tr>); })}
             </tbody></table>}

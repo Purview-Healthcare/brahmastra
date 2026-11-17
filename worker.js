@@ -266,6 +266,9 @@ const EXTRA_COLUMNS = {
     // The client's own folders in the Purviewautomate OneDrive: Brahmastra Clients / <Client> / Inventory, Production.
     ["od_drive_id", "TEXT"], ["od_folder_id", "TEXT"], ["od_inventory_id", "TEXT"], ["od_production_id", "TEXT"],
     ["od_link", "TEXT NOT NULL DEFAULT ''"], ["od_inventory_link", "TEXT NOT NULL DEFAULT ''"], ["od_production_link", "TEXT NOT NULL DEFAULT ''"], ["od_status_json", "TEXT NOT NULL DEFAULT '{}'"], ["od_prod_json", "TEXT NOT NULL DEFAULT '{}'"],
+    // the name the client's folder was made with in OneDrive: kept after a rename, so its files stay in one folder and one
+    // workbook a month, and no other client may take it (Y-01)
+    ["od_name", "TEXT NOT NULL DEFAULT ''"],
     ["ar_mode", "TEXT NOT NULL DEFAULT ''"], ["ar_lead", "TEXT"], ["ar_backup", "TEXT"],
     // The client's logo for the client report (a small image as a data URL; never sent with the client list).
     ["logo", "TEXT NOT NULL DEFAULT ''"],
@@ -462,6 +465,12 @@ const odFileName = (head, client, tail) => { const whole = odClean(head + " " + 
   return whole.length <= 80 ? whole || "Unnamed" : odClean(head + " " + odClean(client).slice(0, Math.max(1, 78 - head.length - tail.length)) + " " + tail); };
 // Two clients whose names are the same in OneDrive would share one folder (and its files): a client's name may not do that.
 const odKey = (s) => odName(s).toLowerCase();
+/* A client's name in OneDrive: the name its folder was made with (kept after a rename, so a month stays in one workbook), else
+   its name now. A new or renamed client may not take another client's name now or the name its folder was made with. */
+const odClientName = (c) => c.od_name || odName(c.name);
+const odTwin = (others, name) => others.find((o) => odKey(o.name) === odKey(name) || (o.od_name && o.od_name.toLowerCase() === odKey(name)));
+const odTwinMsg = (twin, name) => (odKey(twin.name) === odKey(name) ? odClashMsg(twin.name)
+  : `${twin.name}'s OneDrive folder keeps the name it was made with (${twin.od_name}), so this name would share that folder and its files. Pick another name.`);
 const odClashMsg = (other) => `This name would share one OneDrive folder with ${other}: OneDrive leaves out / \\ : * ? " < > | # % and a final dot, and keeps only the first 80 characters. Change the name so the two still differ after that.`;
 /* The team lead(s) of a client: roster team leads whose projects are matched to it. Nobody matched: the lead most of its billers report to. */
 async function clientTeamLeads(env, clientId, byUserId) { return (await clientTeamLeadsOf(env, [clientId])).get(clientId); }
@@ -617,7 +626,14 @@ async function ensureClientFolders(env, clientId, tok) {
   const c = await one(env, "SELECT * FROM clients WHERE id = ?", clientId);
   if (!c) return null;
   const have = jsonObj(c.od_prod_json);
-  if (c.od_drive_id && c.od_folder_id && c.od_inventory_id && c.od_production_id && Object.keys(SCOPE_FOLDER).every((k) => have[k] && have[k].id)) return c;
+  // a client whose folder was made before its name was kept: read the folder's name once (Y-01)
+  const known = async () => {
+    if (c.od_name || !c.od_drive_id || !c.od_folder_id) return c.od_name || "";
+    try { tok = tok || await graphAppToken(env); const it = await graphCall(tok, "GET", `/drives/${encodeURIComponent(c.od_drive_id)}/items/${encodeURIComponent(c.od_folder_id)}?$select=id,name`);
+      if (it && it.name) { await run(env, "UPDATE clients SET od_name = ? WHERE id = ?", it.name, c.id); c.od_name = it.name; } } catch (e) {}
+    return c.od_name || "";
+  };
+  if (c.od_drive_id && c.od_folder_id && c.od_inventory_id && c.od_production_id && Object.keys(SCOPE_FOLDER).every((k) => have[k] && have[k].id)) { await known(); return c; }
   try {
     tok = tok || await graphAppToken(env);
     const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT);
@@ -625,15 +641,19 @@ async function ensureClientFolders(env, clientId, tok) {
     try { root = await graphCall(tok, "POST", `/users/${owner}/drive/root/children`, { name: CLIENT_ROOT, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }); }
     catch (e) { if (!/\(409/.test(String(e.message))) throw e; root = await graphCall(tok, "GET", `/users/${owner}/drive/root:/${encodeURIComponent(CLIENT_ROOT)}?$select=id,name,parentReference,webUrl`); }
     const drive = root.parentReference.driveId;
-    const folder = await odChild(tok, drive, root.id, odName(c.name));
+    const folder = await odChild(tok, drive, root.id, (await known()) || odName(c.name));
+    // never take a folder another client already has (two clients never share a folder or a workbook)
+    const holder = await one(env, "SELECT name FROM clients WHERE od_folder_id = ? AND id <> ?", folder.id, c.id);
+    if (holder) throw new ApiError(409, `The OneDrive folder ${CLIENT_ROOT} › ${folder.name} is ${holder.name}'s, so ${c.name} cannot use it. Give ${c.name} a name that differs in OneDrive.`);
+    const odn = folder.name || odName(c.name);
     const inv = await odChild(tok, drive, folder.id, "Inventory");
     const prod = await odChild(tok, drive, folder.id, "Production");
     const link = await odShareLink(tok, drive, folder.id, folder.webUrl), invLink = await odShareLink(tok, drive, inv.id, inv.webUrl), prodLink = await odShareLink(tok, drive, prod.id, prod.webUrl);
     const scopes = {};
-    for (const [k, nm] of Object.entries(SCOPE_FOLDER)) { const f = (have[k] && have[k].id) ? have[k] : null; if (f) { scopes[k] = f; continue; } const it = await odChild(tok, drive, prod.id, nm); scopes[k] = { id: it.id, link: await odShareLink(tok, drive, it.id, it.webUrl), path: [CLIENT_ROOT, odName(c.name), "Production", nm].join(" › ") }; }
-    await run(env, `UPDATE clients SET od_drive_id = ?, od_folder_id = ?, od_inventory_id = ?, od_production_id = ?, od_link = ?, od_inventory_link = ?, od_production_link = ?, od_prod_json = ?, od_status_json = ? WHERE id = ?`,
-      drive, folder.id, inv.id, prod.id, link, invLink, prodLink, JSON.stringify(scopes), JSON.stringify({ ok: true, at: Date.now(), path: [CLIENT_ROOT, odName(c.name)].join(" › ") }), c.id);
-    if (!c.od_folder_id) await audit(env, null, "client.folders", c.id, `OneDrive folders made: ${CLIENT_ROOT} › ${odName(c.name)} › Inventory; Production › AR, Payment posting, Submission, Rejections`);
+    for (const [k, nm] of Object.entries(SCOPE_FOLDER)) { const f = (have[k] && have[k].id) ? have[k] : null; if (f) { scopes[k] = f; continue; } const it = await odChild(tok, drive, prod.id, nm); scopes[k] = { id: it.id, link: await odShareLink(tok, drive, it.id, it.webUrl), path: [CLIENT_ROOT, odn, "Production", nm].join(" › ") }; }
+    await run(env, `UPDATE clients SET od_drive_id = ?, od_folder_id = ?, od_inventory_id = ?, od_production_id = ?, od_link = ?, od_inventory_link = ?, od_production_link = ?, od_prod_json = ?, od_status_json = ?, od_name = ? WHERE id = ?`,
+      drive, folder.id, inv.id, prod.id, link, invLink, prodLink, JSON.stringify(scopes), JSON.stringify({ ok: true, at: Date.now(), path: [CLIENT_ROOT, odn].join(" › ") }), odn, c.id);
+    if (!c.od_folder_id) await audit(env, null, "client.folders", c.id, `OneDrive folders made: ${CLIENT_ROOT} › ${odn} › Inventory; Production › AR, Payment posting, Submission, Rejections`);
     return one(env, "SELECT * FROM clients WHERE id = ?", c.id);
   } catch (e) {
     await run(env, "UPDATE clients SET od_status_json = ? WHERE id = ?", JSON.stringify({ ok: false, at: Date.now(), error: String(e && e.message || e).slice(0, 300) }), c.id);
@@ -646,7 +666,7 @@ async function clientProductionFile(env, tok, clientId, ms, scope = "ar") {
   const folderId = (jsonObj(c.od_prod_json)[scope] || {}).id;
   if (!folderId) throw new ApiError(502, "The " + SCOPE_FOLDER[scope] + " production folder is missing.");
   const d = istDate(ms), month = MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear();
-  const name = odFileName(SCOPE_FOLDER[scope] + " Production -", c.name, "- " + month) + ".xlsx";
+  const name = odFileName(SCOPE_FOLDER[scope] + " Production -", odClientName(c), "- " + month) + ".xlsx";
   const key = "cp:" + folderId + ":" + (await sha256Hex(name.toLowerCase())).slice(0, 16);
   const cached = await one(env, "SELECT value_json FROM settings WHERE key = ?", key);
   if (cached) { try { const loc = JSON.parse(cached.value_json); if (loc.driveId) return loc; } catch {} }
@@ -661,7 +681,7 @@ async function clientProductionFile(env, tok, clientId, ms, scope = "ar") {
     else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference");
     else throw new ApiError(502, "OneDrive did not create " + name + " (" + r.status + ").");
   }
-  const loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name, path: [CLIENT_ROOT, odName(c.name), "Production", SCOPE_FOLDER[scope], it.name].join(" › ") };
+  const loc = { driveId: it.parentReference.driveId, itemId: it.id, name: it.name, path: [CLIENT_ROOT, odClientName(c), "Production", SCOPE_FOLDER[scope], it.name].join(" › ") };
   await run(env, "INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?,?,?)", key, JSON.stringify(loc), Date.now());
   return loc;
 }
@@ -763,7 +783,7 @@ async function escalationFile(env, tok, clientId) {
   const key = "escfile:" + clientId;
   const cached = await getSetting(env, key, null);
   if (cached && cached.driveId && cached.folderId === c.od_folder_id) return cached;
-  const name = odName("Escalation Tracker - " + c.name) + ".xlsx";
+  const name = odName("Escalation Tracker - " + odClientName(c)) + ".xlsx";
   const at = `/drives/${encodeURIComponent(c.od_drive_id)}/items/${encodeURIComponent(c.od_folder_id)}:/${encodeURIComponent(name)}:`;
   let it = null;
   try { it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference,webUrl"); }
@@ -775,7 +795,7 @@ async function escalationFile(env, tok, clientId) {
     else if (r.status === 409) it = await graphCall(tok, "GET", at + "?$select=id,name,parentReference,webUrl");
     else throw new ApiError(502, "OneDrive did not create " + name + " (" + r.status + ").");
   }
-  const loc = { driveId: it.parentReference.driveId, itemId: it.id, folderId: c.od_folder_id, name: it.name, path: [CLIENT_ROOT, odName(c.name), it.name].join(" › "),
+  const loc = { driveId: it.parentReference.driveId, itemId: it.id, folderId: c.od_folder_id, name: it.name, path: [CLIENT_ROOT, odClientName(c), it.name].join(" › "),
     link: await odShareLink(tok, it.parentReference.driveId, it.id, it.webUrl) };
   await setSetting(env, key, loc);
   return loc;
@@ -5266,7 +5286,7 @@ const OPS = {
     const people = await all(env, "SELECT id, name, active FROM users");
     const nm = new Map(people.map((u) => [u.id, u.name])), activeIds = new Set(people.filter((u) => u.active).map((u) => u.id));
     return { services: SERVICES, clients: clients.map((c) => ({ ...shape(c), stamp: clientStamp(c), locations: locs.filter((l) => l.client_id === c.id).map(shape),
-      scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), od: { link: c.od_link || "", inventory: c.od_inventory_link || "", production: c.od_production_link || "", status: jsonObj(c.od_status_json),
+      scope_of_work: jsonList(c.scope_json), targets: jsonObj(c.targets_json), od: { name: c.od_name || "", link: c.od_link || "", inventory: c.od_inventory_link || "", production: c.od_production_link || "", status: jsonObj(c.od_status_json),
         scopes: Object.fromEntries(Object.entries(jsonObj(c.od_prod_json)).map(([k, v]) => [k, { link: v.link || "", path: v.path || "" }])) }, resp_names: Object.fromEntries(RESP_PEOPLE.map(([, l]) => [l, c[l] ? nm.get(c[l]) || "someone" : ""])),
       profile_gaps: profileGaps(c, locs.filter((l) => l.client_id === c.id && l.active).length, activeIds), team_names: Object.fromEntries(parseTeam(c.team_json).map((id) => [id, nm.get(id) || ""])), responsible_me: !!(user.resp_clients && user.resp_clients.has(c.id)),
       can_edit: user.role === "supervisor" && canEditClient(user, c.id),
@@ -7327,7 +7347,7 @@ const OPS = {
       editableOr(user, ex.id);
       if (payload.seen != null && String(payload.seen) !== clientStamp(ex)) throw new ApiError(409, "Someone else changed this client after you opened it, so nothing was saved. Close this, open the client again and make your change.");
       if (plainName(ex.name) !== plainName(name) && (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
-      if (odKey(ex.name) !== odKey(name)) { const twin = (await all(env, "SELECT name FROM clients WHERE id <> ?", ex.id)).find((c) => odKey(c.name) === odKey(name)); if (twin) throw bad(odClashMsg(twin.name)); }
+      if (odKey(ex.name) !== odKey(name)) { const twin = odTwin(await all(env, "SELECT name, od_name FROM clients WHERE id <> ?", ex.id), name); if (twin) throw bad(odTwinMsg(twin, name)); }
       const fu = fuOr(Number(ex.follow_up_days) || 30);
       // Every check comes before the first write (the profile check included), so a save that is refused changes nothing (N-08).
       let p = null;
@@ -7364,7 +7384,7 @@ const OPS = {
     const locNames = (Array.isArray(payload.locations) ? payload.locations : []).map((x) => str(x, 160).trim()).filter((x, i, a) => x && a.findIndex((y) => plainName(y) === plainName(x)) === i).slice(0, 50);
     const p = await checkProfile(env, payload.profile, { isNew: true, locations: locNames.length });
     if ((await all(env, "SELECT name FROM clients")).some((c) => plainName(c.name) === plainName(name))) throw bad("A client with that name already exists.");
-    { const twin = (await all(env, "SELECT name FROM clients")).find((c) => odKey(c.name) === odKey(name)); if (twin) throw bad(odClashMsg(twin.name)); }
+    { const twin = odTwin(await all(env, "SELECT name, od_name FROM clients"), name); if (twin) throw bad(odTwinMsg(twin, name)); }
     const id = uuid(), now = Date.now();
     const sets = Object.keys(p.cols);
     await env.DB.batch([
