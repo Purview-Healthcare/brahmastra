@@ -168,6 +168,10 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS coach_notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'one_to_one', text TEXT NOT NULL DEFAULT '', by_id TEXT, by_name TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_coach_user ON coach_notes (user_id, at)`,
   `CREATE TABLE IF NOT EXISTS note_templates (id TEXT PRIMARY KEY, client_id TEXT, title TEXT NOT NULL, text TEXT NOT NULL, by_id TEXT, by_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`,
+  // each change to a note template, with who and when (created, edited with the old and the new title and text, removed, restored)
+  `CREATE TABLE IF NOT EXISTS note_template_log (id TEXT PRIMARY KEY, template_id TEXT NOT NULL, at INTEGER NOT NULL, by_id TEXT, by_name TEXT NOT NULL DEFAULT '',
+     action TEXT NOT NULL, old_json TEXT NOT NULL DEFAULT '{}', new_json TEXT NOT NULL DEFAULT '{}')`,
+  `CREATE INDEX IF NOT EXISTS idx_note_template_log ON note_template_log (template_id, at)`,
   `CREATE TABLE IF NOT EXISTS client_snapshots (client_id TEXT NOT NULL, day TEXT NOT NULL, ar_balance REAL NOT NULL DEFAULT 0, ar_claims INTEGER NOT NULL DEFAULT 0,
      over90_balance REAL NOT NULL DEFAULT 0, over90_claims INTEGER NOT NULL DEFAULT 0, over120_balance REAL NOT NULL DEFAULT 0, at INTEGER NOT NULL, PRIMARY KEY (client_id, day))`,
   `CREATE TABLE IF NOT EXISTS client_log (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'note', text TEXT NOT NULL DEFAULT '',
@@ -294,6 +298,8 @@ const EXTRA_COLUMNS = {
     // comes from, and the desk's state while open: in_process | pending | other.
     ["biller_id", "TEXT"], ["from_dept", "TEXT NOT NULL DEFAULT ''"], ["desk_state", "TEXT NOT NULL DEFAULT ''"]],
   settings: [["updated_at", "INTEGER"]],
+  // a removed note template is kept (Removed, with who removed it and when) and can be restored
+  note_templates: [["removed_at", "INTEGER"], ["removed_by", "TEXT"], ["removed_by_name", "TEXT NOT NULL DEFAULT ''"]],
 };
 const DESIGNATIONS = ["Biller", "Sr Biller", "SME", "TL", "Sr TL", "Assistant Manager", "Manager", "Sr Manager"];
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -2807,6 +2813,10 @@ function shiftWindow(shift, now, dayStart) {
 /* ---- audit trail: who changed access, RACI, recipients, client settings, roles ----
    Also who got a sign-in code or set a password for someone else, email and Emp ID changes, accounts added and deleted, the extra
    sign-in emails and roster projects matched to clients. Never a code, a password or a token: only who, whom and when. */
+/* A note template's change, for its timeline: what it was (with who saved it last, and when) and what it became. */
+const templateSnap = (t) => ({ title: t.title, text: t.text, client_id: t.client_id || null, client: t.client_name || "", by_name: t.by_name || "", at: t.at || null });
+const templateLog = (env, user, id, action, before, after, at) => env.DB.prepare("INSERT INTO note_template_log (id, template_id, at, by_id, by_name, action, old_json, new_json) VALUES (?,?,?,?,?,?,?,?)")
+  .bind(uuid(), id, at || Date.now(), (user && user.id) || null, (user && user.name) || "", action, JSON.stringify(before || {}), JSON.stringify(after || {}));
 async function audit(env, user, action, clientId, detail) {
   try { await run(env, "INSERT INTO audit_log (id, at, user_id, user_name, action, client_id, detail) VALUES (?,?,?,?,?,?,?)", uuid(), Date.now(), (user && user.id) || null, (user && user.name) || "", str(action, 60), clientId || null, str(detail, 400)); } catch (e) {}
 }
@@ -6005,8 +6015,12 @@ const OPS = {
   /* Note templates, written by team leads, inserted by billers into RCA / findings. */
   "templates.list": async ({ env, user, payload }) => {
     const cid = payload.client_id ? str(payload.client_id, 60) : "";
-    const rows = await all(env, `SELECT t.*, c.name AS client_name FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id WHERE t.client_id IS NULL${cid ? " OR t.client_id = ?" : " OR 1 = 1"} ORDER BY t.title`, ...(cid ? [cid] : []));
-    return { rows: rows.filter((r) => !r.client_id || inScope(user, r.client_id)).map((r) => ({ id: r.id, client_id: r.client_id, client_name: r.client_name || "", title: r.title, text: r.text, by_name: r.by_name, at: r.at })) };
+    // removed: the templates removed (kept, with who removed them and when, to restore); otherwise the ones in use
+    const removed = payload.removed === true;
+    const rows = await all(env, `SELECT t.*, c.name AS client_name, (SELECT COUNT(*) FROM note_template_log g WHERE g.template_id = t.id) AS changes FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id
+      WHERE (t.client_id IS NULL${cid ? " OR t.client_id = ?" : " OR 1 = 1"}) AND t.removed_at IS ${removed ? "NOT NULL" : "NULL"} ORDER BY ${removed ? "t.removed_at DESC" : "t.title"}`, ...(cid ? [cid] : []));
+    return { rows: rows.filter((r) => !r.client_id || inScope(user, r.client_id)).map((r) => ({ id: r.id, client_id: r.client_id, client_name: r.client_name || "", title: r.title, text: r.text, by_name: r.by_name, at: r.at,
+      logged: r.changes > 0, removed_at: r.removed_at || null, removed_by_name: r.removed_by_name || "" })) };
   },
   "templates.save": async ({ env, user, payload }) => {
     if (user.role !== "supervisor" || isSME(user)) throw denied("Templates are written by team leads and up.");
@@ -6015,21 +6029,59 @@ const OPS = {
     const title = str(payload.title, 80).trim(), text = str(payload.text, 1500).trim();
     if (title.length < 3 || text.length < 8) throw bad("Give the template a short title and the text, a few words at least.");
     const id = payload.id ? str(payload.id, 60) : uuid();
-    // Changing a template that is already there needs edit access to the client it belongs to now, as deleting it does.
-    const ex = payload.id ? await one(env, "SELECT client_id FROM note_templates WHERE id = ?", id) : null;
+    // Changing a template that is already there needs edit access to the client it belongs to now, as removing it does.
+    const ex = payload.id ? await one(env, "SELECT t.*, c.name AS client_name FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id = ?", id) : null;
     if (ex && ex.client_id) editableOr(user, ex.client_id);
+    if (ex && ex.removed_at) throw bad("This template was removed. Restore it first (Removed), then change it.");
     // A template for every client is used by every team: only someone who may change every client moves it to one client.
     if (ex && !ex.client_id && cid && editScope(user) != null) throw denied("This template is for every client, so other teams use it too. To have one for your client, add a new template.");
-    await run(env, `INSERT INTO note_templates (id, client_id, title, text, by_id, by_name, at) VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT (id) DO UPDATE SET client_id = excluded.client_id, title = excluded.title, text = excluded.text, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, cid, title, text, user.id, user.name || "", Date.now());
+    // the owner: any team lead may change any template, and every change shows who made it (the template's timeline, the audit trail)
+    if (ex && ex.title === title && ex.text === text && (ex.client_id || null) === cid) return { ok: true, id };
+    const now = Date.now(), cname = cid ? ((await one(env, "SELECT name FROM clients WHERE id = ?", cid)) || {}).name || "" : "";
+    await batchAll(env, [env.DB.prepare(`INSERT INTO note_templates (id, client_id, title, text, by_id, by_name, at) VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT (id) DO UPDATE SET client_id = excluded.client_id, title = excluded.title, text = excluded.text, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`).bind(id, cid, title, text, user.id, user.name || "", now),
+      templateLog(env, user, id, ex ? "edited" : "created", ex ? templateSnap(ex) : {}, { title, text, client_id: cid, client: cname }, now)]);
+    await audit(env, user, ex ? "template.edit" : "template.add", cid || (ex && ex.client_id) || null, title + " (" + (cname || "every client") + ")" + (ex && ex.title !== title ? ", was: " + ex.title : ""));
     return { ok: true, id };
   },
+  /* Removing keeps the template, marked removed (who, when): it leaves the lists billers insert from and shows under Removed. */
   "templates.delete": async ({ env, user, payload }) => {
     if (user.role !== "supervisor" || isSME(user)) throw denied("Templates are managed by team leads and up.");
-    const t = await one(env, "SELECT client_id FROM note_templates WHERE id = ?", str(payload.id, 60));
-    if (t && t.client_id) editableOr(user, t.client_id);
-    await run(env, "DELETE FROM note_templates WHERE id = ?", str(payload.id, 60));
+    const t = await one(env, "SELECT t.*, c.name AS client_name FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id = ?", str(payload.id, 60));
+    if (!t || t.removed_at) return { ok: true };
+    if (t.client_id) editableOr(user, t.client_id);
+    const now = Date.now();
+    const res = await batchAll(env, [env.DB.prepare("UPDATE note_templates SET removed_at = ?, removed_by = ?, removed_by_name = ? WHERE id = ? AND removed_at IS NULL RETURNING id").bind(now, user.id, user.name || "", t.id)]);
+    if (((res[0] && res[0].results) || []).length) {
+      await templateLog(env, user, t.id, "removed", templateSnap(t), {}, now).run();
+      await audit(env, user, "template.remove", t.client_id || null, t.title + " (" + (t.client_name || "every client") + ")");
+    }
     return { ok: true };
+  },
+  "templates.restore": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor" || isSME(user)) throw denied("Templates are managed by team leads and up.");
+    const t = await one(env, "SELECT t.*, c.name AS client_name FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id = ?", str(payload.id, 60));
+    if (!t) throw bad("That template was not found.");
+    if (t.client_id) editableOr(user, t.client_id);
+    if (!t.removed_at) return { ok: true };
+    const now = Date.now();
+    const res = await batchAll(env, [env.DB.prepare("UPDATE note_templates SET removed_at = NULL, removed_by = NULL, removed_by_name = '', by_id = ?, by_name = ?, at = ? WHERE id = ? AND removed_at IS NOT NULL RETURNING id").bind(user.id, user.name || "", now, t.id)]);
+    if (((res[0] && res[0].results) || []).length) {
+      await templateLog(env, user, t.id, "restored", {}, templateSnap(t), now).run();
+      await audit(env, user, "template.restore", t.client_id || null, t.title + " (" + (t.client_name || "every client") + ")");
+    }
+    return { ok: true };
+  },
+  /* A template's timeline: who added it, each edit (the old and the new title and text), who removed or restored it, and when.
+     A template from before changes were recorded shows who saved it then as "added by" (nothing is made up). */
+  "templates.history": async ({ env, user, payload }) => {
+    if (user.role !== "supervisor") throw denied("Templates are managed by team leads and up.");
+    const t = await one(env, "SELECT t.*, c.name AS client_name FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id = ?", str(payload.id, 60));
+    if (!t || (t.client_id && !inScope(user, t.client_id))) throw bad("That template was not found.");
+    const log = (await all(env, "SELECT at, by_name, action, old_json, new_json FROM note_template_log WHERE template_id = ? ORDER BY at, id", t.id))
+      .map((x) => ({ at: x.at, by_name: x.by_name, action: x.action, old: jsonObj(x.old_json), new: jsonObj(x.new_json) }));
+    const added = log.some((x) => x.action === "created") ? null : log.length ? { by_name: log[0].old.by_name || "", at: log[0].old.at || null } : { by_name: t.by_name, at: t.at };
+    return { template: { id: t.id, title: t.title, text: t.text, client_name: t.client_name || "", by_name: t.by_name, at: t.at, removed_at: t.removed_at || null, removed_by_name: t.removed_by_name || "" }, added, log };
   },
   /* What the team picked most for this payer at this client (last 90 days), so a biller can start from it. */
   "saag.suggest": async ({ env, user, payload }) => {
@@ -7132,6 +7184,7 @@ const OPS = {
       // Its team tasks with their people, updates and files (the file data too).
       env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id IN (SELECT f.id FROM team_task_files f JOIN team_tasks t ON t.id = f.task_id WHERE t.client_id = ?)").bind(ex.id),
       ...["team_task_files", "team_task_updates", "team_task_people"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE task_id IN (SELECT id FROM team_tasks WHERE client_id = ?)`).bind(ex.id)),
+      env.DB.prepare("DELETE FROM note_template_log WHERE template_id IN (SELECT id FROM note_templates WHERE client_id = ?)").bind(ex.id),
       // Everything else kept per client: the escalation tracker, shares, RACI, insurance limits, month-end, snapshots, notices, team tasks, holds and the rest.
       ...["escalations", "client_access", "raci", "payer_limits", "client_monthend", "client_snapshots", "inv_snapshots", "user_notices", "availability", "detail_uploads",
         "ev_rows", "ev_batches", "creport_edits", "client_log", "digest_runs", "digest_log", "note_templates", "team_tasks", "tat_holds"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE client_id = ?`).bind(ex.id)),

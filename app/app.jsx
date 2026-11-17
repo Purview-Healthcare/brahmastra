@@ -7511,23 +7511,32 @@ function CoachDrawer({ userId, onClose }) {
     </Modal>
   );
 }
-/* Note templates: team leads write them, billers insert them into RCA / findings. */
+/* Note templates: team leads write them, billers insert them into RCA / findings. Any team lead and up may change or remove any
+   template; each one shows who changed it last and opens its timeline, and a removed one stays under Removed, where it can be
+   restored (the owner: anyone can edit, and the timeline shows who did). */
 function TemplatesView({ ctx, me }) {
-  const q = useRpc("templates.list", {}, []);
+  const [tab, setTab] = useState("in_use");
+  const q = useRpc("templates.list", tab === "removed" ? { removed: true } : {}, [tab]);
   const [edit, setEdit] = useState(null);
+  const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
   const rows = (q.data && q.data.rows) || [];
   const canEdit = !isSmeUI(me);
   const save = async () => { setBusy(true); try { await rpc("templates.save", edit); toast("Saved."); setEdit(null); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
-  const del = async (r) => { setBusy(true); try { await rpc("templates.delete", { id: r.id }); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const del = async (r) => { setBusy(true); try { await rpc("templates.delete", { id: r.id }); toast("Removed. It is under Removed, where it can be restored."); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const restore = async (r) => { setBusy(true); try { await rpc("templates.restore", { id: r.id }); toast("Restored."); q.reload(); } catch (e) { toast(e.message, "err"); } setBusy(false); };
+  const who = (r) => tab === "removed" ? <>removed by {r.removed_by_name || "–"}<div className="tiny muted">{fmtWhen(r.removed_at)}</div></> : <>{r.logged ? "last changed by " : "added by "}{r.by_name || "–"}<div className="tiny muted">{fmtWhen(r.at)}</div></>;
   return (
     <div className="stack">
-      <div className="row between"><div><h1>Note templates</h1><div className="sub">Text billers insert into RCA / findings with one click, for every client or one. Keep them short and fill in the blanks after inserting.</div></div>
-        {canEdit && <button className="btn primary" onClick={() => setEdit({ title: "", text: "", client_id: "" })}>New template</button>}</div>
-      {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No templates yet.{canEdit ? " Add the notes your team types most often." : ""}</Empty></div> :
-        <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>Title</th><th>Text</th><th>Client</th><th>By</th><th /></tr></thead>
-          <tbody>{rows.map((r) => <tr key={r.id}><td className="b">{r.title}</td><td className="small" style={{ maxWidth: 520, whiteSpace: "pre-wrap" }}>{r.text}</td><td className="small">{r.client_name || "every client"}</td><td className="small">{r.by_name}<div className="tiny muted">{fmtWhen(r.at)}</div></td>
-            <td style={{ whiteSpace: "nowrap" }}>{canEdit && <><button className="btn sm" onClick={() => setEdit({ id: r.id, title: r.title, text: r.text, client_id: r.client_id || "" })}>Edit</button> <button className="btn sm link" style={{ color: "var(--red-ink)" }} disabled={busy} onClick={() => del(r)}>Delete</button></>}</td></tr>)}</tbody></table></div></div>}
+      <div className="row between"><div><h1>Note templates</h1><div className="sub">Text billers insert into RCA / findings with one click, for every client or one. Keep them short and fill in the blanks after inserting. Open a template to see who changed it and when.</div></div>
+        {canEdit && tab !== "removed" && <button className="btn primary" onClick={() => setEdit({ title: "", text: "", client_id: "" })}>New template</button>}</div>
+      <div className="seg2" style={{ alignSelf: "flex-start" }}>{[["in_use", "Templates"], ["removed", "Removed"]].map(([k, l]) => <button key={k} type="button" className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
+      {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>{tab === "removed" ? "No template has been removed." : "No templates yet." + (canEdit ? " Add the notes your team types most often." : "")}</Empty></div> :
+        <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>Title</th><th>Text</th><th>Client</th><th>{tab === "removed" ? "Removed" : "Changed"}</th><th /></tr></thead>
+          <tbody>{rows.map((r) => <tr key={r.id}><td className="b"><button type="button" className="btn link sm" style={{ padding: 0, fontWeight: 600, textAlign: "left" }} title="Who added and changed it, and when" onClick={() => setOpen(r.id)}>{r.title}</button></td><td className="small" style={{ maxWidth: 520, whiteSpace: "pre-wrap" }}>{r.text}</td><td className="small">{r.client_name || "every client"}</td><td className="small">{who(r)}</td>
+            <td style={{ whiteSpace: "nowrap" }}>{canEdit && (tab === "removed" ? <button className="btn sm" disabled={busy} onClick={() => restore(r)}>Restore</button>
+              : <><button className="btn sm" onClick={() => setEdit({ id: r.id, title: r.title, text: r.text, client_id: r.client_id || "" })}>Edit</button> <button className="btn sm link" style={{ color: "var(--red-ink)" }} disabled={busy} onClick={() => del(r)}>Remove</button></>)}</td></tr>)}</tbody></table></div></div>}
+      {open && <TemplateTimeline id={open} onClose={() => setOpen(null)} />}
       {edit && <Modal title={edit.id ? "Edit template" : "New template"} narrow onClose={() => setEdit(null)} footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || edit.title.trim().length < 3 || edit.text.trim().length < 8} onClick={save}>Save</button></>}>
         <div className="stack">
           <Field label="Title" hint="What billers see in the list"><input className="input" value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="e.g. Claim in process, call back in 15 days" autoFocus /></Field>
@@ -7535,6 +7544,26 @@ function TemplatesView({ ctx, me }) {
           <Field label="Client"><Combo value={edit.client_id} onChange={(v) => setEdit({ ...edit, client_id: v })} placeholder="Every client" options={ctx.clients.filter((c) => c.active && c.can_edit !== false).map((c) => ({ id: c.id, label: c.name }))} /></Field>
         </div></Modal>}
     </div>
+  );
+}
+/* One template's timeline: who added it, each edit with the old and the new title and text, who removed or restored it, and when. */
+const TPL_ACTION = { created: "Added", edited: "Edited", removed: "Removed", restored: "Restored" };
+function TemplateTimeline({ id, onClose }) {
+  const q = useRpc("templates.history", { id }, [id]);
+  const d = q.data, t = d && d.template;
+  const was = (label, a, b) => (a === b ? null : <div className="small mt8"><span className="tiny muted b">{label}</span><div className="tpl-was" style={{ whiteSpace: "pre-wrap", textDecoration: "line-through", opacity: 0.7 }}>{a || "–"}</div><div style={{ whiteSpace: "pre-wrap" }}>{b || "–"}</div></div>);
+  return (
+    <Modal title={t ? t.title : "Template"} sub={t ? (t.client_name || "every client") + (t.removed_at ? " · removed" : "") : ""} onClose={onClose}>
+      {q.error ? <div className="alert err">{q.error}</div> : !d ? <Spinner label="Loading…" /> : (
+        <div className="stack">
+          <div className="small" style={{ whiteSpace: "pre-wrap" }}>{t.text}</div>
+          <div className="hist-tl">
+            {d.added && <div className="small"><b>Added</b> by {d.added.by_name || "–"} <span className="muted">· {d.added.at ? fmtWhen(d.added.at) : "date not known"}</span></div>}
+            {d.log.map((x, i) => <div key={i} className="small mt8"><b>{TPL_ACTION[x.action] || x.action}</b> by {x.by_name || "–"} <span className="muted">· {fmtWhen(x.at)}</span>
+              {x.action === "edited" && <>{was("Title", x.old.title, x.new.title)}{was("Text", x.old.text, x.new.text)}{was("Client", x.old.client || "every client", x.new.client || "every client")}</>}</div>)}
+          </div>
+        </div>)}
+    </Modal>
   );
 }
 /* ---------- Portfolio (VP, admins, managers): every client worst first, managers side by side, data freshness ---------- */
@@ -7751,7 +7780,8 @@ const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took 
   "stack.extraEdit": "Edited extra production by hand", "stack.extraRemove": "Removed an extra production file", "attention.review": "Reviewed a claim and gave it to a biller",
   "client.folders": "Made a client's OneDrive folders", "client.location": "Changed a location", "client.team": "Changed a client's billers", "escalation.reason": "Gave why an escalation is still open",
   "roster.sync": "Synced the roster", "task.create": "Gave a team task", "task.close": "Closed a team task", "team.alert": "Dismissed a not logged in alert", "team.note": "Changed a Team status note",
-  "team.rebalance": "Shared out a person's claims" };
+  "team.rebalance": "Shared out a person's claims",
+  "template.add": "Added a note template", "template.edit": "Edited a note template", "template.remove": "Removed a note template", "template.restore": "Restored a note template" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
   const q = useRpc("audit.list", { client_id: f.client_id || undefined, action: f.action || undefined }, [f.client_id, f.action]);
@@ -7762,7 +7792,7 @@ function AuditView({ ctx }) {
       <div className="card tight row" style={{ gap: 10, flexWrap: "wrap" }}>
         <span style={{ minWidth: 240 }}><Combo sm value={f.client_id} onChange={(v) => setF({ ...f, client_id: v })} placeholder="Every client" options={ctx.clients.map((c) => ({ id: c.id, label: c.name }))} /></span>
         <select className="input sm" style={{ width: "auto" }} value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })}>
-          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="stack">Stack report</option><option value="feedback">Feedback</option><option value="settings">Settings</option></select>
+          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="stack">Stack report</option><option value="feedback">Feedback</option><option value="settings">Settings</option><option value="template">Note templates</option></select>
         <span className="small muted" style={{ marginLeft: "auto" }}>{rows.length} changes</span></div>
       {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No changes recorded yet. They are recorded from now on.</Empty></div> :
         <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Client</th><th>Detail</th></tr></thead>

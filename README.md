@@ -320,7 +320,10 @@ entries before the shift time too, as Team status and My day do (a night shift's
   back, average note length, days out, the statuses they enter most, and **1:1 notes** that team leads and up see and
   the biller never does) opens from **Search** (Ctrl+K) on a biller's name. QA scores stay in Sasha's Third Eye.
 - **Manage › Note templates**: text for RCA / findings, for every client or one, written by team leads and up.
-  Billers pick one from **Insert a template** above the RCA box.
+  Billers pick one from **Insert a template** above the RCA box. Any team lead and up may edit or remove any template,
+  and every change shows: each template says who changed it last and when, and opens its timeline (added, each edit with
+  the old and the new title and text, removed, restored, with who and when); a removed template stays under **Removed**,
+  with who removed it and when, and can be restored; every change is also in the audit trail.
 - On **Work this claim**, a biller sees the three SAAG combinations the team used most in the last 90 days for
   that payer (or the client when the payer is new); one click fills status, sub-status, action and bucket.
 

@@ -455,6 +455,52 @@ S("W-06: an upload reopening a Posting Closed claim is kept (the owner's decisio
   ok("W-06: an entry written after the reopening can be edited as any entry", fresh !== note && ed.ok, ed.e);
 }
 
+S("W-14: any team lead may change any note template, and every change shows who made it (the owner's decision)");
+{
+  const TINA = TI;
+  // a template from before changes were recorded: no made-up history, its saver shown as "added by"
+  const oldId = "tpl-old-" + Date.now();
+  await sql("INSERT INTO note_templates (id, client_id, title, text, by_id, by_name, at) VALUES (?,?,?,?,?,?,?)", oldId, null, "Older template", "Called the payer, claim in process, call back in 15 days.", U("Tina Lead"), "Tina Lead", Date.UTC(2026, 9, 1));
+  const h0 = await LEO("templates.history", { id: oldId });
+  ok("W-14: an older template has no made-up history: its saver and date show as added by", h0.log.length === 0 && h0.added.by_name === "Tina Lead" && h0.added.at === Date.UTC(2026, 9, 1), h0);
+  const l0 = (await LEO("templates.list", {})).rows.find((r) => r.id === oldId);
+  ok("W-14: the list says added by for it (nothing logged yet)", l0 && !l0.logged && l0.by_name === "Tina Lead");
+  // Tina adds one for every client; Leo (another team) edits it, then removes it; Tina restores it
+  const t = await TINA("templates.save", { title: "Claim in process", text: "Called the payer, the claim is in process since [date], call back in 15 days.", client_id: "" });
+  const e1 = await T(() => LEO("templates.save", { id: t.id, title: "Claim in process (Lakeview)", text: "Called the payer, the claim is in process since [date], call back in 10 days.", client_id: "" }));
+  ok("W-14: Leo Lead (another team) may still edit Tina's every-client template", e1.ok, e1.e);
+  const after = (await LEO("templates.list", {})).rows.find((r) => r.id === t.id);
+  ok("W-14: the list shows last changed by Leo Lead", after && after.logged && after.by_name === "Leo Lead", after);
+  const h1 = await TINA("templates.history", { id: t.id });
+  const ed = h1.log.find((x) => x.action === "edited");
+  ok("W-14: the timeline has Added by Tina, then Edited by Leo with the old and the new title and text", h1.log[0].action === "created" && h1.log[0].by_name === "Tina Lead" && ed && ed.by_name === "Leo Lead"
+    && ed.old.title === "Claim in process" && ed.new.title === "Claim in process (Lakeview)" && /15 days/.test(ed.old.text) && /10 days/.test(ed.new.text) && !h1.added, h1.log.map((x) => x.action + " " + x.by_name));
+  const same = await LEO("templates.save", { id: t.id, title: "Claim in process (Lakeview)", text: "Called the payer, the claim is in process since [date], call back in 10 days.", client_id: "" });
+  ok("W-14: saving it unchanged adds nothing to the timeline", same.ok && (await TINA("templates.history", { id: t.id })).log.length === 2);
+  const rm = await T(() => LEO("templates.delete", { id: t.id }));
+  const inUse = (await TINA("templates.list", {})).rows.some((r) => r.id === t.id), forBiller = (await AR("templates.list", { client_id: sun.id })).rows.some((r) => r.id === t.id);
+  const gone = (await TINA("templates.list", { removed: true })).rows.find((r) => r.id === t.id);
+  ok("W-14: Leo may remove it: it leaves the lists billers insert from, kept under Removed with who and when", rm.ok && !inUse && !forBiller && gone && gone.removed_by_name === "Leo Lead" && gone.removed_at > 0, [rm.e, inUse, forBiller, gone]);
+  const ed2 = await T(() => TINA("templates.save", { id: t.id, title: "Claim in process", text: "Called the payer, the claim is in process since [date].", client_id: "" }));
+  ok("W-14: a removed template is not edited until restored", !ed2.ok && /restore it first/i.test(ed2.e), ed2.e);
+  const rs = await TINA("templates.restore", { id: t.id });
+  const back = (await TINA("templates.list", {})).rows.find((r) => r.id === t.id);
+  ok("W-14: Restore puts it back in use, last changed by the one who restored it", rs.ok && back && back.by_name === "Tina Lead" && !(await TINA("templates.list", { removed: true })).rows.some((r) => r.id === t.id), back);
+  const h2 = await TINA("templates.history", { id: t.id });
+  ok("W-14: the timeline reads added, edited, removed, restored, each with who and when", JSON.stringify(h2.log.map((x) => [x.action, x.by_name])) === JSON.stringify([["created", "Tina Lead"], ["edited", "Leo Lead"], ["removed", "Leo Lead"], ["restored", "Tina Lead"]]) && h2.log.every((x) => x.at > 0), h2.log.map((x) => [x.action, x.by_name]));
+  const aud = (await A("audit.list", { action: "template" })).rows.filter((x) => /Claim in process/.test(x.detail)).map((x) => x.action + " " + x.user_name).reverse();
+  ok("W-14: every change is in the audit trail (added, edited, removed, restored)", JSON.stringify(aud) === JSON.stringify(["template.add Tina Lead", "template.edit Leo Lead", "template.remove Leo Lead", "template.restore Tina Lead"]), aud);
+  // an older template edited: the timeline keeps who saved it first, from what the template said (not made up)
+  await LEO("templates.save", { id: oldId, title: "Older template", text: "Called the payer, claim in process, call back in 30 days.", client_id: "" });
+  const h3 = await LEO("templates.history", { id: oldId });
+  ok("W-14: an older template edited keeps its added by (Tina, her date) and the edit by Leo", h3.added && h3.added.by_name === "Tina Lead" && h3.added.at === Date.UTC(2026, 9, 1) && h3.log.length === 1 && h3.log[0].by_name === "Leo Lead", h3);
+  // still: billers and SMEs do not change templates; a client's template needs edit access to that client; moving an every-client one to one client stays refused
+  ok("W-14: a biller cannot change or remove templates", !(await T(() => AR("templates.save", { title: "Mine", text: "A biller's own template text here.", client_id: "" }))).ok && !(await T(() => AR("templates.delete", { id: t.id }))).ok && !(await T(() => AR("templates.restore", { id: t.id }))).ok);
+  const sunT = await TINA("templates.save", { title: "Sunrise only", text: "Sunrise's own follow-up template text.", client_id: sun.id });
+  ok("W-14: Leo cannot change or remove a template of a client he cannot edit", !(await T(() => LEO("templates.save", { id: sunT.id, title: "Sunrise only", text: "Changed by another team lead.", client_id: sun.id }))).ok && !(await T(() => LEO("templates.delete", { id: sunT.id }))).ok);
+  ok("W-14: moving an every-client template to one client stays refused for a team lead (E-17)", !(await T(() => LEO("templates.save", { id: t.id, title: "Claim in process", text: "Called the payer, the claim is in process since [date], call back in 15 days.", client_id: lake.id }))).ok);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
