@@ -244,6 +244,26 @@ S("Y-03: with a filter on the person, the Denials page counts the claims AR prod
   ok("Y-03: a clicked denial reason matches the Denied claims KPI", bar && Number(kpi(rs, "Denied claims").value) === bar.count && bar.count === 2, [bar && bar.count, kpi(rs, "Denied claims").value]);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-04: the production Third Eye loads (and the Entries CSV) holds every entry, past 60,000");
+{
+  const [cA] = await q("SELECT id FROM claims WHERE client_id = ? LIMIT 1", sun.id);
+  const N = 60050, from = Date.parse("2026-09-01T00:00:00+05:30"), to = Date.parse("2026-09-30T23:59:59.999+05:30");
+  await sql(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < ${N - 1})
+    INSERT INTO notes (id, claim_id, user_id, user_name, kind, status, sub_status, action, bucket, created_at)
+    SELECT 'y04n' || i, ?, ?, 'Arun Agent', 'work', 'Claim In Process', 'Need to allow some time', 'Follow up', 'Payer', ? + (i * 43000) FROM n`, cA.id, U("Arun Agent"), from);
+  const inDb = (await q1("SELECT COUNT(*) AS n FROM notes WHERE kind = 'work' AND created_at BETWEEN ? AND ? AND claim_id IN (SELECT id FROM claims WHERE client_id = ?)", from, to, sun.id)).n;
+  const r = await TI("reports.production", { scope: "ar", client_id: sun.id, from_ms: from, to_ms: to, page: 13, page_size: 5000 });
+  ok("Y-04: the server's total is the true count (not 60,000)", r.total === inDb && inDb === N, [r.total, inDb]);
+  ok("Y-04: the 13th page holds the last entries", r.rows.length === N - 60000, r.rows.length);
+  app.setToken(null);
+  const all = await (async () => { const tok = (await login(mail("Tina Lead"), "pw-" + mail("Tina Lead"))).token; app.setToken(tok);
+    return app.rpcAllPages("reports.production", { scope: "ar", client_id: sun.id, from_ms: from, to_ms: to }, 5000); })();
+  const iSr = 0;
+  ok("Y-04: the page's loader (rpcAllPages, as Third Eye's load and Download CSV call it) gets every entry, numbered to the last", all.rows.length === N && all.rows[N - 1][iSr] === N, [all.rows.length, all.rows.length && all.rows[all.rows.length - 1][iSr]]);
+  await sql("DELETE FROM notes WHERE id LIKE 'y04n%'");
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

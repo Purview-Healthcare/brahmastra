@@ -8594,10 +8594,11 @@ const OPS = {
     if (payload.user_id && scope === "ar") { where.push("nt.user_id = ?"); args.push(str(payload.user_id, 60)); }
     const extra = where.length ? " AND " + where.join(" AND ") : "";
     // A page of entries when the page asks for one (page, page_size up to 5,000, total), so no single answer holds a whole month: a
-    // month of 60,000 entries in one answer came close to a Worker's 128 MB. Without page: every entry (up to 60,000) at once, as before.
+    // month of 60,000 entries in one answer came close to a Worker's 128 MB. Paged, every entry of the period comes, however many
+    // (the total is the true count, so nothing is left out without a word: Y-04). Without page: up to 60,000 at once, as before.
     const paged = payload.page != null, size = paged ? Math.max(1, Math.min(5000, Math.round(num(payload.page_size, 5000)))) : 60000;
-    const page = paged ? Math.max(1, Math.round(num(payload.page, 1))) : 1, skip = (page - 1) * size, lim = Math.max(0, Math.min(size, 60000 - skip));
-    const pageInfo = async (sql, ...a) => (paged ? { page, page_size: size, total: Math.min(60000, ((await one(env, sql, ...a)) || {}).n || 0) } : {});
+    const page = paged ? Math.max(1, Math.round(num(payload.page, 1))) : 1, skip = (page - 1) * size, lim = size;
+    const pageInfo = async (sql, ...a) => (paged ? { page, page_size: size, total: ((await one(env, sql, ...a)) || {}).n || 0 } : {});
     if (scope === "ar") {
       // only the claim fields a Production row uses: c.* (73 columns, the file's own row among them) took a month's entries past a
       // Worker's 128 MB on Cloudflare
