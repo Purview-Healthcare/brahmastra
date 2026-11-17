@@ -244,6 +244,24 @@ ok("R4-H: and the whole register has all 1,051", ea.rows.filter((e) => /^esc-r4h
 await sql("DELETE FROM escalations WHERE id LIKE 'esc-r4h-%'");
 ok("R4-H: README says Live status's two lists show the red ones first, then the oldest", /picked\), the red ones first, then the oldest first/.test(readme) && /Needs attention,\s+the red ones first, then the oldest first/.test(readme) && !/picked\), oldest first/.test(readme));
 
+S("R4-A (the owner's decision): a Payment posting or Submission team lead gives team tasks only to their own desk's people");
+{
+  const task = (people) => ({ client_id: sun.id, scope: "Payment posting", title: "Post the ERAs the client sent", description: "Made-up: post each ERA and note the batch.", source: "Client", tat: { kind: "24" }, count: people.reduce((t, p) => t + p.share, 0), people });
+  const pick = (await PIA("tasks.people", { client_id: sun.id })).people.map((p) => p.name);
+  ok("R4-A: Pia's people to pick from are her own desk's (Paula), never an AR biller or the other desk", pick.includes("Paula Post") && !pick.includes("Arun Agent") && !pick.includes("Bela Agent") && !pick.includes("Sana Sub"), pick);
+  const toAr = await tryOp(() => PIA("tasks.create", task([{ user_id: U("Arun Agent"), share: 5 }])));
+  ok("R4-A: Pia cannot give a task to Arun (AR)", !toAr.ok && /Only people on your team can be given a task/.test(toAr.e), toAr);
+  const toSub = await tryOp(() => PIA("tasks.create", task([{ user_id: U("Sana Sub"), share: 5 }])));
+  ok("R4-A: nor to Sana (the Submission desk)", !toSub.ok && /Only people on your team/.test(toSub.e), toSub);
+  const own = await tryOp(() => PIA("tasks.create", task([{ user_id: U("Paula Post"), share: 5 }])));
+  ok("R4-A: she can give one to Paula (her desk)", own.ok && own.r.task && own.r.task.id, own);
+  const add = own.ok ? await tryOp(() => PIA("tasks.edit", { id: own.r.task.id, people: [{ user_id: U("Paula Post"), share: 5 }, { user_id: U("Arun Agent"), share: 3 }] })) : { ok: false, e: "no task" };
+  ok("R4-A: and cannot add Arun to it afterwards", !add.ok && /Only people on your team/.test(add.e), add);
+  const tinaPick = (await TI("tasks.people", { client_id: sun.id })).people.map((p) => p.name);
+  ok("R4-A: an AR team lead's picker is as before (her billers are there)", tinaPick.includes("Arun Agent") && tinaPick.includes("Bela Agent"), tinaPick);
+  const tinaTask = await tryOp(() => TI("tasks.create", { ...task([{ user_id: U("Arun Agent"), share: 4 }]), scope: "AR follow-up", title: "Recheck the denials" }));
+  ok("R4-A: and she still gives Arun a task", tinaTask.ok, tinaTask);
+}
 // ---------------------------------------------------------------------------------------------------------------------
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);

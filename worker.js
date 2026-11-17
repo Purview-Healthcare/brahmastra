@@ -9675,7 +9675,9 @@ const OPS = {
   "tasks.people": async ({ env, user, payload }) => {
     if (user.role !== "supervisor") throw denied("Team tasks are for team leads and above.");
     const cid = payload.client_id ? str(payload.client_id, 60) : "";
-    let users = (await visibleUsers(env, user, "edit")).filter((u) => u.active && u.id !== user.id);
+    // a Payment posting or Submission team lead gives team tasks to their own desk's people only, never the AR floor (the
+    // owner's decision, as for accounts: deskMate)
+    let users = (await visibleUsers(env, user, "edit")).filter((u) => u.active && u.id !== user.id && deskMate(user, u));
     // with a client picked, the people on it first
     const onIt = new Set(); if (cid) { const c = await one(env, "SELECT team_json FROM clients WHERE id = ?", cid); if (c) parseTeam(c.team_json).forEach((id) => onIt.add(id)); }
     users = users.map((u) => ({ id: u.id, name: u.name || u.email, role: u.role, designation: u.designation || "", department: u.department || "", on_client: onIt.has(u.id) }))
@@ -9696,7 +9698,7 @@ const OPS = {
     const people = Array.isArray(payload.people) ? payload.people : [];
     if (!people.length) throw bad("Pick who does it.");
     if (people.length > 25) throw bad("Up to 25 people on one task.");
-    const team = new Map((await visibleUsers(env, user, "edit")).filter((u) => u.active).map((u) => [u.id, u]));
+    const team = new Map((await visibleUsers(env, user, "edit")).filter((u) => u.active && deskMate(user, u)).map((u) => [u.id, u]));
     const seen = new Set(), list = [];
     for (const p of people) {
       const id = str(p && p.user_id, 60), u = team.get(id);
@@ -9848,7 +9850,7 @@ const OPS = {
     const current = await all(env, "SELECT p.*, u.name FROM team_task_people p LEFT JOIN users u ON u.id = p.user_id WHERE p.task_id = ?", t.id);
     let count = t.count_total;
     if (Array.isArray(payload.people)) {
-      const team = new Map((await visibleUsers(env, user, "edit")).filter((u) => u.active).map((u) => [u.id, u])), want = new Map();
+      const team = new Map((await visibleUsers(env, user, "edit")).filter((u) => u.active && deskMate(user, u)).map((u) => [u.id, u])), want = new Map();
       for (const p of payload.people) { const id = str(p && p.user_id, 60), share = Math.round(num(p && p.share, -1)); if (want.has(id)) throw bad("Someone is picked twice."); want.set(id, share); }
       for (const c of current) {
         if (!want.has(c.user_id)) { if (c.done_n > 0) throw bad(`${c.name || "Someone"} has done ${c.done_n}: set their share to ${c.done_n} instead of taking them off.`);
