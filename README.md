@@ -654,12 +654,15 @@ needs it sooner; a supervisor sets 1 to 48 under Target and TAT, and anything ab
 
 #### Monday digest email
 
-Every Monday from about 8:30 AM IST the server sends **one email per manager's span**: Sweety's clients, Sandesh's
-clients and Joseph's clients (the managers on the roster and the clients their projects map to, as in Dashboard ›
-Portfolio › Managers side by side). Each goes to **every supervisor on those clients**: the manager, the clients' team leads and
-SMEs, posting / submission leads, the VP and admins (view-only shares are left out). So a team lead gets their
-manager's span, a manager their own, and the VP all three. Active clients that are in no manager's span go in one
-more email, "Clients without a manager", to the VP and admins.
+Every Monday from about 8:30 AM IST the server sends the digest of each manager's span: Sweety's clients, Sandesh's
+clients and Joseph's clients (the managers on the roster, assistant and senior managers too, and the clients their projects
+map to, as in Dashboard › Portfolio › Managers side by side). **Each person gets one digest email**: a manager their own
+span's; anyone else on the span's clients (team leads, SMEs, posting / submission leads) the span of the nearest manager
+above them in the reporting line, with only their own clients of it; the VP and admins every span. So with an assistant
+manager under a senior manager, the assistant manager's team leads get the assistant manager's span and not the senior
+manager's as well. Nobody else gets two. View-only shares are left out. Active clients that are in no manager's span go in
+one more email, "Clients without a manager", to the VP and admins. Someone whose managers above them hold none of their
+clients gets the first span that does (by the manager's name, then "Clients without a manager").
 
 It opens with a header (**Manager name**, **Designation**, **Period**: the week, and the clients) and an **SLA report
 card**: each client's last finished month in Drishti, worst at the bottom, with the average score and how many are

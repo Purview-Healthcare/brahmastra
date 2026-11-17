@@ -19,7 +19,8 @@ const feed = () => [
   P({ emp_id: "V1", name: "Vera Vice", position: "Vice President", project: SUN, email: "vera" + D }),
   P({ emp_id: "M1", name: "Mona Manager", position: "Manager", project: SUN, reports_to: "Vera Vice", email: "mona" + D }),
   P({ emp_id: "T1", name: "Tina Lead", position: "Team Lead", project: SUN, also_on_projects: [LAKE, ...Array.from({ length: NC }, (_, k) => clinic(k + 1))].join(", "), reports_to: "Mona Manager", email: "tina" + D }),
-  P({ emp_id: "T2", name: "Lara Lead", position: "Team Lead", project: clinic(1), reports_to: "Mona Manager", email: "lara" + D }),
+  P({ emp_id: "M2", name: "Asha Assistant", position: "Assistant Manager", project: clinic(1), reports_to: "Mona Manager", email: "asha" + D }),
+  P({ emp_id: "T2", name: "Lara Lead", position: "Team Lead", project: clinic(1), reports_to: "Asha Assistant", email: "lara" + D }),
   P({ emp_id: "S1", name: "Sami Sme", position: "SME", project: SUN, reports_to: "Tina Lead", email: "sami" + D }),
   ...BILLERS.map((n, i) => P({ emp_id: "A" + i, name: n, project: i === 2 ? LAKE : SUN, also_on_projects: i === 2 ? clinic(1) : "", reports_to: "Tina Lead", email: n.split(" ")[0].toLowerCase() + D })),
   ...Array.from({ length: extraBillers }, (_, i) => P({ emp_id: "B" + i, name: "Made-up Biller " + String(i + 1).padStart(2, "0"), project: LAKE, reports_to: "Tina Lead", email: "mb" + i + D })),
@@ -162,6 +163,29 @@ S("Z-01: the Monday digest reads a span's figures for all its clients at once");
   ok(`Z-01: the Monday run makes the same D1 queries with 6 or ${NC + 2} clients, far under D1's 1,000`, sent1 > 0 && sent1 === sent0 && c0.n === c1.n && c1.n < 400, { six: c0.n, more: c1.n, mails: [sent0, sent1] });
   const lm = mails.find((x) => x.to === "lara" + D), lines = lm ? lm.text.split("Client by client:")[1].split("\n\n")[0].split("\n").filter((l) => /^- /.test(l)) : [];
   ok("Z-01: a team lead on one clinic gets the manager's span with that clinic only", lines.length === 1 && lines[0].startsWith("- " + clinic(1) + ":"), lines);
+}
+
+S("Z-SPAN: one Monday digest email a person (nested managers)");
+{
+  // Mona Manager (senior) over Asha Assistant (assistant manager) over Lara Lead; Tina Lead and Sami Sme under Mona
+  const wkNow = (await A("digest.spans", {})).week.week;
+  await sql("DELETE FROM digest_log WHERE week = ?", wkNow); await sql("DELETE FROM digest_runs WHERE week = ?", wkNow); mails.length = 0;
+  await runJob("*/10 3-7 * * MON", mon + 8.5 * H, MAIL);
+  const spans = (await A("digest.spans", {})).spans, mona = spans.find((x) => x.title === "Mona Manager's clients"), asha = spans.find((x) => x.title === "Asha Assistant's clients");
+  ok("Z-SPAN: both managers have a span (the assistant manager's inside the senior manager's)", mona && asha && asha.clients.every((c) => mona.clients.some((m) => m.id === c.id)), spans.map((x) => x.title));
+  const got = new Map(); for (const m of mails.filter((x) => /clients · week/.test(x.subject))) { if (!got.has(m.to)) got.set(m.to, []); got.get(m.to).push(m.subject.split(" · ")[0]); }
+  const one = (who, span) => JSON.stringify(got.get(who + D)) === JSON.stringify([span]);
+  ok("Z-SPAN: a manager gets their own span's email only (the senior manager one, the assistant manager one)", one("mona", "Mona Manager's clients") && one("asha", "Asha Assistant's clients"), Object.fromEntries(got));
+  ok("Z-SPAN: a team lead under the assistant manager gets the assistant manager's span only", one("lara", "Asha Assistant's clients"), got.get("lara" + D));
+  ok("Z-SPAN: a team lead and an SME under the senior manager get the senior manager's span only", one("tina", "Mona Manager's clients") && one("sami", "Mona Manager's clients"), [got.get("tina" + D), got.get("sami" + D)]);
+  ok("Z-SPAN: the VP and the admin get every span", ["vera" + D, "supervisor" + D].every((t) => JSON.stringify((got.get(t) || []).sort()) === JSON.stringify(spans.map((x) => x.title).sort())), [got.get("vera" + D), got.get("supervisor" + D)]);
+  ok("Z-SPAN: nobody else gets two digest emails", [...got].every(([t, xs]) => xs.length === 1 || ["vera" + D, "supervisor" + D].includes(t)), Object.fromEntries(got));
+  ok("Z-SPAN: who gets each span says the same (the senior manager's span is not sent to the assistant manager's people)", !mona.recipients.some((r) => ["Asha Assistant", "Lara Lead"].includes(r.name)) && ["Asha Assistant", "Lara Lead", "Vera Vice"].every((n) => asha.recipients.some((r) => r.name === n)), { mona: mona.recipients.map((r) => r.name), asha: asha.recipients.map((r) => r.name) });
+  const lara = await signIn("Lara Lead"), seen = (await lara.call("digest.spans", {})).spans.map((x) => x.title).sort();
+  const page = await T(() => lara.call("digest.dashboard", { span: mona.key }));
+  ok("Z-SPAN: the team lead still sees both spans on SLA › Monday digest and can open the senior manager's (their clients only)", JSON.stringify(seen) === JSON.stringify(["Asha Assistant's clients", "Mona Manager's clients"]) && page.ok && page.r.span.key === mona.key && page.r.clients.every((c) => c.name === clinic(1)), { seen, page: page.ok ? page.r.clients.map((c) => c.name) : page.e });
+  mails.length = 0; await runJob("*/10 3-7 * * MON", mon + 8.8 * H, MAIL);
+  ok("Z-SPAN: the next run of the morning sends nothing more", !mails.some((x) => /clients · week/.test(x.subject)), mails.map((x) => x.to + " " + x.subject));
 }
 
 S("Z-01 (the same pattern): one read for many people or clients");

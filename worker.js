@@ -2936,15 +2936,29 @@ async function digestSpans(env, people) {
   }
   const rest = clients.filter((c) => !placed.has(c.id));
   if (rest.length) spans.push({ key: NO_SPAN, manager: null, title: "Clients without a manager", clients: rest.map((c) => ({ id: c.id, name: c.name })) });
+  // who is on each span: its manager and every supervisor on its clients (SLA › Monday digest lists the spans a person is on)
   for (const s of spans) {
-    s.recipients = people.filter((u) => (s.manager && u.id === s.manager.id) || s.clients.some((c) => onClient(u, c.id)))
+    s.on = people.filter((u) => (s.manager && u.id === s.manager.id) || s.clients.some((c) => onClient(u, c.id)))
       .filter((u) => s.key !== NO_SPAN || u.is_admin || u.access_all || s.clients.some((c) => canEditClient(u, c.id)));
   }
+  // who gets each span's email: one digest email a person (the owner's rule). The VP and admins get every span; a manager their
+  // own; anyone else the span of the nearest manager above them in the reporting line that holds any of their clients (with
+  // nested managers, a team lead's assistant manager, not the senior manager too); someone with no such manager above them, the
+  // first span that holds their clients (the clients without a manager among them)
+  const up = new Map((await all(env, "SELECT id, reports_to FROM users WHERE active = 1")).map((u) => [u.id, u.reports_to]));
+  const byMgr = new Map(spans.filter((s) => s.manager).map((s) => [s.manager.id, s])), onSpan = (s, u) => s.on.some((x) => x.id === u.id);
+  const theirs = (u) => {
+    if (u.is_admin || u.access_all) return null;
+    if (byMgr.has(u.id)) return byMgr.get(u.id);
+    for (let a = up.get(u.id), seen = new Set(); a && !seen.has(a); a = up.get(a)) { seen.add(a); const s = byMgr.get(a); if (s && onSpan(s, u)) return s; }
+    return spans.find((s) => onSpan(s, u)) || false;
+  };
+  for (const s of spans) s.recipients = s.on.filter((u) => { const t = theirs(u); return t === null || t === s; });
   return spans;
 }
 /* A team lead sees only their own clients of a manager's digest; the manager, the admin and people with every client see it all. */
 const spanFor = (user, s) => (user.is_admin || user.access_all || (s.manager && s.manager.id === user.id)) ? s : { ...s, clients: s.clients.filter((c) => onClient(user, c.id)) };
-const spanVisible = (user, s) => user.is_admin || user.access_all || (s.manager && s.manager.id === user.id) || s.recipients.some((u) => u.id === user.id);
+const spanVisible = (user, s) => user.is_admin || user.access_all || (s.manager && s.manager.id === user.id) || s.on.some((u) => u.id === user.id);
 /* Each client's figures for the digest: Client 360's (client.overview: health and its reasons, AR, collected, entries, SLA,
    month-end, missed tasks, requests waiting on the client, timely filing) and the week's own (AR a week before and at the
    week's end, entries the week before, who worked, claims flagged). Read for all the clients of a span at once, each query
