@@ -262,6 +262,48 @@ S("V-02: people Shastra has on leave or comp off today count as out on Live stat
   ok("V-02: on a Saturday the week off is not counted as out (the weekend says nobody is expected in)", hw.weekend && !hw.rows.some((r) => r.status === "out"), hw.rows.map((r) => [r.name, r.status]));
 }
 
+S("V-05: a night shift's Out today mark and a dismissed alert hold for the shift, past midnight and past 05:00");
+{
+  const feed = stdFeed();
+  feed.push(AG("N1", "Uma Agent", "Tina Lead", SUN, { shift: "21:00-06:00" }), AG("N2", "Vik Agent", "Tina Lead", SUN, { shift: "21:00-06:00" }),
+    AG("N3", "Wren Agent", "Tina Lead", SUN, { shift: "22:30-07:30" }), AG("N4", "Yash Agent", "Tina Lead", SUN, { shift: "02:00-11:00" }));
+  const F = await floor({ now: IST(2026, 11, 16, 12), feed });
+  const TI = await F.who("Tina Lead");
+  await F.give("Uma Agent", 4);
+  // nobody of them punches in for Monday night's shift (nor Yash for his 02:00 shift on Tuesday)
+  F.S.live = [LV("N1", { shift: "21:00-06:00" }), LV("N2", { shift: "21:00-06:00" }), LV("N3", { shift: "22:30-07:30" }), LV("N4", { shift: "02:00-11:00" })];
+  const look = async (ms) => { F.clock(ms); await F.freshLive(); const h = await F.hud(TI), nt = await F.bell(TI);
+    return { h, al: (n) => (nt.alerts || []).find((a) => a.name === n), st: (n) => F.row(h, n).status }; };
+  let L = await look(IST(2026, 11, 16, 23, 45));
+  ok("V-05: 23:45 Monday: the pop-up for Uma, Vik and Wren", ["Uma Agent", "Vik Agent", "Wren Agent"].every((n) => L.al(n) && L.al(n).popup && L.al(n).day === "2026-11-16"), ["Uma Agent", "Vik Agent", "Wren Agent"].map((n) => L.al(n)));
+  await TI("team.setOut", { user_id: F.id("Uma Agent"), out: true, reason: "Not logged in to Shastra", today: "2026-11-16" });   // the pop-up's Mark out only
+  await TI("team.alertDismiss", { user_id: F.id("Vik Agent") });                                                                   // They told me · dismiss
+  await TI("team.shareOut", { user_id: F.id("Wren Agent"), today: "2026-11-16" });                                                 // Reallocate (marks her out)
+  L = await look(IST(2026, 11, 17, 0, 30));
+  ok("V-05: 00:30 Tuesday: Uma is still out on Live status, with no alert", L.st("Uma Agent") === "out" && !L.al("Uma Agent"), [L.st("Uma Agent"), L.al("Uma Agent")]);
+  ok("V-05: 00:30 Tuesday: Vik's dismissed alert and Wren (reallocated, out) stay quiet", !L.al("Vik Agent") && !L.al("Wren Agent") && L.st("Wren Agent") === "out", [L.al("Vik Agent"), L.al("Wren Agent")]);
+  // marking Uma out again after midnight marks the same shift, never Tuesday
+  await TI("team.setOut", { user_id: F.id("Uma Agent"), out: true, reason: "Sick", today: "2026-11-17" });
+  ok("V-05: marking her out again at 00:30 marks Monday's shift, not Tuesday", (await F.rows("SELECT day FROM attendance WHERE user_id = ?", F.id("Uma Agent"))).map((x) => x.day).join() === "2026-11-16");
+  L = await look(IST(2026, 11, 17, 5, 15));
+  ok("V-05: 05:15 Tuesday: no pop-up comes back for Uma, Vik or Wren for the same missed shift", !L.al("Uma Agent") && !L.al("Vik Agent") && !L.al("Wren Agent"), [L.al("Uma Agent"), L.al("Vik Agent"), L.al("Wren Agent")]);
+  ok("V-05: 05:15 Tuesday: Uma and Wren are still out on Live status", L.st("Uma Agent") === "out" && L.st("Wren Agent") === "out");
+  const ts = await F.ts(TI, "2026-11-16", "2026-11-17");
+  ok("V-05: Team status: Uma is out today (her shift's day is Monday until it is over) and Tuesday is not a day out", F.row(ts, "Uma Agent").out_today === "out" && F.row(ts, "Uma Agent").days_out === 1, F.row(ts, "Uma Agent"));
+  // an early shift that begins after midnight: a dismissal at 03:30 still holds after Shastra's day rolls at 05:00
+  L = await look(IST(2026, 11, 17, 3, 30));
+  ok("V-05: 03:30 Tuesday: Yash (02:00 shift) has not logged in", L.al("Yash Agent") && L.al("Yash Agent").day === "2026-11-17", L.al("Yash Agent"));
+  await TI("team.alertSnooze", { user_id: F.id("Yash Agent"), minutes: 120 });
+  L = await look(IST(2026, 11, 17, 5, 10));
+  ok("V-05: a 'remind me later' at 03:30 still holds at 05:10, after Shastra's day rolled", L.al("Yash Agent") && L.al("Yash Agent").snoozed && !L.al("Yash Agent").popup, L.al("Yash Agent"));
+  // In after all, at 01:00 for Monday night's shift, gives that shift back
+  F.clock(IST(2026, 11, 17, 1)); await TI("team.setOut", { user_id: F.id("Uma Agent"), out: false, today: "2026-11-17" });
+  ok("V-05: In after all after midnight takes back Monday's mark", !(await F.rows("SELECT 1 FROM attendance WHERE user_id = ?", F.id("Uma Agent"))).length);
+  // the next night is a new shift: the alert comes again
+  L = await look(IST(2026, 11, 17, 22, 30));
+  ok("V-05: Tuesday night's shift is a new one: Vik's alert comes again at 22:30", L.al("Vik Agent") && L.al("Vik Agent").day === "2026-11-17" && L.al("Vik Agent").popup, L.al("Vik Agent"));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

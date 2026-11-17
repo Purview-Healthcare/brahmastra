@@ -313,7 +313,9 @@ entries before the shift time too, as Team status and My day do (a night shift's
 - **New claims notice**: whenever claims are given to a biller (Allocate, reassigning, Rebalance, Reallocate), they
   see "N new claims were allocated to you" at the top of their screen with who gave them and why, in the bell and,
   once they allow it, on their computer. *Open my list* or *OK* closes it.
-- **Out today** marks someone absent with a reason (**Half day** counts 4 hours of floor time on Team status).
+- **Out today** marks someone absent with a reason (**Half day** counts 4 hours of floor time on Team status). The mark,
+  and a dismissed or snoozed not-logged-in alert, hold for the person's working day: a night shift's is the day it began,
+  until it is over, so they are not lost at midnight and the alert does not come back at 05:00 for the same missed shift.
 - The **coaching card** (entries a day over 30 days against target, skips, carried over, escalations, hand-offs sent
   back, average note length, days out, the statuses they enter most, and **1:1 notes** that team leads and up see and
   the biller never does) opens from **Search** (Ctrl+K) on a biller's name. QA scores stay in Sasha's Third Eye.

@@ -2561,10 +2561,12 @@ const LIVE_IN = new Set(["present", "late", "break"]);
 async function shareEqually(env, user, src, o) {
   const today = o.today || istISO(Date.now()), live = o.live || { state: "off", byUser: new Map() }, now = Date.now();
   const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active && u.id !== src.id);
-  const out = new Set((await all(env, "SELECT user_id FROM attendance WHERE day IN (?, ?) AND status = 'out'", today, live.day || today)).map((x) => x.user_id));
+  // marked out for their own working day (a night shift's is the day it began, until it is over)
+  const outK = new Set((await all(env, "SELECT user_id, day FROM attendance WHERE day IN (?, ?) AND status = 'out'", addDays(today, -1), today)).map((x) => x.user_id + "|" + x.day));
+  const isOut = (u) => outK.has(u.id + "|" + workDayOf(u.shift, now, today).day);
   const stateOf = (u) => liveState(live.byUser.get(u.id), u, now).state;
-  const isIn = (u) => !out.has(u.id) && (live.state !== "ok" || LIVE_IN.has(stateOf(u)) || stateOf(u) === "none");
-  const why = (u) => out.has(u.id) ? "out today" : ({ leave: "on leave", missing: "not logged in", notin: "not in yet", absent: "absent", out: "logged out", offclock: "not on the clock" })[stateOf(u)] || "not in";
+  const isIn = (u) => !isOut(u) && (live.state !== "ok" || LIVE_IN.has(stateOf(u)) || stateOf(u) === "none");
+  const why = (u) => isOut(u) ? "out today" : ({ leave: "on leave", missing: "not logged in", notin: "not in yet", absent: "absent", out: "logged out", offclock: "not on the clock" })[stateOf(u)] || "not in";
   const claims = await all(env, `SELECT id, client_id, priority, tier FROM claims WHERE assigned_to = ? AND state = 'assigned'${editScopeSql(user, "client_id")} ORDER BY priority DESC`, src.id, ...editScopeArgs(user));
   const ids = [...new Set(claims.map((c) => c.client_id))];
   const cls = ids.length ? await all(env, `SELECT id, name, team_json FROM clients WHERE id IN ${IN_LIST}`, listArg(ids)) : [];
@@ -2612,21 +2614,25 @@ async function missingAlerts(env, user) {
   if (user.role !== "supervisor" || deskOf(user)) return { state: "off", alerts: [] };
   const live = await shastraLive(env);
   if (live.state !== "ok") return { state: live.state, alerts: [] };
-  const now = Date.now(), day = live.day, today = istISO(now);
+  const now = Date.now(), today = istISO(now), yday = addDays(today, -1);
   const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active && (!String(u.department || "").trim() || isAR(u)));
-  const out = new Set((await all(env, "SELECT user_id FROM attendance WHERE day IN (?, ?) AND status = 'out'", today, day)).map((x) => x.user_id));
-  const marks = await all(env, "SELECT user_id, by_id, state, until_at FROM shastra_alerts WHERE day = ?", day);
-  const gone = new Set(marks.filter((m) => m.state === "dismissed").map((m) => m.user_id));
-  const snoozed = new Set(marks.filter((m) => m.state === "snoozed" && m.by_id === user.id && m.until_at > now).map((m) => m.user_id));
-  const missing = team.filter((u) => !out.has(u.id) && !gone.has(u.id)).map((u) => ({ u, s: liveState(live.byUser.get(u.id), u, now) })).filter((x) => x.s.state === "missing");
+  // an Out today mark, a dismissal or a snooze holds for the person's working day: a night shift's is the day it began until it
+  // is over, so the mark is not lost at midnight and the alert does not come back at 05:00 for the same missed shift (V-05)
+  const dayOf = (u) => workDayOf(u.shift, now, today).day;
+  const out = new Set((await all(env, "SELECT user_id, day FROM attendance WHERE day IN (?, ?) AND status = 'out'", yday, today)).map((x) => x.user_id + "|" + x.day));
+  const marks = await all(env, "SELECT user_id, day, by_id, state, until_at FROM shastra_alerts WHERE day IN (?, ?)", yday, today);
+  const gone = new Set(marks.filter((m) => m.state === "dismissed").map((m) => m.user_id + "|" + m.day));
+  const snoozed = new Set(marks.filter((m) => m.state === "snoozed" && m.by_id === user.id && m.until_at > now).map((m) => m.user_id + "|" + m.day));
+  const missing = team.map((u) => ({ u, k: u.id + "|" + dayOf(u) })).filter((x) => !out.has(x.k) && !gone.has(x.k))
+    .map((x) => ({ ...x, s: liveState(live.byUser.get(x.u.id), x.u, now) })).filter((x) => x.s.state === "missing");
   if (!missing.length) return { state: "ok", alerts: [] };
   const clients = await all(env, "SELECT id, team_json FROM clients WHERE active = 1");
   const alerts = [];
-  for (const { u, s } of missing) {
+  for (const { u, s, k } of missing) {
     const plan = await shareEqually(env, user, u, { dry: true, live, today });
     const leadsClient = clients.some((c) => parseTeam(c.team_json).includes(u.id) && leadFor(user, c.id));
-    alerts.push({ user_id: u.id, name: u.name, shift: u.shift || "", day, since: s.since, late_min: s.late_min, sub: s.sub, n: plan.n, high: plan.high, plan: plan.to, skipped: plan.skipped,
-      left: plan.left, clients: plan.clients.map((c) => c.name), popup: (u.reports_to === user.id || (leadsClient && !isManagerUp(user))) && !snoozed.has(u.id), snoozed: snoozed.has(u.id) });
+    alerts.push({ user_id: u.id, name: u.name, shift: u.shift || "", day: dayOf(u), since: s.since, late_min: s.late_min, sub: s.sub, n: plan.n, high: plan.high, plan: plan.to, skipped: plan.skipped,
+      left: plan.left, clients: plan.clients.map((c) => c.name), popup: (u.reports_to === user.id || (leadsClient && !isManagerUp(user))) && !snoozed.has(k), snoozed: snoozed.has(k) });
   }
   return { state: "ok", alerts };
 }
@@ -5290,7 +5296,8 @@ const OPS = {
     // the claim each person last worked (their latest entry in the last 7 days, on any client) and when: shown when no claim is open
     const lastWork = new Map((await all(env, `SELECT n.user_id, n.claim_id, MAX(n.created_at) AS at, c.claim_no, c.client_id, cl.name AS client_name FROM notes n JOIN claims c ON c.id = n.claim_id
       LEFT JOIN clients cl ON cl.id = c.client_id WHERE n.kind = 'work' AND n.user_id IN ${IN_LIST} AND n.created_at > ? GROUP BY n.user_id`, ida, now - 7 * 86400000)).map((r) => [r.user_id, r]));
-    const att = new Map((await all(env, `SELECT user_id, status, reason, by_name FROM attendance WHERE day = ? AND user_id IN ${IN_LIST}`, today, ida)).map((r) => [r.user_id, r]));
+    // Out today: the mark of each person's own working day (a night shift's is the day it began, until it is over: V-05)
+    const att = new Map((await all(env, `SELECT user_id, day, status, reason, by_name FROM attendance WHERE day IN (?, ?) AND user_id IN ${IN_LIST}`, addDays(today, -1), today, ida)).map((r) => [r.user_id + "|" + r.day, r]));
     const live = await shastraLive(env);
     const weekdayToday = isWorkDay(today);   // Monday to Friday, not a Shastra holiday
     // a Shastra holiday on a weekday: nobody is expected in, and the page says which holiday (the weekend says weekend)
@@ -5320,7 +5327,7 @@ const OPS = {
       const span = win ? win.len : 9 * 3600000, began = win ? win.start : first;
       const elapsed = began ? Math.min(1, Math.max(0, (now - began) / span)) : 0;
       const expected = Math.round(target * elapsed);
-      const a = att.get(u.id);
+      const a = att.get(u.id + "|" + wday.day);
       const inShift = win ? now >= win.start && now <= win.end : !!first;
       // Saturday and Sunday: nobody is expected in (as on Team status); whoever works is counted, with no target
       const offDay = !workDay && !mine.length && !onDesk.some((c) => c.state === "in_progress");
@@ -5436,7 +5443,7 @@ const OPS = {
       // left over: allocated before the person's working day began (a night shift's: the day it began) and not started
       all(env, `SELECT c.assigned_to, c.tier, c.assigned_at FROM claims c WHERE c.state = 'assigned' AND c.assigned_at < ? AND (c.follow_up_on IS NULL OR c.follow_up_on = '' OR c.follow_up_on <= ?) AND c.assigned_to IN ${IN_LIST}${cw}${lw}`,
         Math.max(...people.map((u) => wdOf.get(u.id).from)), today, ida, ...ca, ...la),
-      all(env, `SELECT user_id, reason FROM attendance WHERE status = 'out' AND day = ? AND user_id IN ${IN_LIST}`, today, ida),
+      all(env, `SELECT user_id, day, reason FROM attendance WHERE status = 'out' AND day IN (?, ?) AND user_id IN ${IN_LIST}`, addDays(today, -1), today, ida),
       all(env, `SELECT e.id, e.error_by_id AS user_id, e.sr, e.client_id, cl.name AS client_name, e.kind, e.dept, e.day, e.error_dow, e.status FROM escalations e LEFT JOIN clients cl ON cl.id = e.client_id
         WHERE e.is_error = 'Y' AND e.error_by_id IN ${IN_LIST} AND e.day BETWEEN ? AND ?${ew} ORDER BY e.day DESC, e.sr DESC`, ida, from, to, ...ca),
       // team tasks: the items each person marked done in these dates (what each update added), on the day the update was made
@@ -5463,7 +5470,8 @@ const OPS = {
       exBy.get(x.user_id).push({ id: x.upload_id, name: exNames.get(x.upload_id) || "", n: x.n || 0, n_done: x.n_done || 0, file_n: x.file_n || 0, file_done: x.file_done || 0, edited: !!x.edits, edit_by: mk ? mk.by : "", edit_at: mk ? mk.at : null }); }
     const escBy = new Map(); for (const e of escs) { if (!escBy.has(e.user_id)) escBy.set(e.user_id, []); escBy.get(e.user_id).push({ id: e.id, sr: e.sr, client_id: e.client_id, client_name: e.client_name || "",
       kind: escKind(e), dept: e.dept, day: e.day, dow: e.error_dow || "", status: e.status === "resolved" ? "Closed" : "Open" }); }
-    const outToday = new Map(outNow.map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
+    // marked out today: the mark of the person's own working day (a night shift's is the day it began: V-05)
+    const outToday = new Map(outNow.filter((x) => wdOf.has(x.user_id) && wdOf.get(x.user_id).day === x.day).map((x) => [x.user_id, /half/i.test(x.reason || "") ? "half" : "out"]));
     const wk = new Map(work.map((x) => [x.user_id, x])), cl = new Map(closed.map((x) => [x.user_id, x.n])), nb = new Map(notes.map((x) => [x.user_id, x]));
     // time on the floor and idle time from Purview Shastra (and its attendance for each day), when its feed is set up
     let fl; try { fl = await shastraFloor(env, from, to, today, off); } catch (e) { fl = { state: "error", error: str(e && e.message, 200), byUser: new Map() }; }
@@ -5889,27 +5897,32 @@ const OPS = {
   },
   "team.setOut": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60), today = isoDate(payload.today) || isoToday();
-    if (!(await visibleUsers(env, user, "edit")).some((u) => u.id === id)) throw denied("That person is not in your team.");
-    if (payload.out === false) await run(env, "DELETE FROM attendance WHERE user_id = ? AND day = ?", id, today);
+    const u = (await visibleUsers(env, user, "edit")).find((x) => x.id === id);
+    if (!u) throw denied("That person is not in your team.");
+    // the person's working day: a night shift under way after midnight is still the day it began (V-05)
+    const day = workDayOf(u.shift, Date.now(), today).day;
+    if (payload.out === false) await run(env, "DELETE FROM attendance WHERE user_id = ? AND day = ?", id, day);
     else await run(env, `INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,'out',?,?,?) ON CONFLICT (user_id, day) DO UPDATE SET status = 'out', reason = excluded.reason, by_name = excluded.by_name, at = excluded.at`,
-      id, today, str(payload.reason, 120).trim(), user.name || "", Date.now());
-    return { ok: true };
+      id, day, str(payload.reason, 120).trim(), user.name || "", Date.now());
+    return { ok: true, day };
   },
   /* The not-logged-in alert: Remind me in 30 min (for this person only) or They told me (for everyone, for the day). */
   "team.alertSnooze": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60);
-    if (!(await visibleUsers(env, user, "edit")).some((u) => u.id === id)) throw denied("That person is not in your team.");
-    const live = await shastraLive(env), mins = Math.min(240, Math.max(5, Math.round(num(payload.minutes, 30)))), now = Date.now();
+    const u = (await visibleUsers(env, user, "edit")).find((x) => x.id === id);
+    if (!u) throw denied("That person is not in your team.");
+    // for the missed shift's working day (a night shift's is the day it began), as missingAlerts reads it (V-05)
+    const mins = Math.min(240, Math.max(5, Math.round(num(payload.minutes, 30)))), now = Date.now(), day = workDayOf(u.shift, now, istISO(now)).day;
     await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'snoozed',?,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'snoozed', until_at = excluded.until_at, at = excluded.at`,
-      id, live.day || istISO(now), user.id, now + mins * 60000, user.name || "", now);
+      id, day, user.id, now + mins * 60000, user.name || "", now);
     return { ok: true, until_at: now + mins * 60000 };
   },
   "team.alertDismiss": async ({ env, user, payload }) => {
     const id = str(payload.user_id, 60);
     const u = (await visibleUsers(env, user, "edit")).find((x) => x.id === id);
     if (!u) throw denied("That person is not in your team.");
-    const live = await shastraLive(env), now = Date.now();
-    await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'dismissed',NULL,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'dismissed', at = excluded.at`, id, live.day || istISO(now), user.id, user.name || "", now);
+    const now = Date.now(), day = workDayOf(u.shift, now, istISO(now)).day;
+    await run(env, `INSERT INTO shastra_alerts (user_id, day, by_id, state, until_at, by_name, at) VALUES (?,?,?,'dismissed',NULL,?,?) ON CONFLICT (user_id, day, by_id) DO UPDATE SET state = 'dismissed', at = excluded.at`, id, day, user.id, user.name || "", now);
     await audit(env, user, "team.alert", null, `${u.name}: not logged in, dismissed (${str(payload.reason, 80) || "the team lead knows"})`);
     return { ok: true };
   },
@@ -5923,7 +5936,7 @@ const OPS = {
     const live = await shastraLive(env);
     const res = await shareEqually(env, user, src, { live, today, via: "not logged in", reason: payload.mark_out === false ? "reallocated" : "not logged in today" });
     if (payload.mark_out !== false) await run(env, `INSERT INTO attendance (user_id, day, status, reason, by_name, at) VALUES (?,?,'out',?,?,?) ON CONFLICT (user_id, day) DO UPDATE SET status = 'out', reason = excluded.reason, by_name = excluded.by_name, at = excluded.at`,
-      id, today, "Not logged in to Shastra", user.name || "", Date.now());
+      id, workDayOf(src.shift, Date.now(), today).day, "Not logged in to Shastra", user.name || "", Date.now());
     if (res.moved || payload.mark_out !== false) await audit(env, user, "team.rebalance", null, `${src.name} (not logged in): ${res.moved} claim${res.moved === 1 ? "" : "s"} shared equally` + (res.to.length ? " to " + res.to.map((x) => x.name + " " + x.count).join(", ") : "") + (res.left ? `; ${res.left} stayed` : ""));
     return { moved: res.moved, left: res.left, to: res.to.map(({ name, count }) => ({ name, count })), marked_out: payload.mark_out !== false };
   },
@@ -6181,8 +6194,8 @@ const OPS = {
       add("missed", "amber", m, plural(m, "missed task", "missed tasks") + " on your clients (allocated or handed off, not worked)", "raci");
       // claims on the desks of people out today (Live status's Rebalance): the AR floor's, never a desk person's (team leads too)
       const team = deskOf(user) ? [] : (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active);
-      const outIds = new Set(team.length ? (await all(env, "SELECT user_id FROM attendance WHERE day = ? AND status = 'out'", today)).map((r) => r.user_id) : []);
-      const absent = team.filter((u) => outIds.has(u.id));
+      const outIds = new Set(team.length ? (await all(env, "SELECT user_id, day FROM attendance WHERE day IN (?, ?) AND status = 'out'", addDays(today, -1), today)).map((r) => r.user_id + "|" + r.day) : []);
+      const absent = team.filter((u) => outIds.has(u.id + "|" + workDayOf(u.shift, now, today).day));
       if (absent.length) {
         const r = await one(env, `SELECT COUNT(*) AS n FROM claims WHERE state = 'assigned' AND assigned_to IN ${IN_LIST}`, listArg(absent.map((u) => u.id)));
         add("absent", "amber", (r && r.n) || 0, plural((r && r.n) || 0, "claim sits", "claims sit") + " on the desks of people out today", "teamtoday");
