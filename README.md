@@ -1022,6 +1022,14 @@ at most 93 days a call, so longer dates are asked for in parts and joined. Until
   back to the pool and their open hand-offs go to the backup, as when someone is
   switched off; their notes stay in the claim history. The last active team
   lead cannot be deleted. People who leave are switched off by the roster sync.
+- **Starting a client fresh**: only the admin, from Manage › Clients & locations (**Start fresh** on the client,
+  then the client's name typed to confirm). It clears the client's inventory and the work on it: every claim with
+  its notes and comments, files and history, its hand-offs, holds and escalations, its upload and allocation
+  history, patient-detail uploads, inventory and AR snapshots, and the bell lines about it. Work counted from those
+  claims leaves Team status and the Stack report (a locked month keeps what it locked). The client's setup stays:
+  locations, team, responsible people, targets and TATs, shares, RACI, insurance limits, note templates, team tasks,
+  month-end, the call log, the client report's texts and EV files; files already in OneDrive are not touched. It
+  cannot be undone; the change history and the audit trail say who did it, when, and how much was cleared.
 - Anyone signed in with a code can set or change a password from the menu
   without typing the old one.
 

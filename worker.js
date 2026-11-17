@@ -7134,6 +7134,39 @@ const OPS = {
     ]);
     return { ok: true, name: ex.name, claims: n ? n.n : 0 };
   },
+  /* Start fresh (the admin only): a client's inventory and the work on it are cleared and its setup is kept, for a team that
+     begins the client again from a new file. Cleared: its claims with their notes and comments, files, history, hand-offs and
+     holds; its escalations; its upload and allocation history, patient-detail uploads, inventory and AR snapshots, and the
+     bell lines about it. Work counted from those claims leaves Team status and the Stack report (a locked month keeps what it
+     locked). Kept: the client, its locations, team, responsible people, targets and TATs, shares, RACI, insurance limits, note
+     templates, team tasks, month-end, the call log, the client report's texts and EV files, and files already in OneDrive.
+     The change history and the audit trail say who did it, when, and how much went. */
+  "clients.startFresh": async ({ env, user, payload }) => {
+    if (!user.is_admin) throw denied("Only the admin can start a client fresh.");
+    const ex = await one(env, "SELECT id, name FROM clients WHERE id = ?", str(payload.id, 60));
+    if (!ex) throw bad("Unknown client.");
+    if (str(payload.confirm, 200).trim().toLowerCase() !== String(ex.name).trim().toLowerCase()) throw bad("Type the client's name exactly to confirm.");
+    const count = async (sql) => ((await one(env, sql, ex.id)) || {}).n || 0;
+    const inClient = "claim_id IN (SELECT id FROM claims WHERE client_id = ?)";
+    const claims = await count("SELECT COUNT(*) AS n FROM claims WHERE client_id = ?");
+    const notes = await count(`SELECT COUNT(*) AS n FROM notes WHERE ${inClient}`);
+    const uploads = await count("SELECT COUNT(*) AS n FROM batches WHERE client_id = ?");
+    // one batch: all of it goes, or (on an error) none of it
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM notes WHERE ${inClient}`).bind(ex.id),
+      env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id IN (SELECT a.id FROM attachments a JOIN claims c ON c.id = a.claim_id WHERE c.client_id = ?)").bind(ex.id),
+      env.DB.prepare(`DELETE FROM attachments WHERE ${inClient}`).bind(ex.id),
+      env.DB.prepare(`DELETE FROM claim_events WHERE ${inClient}`).bind(ex.id),
+      env.DB.prepare(`DELETE FROM handoffs WHERE client_id = ? OR ${inClient}`).bind(ex.id, ex.id),
+      env.DB.prepare(`DELETE FROM tat_holds WHERE client_id = ? OR ${inClient}`).bind(ex.id, ex.id),
+      ...["escalations", "detail_uploads", "inv_snapshots", "client_snapshots", "user_notices"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE client_id = ?`).bind(ex.id)),
+      env.DB.prepare("DELETE FROM claims WHERE client_id = ?").bind(ex.id),
+      env.DB.prepare("DELETE FROM batches WHERE client_id = ?").bind(ex.id),
+      env.DB.prepare("DELETE FROM allocations WHERE client_id = ?").bind(ex.id),
+    ]);
+    await audit(env, user, "client.startFresh", ex.id, `${ex.name} started fresh: ${claims} claims, ${notes} notes and comments, ${uploads} uploads cleared; its setup kept`);
+    return { ok: true, name: ex.name, claims, notes, uploads };
+  },
   "locations.save": async ({ env, user, payload }) => {
     // A change leaves alone what it does not send: no Active in it keeps the location on or off as it is.
     const was = payload.id ? await one(env, "SELECT name, active FROM locations WHERE id = ?", str(payload.id, 60)) : null;

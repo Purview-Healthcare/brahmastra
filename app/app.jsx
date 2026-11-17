@@ -3400,6 +3400,15 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
   /* No workbook link: Brahmastra keeps the month's Production file in the Purviewautomate OneDrive by itself. */
   const [del, setDel] = useState(null);
   const [delTyped, setDelTyped] = useState("");
+  // Start fresh (the admin): the client's inventory and the work on it are cleared, its setup kept
+  const [fresh, setFresh] = useState(null);
+  const [freshTyped, setFreshTyped] = useState("");
+  const doFresh = async () => {
+    setBusy(true);
+    try { const r = await rpc("clients.startFresh", { id: fresh.id, confirm: freshTyped.trim() }); toast(`${r.name} starts fresh: ${plural(r.claims, "claim")}, ${plural(r.notes, "note")} and ${plural(r.uploads, "upload")} cleared. Its setup is kept.`); setFresh(null); setFreshTyped(""); reload(); }
+    catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
   const doDelete = async () => {
     setBusy(true);
     try { const r = await rpc("clients.delete", { id: del.id, confirm: delTyped.trim() }); toast(`${r.name} deleted with ${plural(r.claims, "claim")}.`); setDel(null); setDelTyped(""); setEdit(null); reload(); }
@@ -3408,6 +3417,11 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
   };
   return (
     <div className="stack">
+      {fresh && (
+        <Modal title={"Start " + fresh.name + " fresh?"} sub="This clears the client's inventory and the work on it: every claim with its notes and comments, files and history, its hand-offs and escalations, and its upload and allocation history. Work counted from those claims leaves Team status and the Stack report (a locked month keeps what it locked). The client's setup stays: locations, team, responsible people, targets, TATs, shares and RACI. Files already in OneDrive are not touched. It cannot be undone: to keep a copy, download the claims from Claims first." onClose={() => setFresh(null)} narrow footer={<><button className="btn" onClick={() => setFresh(null)} disabled={busy}>Cancel</button><button className="btn danger" onClick={doFresh} disabled={busy || freshTyped.trim().toLowerCase() !== fresh.name.trim().toLowerCase()}>{busy ? "Clearing…" : "Clear and start fresh"}</button></>}>
+          <Field label={"Type " + fresh.name + " to confirm"}><input className="input" value={freshTyped} onChange={(e) => setFreshTyped(e.target.value)} autoFocus /></Field>
+        </Modal>
+      )}
       {del && (
         <Modal title={"Delete " + del.name + "?"} sub="This removes the client, its locations, every upload and claim under it, and the notes on those claims. It cannot be undone. To keep the history but hide the client, untick Active instead." onClose={() => setDel(null)} narrow footer={<><button className="btn" onClick={() => setDel(null)} disabled={busy}>Cancel</button><button className="btn danger" onClick={doDelete} disabled={busy || delTyped.trim().toLowerCase() !== del.name.trim().toLowerCase()}>{busy ? "Deleting…" : "Delete client"}</button></>}>
           <Field label={"Type " + del.name + " to confirm"}><input className="input" value={delTyped} onChange={(e) => setDelTyped(e.target.value)} autoFocus /></Field>
@@ -3429,7 +3443,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
             <div><h2>{c.name} {c.code && <span className="badge ink">{c.code}</span>} {!c.active && <span className="badge red">inactive</span>} {c.can_edit === false && !ro && <span className="badge amber" title="This client was shared with you view-only.">shared · view only</span>}</h2>
               <div className="sub">Default follow-up after a claim is worked: {plural(c.follow_up_days, "day")} · added {fmtDate(istISOOf(c.created_at))}</div></div>
             {c.can_edit === false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}{!ro && <button className="btn sm" onClick={() => setHist(c)}>Change history</button>}</div>}
-            {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}<button className="btn sm" onClick={() => setHist(c)}>Change history</button><button className="btn sm" onClick={() => setProf({ client: c })}>Edit profile</button>{go && <button className="btn sm" onClick={() => go("client", { client_id: c.id })}>Open Client 360</button>}{!isSmeUI(me) && <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button>}</div>}
+            {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}<button className="btn sm" onClick={() => setHist(c)}>Change history</button><button className="btn sm" onClick={() => setProf({ client: c })}>Edit profile</button>{go && <button className="btn sm" onClick={() => go("client", { client_id: c.id })}>Open Client 360</button>}{me && me.is_admin && <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setFreshTyped(""); setFresh(c); }} title="Clear this client's inventory and the work on it; keep its setup">Start fresh</button>}{!isSmeUI(me) && <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button>}</div>}
           </div>
           {!ro && <div className="od-box mt8">
             <div className="small od-line"><b>OneDrive:</b> {c.od && c.od.link ? <>
@@ -7727,7 +7741,7 @@ const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took 
   "user.save": "Changed a team member", "client.log": "Logged a client call", "client.logRemove": "Removed a client call log entry", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL",
   "project.map": "Matched a roster project to a client", "user.code": "Gave a sign-in code", "user.reset": "Reset a password", "user.email": "Changed an email address",
-  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails", "roster.dupEmp": "The same Emp ID on two Shastra rows", "roster.nameClash": "The same name on two Shastra rows",
+  "user.delete": "Deleted an account", "client.startFresh": "Started a client fresh (inventory and comments cleared)", "roster.emails": "Changed the extra sign-in emails", "roster.dupEmp": "The same Emp ID on two Shastra rows", "roster.nameClash": "The same name on two Shastra rows",
   "stack.save": "Typed a Stack report value", "stack.lock": "Locked the Stack report", "stack.unlock": "Unlocked the Stack report", "stack.extra": "Counted an extra production file",
   "stack.extraEdit": "Edited extra production by hand", "stack.extraRemove": "Removed an extra production file", "attention.review": "Reviewed a claim and gave it to a biller",
   "client.folders": "Made a client's OneDrive folders", "client.location": "Changed a location", "client.team": "Changed a client's billers", "escalation.reason": "Gave why an escalation is still open",
