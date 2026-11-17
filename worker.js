@@ -3912,7 +3912,7 @@ async function autoMapProjects(env) {
 }
 /* Someone who no longer works a client (a share of it taken back or made view only, or Purview Shastra moved them to another
    client) gives that client's claims on their list back to the pool, as when someone leaves (README): each claim's history says
-   so and their bell tells them. clientId: only that client; none: every client they no longer work. Returns how many. */
+   so and their bell tells them. Their open hand-offs of it go to the backup, as when someone is switched off. clientId: only that client; none: every client they no longer work. Returns how many. */
 async function releaseLostClaims(env, by, userId, clientId) {
   const row = userId ? await one(env, "SELECT * FROM users WHERE id = ?", userId) : null;
   if (!row) return 0;
@@ -3929,6 +3929,10 @@ async function releaseLostClaims(env, by, userId, clientId) {
     if (went.length) await batchAll(env, went.map((c) => claimEvent(env, c.id, who, "unassigned", u.name || "")), 50);
     for (const c of went) { const k = per.get(c.client_id) || { name: c.client_name || "", n: 0 }; k.n++; per.set(c.client_id, k); }
   }
+  // their open hand-offs of a client they no longer work go on as when they are switched off: to the backup, or back on the desk (R4-D)
+  const hos = await all(env, `SELECT DISTINCT client_id FROM handoffs WHERE status IN ('pending','assigned','client') AND (lead_id = ? OR backup_id = ? OR assigned_to = ?)${clientId ? " AND client_id = ?" : ""}`,
+    userId, userId, userId, ...(clientId ? [clientId] : []));
+  for (const h of hos) if (!scope.includes(h.client_id) || viewOnlyOf(u, h.client_id)) await rerouteHandoffs(env, userId, h.client_id);
   if (per.size) await batchAll(env, [...per.entries()].map(([cid, k]) => env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)")
     .bind(uuid(), userId, Date.now(), `${k.n} claim${k.n === 1 ? " was" : "s were"} taken off your list: you no longer work ${k.name || "that client"}, so ${k.n === 1 ? "it went" : "they went"} back to the pool.`, "queue", cid)), 50);
   return [...per.values()].reduce((t, k) => t + k.n, 0);
@@ -3996,8 +4000,10 @@ async function sendToDesk(env, user, clientId, saag, targets, now, billerId) {
   return { dept, label: DEPT_LABEL[dept], mode: mode === "person" && !lead ? "unset" : mode || "unset", to: leadName || "" };
 }
 /* Open hand-offs of someone who is switched off: they go to the backup, or to whoever the client's profile now names. */
-async function rerouteHandoffs(env, userId) {
-  const open = await all(env, "SELECT h.id, h.dept, h.lead_id, h.backup_id, h.assigned_to, h.client_id FROM handoffs h WHERE h.status IN ('pending','assigned','client') AND (h.lead_id = ? OR h.backup_id = ? OR h.assigned_to = ?)", userId, userId, userId);
+async function rerouteHandoffs(env, userId, clientId = null) {
+  // clientId: only that client's (someone who no longer works it, still active); none: all of them (someone switched off)
+  const open = await all(env, "SELECT h.id, h.dept, h.lead_id, h.backup_id, h.assigned_to, h.client_id FROM handoffs h WHERE h.status IN ('pending','assigned','client') AND (h.lead_id = ? OR h.backup_id = ? OR h.assigned_to = ?)"
+    + (clientId ? " AND h.client_id = ?" : ""), userId, userId, userId, ...(clientId ? [clientId] : []));
   if (!open.length) return 0;
   const cls = new Map();
   const stmts = [];

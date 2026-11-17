@@ -143,6 +143,35 @@ ok("R4-C: Sunrise's only roster project re-mapped: the project's billers leave i
 await A("projects.map", { name: SUN, client_id: sun.id });
 ok("R4-C: matched back, the team is the project's again", JSON.parse((await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json).includes(U("Arun Agent")));
 
+S("R4-D: a desk person whose share of a client is taken back gives up its open hand-offs");
+await MONA("clients.saveResponsibility", { client_id: lake.id, dept: "posting", mode: "person", lead: U("Pia Poster") });
+await MONA("clients.accessSave", { client_id: lake.id, user_id: U("Paula Post"), level: "edit" });
+const hoClaims = await poolOf(3, lake.id), hnow = Date.now();
+const HO = (id, claim, lead, backup, assigned, status) => sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, backup_id, assigned_to, assigned_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+  id, claim, lake.id, "posting", status, hnow, hnow + 86400000, lead, backup, assigned, assigned ? hnow : null);
+await HO("ho-r4d-1", hoClaims[0], U("Pia Poster"), null, U("Paula Post"), "assigned");    // Pia's, given to Paula to work
+await HO("ho-r4d-2", hoClaims[1], U("Paula Post"), U("Pia Poster"), null, "pending");      // Paula's, Pia the backup
+await HO("ho-r4d-3", hoClaims[2], U("Pia Poster"), null, U("Paula Post"), "done");         // finished: stays as it was
+const hoOf = (id) => q1("SELECT lead_id, backup_id, assigned_to, status FROM handoffs WHERE id = ?", id);
+await MONA("clients.accessRemove", { client_id: lake.id, user_id: U("Paula Post") });
+const h1 = await hoOf("ho-r4d-1"), h2 = await hoOf("ho-r4d-2"), h3 = await hoOf("ho-r4d-3");
+ok("R4-D: the share taken back: the hand-off given to Paula Post is no longer hers (back on the desk, pending, with its lead)", h1.assigned_to === null && h1.status === "pending" && h1.lead_id === U("Pia Poster"), h1);
+ok("R4-D: the hand-off Paula Post led goes to the backup, as when someone is switched off", h2.lead_id === U("Pia Poster") && h2.backup_id !== U("Paula Post"), h2);
+ok("R4-D: a finished hand-off is left as it was", h3.assigned_to === U("Paula Post") && h3.status === "done", h3);
+// the same for a share made view only
+await MONA("clients.accessSave", { client_id: lake.id, user_id: U("Paula Post"), level: "edit" });
+await sql("UPDATE handoffs SET assigned_to = ?, status = 'assigned' WHERE id = 'ho-r4d-1'", U("Paula Post"));
+await MONA("clients.accessSave", { client_id: lake.id, user_id: U("Paula Post"), level: "view" });
+const h1v = await hoOf("ho-r4d-1");
+ok("R4-D: a share made view only: the hand-off given to her goes back too", h1v.assigned_to === null && h1v.status === "pending", h1v);
+await MONA("clients.accessRemove", { client_id: lake.id, user_id: U("Paula Post") });
+// someone who still works the client keeps theirs: Pia is responsible for it
+await MONA("clients.accessSave", { client_id: lake.id, user_id: U("Pia Poster"), level: "edit" });
+await sql("UPDATE handoffs SET assigned_to = ?, status = 'assigned' WHERE id = 'ho-r4d-1'", U("Pia Poster"));
+await MONA("clients.accessRemove", { client_id: lake.id, user_id: U("Pia Poster") });
+const h1p = await hoOf("ho-r4d-1");
+ok("R4-D: Pia Poster, still responsible for Lakeview's posting, keeps the hand-off she was given", h1p.assigned_to === U("Pia Poster") && h1p.status === "assigned", h1p);
+
 // ---------------------------------------------------------------------------------------------------------------------
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);

@@ -733,7 +733,8 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 Shares are personal (one person, one client), show who shared and when, and can
 be taken back any time. SMEs cannot share; a view-only share cannot be passed on. When a share is taken back or made
 view only, the client's claims on that person's list go back to the pool, as when someone leaves (each claim's history
-and their bell say so), unless the client is still theirs through their own projects. Someone who no longer works a
+and their bell say so), and their open hand-offs of it (a Payment posting or Submission person's) go to the backup or back
+on the desk, as when someone is switched off, unless the client is still theirs through their own projects. Someone who no longer works a
 client cannot open or work its claims, whatever was left on their list.
 
 A share is about the client, never about its people. Sign-in codes, password
