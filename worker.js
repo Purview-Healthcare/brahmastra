@@ -3513,7 +3513,8 @@ const diffLines = (before, after) => after.map((x, i) => (x !== before[i] ? x + 
 /* Client names, and a client's location names, are one of a kind: told apart without case or extra spaces. */
 const plainName = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
 /* Tell people when they are made responsible for a client (or taken off it): a line in their bell for two
-   weeks, and an email when one is set up. */
+   weeks, and an email when one is set up. Someone taken off it (its billers, or a responsibility moved to someone else) who no
+   longer works it gives its claims on their list back to the pool, as when a share is taken back (R4-C). */
 const RESP_LABEL = { ar_lead: "AR follow-up person (accountable)", ar_backup: "AR follow-up backup", posting_lead: "Payment posting person", posting_backup: "Payment posting backup",
   submission_lead: "Submission person", submission_backup: "Submission backup", submission_check_person: "Submission follow-up person (the recheck after submitting)", rejection_lead: "Rejections person", rejection_backup: "Rejections backup" };
 async function noticeResponsibility(env, actor, client, before, after) {
@@ -3547,6 +3548,7 @@ async function noticeResponsibility(env, actor, client, before, after) {
     await run(env, "INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)", uuid(), uid, now,
       `${who} took you off ${client.name} (${col === "team" ? "billers" : RESP_LABEL[col]}).`, "clients", client.id);
   }
+  for (const uid of new Set(removed.map(([u]) => u))) await releaseLostClaims(env, actor, uid, client.id);
 }
 /* ---- who sees which projects ----
    Admins and the VP (access_all) see every client, and so does an account added by hand that has no projects
@@ -10077,12 +10079,24 @@ const OPS = {
       if (from) editableOr(user, from.id);
     }
     let changed = !!payload.create;
+    // who holds claims of the client the project leaves: once it is matched elsewhere, those who no longer work it give them back (R4-C)
+    const holders = from ? (await all(env, "SELECT DISTINCT assigned_to FROM claims WHERE client_id = ? AND assigned_to IS NOT NULL AND state IN ('assigned','in_progress')", from.id)).map((r) => r.assigned_to) : [];
     for (const o of others) {
       const list = jsonList(o.roster_names_json).filter((n) => projKey(n) !== projKey(name));
       if (o.id === c.id) list.push(name);
       if (JSON.stringify(list) !== o.roster_names_json) { await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify(list), o.id); changed = true; }
     }
     await syncTeams(env);
+    if (from) {
+      // syncTeams leaves alone the team of a client with no roster project left: the project's own people came with it, so they go with it
+      const f = await one(env, "SELECT team_json, roster_names_json FROM clients WHERE id = ?", from.id);
+      if (f && !jsonList(f.roster_names_json).length) {
+        const mates = new Set((await all(env, "SELECT id, projects_json FROM users WHERE source = 'roster' AND role = 'user'")).filter((u) => jsonList(u.projects_json).some((p) => projKey(p.name) === projKey(name))).map((u) => u.id));
+        const team = parseTeam(f.team_json), left = team.filter((id) => !mates.has(id));
+        if (left.length !== team.length) await run(env, "UPDATE clients SET team_json = ? WHERE id = ?", JSON.stringify(left), from.id);
+      }
+    }
+    for (const uid of holders) await releaseLostClaims(env, user, uid, from.id);
     // who sees a client follows from this match, so it goes in the audit trail
     if (changed) await audit(env, user, "project.map", c.id, `Roster project ${name} matched to ${c.name}` + (payload.create ? " (a new client)" : "") + (from ? `; it was on ${from.name}` : ""));
     return { ok: true, client_id: c.id };

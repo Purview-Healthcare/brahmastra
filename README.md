@@ -164,7 +164,10 @@ it must be fixed in Shastra.
   claim of a client they are set responsible for), the Past TAT list and its
   reminder emails their own desk's tasks only. Someone Shastra moves off AR gives
   their AR claims back to the pool, as when someone leaves; someone Shastra moves to another client (another
-  project) gives back the claims of the client they no longer work.
+  project) gives back the claims of the client they no longer work. So does someone a team lead takes off a client's
+  team, someone whose responsibility for a client goes to another person, and the people of a roster project that is
+  matched to another client (a client left with no roster project loses the project's people from its team too),
+  unless the client is still theirs another way.
 
 #### Client 360
 

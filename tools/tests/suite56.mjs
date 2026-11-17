@@ -103,6 +103,46 @@ ok("R4-B: the app's go() (the menu, the bell, Ctrl+K, links) asks the top typed 
 ok("R4-B: Back and Forward, once Discard is pressed, move without asking again", /g\.ask\(\(\) => goNow\(h\.view, h\.params\)\)/.test(src));
 ok("R4-B: README says the menu, the bell and Ctrl+K ask too", /the menu, the bell, Ctrl\+K, Back and Forward ask first/.test(readme));
 
+S("R4-C: losing a client another way gives its claims on the person's list back to the pool");
+app.setToken(TOK["Leo Lead"]);
+await app.uploadClaims({ client_id: lake.id, location_id: null, kind: "fresh", file_name: "R4 lake inventory.xlsx", claims: made("LK", 12), summary: {}, rows_read: 12 });
+const onList = async (who, cid) => (await q("SELECT id FROM claims WHERE assigned_to = ? AND client_id = ? AND state IN ('assigned','in_progress')", U(who), cid)).map((x) => x.id);
+const noticeOf = async (who, cid) => (await q("SELECT text FROM user_notices WHERE user_id = ? AND client_id = ? AND text LIKE '%taken off your list%'", U(who), cid)).map((x) => x.text);
+// 1. a team lead takes someone off a client's team (clients.saveTeam)
+const sunTeam = async () => (await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json;
+const team0 = JSON.parse(await sunTeam()).map((x) => (typeof x === "string" ? x : x.id));
+await TI("clients.saveTeam", { client_id: sun.id, team: [...team0, U("Dev Agent")] });
+const devIds = await poolOf(2, sun.id); await give(devIds, "Dev Agent", TI, sun.id);
+ok("R4-C: set-up: Dev Agent (Lakeview) is put on Sunrise's team and given 2 of its claims", (await onList("Dev Agent", sun.id)).length === 2);
+const arunHeld = (await onList("Arun Agent", sun.id)).length;
+await TI("clients.saveTeam", { client_id: sun.id, team: team0.filter((x) => x !== U("Arun Agent")) });
+ok("R4-C: taking Dev Agent off Sunrise's team gives its claims on his list back to the pool", (await onList("Dev Agent", sun.id)).length === 0
+  && (await q("SELECT id FROM claims WHERE id IN (SELECT value FROM json_each(?)) AND state = 'open' AND assigned_to IS NULL", JSON.stringify(devIds))).length === 2, await onList("Dev Agent", sun.id));
+ok("R4-C: his bell says so", (await noticeOf("Dev Agent", sun.id)).length === 1, await noticeOf("Dev Agent", sun.id));
+ok("R4-C: Arun Agent, taken off the team too but still on the project, keeps his", (await onList("Arun Agent", sun.id)).length === arunHeld && arunHeld > 0, arunHeld);
+await TI("clients.saveTeam", { client_id: sun.id, team: team0 });
+// 3. a changed responsibility takes the client away
+await MONA("clients.saveResponsibility", { client_id: lake.id, dept: "ar", mode: "person", lead: U("Arun Agent") });
+const lkIds = await poolOf(2, lake.id); await give(lkIds, "Arun Agent", MONA, lake.id);
+ok("R4-C: set-up: Arun Agent is made AR responsible for Lakeview and given 2 of its claims", (await onList("Arun Agent", lake.id)).length === 2);
+await MONA("clients.saveResponsibility", { client_id: lake.id, dept: "ar", mode: "person", lead: U("Dev Agent") });
+ok("R4-C: AR responsibility moved to Dev Agent: Arun's Lakeview claims go back to the pool", (await onList("Arun Agent", lake.id)).length === 0, await onList("Arun Agent", lake.id));
+ok("R4-C: Arun's bell says so", (await noticeOf("Arun Agent", lake.id)).length === 1);
+ok("R4-C: his Sunrise claims stay on his list", (await onList("Arun Agent", sun.id)).length === arunHeld);
+// 2. a roster project re-mapped to another client (Sunrise keeps another roster project, so its team follows the roster)
+await sql("UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify([SUN, "Sunrise North"]), sun.id);
+await A("projects.map", { name: SUN, client_id: lake.id });
+ok("R4-C: re-mapping the roster project Sunrise Eye Care to Lakeview gives Arun's Sunrise claims back to the pool", (await onList("Arun Agent", sun.id)).length === 0, await onList("Arun Agent", sun.id));
+ok("R4-C: Arun's bell says so", (await noticeOf("Arun Agent", sun.id)).length === 1);
+await A("projects.map", { name: SUN, client_id: sun.id });
+await sql("UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify([SUN]), sun.id);
+const reIds = await poolOf(2, sun.id); await give(reIds, "Arun Agent", TI, sun.id);
+await A("projects.map", { name: SUN, client_id: lake.id });
+const sunAfter = JSON.parse((await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json);
+ok("R4-C: Sunrise's only roster project re-mapped: the project's billers leave its team and give its claims back", (await onList("Arun Agent", sun.id)).length === 0 && !sunAfter.includes(U("Arun Agent")), [await onList("Arun Agent", sun.id), sunAfter.length]);
+await A("projects.map", { name: SUN, client_id: sun.id });
+ok("R4-C: matched back, the team is the project's again", JSON.parse((await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json).includes(U("Arun Agent")));
+
 // ---------------------------------------------------------------------------------------------------------------------
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);
