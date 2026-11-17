@@ -8965,17 +8965,21 @@ const OPS = {
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met,
         SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN ${openNow} AND h.due_at < ? AND NOT ${held} THEN 1 ELSE 0 END) AS overdue_now
       FROM handoffs h LEFT JOIN clients cl ON cl.id = h.client_id WHERE ${W} GROUP BY h.client_id ORDER BY overdue_now DESC, open_now DESC, cl.name`, from, to, from, to, from, to, now, ...a);
-    const byPerson = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done,
+    // By person: one row a person (their id: who did it, else whom it is with), never one row for two people with the same name (R4-G)
+    const pKey = "CASE WHEN COALESCE(h.done_by_name, '') <> '' THEN COALESCE(h.done_by, 'n:' || h.done_by_name) ELSE COALESCE(h.assigned_to, h.lead_id, '') END";
+    const byPerson = await all(env, `SELECT ${pKey} AS id, MAX(COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned')) AS name, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done,
         SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now,
         AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
       FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
+    const empOf = new Map((await all(env, `SELECT id, emp_id FROM users WHERE id IN ${IN_LIST}`, listArg(byPerson.map((p) => p.id)))).map((u) => [u.id, u.emp_id || ""]));
+    for (const p of byPerson) p.emp_id = empOf.get(p.id) || "";
     // time to complete in working hours, as the TAT counts (a task sent Friday 18:00 and done Monday 10:00 took 16, not 64)
-    const comp = await all(env, `SELECT COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned') AS name, CASE WHEN h.dept = 'subcheck' AND h.available_at IS NOT NULL THEN h.available_at ELSE h.created_at END AS st, h.done_at
+    const comp = await all(env, `SELECT ${pKey} AS id, CASE WHEN h.dept = 'subcheck' AND h.available_at IS NOT NULL THEN h.available_at ELSE h.created_at END AS st, h.done_at
       FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? LIMIT 20000`, ...a, from, to);
     const whAvg = (xs) => (xs.length ? Math.round(xs.reduce((t, x) => t + workingHoursBetween(x.st, x.done_at), 0) / xs.length * 10) / 10 : null);
     if (tot) tot.avg_hours = whAvg(comp);
-    for (const p of byPerson) p.avg_hours = whAvg(comp.filter((x) => x.name === p.name));
+    for (const p of byPerson) p.avg_hours = whAvg(comp.filter((x) => x.id === p.id));
     const ev = await all(env, `SELECT h.created_at, h.done_at, h.status FROM handoffs h WHERE ${W} AND ${work} AND (h.created_at BETWEEN ? AND ? OR h.done_at BETWEEN ? AND ?) LIMIT 20000`, ...a, from, to, from, to);
     const day = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10);
     const days = {};

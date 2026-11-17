@@ -2077,6 +2077,8 @@ function DeskDashboard({ ctx, desk, go }) {
   const d = q.data, t = (d && d.totals) || {};
   const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "–");
   const hrs = (h) => (h == null ? "–" : h < 1 ? Math.round(h * 60) + " min" : (Math.round(h * 10) / 10) + " h");
+  // By person: two people with the same name each get their own row, told apart by their Emp ID
+  const sameName = (p) => d.by_person.some((x) => x !== p && x.name === p.name);
   const maxDay = Math.max(1, ...((d && d.by_day) || []).map((x) => Math.max(x.received, x.done)));
   const label = DESK[desk].tab, verb = desk === "posting" ? "posted" : desk === "submission" ? "submitted" : "completed";
   return (
@@ -2103,7 +2105,7 @@ function DeskDashboard({ ctx, desk, go }) {
               <span className="small num" style={{ width: 90, textAlign: "right" }}>{x.received} in · {x.done} out</span></div>)}
               <div className="tiny muted"><span style={{ color: "var(--blue)" }}>■</span> received · <span style={{ color: "var(--teal)" }}>■</span> {verb}</div></div> : <Empty>Nothing in these dates.</Empty>}</div>
           <div className="card"><h3>By person</h3><div className="table-wrap mt8"><table className="t"><thead><tr><th>Who</th><th className="r">{desk === "posting" ? "Posted" : desk === "submission" ? "Submitted" : "Completed"}</th><th className="r">Within TAT</th><th className="r">Average</th><th className="r">Open</th></tr></thead>
-            <tbody>{d.by_person.map((p) => <tr key={p.name}><td><b>{p.name}</b></td><td className="num" title={fmtInt(p.done) + " handled in all (completed, back to AR, assistance, rejected)"}>{fmtInt(p.completed)}</td><td className="num">{pct(p.met, p.done)}</td><td className="num">{hrs(p.avg_hours)}</td><td className="num">{fmtInt(p.open_now)}</td></tr>)}
+            <tbody>{d.by_person.map((p) => <tr key={p.id || p.name}><td><b>{p.name}</b>{sameName(p) && p.emp_id ? <span className="tiny muted mono"> {p.emp_id}</span> : null}</td><td className="num" title={fmtInt(p.done) + " handled in all (completed, back to AR, assistance, rejected)"}>{fmtInt(p.completed)}</td><td className="num">{pct(p.met, p.done)}</td><td className="num">{hrs(p.avg_hours)}</td><td className="num">{fmtInt(p.open_now)}</td></tr>)}
               {!d.by_person.length && <tr><td colSpan={5} className="muted">Nobody yet.</td></tr>}</tbody></table></div></div>
         </div>
         <div className="card"><h3>By client</h3><div className="table-wrap mt8"><table className="t"><thead><tr><th>Client</th><th className="r">Received</th><th className="r">{desk === "posting" ? "Posted" : desk === "submission" ? "Submitted" : "Completed"}</th><th className="r">Within TAT</th><th className="r">Open now</th><th className="r">Past TAT</th></tr></thead>

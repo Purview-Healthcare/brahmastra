@@ -187,6 +187,23 @@ await sql("UPDATE notes SET created_at = ? WHERE id = ?", Date.now() - 10 * 8640
 const ed = await tryOp(() => AR("notes.update", { id: wk.id, saag: FOLLOW.saag, note: { ...FOLLOW.note, findings: "Checked again ten days later: still in process at the payer" } }));
 ok("R4-F: an entry ten days old can still be edited by its author (no time limit in the code)", ed.ok, ed);
 
+S("R4-G: the desk dashboard's By person table keeps two people with the same name apart");
+// a second Payment posting person named Paula Post (another Emp ID), each with work done on Sunrise
+const twin = "twin-paula-r4g";
+await sql("INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at, department, emp_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+  twin, "paula.post.two@purview-healthcare.com", "Paula Post", "Paula", "Post", "Biller", "user", "", "", 0, 1, 35, Date.now(), "Posting", "D9");
+const gClaims = await poolOf(3, sun.id), gnow = Date.now();
+const done = (id, claim, by, name, at) => sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, assigned_to, done_at, done_by, done_by_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+  id, claim, sun.id, "posting", "complete", at - 3600000, at + 86400000, by, by, at, by, name);
+await done("ho-r4g-1", gClaims[0], U("Paula Post"), "Paula Post", gnow - 60000);
+await done("ho-r4g-2", gClaims[1], U("Paula Post"), "Paula Post", gnow - 50000);
+await done("ho-r4g-3", gClaims[2], twin, "Paula Post", gnow - 40000);
+const dash = await PIA("handoffs.dashboard", { dept: "posting", from_ms: gnow - 86400000, to_ms: gnow + 60000 });
+const paulas = dash.by_person.filter((x) => x.name === "Paula Post");
+ok("R4-G: two rows for the two Paula Posts (2 and 1 posted), not one row of 3", paulas.length === 2 && paulas.map((x) => x.completed).sort().join(",") === "1,2", dash.by_person);
+ok("R4-G: each row carries the person's id, and their Emp ID to tell them apart", paulas.every((x) => x.id) && new Set(paulas.map((x) => x.id)).size === 2 && paulas.map((x) => x.emp_id).sort().join(",") === "D1,D9", paulas);
+ok("R4-G: the page keys and labels the rows by person (the Emp ID shows when two share a name)", /d\.by_person\.map\(\(p\) => <tr key=\{p\.id \|\| p\.name\}/.test(src) && /sameName\(p\)/.test(src));
+
 // ---------------------------------------------------------------------------------------------------------------------
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);
