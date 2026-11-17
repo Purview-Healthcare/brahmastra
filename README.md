@@ -1219,7 +1219,8 @@ Production, Agent Quality...). A click there opens that tab inside the app (a `b
 exactly as before. Both have their own tabs, first in the bar: **SLA** (the Drishti scorecard) and
 **Sasha's Third Eye** (the internal reports; Posting and Submission leads get Quality only, for their own
 work; Third Eye's own Team Status tab is not drawn, because Brahmastra's Dashboard has Team status). The client report is **Dashboard › Client 360 report** (Client 360 has a button to it). There is no
-My day & reports tab any more: **Claims › Entries** lists every entry the team wrote (with the CSV QA uses), Team
+My day & reports tab any more: **Claims › Entries** lists every entry the team wrote (with the CSV QA uses; loaded 5,000 at a
+time, and past 5,000 the table draws the first 5,000 and says so, while its counts and downloads hold them all), Team
 status opens a person's allocations, and a team lead who works claims gets **Work › My desk**.
 
 **Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:

@@ -9297,7 +9297,7 @@ const OPS = {
         (SELECT hb.dept FROM handoffs hb WHERE hb.claim_id = c.id AND hb.status IN ('assistance','back') AND hb.done_at = c.escalated_at LIMIT 1) AS bounced_dept,
         (SELECT COUNT(*) FROM handoffs hr WHERE hr.claim_id = c.id AND hr.status IN ('assistance','back')) AS returns
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN users e ON e.id = c.escalated_by LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
-      WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")} ORDER BY c.escalated_at ASC LIMIT 500`, ...scopeArgs(user));
+      WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")} ORDER BY c.escalated_at ASC`, ...scopeArgs(user));   // every one, as the tab counts them
     const now = Date.now();
     const out = rows.map((r) => ({ ...reviewShape(r), flag_label: r.bounced_dept ? `Returned ${r.returns} times by ${DEPT_LABEL[r.bounced_dept] || r.bounced_dept}` : "", waiting_ms: r.escalated_at ? workingHoursBetween(r.escalated_at, now) * 3600000 : 0, overdue: !!r.escalated_at && addWorkingHours(r.escalated_at, ATTN_TAT_HOURS) < now, sent_by_id: r.escalated_by || r.assigned_to || null,
       sent_by_name: r.escalated_by_name || r.assigned_name || "" }));
@@ -9309,7 +9309,7 @@ const OPS = {
     const rows = await all(env, `SELECT h.id, h.claim_id, h.client_id, h.dept, h.reason, h.note, h.paused_at AS asked_at, h.client_req_by_name AS asked_by, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.client_sent_note,
         h.chase_at, h.due_at, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, cl.name AS client_name, l.name AS location_name, u.name AS biller_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE h.status = 'client'${scopeSql(user, "h.client_id")} ORDER BY h.client_sent_at IS NOT NULL, h.paused_at LIMIT 500`, ...scopeArgs(user));
+      WHERE h.status = 'client'${scopeSql(user, "h.client_id")} ORDER BY h.client_sent_at IS NOT NULL, h.paused_at`, ...scopeArgs(user));
     const now = Date.now();
     const out = rows.map((r) => ({ ...r, dept_label: DEPT_LABEL[r.dept] || r.dept, late: !r.client_sent_at && now > addWorkingHours(r.asked_at || now, ATTN_TAT_HOURS), chase: !!r.chase_at && now >= r.chase_at }));
     return { rows: out, to_send: out.filter((r) => !r.client_sent_at).length, late: out.filter((r) => r.late).length, hows: CLIENT_SENT_HOW };
@@ -9324,7 +9324,7 @@ const OPS = {
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN users u ON u.id = c.assigned_to
       WHERE h.status IN ('assistance','back') AND h.done_at > ? AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.claim_id = h.claim_id AND n.kind = 'work' AND n.created_at > h.done_at)
         AND NOT EXISTS (SELECT 1 FROM handoffs h2 WHERE h2.claim_id = h.claim_id AND h2.created_at > h.done_at)${scopeSql(user, "h.client_id")}
-      ORDER BY h.done_at ASC LIMIT 500`, Date.now() - 30 * 86400000, ...scopeArgs(user));
+      ORDER BY h.done_at ASC`, Date.now() - 30 * 86400000, ...scopeArgs(user));
     const now = Date.now();
     return { rows: rows.map((r) => ({ ...reviewShape({ ...r, last_dept: r.dept }), dept_label: DEPT_LABEL[r.dept] || r.dept, late: now > addWorkingHours(r.done_at, ATTN_TAT_HOURS) && !(r.reviewed_at && r.reviewed_at > r.done_at),
       sent_by_id: r.assigned_to || r.biller_id || r.created_by || null, sent_by_name: r.biller_name || "", reviewed: !!r.reviewed_at && r.reviewed_at > r.done_at })), people: await reviewPeople(env, user) };

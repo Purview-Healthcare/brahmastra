@@ -277,7 +277,7 @@ S("Z-04: Live status lists every open escalation and flagged claim, as its tab c
   const open0 = (await A("attention.count", {})).esc_open;
   for (let i = 1; open0 + i <= 310; i++) await A("escalations.save", { kind: i % 4 ? "external" : "internal", client_id: i % 2 ? sun.id : lake.id, day: IST(Date.now()), dept: "Account Receivable", raised_who: "Office manager at the client", reported_to: "the team lead",
     owner_id: admin.user.id, email_subject: "Made-up escalation " + i, description: "Made-up escalation for the test: a follow-up was missed", comment: "Being looked at", location_id: "all", channels: ["Email"] });
-  const biller = await U("Bela Agent"), ids = (await rows("SELECT id FROM claims WHERE state IN ('open','assigned','completed') AND escalated = 0 ORDER BY claim_no LIMIT 320")).map((x) => x.id);
+  const biller = await U("Bela Agent"), ids = (await rows("SELECT id FROM claims WHERE state IN ('open','assigned','completed') AND escalated = 0 ORDER BY claim_no LIMIT 520")).map((x) => x.id);
   await sql("UPDATE claims SET escalated = 1, escalated_at = ?, escalated_by = ? WHERE id IN (SELECT value FROM json_each(?))", Date.now() - H, biller.id, JSON.stringify(ids));
   // the newest red one: past its expected close date
   const newest = await row1("SELECT id FROM escalations ORDER BY created_at DESC, sr DESC LIMIT 1");
@@ -286,6 +286,10 @@ S("Z-04: Live status lists every open escalation and flagged claim, as its tab c
   ok("Z-04: the open escalations list holds every one the tab counts (over 300)", tab.esc_open > 300 && live.escalations.length === tab.esc_open, { list: live.escalations.length, tab: tab.esc_open });
   ok("Z-04: the flagged list holds every one the tab counts (over 300)", tab.escalations > 300 && live.flagged.length === tab.escalations, { list: live.flagged.length, tab: tab.escalations });
   ok("Z-04: red first: the newest escalation, past its expected date, is among the first shown", live.escalations.slice(0, 12).some((e) => e.id === newest.id && e.red), live.escalations.slice(0, 3));
+  // the same on Needs attention: its lists stopped at the 500 oldest while its tab counted all
+  const nl = await A("attention.list", {}), cr = await T(() => A("attention.clientRequests", {})), fd = await T(() => A("attention.fromDesks", {}));
+  ok("Z-04 (Needs attention): the flagged list holds every one the tab counts (over 500)", tab.escalations > 500 && nl.rows.length === tab.escalations, { list: nl.rows.length, tab: tab.escalations });
+  ok("Z-04 (Needs attention): client requests and sent back answer every row", cr.ok && fd.ok && cr.r.rows.length === cr.r.rows.filter((x) => x.id).length, [cr.e, fd.e]);
 }
 
 const fails = results.filter((x) => !x.pass);
