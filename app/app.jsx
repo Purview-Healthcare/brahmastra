@@ -2328,7 +2328,8 @@ function ExtraLinesTable({ lines, onEdit, maxHeight = 300 }) {
           <td className="small">{l.person_emp || "–"}</td><td className="small">{l.lead_name || "–"}</td>
           <td className="num">{l.edits ? <span className="typed ro" title={plural(l.edits, "day") + " edited by hand: " + l.days.filter((d) => d.edited).map((d) => stkDay(d.day) + " " + d.n + " (file: " + d.file_n + "), " + extraMark(d.edited).toLowerCase()).join("; ")}>{fmtInt(l.rows)} (file: {fmtInt(l.file_rows)})</span> : fmtInt(l.rows)}</td>
           <td className="num">{l.n_days}</td><td className="small nowrap">{extraSpan(l.from, l.to)}</td>
-          <td className="r">{onEdit && (locked ? <span className="tiny muted" title="Its month is locked: no edits. The admin can unlock the month.">locked</span> : <button type="button" className="btn sm" onClick={() => onEdit(l)}>Edit</button>)}</td></tr>; })}</tbody></table></div>
+          <td className="r">{onEdit && (locked ? <span className="tiny muted" title="Its month is locked: no edits. The admin can unlock the month.">locked</span>
+            : l.can_edit === false ? <span className="tiny muted" title="Only their own team lead, or a manager above them, can edit it.">another team</span> : <button type="button" className="btn sm" onClick={() => onEdit(l)}>Edit</button>)}</td></tr>; })}</tbody></table></div>
   );
 }
 /* The names left out because nobody was found, or two people share the name: each can be given a person (Pick the person). */
@@ -2405,6 +2406,7 @@ function ExtraPreviewModal({ x, label, onClose, onSaved }) {
     L.not_found.length ? ["Not found among the active people you see", L.not_found, null, true] : null,
     L.same_name.length ? ["More than one person you see has this name, so Brahmastra does not guess (an Emp ID column tells them apart)", L.same_name, (n) => n.people + " people", true] : null,
     L.not_counted.length ? ["Not on Team status, so not counted", L.not_counted, (n) => n.why] : null,
+    L.not_mine && L.not_mine.length ? ["On another team lead's team: only their own team lead, or a manager above them, counts their work", L.not_mine, (n) => (n.lead ? n.lead + "'s team" : "")] : null,
     L.elsewhere && L.elsewhere.length ? ["Already counted from an earlier upload of this file, for people you do not see (it stays counted there, and is not counted twice)", L.elsewhere] : null,
     L.elsewhere_new && L.elsewhere_new.length ? ["New rows of this file for people you do not see: counted for nobody until their team lead or a manager loads the file again", L.elsewhere_new] : null,
   ].filter(Boolean);
@@ -2599,7 +2601,7 @@ function StackReportTab({ me, params }) {
       {xPick && <OneDrivePicker onClose={() => setXPick(false)} onPick={pickExtra} accept={(n) => /\.(xlsx|csv)$/i.test(n || "")} what="Excel (.xlsx) or CSV" />}
       {xPrev && <ExtraPreviewModal x={xPrev} label={d.label} onClose={() => setXPrev(null)} onSaved={() => { setXPrev(null); again(); }} />}
       {xDel && <Confirm title={"Remove " + xDel.name + "?"} danger busy={xBusy} confirmLabel="Remove" onNo={() => setXDel(null)} onYes={removeExtra}
-        text={"Its counts come off Team status and the Stack report for the people you see: " + plural(xDel.rows - xDel.locked_rows, "row") + " in " + d.label + (xDel.other_rows ? ", and its rows in other months" : "") + ". A locked month keeps what it counted. The file in OneDrive stays as it is."} />}
+        text={"Its counts come off Team status and the Stack report for your team: " + plural(xDel.mine_rows != null ? xDel.mine_rows : xDel.rows - xDel.locked_rows, "row") + " in " + d.label + (xDel.other_rows ? ", and its rows in other months" : "") + ". Another team's counts stay, and a locked month keeps what it counted. The file in OneDrive stays as it is."} />}
       {cur && <StackPersonModal r={cur} label={d.label} lines={d.lines} trend={[...(d.history[cur.id] || []), { month: d.month, stack: cur.s.stack, pct: cur.s.pct, draft: !cur.locked }]} onEdit={(field) => setEdit({ r: cur, field })} onClose={() => setPerson(null)} />}
       {curLead && <StackLeadModal t={curLead} label={d.label} lines={d.lines} ticks={d.ticks} onTick={() => setTick(curLead)} onClose={() => setLead(null)} />}
       {edit && <StackEditModal month={d.month} label={d.label} r={edit.r} field={edit.field} onClose={() => setEdit(null)} onSaved={reload} />}

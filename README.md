@@ -463,11 +463,13 @@ grouped by team lead as on Team status, ranked by percentage (a tie: the higher 
 did not reach): the same in the score, on the page and in the Excel. A team's average is judged the same way (three members at
 99% are 99%), and a typed PKT or quality keeps two decimals (98.999 is kept as 98.99).
 
-**Who sees and types what.** A team lead sees their own team (their span, as everywhere: the people under them and
-on their projects), draft and locked, types PKT, Team player and the fallbacks (Achieved and Expected, Quality), and
-sees their own team lead row once the month is locked. Managers and above see the teams of their span on both
-stacks, type the ticks (never their own) and the attrition Brahmastra cannot tell, and lock the month. The admin sees
-everything and alone can unlock. A value Brahmastra works out is never typed over. **Yellow dashed** cells are typed:
+**Who sees and types what.** A team lead sees their span (as everywhere: the people under them and on their
+projects), draft and locked, and sees their own team lead row once the month is locked. Only a person's own team lead,
+and the managers above them, the VP and the admin, type that person's values (PKT, Team player and the fallbacks:
+Achieved and Expected, Quality): another team lead of the same project, a desk team lead included, sees those rows read
+only, and the server refuses them with a plain message. Managers and above see the teams of their span on both stacks,
+type the ticks (never their own) and the attrition Brahmastra cannot tell of the team leads below them, and lock the
+month. The admin sees everything and alone can unlock. A value Brahmastra works out is never typed over. **Yellow dashed** cells are typed:
 click one to type it; its title says who typed it and when.
 
 **The page**: Month (the list marks a month *locked* when everyone the viewer sees on it is locked, *partly locked* when
@@ -510,8 +512,10 @@ counts it as the person's work done on that day, the same way a claim worked cou
   column, as Third Eye does: day first when more of them can only be day first (31/10/2026) than only month first
   (10/31/2026), else month first (05/06/2026 is May 6; 31/31/2026 is no date either way and says nothing). A row with
   no DOW, a DOW that is no date or no user name is left out and counted.
-- **People.** Each name is matched to an active person of the uploader's span (a team lead's team, a manager's,
-  the VP's and the admin's span): the Emp ID first, then the name in any case, extra spaces ignored. A row whose Emp ID is
+- **People.** Each name is matched to an active person the uploader sees (their span), and counted only for their
+  own team: the people below them (a team lead's team, a manager's teams; everyone for the VP and the admin). A name of
+  another team lead's team, even on the same project, is left out and named with that team lead: only their own team
+  lead, or a manager above them, counts it. Matching takes the Emp ID first, then the name in any case, extra spaces ignored. A row whose Emp ID is
   someone else's (another team's person, or someone switched off) is never counted by its name: it is left out as not found.
   The name is used only for a row with no Emp ID, or one Brahmastra does not know (the line then shows the file's Emp ID
   beside the person's). Brahmastra never
@@ -528,10 +532,10 @@ counts it as the person's work done on that day, the same way a claim worked cou
   typed text (and so do the manager's ticks and a Team player Yes or No not saved yet).
 - **Edit.** Each line has **Edit**, in the check before saving and later on a file already counted (in the month's
   list, **Open** shows the file's people), so a mistake is corrected without loading the file again. Whoever may
-  upload may edit, for the same people.
+  upload may edit, for the same people: their own team (another team's lines show read only).
   - **A day's count**: a whole number, 0 or more; 0 means that day is not counted. The file's own number stays
     beside an edited one ("5 (file: 3)").
-  - **Who it counts for**: another person of the editor's span whom Team status counts. The name written in the file
+  - **Who it counts for**: another person of the editor's own team whom Team status counts. The name written in the file
     stays visible ("in the file: Mina Agent"), and one click goes back to the file's own match.
   - **Pick the person**, for a name left out because nobody was found or because two people share it: once a person
     is picked, those rows count for them (and can be left out again).
@@ -556,7 +560,7 @@ counts it as the person's work done on that day, the same way a claim worked cou
   file no longer has, and a pick whose person can no longer be counted).
 - **The month's files** are listed at the bottom of the Stack report, each with its link, who uploaded it, its rows in
   the month, its people and dates, the names still left out, **Open** (its people, with Edit) and **Remove** (it
-  takes the file's counts off for the remover's people, outside a locked month).
+  takes the file's counts off for the remover's own team, outside a locked month; another team's counts stay).
 - **Where it counts.** On its DOW, as work done: on Team status (attainment, its line "250 claims + 40
   extra", the KPI, Performance by status and the CSV's **Extra production** column), and so in the Stack report's
   Productivity ("incl. 40 extra" under Achieved; a person's *how it was worked out* names the files and says when

@@ -542,6 +542,66 @@ S("X-02: a joiner with no email: never shown a made-up address, and the team lea
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+S("U-ACCESS: only a person's own team lead and the managers above them (the VP, the admin) change their Stack values and extra production");
+{
+  // Mona's Sunrise has two AR team leads (Tina, Tara) and a Payment posting team lead (Posy); Mark manages Harbor and also sees
+  // Sunrise (one of his projects), without being above anyone there
+  const feed = [...stdFeed().map((f) => (f.name === "Mark Manager" ? { ...f, also_on_projects: SUN } : f)),
+    P({ emp_id: "T4", name: "Tara Lead", position: "Team Lead", project: SUN, reports_to: "Mona Manager", email: mail("Tara Lead") }),
+    P({ emp_id: "T5", name: "Posy PostLead", position: "Team Lead", department: "Posting", project: SUN, reports_to: "Mona Manager", email: mail("Posy PostLead") }),
+    AS("PHC-A1", "Arun Agent", "Tina Lead", SUN), AS("PHC-A2", "Tess Tara", "Tara Lead", SUN), AS("PHC-A3", "Pia Poster", "Posy PostLead", SUN, { department: "Posting" })];
+  const F = await floor({ feed, floorRows: presentAll(["PHC-A1", "PHC-A2", "PHC-A3"]) });
+  const TI = await F.who("Tina Lead"), TA = await F.who("Tara Lead"), PO = await F.who("Posy PostLead"), MO = await F.who("Mona Manager"), MK = await F.who("Mark Manager"), VI = await F.who("Vida Vice");
+  await F.work("Arun Agent", D(10, 5), 200); await F.work("Tess Tara", D(10, 5), 200);
+  const NOT = "Arun Agent is not on your team: only their own team lead, or a manager above them, types their Stack report values.";
+  let r = await F.save(TA, "2026-10", "Arun Agent", "pkt", "50");
+  ok("U-ACCESS: another AR team lead of the same project (Tara) cannot type Arun's PKT, with a plain message", !r.ok && r.status === 403 && r.e === NOT, r);
+  r = await F.save(PO, "2026-10", "Arun Agent", "quality", "80");
+  ok("U-ACCESS: nor a Payment posting team lead there (Posy)", !r.ok && r.status === 403 && r.e === NOT, r);
+  r = await F.save(MK, "2026-10", "Arun Agent", "tp", "no", "made up");
+  ok("U-ACCESS: nor a manager who sees Sunrise but is not above Arun (Mark)", !r.ok && r.status === 403 && r.e === NOT, r);
+  const okAll = [await F.save(TI, "2026-10", "Arun Agent", "pkt", "100"), await F.save(MO, "2026-10", "Arun Agent", "quality", "99"), await F.save(VI, "2026-10", "Arun Agent", "tp", "no", "made up"),
+    await F.save(F.AD, "2026-10", "Arun Agent", "tp", "")];
+  ok("U-ACCESS: his own team lead (Tina), the manager above (Mona), the VP and the admin can", okAll.every((x) => x.ok), okAll.map((x) => x.ok || x.e));
+  r = await F.save(PO, "2026-10", "Pia Poster", "achieved", "180");
+  ok("U-ACCESS: a desk team lead still types for her own team (Posy for Pia)", r.ok, r);
+  const ta = await F.month(TA, "2026-10"), ti = await F.month(TI, "2026-10");
+  ok("U-ACCESS: seeing stays: Tara's report lists Arun read only (no typed cell open) and her own Tess open", F.row(ta, "Arun Agent") && !F.row(ta, "Arun Agent").can_edit && F.row(ta, "Tess Tara").can_edit,
+    ta.rows.map((x) => [x.name, x.can_edit]));
+  ok("U-ACCESS: Tina's report has Arun open and Tess read only", F.row(ti, "Arun Agent").can_edit && !F.row(ti, "Tess Tara").can_edit, ti.rows.map((x) => [x.name, x.can_edit]));
+  r = await F.save(MK, "2026-10", "Tina Lead", "th1", "yes");
+  const mk = await F.month(MK, "2026-10"), mo = await F.month(MO, "2026-10");
+  ok("U-ACCESS: ticks: Mark (not above Tina) cannot tick hers, and his report shows them closed; Mona's are open", !r.ok && r.status === 403 && r.e === "Only the managers above Tina Lead type their ticks and attrition."
+    && F.tl(mk, "Tina Lead") && !F.tl(mk, "Tina Lead").can_tick && F.tl(mo, "Tina Lead").can_tick && (await F.save(MO, "2026-10", "Tina Lead", "th1", "yes")).ok, r);
+  // extra production: Tara's file has rows for Arun (Tina's team) and Tess (hers)
+  const file = F.read(F.xlsx([["S", [["DOW", "User Name"], ...rep(3, [serial(D(11, 10)), "Arun Agent"]), ...rep(2, [serial(D(11, 10)), "Tess Tara"])]]]), "Extra production shared.xlsx");
+  const pv = await TA("stack.extraPreview", F.body(file, { item: "shared" }));
+  ok("U-ACCESS: extra production: Tara's file counts Tess's 2; Arun's 3 are left out, named as Tina Lead's team", pv.counted === 2 && pv.lines.length === 1 && pv.lines[0].person === "Tess Tara"
+    && pv.left_out.not_mine.length === 1 && pv.left_out.not_mine[0].name === "Arun Agent" && pv.left_out.not_mine[0].rows === 3 && pv.left_out.not_mine[0].lead === "Tina Lead" && pv.left_out.rows === 3, { counted: pv.counted, left: pv.left_out.not_mine });
+  r = await F.T(() => TA("stack.extraPreview", F.body(file, { item: "shared", edits: { picks: [{ line: "|arun agent", user_id: F.id("Tess Tara") }] } })));
+  ok("U-ACCESS: Tara cannot pick a person for Arun's rows", !r.ok && r.status === 403 && /Arun Agent is not on your team: only their own team lead, or a manager above them, counts their work/.test(r.e), r);
+  await TA("stack.extraSave", F.body(file, { item: "shared" }));
+  const tiUp = await TI("stack.extraSave", F.body(file, { item: "shared" }));
+  let ts = await F.ts(F.AD, D(11, 1), D(11, 16)), ex = (n) => (ts.rows.find((x) => x.name === n) || {}).extra;
+  ok("U-ACCESS: Tina loads the same file: Arun's 3 count for her team, Tess's 2 stay counted for Tara's", tiUp.counted === 3 && ex("Arun Agent") === 3 && ex("Tess Tara") === 2, { arun: ex("Arun Agent"), tess: ex("Tess Tara") });
+  await TA("stack.extraSave", F.body(file, { item: "shared" }));
+  ts = await F.ts(F.AD, D(11, 1), D(11, 16));
+  ok("U-ACCESS: Tara loading it again never takes Tina's counts off (Arun still 3)", ex("Arun Agent") === 3 && ex("Tess Tara") === 2, { arun: ex("Arun Agent"), tess: ex("Tess Tara") });
+  const view = await TA("stack.extraFile", { upload_id: tiUp.id }), arunLine = view.lines.find((l) => l.person === "Arun Agent");
+  ok("U-ACCESS: Tara opens Tina's upload: she sees Arun's line, read only", arunLine && arunLine.can_edit === false, view.lines.map((l) => [l.person, l.can_edit]));
+  r = await F.T(() => TA("stack.extraEdit", { upload_id: tiUp.id, line: "|arun agent", counts: [{ day: D(11, 10), n: 9 }] }));
+  ok("U-ACCESS: and cannot edit it", !r.ok && r.status === 403 && /is not for your team: only their own team lead, or a manager above them, can change it/.test(r.e), r);
+  r = await F.T(() => TA("stack.extraRemove", { upload_id: tiUp.id }));
+  ok("U-ACCESS: nor remove Tina's upload", !r.ok && r.status === 403 && /is not for your team/.test(r.e), r);
+  const list = (await TA("stack.month", { month: "2026-11" })).extra.files, tinaFile = list.find((f) => f.id === tiUp.id);
+  ok("U-ACCESS: Tara's month list offers no Remove for Tina's upload", tinaFile && !tinaFile.can_remove, list.map((f) => [f.by, f.can_remove]));
+  r = await F.T(() => MO("stack.extraEdit", { upload_id: tiUp.id, line: "|arun agent", counts: [{ day: D(11, 10), n: 4 }] }));
+  ok("U-ACCESS: Mona (the manager above) can edit Arun's count in Tina's upload", r.ok && r.r.changed === 1, r);
+  r = await F.T(() => PO("stack.extraPreview", F.body(file, { item: "shared" })));
+  ok("U-ACCESS: a desk team lead still cannot use extra production", !r.ok && r.status === 403, r);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 const passed = results.filter((x) => x.pass).length, failed = results.length - passed;
 console.log(`\n==== ${passed} passed, ${failed} failed of ${results.length}`);
 process.exit(failed ? 1 : 0);

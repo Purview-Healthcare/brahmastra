@@ -4495,6 +4495,19 @@ function stackLockPlan(live, span, locks) {
   return teams;
 }
 const stackSpan = async (env, user) => new Set((await visibleUsers(env, user, "span")).map((u) => u.id));
+/* Whose Stack report values a viewer may type or change (PKT, Quality, Team player, the fallbacks, the ticks and attrition), and
+   whose extra production they may count, edit, pick or remove (decided by the owner, U-ACCESS): the people below them in the
+   reporting chain, so a person's own team lead and every manager above them (the VP too); the VP and the admin everyone. Another
+   team lead of the same project, a desk team lead included, sees those people (the span) read only. */
+async function stackMine(env, user) {
+  const users = await all(env, "SELECT id, reports_to FROM users");
+  if (user.is_admin || isVicePresident(user)) return new Set(users.map((u) => u.id));
+  const below = new Set([user.id]);
+  for (let grew = true; grew;) { grew = false; for (const u of users) if (u.reports_to && below.has(u.reports_to) && !below.has(u.id)) { below.add(u.id); grew = true; } }
+  below.delete(user.id);
+  return below;
+}
+const NOT_MINE = "only their own team lead, or a manager above them, can change it";
 /* When a month is over, so it can be locked: once its last working day is, not at midnight. The day rolls at 05:00 India time
    (Shastra's day, as Team status counts it), later for a night shift whose working day runs on past it (dayRollMin, 09:00 for
    22:30 to 07:30). Until then the last day is still being worked, and a lock would leave it out. shifts: the people's shifts. */
@@ -4520,9 +4533,11 @@ async function stackView(env, user, span, month, today) {
   }
   // ranked by percentage, ties: higher productivity first
   rows.sort((a, b) => b.s.pct - a.s.pct || (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct) || a.name.localeCompare(b.name));
-  rows.forEach((r, i) => { r.rank = i + 1; r.can_edit = !r.locked; });
+  // a typed cell is open only to the person's own team lead and the managers above them (U-ACCESS); the others see it read only
+  const mine = await stackMine(env, user);
+  rows.forEach((r, i) => { r.rank = i + 1; r.can_edit = !r.locked && mine.has(r.id); });
   tls.sort((a, b) => b.s.pct - a.s.pct || a.name.localeCompare(b.name));
-  tls.forEach((t, i) => { t.rank = i + 1; t.can_tick = !t.locked && mgr && (t.id !== user.id || admin); });
+  tls.forEach((t, i) => { t.rank = i + 1; t.can_tick = !t.locked && mgr && (t.id !== user.id || admin) && mine.has(t.id); });
   const scopes = new Set([...rows.map((r) => r.scope), ...tls.map((t) => t.scope)]), lockedShown = [...scopes].filter((s) => locks.has(s));
   const lockers = []; for (const s of lockedShown) { const L = locks.get(s), x = lockers.find((y) => y.name === L.by); if (x) { x.teams++; x.at = Math.max(x.at, L.at); } else lockers.push({ name: L.by, at: L.at, teams: 1 }); }
   // what a manager can still lock: the draft teams of their span
@@ -4620,12 +4635,16 @@ async function auditMany(env, user, action, details) {
   try { await run(env, "INSERT INTO audit_log (id, at, user_id, user_name, action, client_id, detail) SELECT json_extract(value, '$[0]'), ?, ?, ?, ?, NULL, json_extract(value, '$[1]') FROM json_each(?)",
     Date.now(), (user && user.id) || null, (user && user.name) || "", str(action, 60), JSON.stringify(details.map((d) => [uuid(), str(d, 400)]))); } catch (e) { /* the audit trail never stops the work */ }
 }
-/* The people an editor may count extra production for: the active people of their span whom Team status counts. */
+/* The people an editor may count extra production for (upload, Edit, Pick the person, Remove): their own team (stackMine: the
+   people below them, everyone for the VP and the admin), active, whom Team status counts (U-ACCESS). seen: everyone of their span,
+   whom they see: a file's name on another team of the same project is named as such, and a counted file shows its lines read only. */
 async function extraPeople(env, user) {
-  const span = await visibleUsers(env, user, "span"), act = span.filter((u) => u.active), byId = new Map(span.map((u) => [u.id, u]));
+  const seen = await visibleUsers(env, user, "span"), mine = await stackMine(env, user), span = seen.filter((u) => mine.has(u.id));
+  const act = span.filter((u) => u.active), byId = new Map(span.map((u) => [u.id, u])), seenById = new Map(seen.map((u) => [u.id, u]));
   const ok = (id) => { const u = byId.get(id); return u && u.active && isArBiller(u) ? u : null; };
-  return { span, act, byId, ok };
+  return { span, act, byId, ok, seen, seenById };
 }
+const extraNotMine = (name) => name + " is not on your team: only their own team lead, or a manager above them, counts their work.";
 /* The file's rows as the page sent them, matched and with the hand edits applied: what would be counted (name by name, day by
    day), what is left out and why, what this OneDrive file counted before and which of its hand edits carry over. Preview and
    save both work it out afresh. */
@@ -4668,9 +4687,10 @@ async function extraPlan(env, user, payload) {
     if (!lines.has(k) || !lines.get(k).file.has(d)) throw gone("work under that name on that day"); counts.set(k + "|" + d, extraTyped(x.n)); }
   const today = istISO(Date.now()), fileKey = (driveId ? driveId + "!" : "") + itemId;
   // who: the active people of the uploader's span (the Emp ID first, then the name, any case and spacing)
-  const { span, act, byId: spanById, ok: countable } = await extraPeople(env, user);
+  const { span, act, byId: spanById, ok: countable, seen } = await extraPeople(env, user);
   const byEmp = new Map(), byName = new Map(), put = (m, k, u) => { if (k) m.set(k, [...(m.get(k) || []), u]); };
-  for (const u of act) { put(byEmp, extraKey(u.emp_id), u); put(byName, extraKey(u.name), u); }
+  // matched among everyone the uploader sees, counted only for their own team: a name on another team is named as such (U-ACCESS)
+  for (const u of seen) if (u.active) { put(byEmp, extraKey(u.emp_id), u); put(byName, extraKey(u.name), u); }
   // every Emp ID Brahmastra knows: one that is someone's (outside the uploader's people, or switched off) is never matched by the
   // name instead, so another team's Arun Agent is never counted for this team's Arun Agent
   const empKnown = new Set((await all(env, "SELECT emp_id FROM users WHERE COALESCE(emp_id, '') <> ''")).map((u) => extraKey(u.emp_id)));
@@ -4709,13 +4729,15 @@ async function extraPlan(env, user, payload) {
     // the file's own match: the Emp ID first; the name only when the row has no Emp ID, or one nobody in Brahmastra has
     const e = extraKey(L.emp_id); let hit = e ? byEmp.get(e) || [] : [];
     if (!hit.length && !(e && empKnown.has(e))) hit = byName.get(extraKey(L.name)) || [];
-    if (!hit.length) o.why = "none"; else if (hit.length > 1) { o.why = "same"; o.people = hit.length; } else if (isArBiller(hit[0])) o.auto = hit[0]; else { o.why = "noton"; o.other = hit[0]; }
+    if (!hit.length) o.why = "none"; else if (hit.length > 1) { o.why = "same"; o.people = hit.length; } else if (!spanById.has(hit[0].id)) { o.why = "notmine"; o.other = hit[0]; }
+    else if (isArBiller(hit[0])) o.auto = hit[0]; else { o.why = "noton"; o.other = hit[0]; }
     // who it counts for: a person picked now, else the one picked before for this name in this file (while they can still be
     // counted), else the file's own match
     const mem = oldPick.get(L.line), memP = mem ? countable(mem.user_id) : null, own = o.auto;
     const want = picks.has(L.line) ? picks.get(L.line) : null;   // null: nothing asked; "": back to what the file says; an id: that person
     const was = () => (memP ? memP.name : own ? own.name : EXTRA_WHY[o.why === "noton" ? "none" : o.why]);
     if (want) {
+      if (o.why === "notmine") throw denied(extraNotMine(o.other.name));
       if (o.why === "noton" && !memP) throw bad(o.other.name + " is not counted on Team status, so these rows are not counted: the fix is in the file.");
       const p = countable(want); if (!p) throw bad("Pick one of the people you see who is counted on Team status.");
       o.p = p;
@@ -4724,6 +4746,7 @@ async function extraPlan(env, user, payload) {
       else { o.picked = { by: user.name || "", at: null, now: true }; made.push('"' + L.name + '" in the file counts for ' + p.name + " (was " + was() + ")"); }
     } else if (want === null && memP && !(own && own.id === memP.id)) { o.p = memP; o.picked = { by: mem.by, at: mem.at }; }
     else {
+      if (o.why === "notmine" && asked) throw denied(extraNotMine(o.other.name));
       if (o.why === "noton" && asked && !memP) throw bad(o.other.name + " is not counted on Team status, so these rows are not counted: the fix is in the file.");
       o.p = own;
       if (want === "" && memP && !(own && own.id === memP.id)) made.push('"' + L.name + '" in the file counts for ' + (own ? own.name + " again" : "nobody again (" + EXTRA_WHY[o.why === "noton" ? "none" : o.why] + ")") + " (was " + memP.name + ")");
@@ -4758,7 +4781,8 @@ function extraLineOut(o, leads) {
   const on = days.filter((d) => d.n > 0).map((d) => d.day);
   return { line: o.line, name: o.name, emp_id: o.emp_id, id: o.p.id, person: o.p.name, person_emp: o.p.emp_id || "", lead_name: (leads && leads.get(o.p.reports_to)) || "",
     auto_id: o.auto ? o.auto.id : "", auto_name: o.auto ? o.auto.name : "", why: o.why === "none" || o.why === "same" ? o.why : "", picked: o.picked || null,
-    rows: days.reduce((t, d) => t + d.n, 0), file_rows: days.reduce((t, d) => t + d.file_n, 0), edits: days.filter((d) => d.edited).length, n_days: on.length, from: on[0] || "", to: on[on.length - 1] || "", days };
+    rows: days.reduce((t, d) => t + d.n, 0), file_rows: days.reduce((t, d) => t + d.file_n, 0), edits: days.filter((d) => d.edited).length, n_days: on.length, from: on[0] || "", to: on[on.length - 1] || "", days,
+    can_edit: !o.ro };
 }
 const extraLeads = async (env, people) => { const ids = [...new Set(people.map((p) => p && p.reports_to).filter(Boolean))];
   return new Map(ids.length ? (await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(ids))).map((x) => [x.id, x.name]) : []); };
@@ -4780,8 +4804,11 @@ async function extraSummary(env, P) {
   const byMonth = new Map(), mo = (m) => { if (!byMonth.has(m)) byMonth.set(m, { month: m, label: stackMonthLabel(m), rows: 0, locked_rows: 0, people: new Set() }); return byMonth.get(m); };
   for (const o of counted) for (const d of o.days) { if (d.state === "counted") mo(d.day.slice(0, 7)).rows += d.n; else if (d.state === "locked") { const m = mo(d.day.slice(0, 7)); m.locked_rows += d.file_n; m.people.add(o.p.id); } }
   // a name counted for people the uploader does not see: the rows that stay counted there (the earlier upload's), not the file's
+  // a name on another team lead's team (U-ACCESS): the person and their team lead
+  const otherLeads = await extraLeads(env, P.lines.filter((o) => o.why === "notmine").map((o) => o.other));
   const fileRows = (o) => o.days.reduce((t, d) => t + d.file_n, 0), names = (why) => P.lines.filter((o) => o.why === why && !o.p && (why === "elsewhere" ? o.there : fileRows(o)) > 0)
-    .map((o) => ({ line: o.line, name: why === "noton" ? o.other.name : o.name, emp_id: o.emp_id, rows: why === "elsewhere" ? o.there : fileRows(o), ...(why === "same" ? { people: o.people } : {}),
+    .map((o) => ({ line: o.line, name: why === "noton" || why === "notmine" ? o.other.name : o.name, emp_id: o.emp_id, rows: why === "elsewhere" ? o.there : fileRows(o), ...(why === "same" ? { people: o.people } : {}),
+      ...(why === "notmine" ? { lead: otherLeads.get(o.other.reports_to) || "" } : {}),
       ...(why === "noton" ? { why: o.other.role === "user" ? (o.other.department || "another department") + ", not AR" : "a team lead, SME or manager" } : {}),
       ...(why === "none" || why === "same" ? { days: o.days.map((d) => ({ day: d.day, file_n: d.file_n })) } : {}) }))
     .sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
@@ -4791,9 +4818,10 @@ async function extraSummary(env, P) {
   const elsewhereNew = P.lines.filter((o) => o.why === "elsewhere" && o.fresh > 0).map((o) => ({ line: o.line, name: o.name, emp_id: o.emp_id, rows: o.fresh }))
     .sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
   const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: names("none"), same_name: names("same"), not_counted: names("noton"), elsewhere: names("elsewhere"),
-    elsewhere_new: elsewhereNew, locked };
+    elsewhere_new: elsewhereNew, not_mine: names("notmine"), locked };
   const sumRows = (xs) => xs.reduce((t, x) => t + x.rows, 0);
-  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + P.lines.filter((o) => o.why === "elsewhere").reduce((t, o) => t + fileRows(o), 0) + sumRows(left.locked);
+  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + sumRows(left.not_mine)
+    + P.lines.filter((o) => o.why === "elsewhere").reduce((t, o) => t + fileRows(o), 0) + sumRows(left.locked);
   return { file: { name: P.name, web_url: P.webUrl }, sheets: P.sheets, rows: P.rowsRead, counted: total, file_counted: lines.reduce((t, l) => t + l.file_rows, 0), people, lines, from, to,
     months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)).map((m) => ({ month: m.month, label: m.label, rows: m.rows, locked_rows: m.locked_rows })), left_out: left,
     pickable: extraPickable(P.act, leads), dropped: P.dropped, dropped_picks: P.droppedPicks, edits: { counts: lines.reduce((t, l) => t + l.edits, 0), picks: lines.filter((l) => l.picked).length },
@@ -4805,11 +4833,13 @@ async function extraFileView(env, user, id) {
   const x = id ? await one(env, "SELECT * FROM extra_uploads WHERE id = ?", id) : null;
   const rows = x ? await all(env, "SELECT * FROM extra_lines WHERE upload_id = ? ORDER BY line, day", id) : [];
   if (!x || !rows.some((r) => r.user_id)) throw bad("That file does not count anything now.");
-  const { span, act, byId } = await extraPeople(env, user);
-  if (!rows.some((r) => r.user_id && byId.has(r.user_id)) && x.by_id !== user.id) throw denied("What " + x.file_name + " counts is not for your people.");
-  const lk = await extraLocks(env, [...new Set(rows.map((r) => r.day.slice(0, 7)))]), leads = await extraLeads(env, span), by = new Map();
-  for (const r of rows) { if (r.user_id && !byId.has(r.user_id)) continue;
-    if (!by.has(r.line)) by.set(r.line, { line: r.line, name: r.name, emp_id: r.emp_id, p: r.user_id ? byId.get(r.user_id) : null, auto: r.auto_id ? byId.get(r.auto_id) || { id: r.auto_id, name: "" } : null, why: r.why,
+  // what it counts for everyone the viewer sees is shown; only their own team's lines can be edited (U-ACCESS)
+  const { act, byId, seen, seenById } = await extraPeople(env, user);
+  if (!rows.some((r) => r.user_id && seenById.has(r.user_id)) && x.by_id !== user.id) throw denied("What " + x.file_name + " counts is not for your people.");
+  const lk = await extraLocks(env, [...new Set(rows.map((r) => r.day.slice(0, 7)))]), leads = await extraLeads(env, seen), by = new Map();
+  for (const r of rows) { if (r.user_id && !seenById.has(r.user_id)) continue;
+    if (!by.has(r.line)) by.set(r.line, { line: r.line, name: r.name, emp_id: r.emp_id, p: r.user_id ? seenById.get(r.user_id) : null, ro: !!r.user_id && !byId.has(r.user_id),
+      auto: r.auto_id ? seenById.get(r.auto_id) || { id: r.auto_id, name: "" } : null, why: r.why,
       picked: r.pick_at != null ? { by: r.pick_by, at: r.pick_at } : null, days: [] });
     const o = by.get(r.line);
     o.days.push({ day: r.day, file_n: r.file_n, n: r.n, edited: r.n_at != null ? { by: r.n_by, at: r.n_at } : null, state: !o.p ? "out" : lk.of(o.p, r.day.slice(0, 7)) ? "kept" : "counted" }); }
@@ -4834,18 +4864,20 @@ async function extraFiles(env, user, span, month) {
   const other = new Map((await all(env, `SELECT upload_id, SUM(n) AS n FROM extra_lines WHERE upload_id IN ${IN_LIST} AND user_id IN ${IN_LIST} AND (day < ? OR day > ?) GROUP BY upload_id`, upIds, ids, first, last)).map((x) => [x.upload_id, x.n || 0]));
   const out0 = new Map((await all(env, `SELECT upload_id, COUNT(DISTINCT line) AS names, SUM(file_n) AS n FROM extra_lines WHERE upload_id IN ${IN_LIST} AND user_id = '' GROUP BY upload_id`, upIds)).map((x) => [x.upload_id, x]));
   const who = new Map((await all(env, `SELECT id, reports_to FROM users WHERE id IN ${IN_LIST}`, listArg(new Set(per.map((x) => x.user_id))))).map((u) => [u.id, u]));
-  const lk = await extraLocks(env, [month]), files = new Map();
+  // Remove is for the viewer's own team's counts (U-ACCESS): mine_rows, the rows of the month it would take off
+  const lk = await extraLocks(env, [month]), files = new Map(), own = await stackMine(env, user);
   for (const x of per) {
     const u = ups.get(x.upload_id); if (!u) continue;
     const f = files.get(u.id) || { id: u.id, name: u.file_name, web_url: u.web_url, by: u.by_name, at: u.at, rows: 0, file_rows: 0, people: 0, from: "", to: "", locked_rows: 0, other_rows: other.get(u.id) || 0, edits: 0, picks: 0, edited_at: 0,
-      left_names: (out0.get(u.id) || {}).names || 0, left_rows: (out0.get(u.id) || {}).n || 0 };
+      left_names: (out0.get(u.id) || {}).names || 0, left_rows: (out0.get(u.id) || {}).n || 0, mine_rows: 0 };
     f.rows += x.n; f.file_rows += x.file_n; if (x.n > 0) f.people++; f.edits += x.edits; f.picks += x.picks; f.edited_at = Math.max(f.edited_at, x.n_at || 0, x.pick_at || 0);
     if (x.d0 && (!f.from || x.d0 < f.from)) f.from = x.d0; if (x.d1 && (!f.to || x.d1 > f.to)) f.to = x.d1;
-    if (lk.of(who.get(x.user_id) || { id: x.user_id }, month)) f.locked_rows += x.n;
+    const locked = lk.of(who.get(x.user_id) || { id: x.user_id }, month);
+    if (locked) f.locked_rows += x.n; else if (own.has(x.user_id)) f.mine_rows += x.n;
     files.set(u.id, f);
   }
   const can = mayExtra(user);
-  return [...files.values()].map((f) => ({ ...f, edited_at: f.edited_at || null, can_remove: can && f.rows > f.locked_rows, can_edit: can })).sort((a, b) => b.at - a.at);
+  return [...files.values()].map((f) => ({ ...f, edited_at: f.edited_at || null, can_remove: can && f.mine_rows > 0, can_edit: can })).sort((a, b) => b.at - a.at);
 }
 
 const OPS = {
@@ -5816,10 +5848,13 @@ const OPS = {
     const who = id ? await one(env, "SELECT * FROM users WHERE id = ?", id) : null;
     if (!who) throw bad("Unknown person.");
     if (!(await stackSpan(env, user)).has(id)) throw denied("That person is not in your span.");
+    // only the person's own team lead and the managers above them (the VP and the admin: everyone) type their values (U-ACCESS)
+    const mine = await stackMine(env, user);
     const label = stackMonthLabel(month), locks = await stackLocks(env, month), first = month + "-01", last = stackMonthEnd(month);
     if (field === "attrition" || /^(th|cf)[1-5]$/.test(field)) {
       if (!isManagerUp(user)) throw denied("The ticks and the attrition are typed by the manager.");
       if (id === user.id && !user.is_admin) throw denied("Your own ticks are typed by your manager.");
+      if (!mine.has(id)) throw denied("Only the managers above " + who.name + " type their ticks and attrition.");
       if (!(await one(env, "SELECT 1 AS x FROM users WHERE role = 'user' AND active = 1 AND reports_to = ? LIMIT 1", id))) throw bad(who.name + " has no team on the Stack report.");
       // a team lead's row is locked with their team's snapshot
       if (locks.has(id)) throw bad(label + " is locked for " + who.name + "'s team: ask the admin to unlock it first.");
@@ -5829,6 +5864,7 @@ const OPS = {
       }
     } else {
       if (who.role !== "user" || !who.active) throw bad(who.name + " is not an associate on the Stack report.");
+      if (!mine.has(id)) throw denied(who.name + " is not on your team: only their own team lead, or a manager above them, types their Stack report values.");
       // an associate is locked once their row is in a snapshot of the month, whichever team it was locked with (stackLockedIds)
       if (stackLockedIds(locks).has(id)) throw bad(label + " is locked for " + who.name + ": ask the admin to unlock it first.");
       if ((field === "achieved" || field === "expected") && isArBiller(who)) throw bad("Brahmastra works out " + who.name + "'s productivity (the same numbers as Team status), so it is not typed.");
@@ -5973,9 +6009,9 @@ const OPS = {
     if (!rows.length) throw bad("The file has no rows under that name: a person the file does not have cannot be added here. " + EXTRA_ADD);
     const { byId, ok: countable } = await extraPeople(env, user);
     const curId = rows[0].user_id, cur = curId ? byId.get(curId) : null, fname = rows[0].name, wasOut = EXTRA_WHY[rows[0].why] || "left out";
-    if (curId && !cur) throw denied("What " + x.file_name + " counts under " + fname + " is not for your people.");
+    if (curId && !cur) throw denied("What " + x.file_name + " counts under " + fname + " is not for your team: " + NOT_MINE + ".");
     // a name that is left out belongs to nobody yet: whoever sees the file (it counts for their people, or they loaded it) may pick
-    if (!curId && x.by_id !== user.id && !(await one(env, `SELECT 1 AS ok FROM extra_lines WHERE upload_id = ? AND user_id IN ${IN_LIST} LIMIT 1`, id, listArg(byId.keys())))) throw denied("What " + x.file_name + " counts is not for your people.");
+    if (!curId && x.by_id !== user.id && !(await one(env, `SELECT 1 AS ok FROM extra_lines WHERE upload_id = ? AND user_id IN ${IN_LIST} LIMIT 1`, id, listArg(byId.keys())))) throw denied("What " + x.file_name + " counts is not for your team: " + NOT_MINE + ".");
     const lk = await extraLocks(env, [...new Set(rows.map((r) => r.day.slice(0, 7)))]);
     const lockedFor = (u) => rows.filter((r) => lk.of(u, r.day.slice(0, 7))).map((r) => stackMonthLabel(r.day.slice(0, 7)))[0] || "";
     const at = Date.now(), me = user.name || "", stmts = [], made = [];
@@ -6025,9 +6061,10 @@ const OPS = {
     const id = str(payload.upload_id, 60), x = id ? await one(env, "SELECT * FROM extra_uploads WHERE id = ?", id) : null;
     const all0 = x ? await all(env, "SELECT user_id, day, SUM(n) AS n FROM extra_lines WHERE upload_id = ? AND user_id != '' GROUP BY user_id, day", id) : [];
     if (!x || !all0.length) throw bad("That file does not count anything now.");
-    const span = await visibleUsers(env, user, "span"), byId = new Map(span.map((u) => [u.id, u]));
+    // it comes off for the remover's own team only (U-ACCESS): another team's counts stay
+    const { byId } = await extraPeople(env, user);
     const mine = all0.filter((r) => byId.has(r.user_id));
-    if (!mine.length) throw denied("What " + x.file_name + " counts is not for your people.");
+    if (!mine.length) throw denied("What " + x.file_name + " counts is not for your team: only their own team lead, or a manager above them, can remove it.");
     const lk = await extraLocks(env, [...new Set(mine.map((r) => r.day.slice(0, 7)))]);
     const go = [], stay = []; for (const r of mine) (lk.of(byId.get(r.user_id), r.day.slice(0, 7)) ? stay : go).push(r);
     const lockedLabels = [...new Set(stay.map((r) => stackMonthLabel(r.day.slice(0, 7))))];
