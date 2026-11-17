@@ -3003,7 +3003,7 @@ async function digestData(env, ids, wk) {
   // requests waiting on the client: Client 360 lists the oldest 100 of each client
   const waiting = new Map(ids.map((id) => [id, []]));
   for (const w of await all(env, `SELECT client_id, paused_at, client_sent_at, balance FROM (SELECT h.client_id, h.paused_at, h.client_sent_at, c.balance,
-      ROW_NUMBER() OVER (PARTITION BY h.client_id ORDER BY h.paused_at ASC) AS rn FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id IN ${IN} AND h.status = 'client')
+      ROW_NUMBER() OVER (PARTITION BY h.client_id ORDER BY COALESCE(h.client_sent_at, h.paused_at) ASC, h.paused_at ASC) AS rn FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id IN ${IN} AND h.status = 'client')
       WHERE rn <= 100 ORDER BY client_id, rn`, L)) waiting.get(w.client_id).push(w);
   // each claim once per reason: a claim denied twice in the dates is one claim and its balance once; the top 6 reasons a client
   const reasons = new Map(ids.map((id) => [id, []]));
@@ -3049,7 +3049,8 @@ async function digestData(env, ids, wk) {
     // the SLA step shows the score in use (Client 360's month-end steps)
     const steps = MONTHEND_STEPS.map(([key, label, due]) => { const r = done.get(key); return { key, label, due: monthendDue(mon, due), done: !!(r && r.done_at) }; });
     const pct = a.balp ? Math.round(a.o90p / a.balp * 1000) / 10 : 0;
-    const oldest = ws.length ? Math.floor((now - (ws[0].client_sent_at || ws[0].paused_at || now)) / 86400000) : 0;
+    // the longest any request has waited on the client (since it was sent, else since it was paused), as Client 360's table counts it
+    const oldest = ws.reduce((m, w) => Math.max(m, Math.floor((now - (w.client_sent_at || w.paused_at || now)) / 86400000)), 0);
     const wa = weekAgo.get(id), endSnap = endSnaps.get(id), co = coll.get(id) || { amt: 0, n: 0 }, wo = worked.get(id);
     // that week's money owed (credits left out); a reading kept before the money owed was kept falls back to the net figures
     const arW = endSnap ? (() => { const owed = endSnap.ar_owed != null ? endSnap.ar_owed : endSnap.ar_balance, o90 = endSnap.over90_owed != null ? endSnap.over90_owed : endSnap.over90_balance;
@@ -7129,7 +7130,7 @@ const OPS = {
     const paid = async (a, b) => (await one(env, `SELECT COALESCE(SUM(CAST(json_extract(proof_json, '$.amount') AS REAL)), 0) AS amt, COUNT(*) AS n FROM handoffs WHERE client_id = ? AND dept = 'posting' AND status = 'complete' AND done_at BETWEEN ? AND ?`, clientId, a, b));
     const coll = await paid(from, to), collPrev = await paid(from - span, from);
     const waiting = await all(env, `SELECT h.id, h.dept, h.reason, h.note, h.paused_at, h.client_sent_at, h.client_sent_by_name, h.client_sent_how, h.chase_at, c.claim_no, c.patient, c.balance
-      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client'${deskDepts(user) ? ` AND h.dept IN (${deskDepts(user).map(() => "?").join(",")})` : ""} ORDER BY h.paused_at ASC LIMIT 100`, clientId, ...(deskDepts(user) || []));
+      FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE h.client_id = ? AND h.status = 'client'${deskDepts(user) ? ` AND h.dept IN (${deskDepts(user).map(() => "?").join(",")})` : ""} ORDER BY COALESCE(h.client_sent_at, h.paused_at) ASC, h.paused_at ASC LIMIT 100`, clientId, ...(deskDepts(user) || []));
     const replyAvg = async (cid) => { const r = await one(env, `SELECT AVG(client_answered_at - COALESCE(client_sent_at, paused_at)) AS ms, COUNT(*) AS n FROM handoffs WHERE client_answered_at IS NOT NULL AND client_answered_at > ?${cid ? " AND client_id = ?" : ""}`, now - 90 * 86400000, ...(cid ? [cid] : [])); return r && r.n ? { days: Math.round(r.ms / 864000) / 100, n: r.n } : null; };
     // each claim once per reason: a claim denied twice in the dates is one claim and its balance once
     const reasons = await all(env, `SELECT reason, COUNT(*) AS n, COALESCE(SUM(bal), 0) AS bal FROM (SELECT COALESCE(NULLIF(n.sub_status, ''), 'Other') AS reason, n.claim_id, MAX(c.balance) AS bal
@@ -7157,7 +7158,8 @@ const OPS = {
     const locs = (await all(env, "SELECT name FROM locations WHERE client_id = ? AND active = 1 ORDER BY name", clientId)).map((l) => l.name);
     // health: plain reasons, worst first
     const pct = ar.balp ? Math.round(ar.o90p / ar.balp * 1000) / 10 : 0;
-    const oldest = waiting.length ? Math.floor((now - (waiting[0].client_sent_at || waiting[0].paused_at || now)) / 86400000) : 0;
+    // the longest any request has waited (the largest of the table's own days), not the one paused first
+    const oldest = waiting.reduce((m, w) => Math.max(m, Math.floor((now - (w.client_sent_at || w.paused_at || now)) / 86400000)), 0);
     const { health, reasons: reasonsOut } = healthOf({ pct, sla: slaRow, tfl, escLate: esc && esc.late, waitingN: waiting.length, oldest, missed: missed.ar + missed.posting + missed.submission });
     return {
       client: { id: c.id, name: c.name, code: c.code, active: !!c.active, created_at: c.created_at, team, locations: locs },

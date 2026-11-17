@@ -176,6 +176,27 @@ S("Y-02: Save AR Inventory to OneDrive keeps the date in the file name, whatever
   ok("Y-02: a short name is as before", r4.ok && r4.r.name === "AR Inventory report - " + SUN + " Center - 2026-11-16.xlsx", r4.e || r4.r.name);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-09: the oldest request waiting on the client is the one that has waited longest");
+{
+  const DAY = 86400000, now = Date.now();
+  const [c1, c2] = await q("SELECT id, claim_no FROM claims WHERE client_id = ? AND state IN ('open', 'assigned') ORDER BY id DESC LIMIT 2", sun.id);
+  const ho = (id, cl, paused, sent) => sql(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, due_at, proof_json, reason, note, paused_at, client_sent_at, client_sent_by_name, client_sent_how)
+    VALUES (?,?,?,'posting','client',?,?,?,?, '{}', 'EOB needed from the client', '', ?, ?, 'Tina Lead', 'Email')`, id, cl, sun.id, paused - DAY, U("Arun Agent"), "Arun Agent", paused + DAY, paused, sent);
+  await ho("y09a", c1.id, now - 20 * DAY, now - 1 * DAY);    // paused 20 days ago, sent to the client yesterday: 1 day
+  await ho("y09b", c2.id, now - 10 * DAY, now - 10 * DAY);   // paused and sent 10 days ago: 10 days
+  const o = await TI("client.overview", { client_id: sun.id });
+  const longest = Math.max(...o.waiting.rows.map((w) => w.days));
+  ok("Y-09: Client 360's oldest is the longest wait in its own table (10 days, not the 1 day of the request paused first)", o.waiting.oldest === 10 && longest === 10, { oldest: o.waiting.oldest, rows: o.waiting.rows.map((w) => [w.claim_no, w.days]) });
+  ok("Y-09: the table lists the longest wait first", o.waiting.rows[0] && o.waiting.rows[0].days === 10, o.waiting.rows.map((w) => w.days));
+  ok("Y-09: its health names the old requests waiting on the client", o.reasons.some((r) => /2 requests waiting on the client, oldest 10 days/.test(r.text)), o.reasons.map((r) => r.text));
+  const MO = R["Mona Manager"];
+  const sp = (await MO("digest.spans", {})).spans.find((x) => x.clients.some((c) => c.id === sun.id));
+  const pv = sp ? await T(() => MO("digest.preview", { span: sp.key })) : { ok: false, e: "no span" };
+  ok("Y-09: the Monday digest judges the client on the same oldest request", pv.ok && /waiting on the client, oldest 10 days/.test(pv.r.text), pv.ok ? (pv.r.text.match(/.*waiting on the client.*/g) || []).join(" | ") : pv.e);
+  await sql("DELETE FROM handoffs WHERE id IN ('y09a', 'y09b')");
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

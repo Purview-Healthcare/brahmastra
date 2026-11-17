@@ -180,7 +180,9 @@ client on one page, for team leads, managers and the VP (and anyone a client is 
   hand-offs, against the period before), dollars waiting on the client, dollars at timely-filing risk;
 - AR and the over-90 share of the money owed by month (Brahmastra keeps one reading a day, so the trend fills in by itself);
 - denial and rejection reasons from billers' entries, in dollars (each claim's balance once, however often it was worked);
-- every request waiting on the client, how long, whether it was sent, and the client's average reply time;
+- every request waiting on the client, how long (since it was sent to the client, else since it was paused), longest
+  first, whether it was sent, and the client's average reply time; its "oldest" (and the health reason and the Monday
+  digest's) is the longest any request has waited;
 - escalations, missed tasks, entries made, RACI;
 - the **month-end checklist** (inventory uploaded, internal reports reviewed, AR Inventory sent to the SLA
   scorecard, client pack built, SLA scored with its score, pack sent), each with a due working day of the next
