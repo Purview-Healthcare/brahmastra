@@ -97,6 +97,12 @@ ok("R4-A: Tina Lead's Productivity still has Arun Agent's entries", tiProd.some(
 const tiCt = await TI("supervisor.callTime", { from_ms: 0, to_ms: Date.now() + 60000 });
 ok("R4-A: Tina Lead's Time on calls still has Arun Agent's calls", tiCt.by_user.some((x) => x.user_id === U("Arun Agent")) && tiCt.total.minutes === 12, tiCt);
 
+S("R4-B: moving inside the app with an entry typed asks first");
+ok("R4-B: the app's go() (the menu, the bell, Ctrl+K, links) asks the top typed form or pop-up before moving, as Back and Forward do",
+  /const go = useCallback\(\(view, params\) => \{\s*const g = typedLayerFor\(/.test(src) && /if \(g\) \{ g\.ask\(\(\) => goNow\(view, params\)\); return; \}/.test(src));
+ok("R4-B: Back and Forward, once Discard is pressed, move without asking again", /g\.ask\(\(\) => goNow\(h\.view, h\.params\)\)/.test(src));
+ok("R4-B: README says the menu, the bell and Ctrl+K ask too", /the menu, the bell, Ctrl\+K, Back and Forward ask first/.test(readme));
+
 // ---------------------------------------------------------------------------------------------------------------------
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);

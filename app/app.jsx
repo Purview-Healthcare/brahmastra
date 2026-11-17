@@ -10469,22 +10469,30 @@ function App() {
   const [me, setMe] = useState(undefined);
   const [nav, setNav] = useState(() => navFromHistory() || { view: null, params: null });
   const navRef = useRef(nav); navRef.current = nav;
+  const shownRef = useRef(null);   // the page on screen (the start page when the address names none)
   const [ctx, setCtx] = useState({ clients: [], codes: [], users: [], loaded: false });
   const [pwOpen, setPwOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
-  const go = useCallback((view, params) => {
+  const goNow = useCallback((view, params) => {
     const next = { view, params: params || null }, hash = navHash(view, params);
     setNav(next);
     try { if (location.hash === hash) history.replaceState({ bnav: next }, "", hash); else history.pushState({ bnav: next }, "", hash); } catch (e) {}
     window.scrollTo(0, 0);
   }, []);
+  // Moving inside the app (the menu, the bell, Ctrl+K, a link on a page) while a form or pop-up holds typed text asks "Discard
+  // what you typed?" first, as Back and Forward do: Keep editing stays, Discard moves on. Nothing typed (or saved): it just moves.
+  const go = useCallback((view, params) => {
+    const g = typedLayerFor({ view: shownRef.current || navRef.current.view, params: navRef.current.params || null }, { view, params: params || null });
+    if (g) { g.ask(() => goNow(view, params)); return; }
+    goNow(view, params);
+  }, [goNow]);
   useEffect(() => {
     (async () => { if (!TOKEN) { setMe(null); return; } try { const r = await rpc("auth.me"); if (Array.isArray(r.holidays)) APP_HOLIDAYS = new Set(r.holidays); setMe(r.user); } catch (e) { setMe(null); } })();
     const h = () => setMe(null);
     const hh = () => { const h = navFromHistory(); if (!h) return;
       // Back, Forward or a new address while a pop-up holds typed text: stay on the page and ask first, as Escape does
       const cur = navRef.current, g = typedLayerFor(cur, h);
-      if (g) { try { history.pushState({ bnav: cur }, "", navHash(cur.view, cur.params)); } catch (e) {} g.ask(() => go(h.view, h.params)); return; }
+      if (g) { try { history.pushState({ bnav: cur }, "", navHash(cur.view, cur.params)); } catch (e) {} g.ask(() => goNow(h.view, h.params)); return; }
       setNav((n) => (n.view === h.view && JSON.stringify(n.params) === JSON.stringify(h.params) ? n : h)); };
     window.addEventListener("brahmastra:signedout", h);
     window.addEventListener("hashchange", hh);
@@ -10554,6 +10562,7 @@ function App() {
   // an old Past TAT link (#/tat) opens Posting & submission, where the reminders are now (Needs attention when that tab is not there)
   const asked = nav.view === "tat" ? (allowed.includes("handoffs") ? "handoffs" : "attention") : nav.view;
   const view = allowed.includes(asked) ? asked : (me.role === "supervisor" ? "dashboard" : deskOf(me, handoffs) ? "handoffs" : "queue");
+  shownRef.current = view;
   // A page this person cannot open (or a name that is not a page) shows their start page, and the address says so too.
   if (nav.view && nav.view !== view && ctx.loaded && handoffs !== null) { try { if ((location.hash || "").replace(/^#\/?/, "").split("?")[0] === nav.view) history.replaceState(null, "", "#/" + view); } catch (e) {} }
   const props = { ctx, me, reload, go, params: nav.params, refreshAttention, refreshHandoffs, handoffs, refreshFb, refreshTasks: () => { refreshTasks(); refreshNotify(); } };

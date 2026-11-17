@@ -121,9 +121,33 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const preview = await p.locator("text=NOTE PREVIEW").locator("xpath=..").innerText().catch(() => "");
     ok("the note preview builds the one-cell note, with no ACTION part", /SAAG: Claim Not On File > Policy Active > Need to Resubmit/.test(await p.innerText(".main")) && !/ACTION:/.test(preview), preview.slice(0, 200));
     ok("and nothing is still needed once the SAAG entry and the RCA are filled", !/Still needed/.test(await p.innerText(".main")), (await p.innerText(".main")).match(/Still needed[^.]*\./));
+    // R4-B: moving inside the app (the menu, Ctrl+K) with an entry typed asks first, as Back and Forward do
+    const menuTo = (l) => p.locator('.topbar .nav > button:text-is("' + l + '")').first();
+    const discardAsk = () => p.locator('[role="alertdialog"]:has-text("Discard what you typed?")');
+    const typed = () => p.locator(".main textarea").first().inputValue().catch(() => "");
+    await menuTo("My work").click(); await t(800);
+    ok("R4-B: a menu click with an entry typed asks \"Discard what you typed?\" and stays on My day", (await discardAsk().count()) === 1 && /#\/queue/.test(p.url()), p.url());
+    await discardAsk().locator('button:has-text("Keep editing")').click(); await t(500);
+    ok("R4-B: Keep editing keeps the typed entry on My day", !(await discardAsk().count()) && /#\/queue/.test(p.url()) && /resubmitting/.test(await typed()), [p.url(), await typed()]);
+    await p.keyboard.press("Control+k"); await t(500); await p.keyboard.type("My work"); await t(300); await p.keyboard.press("Enter"); await t(800);
+    ok("R4-B: Ctrl+K to another page asks too", (await discardAsk().count()) === 1 && /#\/queue/.test(p.url()), p.url());
+    await discardAsk().locator('button:has-text("Keep editing")').click(); await t(500);
     await p.locator('button.btn:text-is("Save")').first().click(); await t(2500);
     const done = await rpc("history.mine", { from_ms: Date.now() - 600000, to_ms: Date.now() + 60000 });
     ok("the entry saves", JSON.stringify(done).includes("Policy Active"), Object.keys(done));
+    await menuTo("My work").click(); await t(1200);
+    ok("R4-B: after the save a menu click just moves on (nothing asked)", !(await discardAsk().count()) && /#\/history/.test(p.url()), p.url());
+    await open("#/queue"); await t(500);
+    await p.locator("button.btn.primary.lg").first().click(); await t(3000);
+    await menuTo("My work").click(); await t(1200);
+    ok("R4-B: a claim open with nothing typed: a menu click just moves on", !(await discardAsk().count()) && /#\/history/.test(p.url()), p.url());
+    await open("#/queue"); await t(500);
+    await p.locator("button.btn.primary.lg").first().click(); await t(3000);
+    await p.locator(".main textarea").first().fill("Typed and then thrown away on purpose."); await t(300);
+    await menuTo("My work").click(); await t(800);
+    ok("R4-B: typed again: the menu click asks", (await discardAsk().count()) === 1 && /#\/queue/.test(p.url()), p.url());
+    await discardAsk().locator('button:has-text("Discard")').click(); await t(1500);
+    ok("R4-B: Discard moves on to the page clicked", !(await discardAsk().count()) && /#\/history/.test(p.url()), p.url());
   });
 
   S("Claims and reports CSV");
