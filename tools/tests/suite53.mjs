@@ -340,6 +340,23 @@ S("V-11: the bell names who has not logged in in a fixed number of reads; the pl
   ok("V-11: and in a fixed number of reads too (20 or 200 not logged in)", sizes[200].plan - sizes[20].plan <= 2 && sizes[200].plan < 40, [sizes[20].plan, sizes[200].plan]);
 }
 
+S("V-06: the team lead's row on Team status rounds the team's attainment as the KPI does");
+{
+  const F = await floor({ now: IST(2026, 11, 16, 14) });
+  // Nov 2-13 without Diwali (Nov 9): 9 working days x 10 = 90 each, 360 for Tina's four. Worked 80 + 81 + 81 + 81 = 323: 89.7%.
+  const days = []; for (let d = 2; d <= 13; d++) { const iso = "2026-11-" + String(d).padStart(2, "0"), w = new Date(iso + "T12:00:00Z").getUTCDay(); if (w && w !== 6 && d !== 9) days.push(d); }
+  for (const [n, total] of [["Arun Agent", 80], ["Bela Agent", 81], ["Cara Agent", 81], ["Dev Agent", 81]]) for (let i = 0; i < total; i++) await F.workAt(n, IST(2026, 11, days[i % days.length], 11) + i * 60000);
+  const TI = await F.who("Tina Lead"), ts = await F.ts(TI, "2026-11-01", "2026-11-16");
+  const mine = ts.rows.filter((r) => r.lead_id === F.id("Tina Lead"));
+  ok("V-06: the KPI says 89.7% (323 of 360 up to yesterday)", ts.totals.attain === 89.7 && ts.totals.count_done === 323 && ts.totals.target_done === 360, ts.totals);
+  const row = F.rig.app.groupAttain(mine);
+  ok("V-06: Tina's row on the page says 89.7% too, below the 90% mark (not 90% in green)", mine.length === 4 && row === 89.7 && row < 90, row);
+  const MO = await F.who("Mona Manager"), mts = await F.ts(MO, "2026-11-01", "2026-11-16");
+  ok("V-06: the manager's Team status shows the same figure on Tina's row", F.rig.app.groupAttain(mts.rows.filter((r) => r.lead_id === F.id("Tina Lead"))) === 89.7);
+  const today = await F.ts(TI, "2026-11-16", "2026-11-16");
+  ok("V-06: with only today picked the row is today's figure to one decimal as well", F.rig.app.groupAttain(today.rows.filter((r) => r.lead_id === F.id("Tina Lead"))) === today.totals.attain, [today.totals.attain]);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

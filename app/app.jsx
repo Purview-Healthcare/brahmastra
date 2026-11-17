@@ -2915,6 +2915,12 @@ const perfCell = (r, mark) => { const b = PERF_BADGE[r.perf]; if (!b) return <sp
   const tip = r.perf === "ramp" ? "Training and OJT are not judged against the production mark" : r.perf === "pending" ? "Judged once the day is finished" : r.perf === "below" ? "Under " + mark + "% attainment" : "";
   return <span className={"badge " + b[0]} title={tip}>{b[1]}</span>; };
 const attainStamp = (v) => v == null ? <span className="muted">–</span> : <span className={"stamp " + (v >= 90 ? "good" : v >= 80 ? "warn" : "bad")}>{v}%</span>;   // 90%: the production mark
+/* A team lead's row on Team status: the team's attainment from its people's rows, one decimal as the KPI and each person's
+   row have it, so 89.7% is never shown (or coloured) as 90% (V-06). */
+function groupAttain(rows) {
+  const sum = (k) => rows.reduce((a, r) => a + (r[k] || 0), 0), td = sum("target_done"), tt = sum("target_today");
+  return td > 0 ? Math.round(sum("count_done") / td * 1000) / 10 : tt ? Math.round(sum("count_today") / tt * 1000) / 10 : null;
+}
 /* On floor and Idle on Team status, from Purview Shastra: met or short on the finished days; idle is Shastra Guard's no
    movement plus screen locked while punched in, breaks left out. */
 const FLOOR_SRC = { off: "Purview Shastra is not connected", not_set_up: "waiting for the floor-time feed in Purview Shastra", error: "Purview Shastra did not answer", pending: "from Purview Shastra" };
@@ -3028,7 +3034,7 @@ function TeamStatusTab({ ctx, me, go }) {
               return <React.Fragment key={g.key || "none"}>
                 <tr className="tlrow click" onClick={() => setClosed((c) => ({ ...c, [g.key || "none"]: open }))}><td><span className="caret">{open ? "▾" : "▸"}</span> <b>{g.name}</b></td>
                   <td colSpan={3} className="small muted">{plural(gr.length, "person", "people")} · {gr.filter((r) => r.status === "Production").length} production{gr.some((r) => r.status !== "Production") ? " · " + gr.filter((r) => r.status !== "Production").length + " other" : ""}</td>
-                  <td className="num">{attainStamp((() => { const wd = gr.reduce((a, r) => a + r.count_done, 0), td = gr.reduce((a, r) => a + r.target_done, 0), wt = gr.reduce((a, r) => a + r.count_today, 0), tt = gr.reduce((a, r) => a + r.target_today, 0); return td > 0 ? Math.round(wd / td * 100) : tt ? Math.round(wt / tt * 100) : null; })())}</td>
+                  <td className="num">{attainStamp(groupAttain(gr))}</td>
                   <td className="num">{gr.some((r) => r.task_items) ? <><b>{fmtInt(gr.reduce((a, r) => a + (r.task_items || 0), 0))}</b><div className="tiny muted">{plural(gr.filter((r) => r.task_items).length, "person", "people")}</div></> : <span className="muted">0</span>}</td><td className="num">{fmtHM(gr.reduce((a, r) => a + r.floor_needed_min, 0))}</td>
                   <td className="num">{gr.some((r) => r.on_floor_min != null) ? <>{fmtHM(gr.reduce((a, r) => a + (r.on_floor_min || 0), 0))}{gr.some((r) => r.floor === "short") ? <div className="tiny amber-ink">{gr.filter((r) => r.floor === "short").length} short</div> : null}</> : <span className="muted">–</span>}</td>
                   <td className="num">{gr.some((r) => r.idle_min != null) ? fmtHM(gr.reduce((a, r) => a + (r.idle_min || 0), 0)) : <span className="muted">–</span>}</td>
