@@ -8078,12 +8078,20 @@ function xlsxBlob(header, rows, sheet) {
   return new Blob([XLSX.write(xlsxBook(header, rows, sheet), { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, " ").trim();
-/* The team roster in the columns Third Eye's roster reads (the same as the Purview roster CSV). */
-function rosterSheet(users) {
+/* The team roster in the columns Third Eye's roster reads (the same as the Purview roster CSV). The Status is the one Brahmastra's
+   Team status reads from Shastra, in Third Eye's words: Training, OJT and Sabbatical as they are, anything else (Shastra's Working,
+   and Serving Notice: still in production) Production. Third Eye reports on associates: team leads, managers and the VP are left
+   out unless they have production in what is sent (`worked`: lower-case names), and SMEs stay (Y-05). */
+const teRosterStatus = (u) => { const st = String(u.roster_status || "").trim().toLowerCase();
+  return st === "training" ? "Training" : st === "ojt" ? "OJT" : st === "sabbatical" ? "Sabbatical" : "Production"; };
+const teSupervisor = (u) => u.access_all || u.roster_kind === "manager" || u.roster_kind === "all"
+  || (u.roster_kind === "lead" ? !/\bsme\b|subject matter/i.test(String(u.designation || "")) : !u.roster_kind && u.role === "supervisor");
+function rosterSheet(users, worked) {
   const byId = new Map(users.map((u) => [u.id, u]));
   const header = ["Emp ID", "Name", "Position", "Department", "Project", "Reports to", "Status", "Shift", "DOJ", "Email"];
-  const rows = users.filter((u) => u.active && !u.is_admin).map((u) => [u.emp_id || "", u.name, u.designation || u.position || "", u.department || "", (u.projects || []).map((p) => p.name).join("; "),
-    u.reports_to_name || (byId.get(u.reports_to) || {}).name || "", u.roster_status || "Production", u.shift || "", u.doj || "", u.email || ""]);
+  const rows = users.filter((u) => u.active && !u.is_admin && (!teSupervisor(u) || (worked && worked.has(String(u.name || "").trim().toLowerCase()))))
+    .map((u) => [u.emp_id || "", u.name, u.designation || u.position || "", u.department || "", (u.projects || []).map((p) => p.name).join("; "),
+    u.reports_to_name || (byId.get(u.reports_to) || {}).name || "", teRosterStatus(u), u.shift || "", u.doj || "", u.email || ""]);
   return { header, rows };
 }
 /* Third Eye saves its Quality insights to Brahmastra Reports / <team lead> / <client>. It asks the page around it
@@ -8217,7 +8225,8 @@ function QualityPage({ ctx, me, onHow, lockScope }) {
       setBusy("Loading the report…");
       const F = win.File || File, label = [client ? client.name : "All clients", TE_SCOPES.find(([k]) => k === scope)[1], f.from + " to " + f.to].join(" - ");
       let people = 0;
-      if (f.roster && typeof win.handleRoster === "function") { const rs = rosterSheet(ctx.users); people = rs.rows.length; const b = xlsxBlob(rs.header, rs.rows, "Roster"); await win.handleRoster(new F([b], "Brahmastra team roster.xlsx", { type: b.type })); await new Promise((res) => setTimeout(res, 600)); }
+      const iWho = r.header.indexOf("Associate Name"), worked = new Set(iWho < 0 ? [] : r.rows.map((x) => String(x[iWho] || "").trim().toLowerCase()));
+      if (f.roster && typeof win.handleRoster === "function") { const rs = rosterSheet(ctx.users, worked); people = rs.rows.length; const b = xlsxBlob(rs.header, rs.rows, "Roster"); await win.handleRoster(new F([b], "Brahmastra team roster.xlsx", { type: b.type })); await new Promise((res) => setTimeout(res, 600)); }
       const pb = xlsxBlob(r.header, r.rows, "Production");
       await win.handleProd(new F([pb], safeName("Brahmastra production - " + label + ".xlsx"), { type: pb.type }));
       setDone({ n: r.rows.length, people, at: timeNow(), auto });

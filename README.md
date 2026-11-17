@@ -1243,7 +1243,9 @@ status opens a person's allocations, and a team lead who works claims gets **Wor
 **Brahmastra's data goes in by itself, with a note.** Nobody exports and re-uploads what Brahmastra already has:
 - *Internal reports*: Brahmastra's production (and the roster) loads into the Production Sheet box when the page
   opens and whenever the work, client or dates change, every entry of the dates however many (it loads in pages of
-  5,000, as Claims › Entries › Download CSV does). Payment posting rows carry what the poster entered (check /
+  5,000, as Claims › Entries › Download CSV does). The roster that goes with it lists the associates (team leads,
+  managers and the VP only when they have production in it), each with the status Third Eye reads: Production for
+  Shastra's Working or Serving Notice, else Training, OJT or Sabbatical. Payment posting rows carry what the poster entered (check /
   EFT date, allowed, paid, adjustment and its reason, deductible, co-insurance, co-pay, patient responsibility,
   write-off) and Submission rows their Type and Claim Type, under the column names Third Eye reads.
 - *SLA*: when a client's upload page is open in the scorecard, today's AR Inventory for the Brahmastra client

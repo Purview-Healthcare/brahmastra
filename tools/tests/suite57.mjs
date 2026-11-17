@@ -264,6 +264,26 @@ S("Y-04: the production Third Eye loads (and the Entries CSV) holds every entry,
   await sql("DELETE FROM notes WHERE id LIKE 'y04n%'");
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-05: the roster handed to Third Eye: statuses Third Eye reads, associates only");
+{
+  await sql("UPDATE users SET roster_status = 'Serving Notice' WHERE name = 'Bela Agent'");
+  const us = (await TI("users.list")).users;
+  // Third Eye's own reading of a Status cell (its normStatus): '' is "not in production"
+  const teNorm = (raw) => { const v = String(raw || "").toUpperCase().replace(/[^A-Z]/g, ""); if (!v) return ""; if (/PIP|QIP/.test(v)) return "PIP"; if (/OJT|OGT|OTT|ONJOB|TRAIN/.test(v)) return "OJT"; if (/PROD|LIVE|BAU/.test(v)) return "Production"; return ""; };
+  const rs = app.rosterSheet(us, new Set()), iN = rs.header.indexOf("Name"), iS = rs.header.indexOf("Status");
+  const st = (n) => (rs.rows.find((r) => r[iN] === n) || [])[iS];
+  ok("Y-05: Shastra's Working goes to Third Eye as Production", st("Arun Agent") === "Production" && teNorm(st("Arun Agent")) === "Production", st("Arun Agent"));
+  ok("Y-05: Serving Notice is still in production", st("Bela Agent") === "Production", st("Bela Agent"));
+  ok("Y-05: the team lead and the manager are not listed as associates", !rs.rows.some((r) => ["Tina Lead", "Mona Manager"].includes(r[iN])), rs.rows.map((r) => r[iN]));
+  const rs2 = app.rosterSheet(us, new Set(["tina lead"]));
+  ok("Y-05: a team lead with production in what is sent is listed", rs2.rows.some((r) => r[iN] === "Tina Lead") && !rs2.rows.some((r) => r[iN] === "Mona Manager"), rs2.rows.map((r) => r[iN]));
+  await sql("UPDATE users SET roster_status = 'OJT' WHERE name = 'Bela Agent'");
+  const rs3 = app.rosterSheet((await TI("users.list")).users, new Set());
+  ok("Y-05: OJT stays OJT", (rs3.rows.find((r) => r[iN] === "Bela Agent") || [])[iS] === "OJT", rs3.rows.map((r) => r[iS]));
+  await sql("UPDATE users SET roster_status = 'Working' WHERE name = 'Bela Agent'");
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
