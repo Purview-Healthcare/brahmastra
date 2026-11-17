@@ -817,6 +817,32 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("U-13: Discard closes it, and nothing was counted (Arun still 4)", !(await p.locator(".overlay .modal").count()) && (await extraOf("Arun Agent")) === 4, await extraOf("Arun Agent"));
   });
 
+  S("Stack report and extra production: another team lead of the same project sees Tina's people read only (U-ACCESS)");
+  await step("stack-not-mine", async () => {
+    const ist = new Date(Date.now() + 330 * 60000), M = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+    let dd = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - 1));
+    while (dd.getUTCDay() === 0 || dd.getUTCDay() === 6) dd = new Date(dd.getTime() - 86400000);
+    const XM = dd.toISOString().slice(0, 7), NAME2 = "Extra production week 2 - Tina Lead.xlsx";
+    // Leo leads Lakeview; for this step he is a second team lead of Sunrise as well (his projects), then Lakeview only again
+    const projects = (v) => p.evaluate(async (v) => { await window.__sql("UPDATE users SET projects_json = ?, scope_projects_json = ? WHERE email = 'leo@purview-healthcare.com'",
+      JSON.stringify(v.map((name) => ({ name, share: null }))), JSON.stringify(v)); await window.__flush(); }, v);
+    await projects(["Lakeview Dental Group", "Sunrise Eye Care"]);
+    try {
+      await as("leo"); await open("#/dashboard?tab=stack&month=" + M); await t(500); await p.reload(); await t(4500);
+      const row = p.locator('.main table.stk-t tr:has-text("Arun Agent")').first();
+      ok("U-ACCESS: Leo, a second team lead of Sunrise, sees Tina's Arun on the Stack report (seeing stays)", (await row.count()) === 1, (await p.innerText(".main")).slice(0, 300));
+      ok("U-ACCESS: read only: no typed cell opens in Arun's row (only Tina, or a manager above her, types them)", (await row.locator("button.typed").count()) === 0 && (await row.locator(".typed.ro").count()) > 0, await row.innerText());
+      await open("#/dashboard?tab=stack&month=" + XM); await t(500); await p.reload(); await t(4500);
+      const frow = p.locator(`.stk-extra tr:has-text("${NAME2}")`).first();
+      ok("U-ACCESS: Tina's extra production file is listed for Leo, with Open and no Remove", (await frow.count()) === 1 && (await frow.locator('button:has-text("Open")').count()) === 1 && (await frow.locator('button:has-text("Remove")').count()) === 0,
+        (await frow.count()) ? await frow.innerText() : "not listed");
+      await frow.locator('button:has-text("Open")').click(); await t(2500);
+      const lines = p.locator(".overlay .xp-lines").first();
+      ok("U-ACCESS: Open shows Arun's line read only: no Edit, marked another team", /Arun Agent/.test(await lines.innerText()) && (await lines.locator('button:has-text("Edit")').count()) === 0 && /another team/.test(await lines.innerText()), await lines.innerText());
+      await p.keyboard.press("Escape"); await t(500);
+    } finally { await projects(["Lakeview Dental Group"]); }
+  });
+
   ok("no script errors on any page", !errs.length, errs);
   await b.close(); srv.close();
   const failed = results.filter((x) => !x.pass);
