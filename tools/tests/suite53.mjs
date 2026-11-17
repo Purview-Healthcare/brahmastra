@@ -384,6 +384,15 @@ S("V-08: the roster sync counts and lists every change it writes");
   ok("V-08: the next sync with nothing new counts no change and adds no entry", r2.summary.updated === 0 && JSON.parse((await F.rows("SELECT value_json FROM settings WHERE key = 'shastra_log'"))[0].value_json)[0].at === IST(2026, 11, 16, 11, 5), r2.summary);
 }
 
+S("V-09: Live status's Needs you lines wrap on a phone (the page's own CSS)");
+{
+  // the browser proof measures the page at 390 px; here the rule that makes the strip's link buttons wrap is checked to stay
+  const html = (await import("fs")).readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+  const rule = (html.match(/\.needs-strip \.btn\{([^}]*)\}/) || [])[1] || "";
+  ok("V-09: the Needs you strip's lines wrap inside the card (white-space normal, at most the card's width)", /white-space:normal/.test(rule) && /max-width:100%/.test(rule), rule);
+  ok("V-09: and the strip is the one Live status draws", /className="card tight row needs-strip"/.test((await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8")));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

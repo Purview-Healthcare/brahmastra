@@ -387,6 +387,8 @@ kbd{font:600 11px/1 inherit;font-family:inherit;padding:3px 6px;border:1px solid
 .people-row.flash{animation:flash 2s ease 1}@keyframes flash{0%,40%{background:var(--soft);box-shadow:0 0 0 3px var(--teal)}100%{background:transparent;box-shadow:none}}
 .dash-k6{grid-template-columns:repeat(6,minmax(0,1fr))}
 .dash-subtabs button{padding:8px 18px}.live-badge{font-size:13px;padding:6px 12px;align-self:center}
+/* Live status's Needs you strip: each line wraps inside the card on a phone, never pushes the page sideways (V-09) */
+.needs-strip .btn{white-space:normal;text-align:left;max-width:100%}
 .stamp{display:inline-block;padding:2px 8px;border-radius:6px;font-weight:700;font-size:12.5px;font-family:var(--mono)}
 .stamp.good{background:var(--green-soft,var(--soft));color:var(--tealink)}.stamp.warn{background:var(--amber-soft);color:var(--amber-ink)}.stamp.bad{background:var(--red-soft);color:var(--red-ink)}
 .ts td{vertical-align:middle}.ts .tlrow td{background:var(--card2);border-top:2px solid var(--line2)}.ts .caret{color:var(--slate);font-size:12px}.ts .child{color:var(--faint);margin:0 8px 0 10px}.nowrap{white-space:nowrap}
