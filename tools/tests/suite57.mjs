@@ -157,6 +157,25 @@ const rowsHave = (it, no) => it.rows.some((r) => (r || []).includes(no));
   ok("Y-01: a client whose folder name was not kept gets it back from OneDrive, and its month stays in one workbook", r.ok && back.od_name === SUN && arBooks().filter((b) => b.path.startsWith("Brahmastra Clients/" + SUN + "/")).length === 1 && rowsHave(arBooks()[0].it, pool[2].claim_no), [back, arBooks().map((b) => b.path)]);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-02: Save AR Inventory to OneDrive keeps the date in the file name, whatever the client's name");
+{
+  const lake = (await A("clients.list")).clients.find((c) => c.name === LAKE);
+  const long = "Lakeview Dental Group Pediatric and Adult Family Dentistry Associates";   // 69 characters
+  await A("clients.save", { id: lake.id, name: long });
+  await A("clients.saveTeam", { client_id: lake.id, team: [U("Tina Lead")] }).catch(() => {});
+  const save = (day, extra = {}) => T(() => A("reports.saveArInventory", { client_id: lake.id, name: `AR Inventory report - ${long} - ${day}`, file_b64: Buffer.from("AR " + day).toString("base64"), ...extra }));
+  const r1 = await save("2026-10-30"), r2 = await save("2026-11-16");
+  const inv = files().filter((x) => /SLA & KPI\/AR Inventory report - Lakeview/.test(x.path));
+  ok("Y-02: two days' saves for a long client name write two files", r1.ok && r2.ok && inv.length === 2 && r1.r.name !== r2.r.name, [r1.e || r1.r.name, r2.e || r2.r.name, inv.map((x) => x.path)]);
+  ok("Y-02: each name ends with its date and fits OneDrive's 80 characters", r1.ok && /- 2026-10-30\.xlsx$/.test(r1.r.name) && r1.r.name.replace(/\.xlsx$/, "").length <= 80 && /^AR Inventory report - Lakeview Dental Group/.test(r1.r.name), r1.r && r1.r.name);
+  ok("Y-02: October's file is kept (not replaced by November's)", inv.some((x) => x.it.bytes.toString() === "AR 2026-10-30") && inv.some((x) => x.it.bytes.toString() === "AR 2026-11-16"), inv.map((x) => x.it.bytes.toString()));
+  const r3 = await T(() => A("reports.saveArInventory", { client_id: lake.id, name: "AR Inventory report", today: "2026-11-17", file_b64: Buffer.from("AR").toString("base64") }));
+  ok("Y-02: a name without a date takes the page's today", r3.ok && /^AR Inventory report - Lakeview Dental Group .* - 2026-11-17\.xlsx$/.test(r3.r.name), r3.e || r3.r.name);
+  const r4 = await T(() => A("reports.saveArInventory", { client_id: sun.id, name: "AR Inventory report - " + SUN + " Center - 2026-11-16", file_b64: Buffer.from("AR").toString("base64") }));
+  ok("Y-02: a short name is as before", r4.ok && r4.r.name === "AR Inventory report - " + SUN + " Center - 2026-11-16.xlsx", r4.e || r4.r.name);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -8766,7 +8766,10 @@ const OPS = {
     if (!c) throw bad("Pick the client.");
     const b64 = String(payload.file_b64 || "");
     if (!b64 || b64.length > 14_000_000) throw bad("The report is empty or too large.");
-    const name = odName(str(payload.name, 160) || "AR Inventory report - " + c.name).replace(/\.xlsx$/i, "") + ".xlsx";
+    // the day's date always stays in the name (a long client name is cut instead, as for the monthly files), so each save keeps
+    // its own file: the date the page's name ends with, else the page's today
+    const day = isoDate((/(\d{4}-\d{2}-\d{2})(\.xlsx)?\s*$/i.exec(String(payload.name || "")) || [])[1]) || isoDate(payload.today) || istISO(Date.now());
+    const name = odFileName("AR Inventory report -", c.name, "- " + day) + ".xlsx";
     const tok = await graphAppToken(env);
     const owner = encodeURIComponent(env.REPORTS_OWNER || REPORTS_OWNER_DEFAULT);
     const saved = [];
