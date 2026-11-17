@@ -172,6 +172,21 @@ await MONA("clients.accessRemove", { client_id: lake.id, user_id: U("Pia Poster"
 const h1p = await hoOf("ho-r4d-1");
 ok("R4-D: Pia Poster, still responsible for Lakeview's posting, keeps the hand-off she was given", h1p.assigned_to === U("Pia Poster") && h1p.status === "assigned", h1p);
 
+S("R4-E: the Stack report's reason box (Team player) refuses a long reason, never cuts it");
+const month = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7), longWhy = "Helped the team clear the backlog every day this month. ".repeat(5).trim();
+const tpLong = await tryOp(() => TI("stack.save", { month, user_id: U("Arun Agent"), field: "tp", value: "no", note: longWhy }));
+ok("R4-E: a 279-character reason is refused with a message naming the box, and nothing is saved", !tpLong.ok && /The reason is too long: 279 characters, and it takes up to 200/.test(tpLong.e)
+  && !(await q1("SELECT note FROM stack_typed WHERE subject_id = ? AND field = 'tp'", U("Arun Agent"))), tpLong);
+const tpOk = await tryOp(() => TI("stack.save", { month, user_id: U("Arun Agent"), field: "tp", value: "no", note: longWhy.slice(0, 200) }));
+ok("R4-E: 200 characters are kept whole", tpOk.ok && tpOk.r.note.length === 200, tpOk);
+
+S("R4-F: README says what the code does about editing entries");
+ok("R4-F: README no longer says entries can be edited for 24 hours, and says any time in both places", !/edited for 24\s+hours/.test(readme) && /can be edited at any\s+time by its author or a team lead/.test(readme) && /edited at any time\*\* by their author or a team lead \(no time\s+limit\)/.test(readme));
+const wk = (await q("SELECT id, claim_id FROM notes WHERE user_id = ? AND kind = 'work' ORDER BY created_at LIMIT 1", U("Arun Agent")))[0];
+await sql("UPDATE notes SET created_at = ? WHERE id = ?", Date.now() - 10 * 86400000, wk.id);
+const ed = await tryOp(() => AR("notes.update", { id: wk.id, saag: FOLLOW.saag, note: { ...FOLLOW.note, findings: "Checked again ten days later: still in process at the payer" } }));
+ok("R4-F: an entry ten days old can still be edited by its author (no time limit in the code)", ed.ok, ed);
+
 // ---------------------------------------------------------------------------------------------------------------------
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);

@@ -7,8 +7,8 @@ A **team lead** sets up clients and their locations, uploads inventory
 Revenue Doctor's prioritisation rules. A **biller** sees the day's
 allocations in priority order, opens one claim at a time, records the SAAG
 entry (Status › Sub-status › Action, with the bucket) and the standard note,
-and moves on. Every entry is kept on the claim's profile, can be edited for 24
-hours, and can be exported as one cell per note.
+and moves on. Every entry is kept on the claim's profile, can be edited at any
+time by its author or a team lead, and can be exported as one cell per note.
 
 ## Files
 
