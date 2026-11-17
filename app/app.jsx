@@ -8457,8 +8457,16 @@ function crCtx(DS, R, pageId, sel) {
     const inR = (r, rg) => ds.spans ? !!r[ds.dateField] && r[ds.dateField] <= rg.end && (r.open === true || !r.endDate || r.endDate >= rg.start) : crInRange(r[ds.dateField], rg);
     const of = (rg) => { const xs = !ds ? [] : ds.dateField && rg ? ds.recs.filter((r) => inR(r, rg)) : ds.recs.slice(); return ds && ds.dedupe ? crDedupe(xs) : xs; };
     cache[role] = { ds, all: of(range), prevAll: prevRange ? of(prevRange) : [] }; } return cache[role]; };
-  return { pageId, sel, range, prevRange, ds: (role) => get(role).ds, rows: (role, except) => crApplySel(get(role).all, sel, except), rowsAll: (role) => get(role).all,
-    prev: (role) => crApplySel(get(role).prevAll, sel, null), hasPrev: (role) => !!(prevRange && get(role).prevAll.length), prevAll: (role) => get(role).prevAll,
+  // Denials and rejections read from the AR entries are of the claims AR production shows with the same filters (each claim at its
+  // latest entry, then the filters), so the pages count the same claims; each is described by its latest denial (or rejection),
+  // and the denial reason picks by that (Y-03)
+  const fromWorked = (role) => { const d = get(role).ds; return !!(d && d.derivedFrom === "worked" && get("worked").ds); };
+  const ofWorked = (role, prevOf, except) => { const g = get(role), w = get("worked"), selW = { ...(sel || {}) }; delete selW.status;
+    const shown = crIdsOf(crApplySel(crClaimsOf(prevOf ? w.prevAll : w.all), selW, except));
+    const own = except !== "status" && sel && sel.status ? { status: sel.status } : null;
+    return crApplySel((prevOf ? g.prevAll : g.all).filter((r) => shown.has(r.id || r.invoice || r._i)), own, null); };
+  return { pageId, sel, range, prevRange, ds: (role) => get(role).ds, rows: (role, except) => (fromWorked(role) ? ofWorked(role, false, except) : crApplySel(get(role).all, sel, except)), rowsAll: (role) => get(role).all,
+    prev: (role) => (fromWorked(role) ? ofWorked(role, true, null) : crApplySel(get(role).prevAll, sel, null)), hasPrev: (role) => !!(prevRange && get(role).prevAll.length), prevAll: (role) => get(role).prevAll,
     // claims, not entries: one row per claim (its latest entry in the period) first, then the filters, so a filter picks claims by
     // their latest entry and a picked bar always matches the KPIs
     claims: (role, except) => crApplySel(crClaimsOf(get(role).all), sel, except), prevClaims: (role) => crApplySel(crClaimsOf(get(role).prevAll), sel, null),
@@ -8688,7 +8696,7 @@ function crBuildRejection(c) {
   // A share of this period's submissions, with the same filter (of the claims worked only for a client with no Submission records at all).
   // Rejections of claims sent earlier can outnumber them, or come in a period with no submission: no rate then.
   const subDs = c.ds("submission"), all = c.rows("rejection", null), subRows = subDs ? c.rows("submission", null).filter((r) => crSubState(r) === "submitted") : [];
-  const base = subDs ? subRows.length : c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : 0, more = !!base && all.length > base;
+  const base = subDs ? subRows.length : c.ds("worked") ? c.claims("worked", null).length : 0, more = !!base && all.length > base;
   const rate = base && !more ? all.length / base : null, noun = subDs ? "submitted" : "worked";
   const none = subDs && !base ? (Object.values(c.sel || {}).some((x) => x && x.size) ? "no submissions match these filters this period" : "no submissions this period (these were submitted earlier)") : "";
   const prev = c.hasPrev("rejection") ? c.prev("rejection") : null;
@@ -8793,8 +8801,9 @@ function crTopDenials(reasons) {
 }
 function crBuildDenials(c) {
   const R = c.R, ds = c.ds("denial"); if (!ds) return null;
-  const all = c.rows("denial", null), workedN = c.ds("worked") ? crClaimsOf(c.rows("worked", null)).length : null, prev = c.hasPrev("denial") ? c.prev("denial") : null;
-  const prevWorkedN = c.ds("worked") && c.hasPrev("worked") ? crClaimsOf(c.prev("worked")).length : 0;
+  // of the claims AR production shows with the same filters (Y-03): the rate's base is AR production's Claims worked
+  const all = c.rows("denial", null), workedN = c.ds("worked") ? c.claims("worked", null).length : null, prev = c.hasPrev("denial") ? c.prev("denial") : null;
+  const prevWorkedN = c.ds("worked") && c.hasPrev("worked") ? c.prevClaims("worked").length : 0;
   const amt = crSum(all, (r) => r.amount), rate = workedN ? all.length / workedN : null;
   const kpis = [
     crKpi("Denied claims", crF.int(all.length), { delta: crDelta(all.length, prev ? prev.length : null), upGood: false, fmt: crF.int, accent: true }),

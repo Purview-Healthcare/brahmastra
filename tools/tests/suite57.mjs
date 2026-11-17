@@ -3,6 +3,7 @@
    the roster Brahmastra hands to Third Eye. Each check names the finding it guards ("Y-07: ..."). A stand-in for Purview Shastra's
    roster and a fake Microsoft Graph (OneDrive) that keeps every file. Made-up people and data only. */
 import { makeRig } from "./rig.mjs";
+import vm from "vm";
 const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 600))); };
@@ -195,6 +196,52 @@ S("Y-09: the oldest request waiting on the client is the one that has waited lon
   const pv = sp ? await T(() => MO("digest.preview", { span: sp.key })) : { ok: false, e: "no span" };
   ok("Y-09: the Monday digest judges the client on the same oldest request", pv.ok && /waiting on the client, oldest 10 days/.test(pv.r.text), pv.ok ? (pv.r.text.match(/.*waiting on the client.*/g) || []).join(" | ") : pv.e);
   await sql("DELETE FROM handoffs WHERE id IN ('y09a', 'y09b')");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-03: with a filter on the person, the Denials page counts the claims AR production counts");
+{
+  const X = (expr) => vm.runInContext(expr, app);
+  const cl = (await A("clients.list")).clients.find((c) => c.name === LAKE + " Pediatric and Adult Family Dentistry Associates") || (await A("clients.list")).clients.find((c) => /Lakeview/.test(c.name));
+  await sql("UPDATE claims SET state = 'closed' WHERE client_id = ?", cl.id);
+  const ist = (d) => Date.parse(d + "T11:00:00+05:30");
+  const claim = async (id, no, payer, dos, bal) => sql(`INSERT INTO claims (id, client_id, match_key, claim_no, account_no, patient, payer, dos, balance, billed, state, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?, 'open', ?, ?)`, id, cl.id, "mk-" + id, no, "ACC-" + no, "Test Patient " + no, payer, dos, bal, bal * 2, Date.parse("2026-07-01T00:00:00Z"), Date.now());
+  let nseq = 0;
+  const note = (cid, at, st, sub, act, mv, who) => sql("INSERT INTO notes (id, claim_id, user_id, user_name, kind, status, sub_status, action, bucket, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    "y03n" + (++nseq), cid, U(who), who, "work", st, sub, act, mv, at);
+  await claim("y03x", "7711001", "Aetna", "2026-08-20", 400); await claim("y03y", "7711002", "Aetna", "2026-08-25", 300); await claim("y03z", "7711003", "Cigna", "2026-09-01", 200);
+  await note("y03x", ist("2026-10-05"), "Claim Denied", "Missing information", "Corrected claim", "Payer", "Arun Agent");
+  await note("y03x", ist("2026-10-20"), "Claim Paid", "Paid in full", "Close the claim", "Closed", "Bela Agent");
+  await note("y03y", ist("2026-10-10"), "Claim Denied", "Missing information", "Corrected claim", "Payer", "Bela Agent");
+  await note("y03z", ist("2026-10-12"), "Claim In Process", "Need to allow some time", "Follow up", "Payer", "Arun Agent");
+  const range = { start: new Date(2026, 9, 1), end: new Date(2026, 9, 31), kind: "month" }, pv = app.crShift(range);
+  const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  const raw = await A("creport.get", { client_id: cl.id, from: iso(range.start), to: iso(range.end), prev_from: iso(pv.start), prev_to: iso(pv.end), period_key: X("crPeriodKey")(range) });
+  const DS = app.crDatasets(raw), Rr = { range, compare: true, client: cl.name, periodName: "October", cardMeasure: {} };
+  const build = (sel) => ({ ar: app.crBuildAR(app.crCtx(DS, Rr, "ar", sel)), den: app.crBuildDenials(app.crCtx(DS, Rr, "denials", sel)), rca: app.crBuildRCA(app.crCtx(DS, Rr, "rca", sel)) });
+  const kpi = (m, l) => m.kpis.find((k) => k.label === l) || {};
+  const nOf = (s) => Number((/(\d+)/.exec(String(s || "")) || [])[1]);
+  const agree = (b) => ({ arWorked: Number(kpi(b.ar, "Claims worked").value), arDenied: nOf(kpi(b.ar, "Denied").sub), denied: Number(kpi(b.den, "Denied claims").value), base: nOf(kpi(b.den, "Denial rate").sub), rate: kpi(b.den, "Denial rate").value });
+  const u0 = agree(build({}));
+  ok("Y-03: unfiltered, both pages: 3 claims worked, 2 denied", u0.arWorked === 3 && u0.arDenied === 2 && u0.denied === 2 && u0.base === 3, u0);
+  const keyOf = (name) => DS.worked.recs.find((r) => String(r.workBy || "").toLowerCase().includes(name.split(" ")[0].toLowerCase())).workBy;
+  const ar1 = agree(build({ workBy: new Set([keyOf("Arun Agent")]) }));
+  ok("Y-03: Worked by Arun: Denials counts the claims AR production counts (1 worked, none denied)", ar1.arWorked === 1 && ar1.arDenied === 0 && ar1.denied === 0 && ar1.base === 1, ar1);
+  const be = build({ workBy: new Set([keyOf("Bela Agent")]) }), be1 = agree(be);
+  ok("Y-03: Worked by Bela: both pages 2 claims worked, 2 denied (100%)", be1.arWorked === 2 && be1.arDenied === 2 && be1.denied === 2 && be1.base === 2 && be1.rate === "100.0%", be1);
+  const ar = build({ workBy: new Set([keyOf("Arun Agent")]) });
+  ok("Y-03: the RCA page's denied amount is of the same claims (Bela $1,400 of both claims; Arun none)", be.rca && /\$1,400 denied/.test(be.rca.insights[0] || "") && ar.rca && !/\$400 denied/.test(ar.rca.insights[0] || ""), [be.rca && be.rca.insights[0], ar.rca && ar.rca.insights[0]]);
+  // the Denials page's own reason bar still picks by the denial's reason, and the KPIs match the clicked bar
+  const rs = build({ status: new Set(["missing information"]) }).den, rsAll = build({}).den;
+  const bar = (rsAll.cards.find((x) => x.id === "den.reason").items || []).find((i) => /missing/i.test(i.label));
+  // rejections read from the AR entries (no Rejections desk records) follow the same rule
+  await note("y03z", ist("2026-10-25"), "Claim Rejected", "Invalid member ID", "Corrected claim", "Payer", "Arun Agent");
+  const raw2 = await A("creport.get", { client_id: cl.id, from: iso(range.start), to: iso(range.end), prev_from: iso(pv.start), prev_to: iso(pv.end), period_key: X("crPeriodKey")(range) });
+  const DS2 = app.crDatasets(raw2), rej = (sel) => app.crBuildRejection(app.crCtx(DS2, Rr, "rejection", sel));
+  const rA = rej({ workBy: new Set([keyOf("Arun Agent")]) }), rB = rej({ workBy: new Set([keyOf("Bela Agent")]) });
+  ok("Y-03: rejections from the AR entries: Arun 1 of his 1 claim worked, Bela none", rA && kpi(rA, "Rejected claims").value === "1" && kpi(rA, "Rejection rate").value === "100.0%" && (!rB || kpi(rB, "Rejected claims").value === "0"), [rA && rA.kpis.map((k) => k.label + "=" + k.value), rB && rB.kpis.map((k) => k.label + "=" + k.value)]);
+  ok("Y-03: a clicked denial reason matches the Denied claims KPI", bar && Number(kpi(rs, "Denied claims").value) === bar.count && bar.count === 2, [bar && bar.count, kpi(rs, "Denied claims").value]);
 }
 
 const fails = results.filter((x) => !x.pass);
