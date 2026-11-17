@@ -4,6 +4,7 @@
    roster and a fake Microsoft Graph (OneDrive) that keeps every file. Made-up people and data only. */
 import { makeRig } from "./rig.mjs";
 import vm from "vm";
+import fs from "fs";
 const results = []; let section = "";
 const S = (n) => { section = n; console.log("\n## " + n); };
 const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 600))); };
@@ -293,6 +294,15 @@ S("Y-06: the Third Eye tab opens on a tab Brahmastra's row draws");
   ok("Y-06: Team Status is not drawn, and Third Eye is moved to the next drawn tab (Production), highlighted", x.go === "prod" && x.tabs.map((t) => t.label + (t.on ? "*" : "")).join(",") === "Production*,Agent Quality", x);
   const y = embedTabsOf(te.map((t) => ({ ...t, on: t.id === "aq" })));
   ok("Y-06: on a drawn tab nothing is moved", y.go === null && y.tabs.find((t) => t.on).id === "aq", y);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-08: counts of one read in the singular");
+{
+  const plural = vm.runInContext("plural", app);
+  const src = fs.readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  ok("Y-08: the SLA scorecard's trend heading counts with plural() (\"Score · 1 month\")", /Score · \{plural\(tr\.length, cur\.kind === "week" \? "week"/.test(src) && !/\{tr\.length\} \{cur\.kind/.test(src) && plural(1, "month") === "1 month" && plural(2, "month") === "2 months");
+  ok("Y-08: the change history's count too (\"1 change\")", /\{plural\(rows\.length, "change"\)\}/.test(src) && !/\{rows\.length\} changes/.test(src));
 }
 
 const fails = results.filter((x) => !x.pass);

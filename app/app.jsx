@@ -7820,7 +7820,7 @@ function AuditView({ ctx }) {
         <span style={{ minWidth: 240 }}><Combo sm value={f.client_id} onChange={(v) => setF({ ...f, client_id: v })} placeholder="Every client" options={ctx.clients.map((c) => ({ id: c.id, label: c.name }))} /></span>
         <select className="input sm" style={{ width: "auto" }} value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })}>
           <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="stack">Stack report</option><option value="feedback">Feedback</option><option value="settings">Settings</option><option value="template">Note templates</option></select>
-        <span className="small muted" style={{ marginLeft: "auto" }}>{rows.length} changes</span></div>
+        <span className="small muted" style={{ marginLeft: "auto" }}>{plural(rows.length, "change")}</span></div>
       {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No changes recorded yet. They are recorded from now on.</Empty></div> :
         <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Client</th><th>Detail</th></tr></thead>
           <tbody>{rows.map((r) => <tr key={r.id}><td className="small" style={{ whiteSpace: "nowrap" }}>{fmtWhen(r.at)}</td><td className="small">{r.user_name || "–"}</td><td className="small b">{AUDIT_LABEL[r.action] || r.action}</td><td className="small">{r.client_name || "–"}</td><td className="small">{r.detail}</td></tr>)}</tbody></table></div></div>}
@@ -8658,7 +8658,7 @@ function crBuildInventory2(c) {
   if (stAll[0]) kpis.push(crKpi("Top status", crF.pct(stAll[0].share, 0), { sub: stAll[0].label }));
   const cards = [
     { id: "inv2.payer", title: "Insurance wise Pareto", sub: `Payers holding the top 80% of ${credit ? "the money owed (credits left out)" : "the balance"} are highlighted`, cols: 6, type: "hbar", dim: "payerKey", dimLabel: "Payer", items: payerItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, emphasis: true, maxRows: 7,
-      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} payers</b> hold ${share80} of ${ofBal}: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
+      callout: payerItems.length ? `<b>${n80} of ${payerItems.length} ${payerItems.length === 1 ? "payer" : "payers"}</b> hold ${share80} of ${ofBal}: ${crEsc(crListNames(payerItems.filter((x) => x.emph)))}.` : "" },
     { id: "inv2.status", title: "Inventory status mix", sub: crDimLabel(ds, statusField), cols: 6, type: "donut", dim: statusField, items: stItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, centerValue: crF.moneyK(credit ? crSum(owedSet, (r) => r.amount) : amtCur), centerLabel: credit ? "owed" : "open" },
   ];
   if (actItems.length > 1) cards.push({ id: "inv2.action", title: "Action wise breakdown", sub: "Balance by action taken", cols: 12, type: "hbar", dim: "action", dimLabel: "Action", items: actItems, measureLabel: "Amount", fmtV: crF.moneyK, fmtT: crF.money, secondary: { key: "count", label: "Claims", fmt: crF.int }, maxRows: 5 });
@@ -10055,7 +10055,7 @@ function SlaScorecard({ ctx, me, go, clientId, setClientId, openInputs }) {
                 {monthOf(cur) && d.score != null ? " · month closed" : ""} · scored in Drishti</div>
               <div className="sc-stats"><span className="ok"><b>{d.counts.ok}</b>on target</span><span className="warn"><b>{d.counts.warn}</b>close</span><span className="miss"><b>{d.counts.miss}</b>missed</span><span className="none"><b>{notScored}</b>not scored</span></div>
             </div>
-            <div className="sc-trend"><div className="sc-lbl">Score · {tr.length} {cur.kind === "week" ? "weeks" : cur.kind === "month" ? "months" : "periods"}</div>
+            <div className="sc-trend"><div className="sc-lbl">Score · {plural(tr.length, cur.kind === "week" ? "week" : cur.kind === "month" ? "month" : "period")}</div>
               {tr.length > 1 ? <svg width="300" height="80" viewBox="0 0 300 80"><rect x="0" y="6" width="300" height={sy(90) - 6} fill="var(--sc-zone)" rx="3" /><text x="296" y="15" textAnchor="end" fontSize="9" className="teal-ink" fill="currentColor">green 90%+</text>
                 <polyline fill="none" stroke="var(--slate)" strokeWidth="2" strokeLinejoin="round" points={tr.map((p, k) => (p.pct == null ? null : sx(k) + "," + sy(p.pct))).filter(Boolean).join(" ")} />
                 {tr.map((p, k) => <g key={p.id}>{p.pct != null && <circle cx={sx(k)} cy={sy(p.pct)} r={k === tr.length - 1 ? 4.5 : 2.5} fill={k === tr.length - 1 ? (d.band ? KPI_COL[d.band] : "var(--slate)") : "var(--slate)"} />}<title>{p.label}: {p.pct == null ? "–" : p.pct + "%"}</title>
