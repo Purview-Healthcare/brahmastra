@@ -397,7 +397,8 @@ bar to narrow the charts), then:
   client, a responsibility, settings, a team member's role, projects or access, Team status notes and month-end,
   with when and what. Also who gave a sign-in code or set a temporary password for someone else, changed an email
   address or an Emp ID, added or deleted an account, changed the extra sign-in emails, matched a roster project
-  to a client, or counted, edited or removed an extra production file. A code or a password is never written there:
+  to a client, or counted, edited or removed an extra production file; and on the Stack report, each value typed, typed
+  over or cleared (with the old and the new value, and who typed the old one), each lock and unlock. A code or a password is never written there:
   only who did it, for whom and when.
 
 #### Dashboard › Stack report
@@ -425,7 +426,7 @@ grouped by team lead as on Team status, ranked by percentage (a tie: the higher 
   shrinkage is 1 less present / working.
 - **Others (5)**: **Late login** (the days Shastra marks the person late) and **Breaks over** (the days their breaks
   added up to more than 60 minutes, the owner's daily limit): none: 1; 1 or 2: 0.5; more: 0 each. **Team player**,
-  typed Yes or No by the team lead with an optional reason (it starts as Yes): 1 or 0. **PKT score**, typed by the
+  typed Yes or No by the team lead with an optional reason (up to 200 characters: a longer one is refused, never cut; it starts as Yes): 1 or 0. **PKT score**, typed by the
   team lead: 99.51% and above: 2; 94.51%: 1; 89.51%: 0.5; less: 0. An empty PKT counts as 0 and is listed to enter.
 - **Time on system (5)**: the average On floor time a day from Shastra, over the finished days that have some:
   7 h 59 min and above: 5; 7 h 30 min: 3; less: 0.
@@ -438,7 +439,9 @@ grouped by team lead as on Team status, ranked by percentage (a tie: the higher 
 - **Shrinkage (10)**: the members' average shrinkage: 16% and above: 0; 13.49%: 2; 11.49%: 4; 9.49%: 6; 8%: 8;
   under 8%: 10.
 - **Attrition (5)**: people of the team who left in the month, by Shastra's exit date or else the day the roster
-  sync switched them off (kept since this report came in): none: 5; 1: 4; 2: 3; more: 0. Someone switched off with
+  sync switched them off (kept since this report came in): none: 5; 1: 4; 2: 3; more: 0. A leaver stays in Brahmastra
+  (switched off) for the report's 13 months, also one who never signed in, and so do values typed for someone and
+  their extra production. Someone switched off with
   neither date who still worked in the month cannot be placed, so the manager types the count.
 - **Adherence (5)**: the members' late logins and breaks over added up: more than 12: 0; 9 to 12: 3; 6 to 8: 4;
   less: 5.
@@ -447,6 +450,10 @@ grouped by team lead as on Team status, ranked by percentage (a tie: the higher 
 - **Addition point**: the average of the members' Stacks, added as it is. **Stack**: 96% and above: 5; 91%: 4;
   86%: 3; 81%: 2; 76%: 1; less: 0.
 
+**Rounding.** A percentage is taken at two decimals, cut, never rounded up (99.509% is 99.5%, so it never reaches a line it
+did not reach): the same in the score, on the page and in the Excel. A team's average is judged the same way (three members at
+99% are 99%), and a typed PKT or quality keeps two decimals (98.999 is kept as 98.99).
+
 **Who sees and types what.** A team lead sees their own team (their span, as everywhere: the people under them and
 on their projects), draft and locked, types PKT, Team player and the fallbacks (Achieved and Expected, Quality), and
 sees their own team lead row once the month is locked. Managers and above see the teams of their span on both
@@ -454,16 +461,20 @@ stacks, type the ticks (never their own) and the attrition Brahmastra cannot tel
 everything and alone can unlock. A value Brahmastra works out is never typed over. **Yellow dashed** cells are typed:
 click one to type it; its title says who typed it and when.
 
-**The page**: Month, Team lead and Client; a chip with **Draft** and what is left to enter, or **Locked by** whom and
+**The page**: Month (the list marks a month *locked* when everyone the viewer sees on it is locked, *partly locked* when
+some are), Team lead and Client; a chip with **Draft** and what is left to enter, or **Locked by** whom and
 when; **How it is worked out** (every band above in plain words); **Download Excel**; **Lock**. Below, the people
 listed, the floor average, how many are at each Stack and what is still to enter. Click a person (or a team lead) for
 how it was worked out: each parameter, what Brahmastra found, the band that applied, the score and where it came
 from (Brahmastra, Shastra, or typed by whom and when), with their last months. A month still under way counts its
 finished days (up to yesterday), as Team status does.
 
-**Lock the month** (managers and above, once the month is over): it lists what is still empty (PKT scores, ticks)
+**Lock the month** (managers and above, once the month is over: from 05:00 India time on the 1st, when its last working
+day ends, or later when a night shift's day runs on past that, as Team status counts it): it lists what is still empty (PKT scores, ticks)
 and asks first. Then each draft team of the manager's span is saved as it is (a snapshot a team), and from then on
-the month shows those numbers and its typed cells are closed. The admin can **unlock** it (written in the audit
+the month shows those numbers and its typed cells are closed. Each person has one row a month: someone who moves to
+another team lead after their team was locked stays in that snapshot (counted once, with that team), and someone who
+moves into a team already locked is a draft until the next lock of their span saves them on their own. The admin can **unlock** it (written in the audit
 trail, as the lock is); it is then a draft again. On **My day**, an associate's **My stack** shows their last locked
 month (Stack, total, percentage), their earlier locked months as a small trend, and opens how it was worked out.
 
@@ -491,14 +502,21 @@ counts it as the person's work done on that day, the same way a claim worked cou
   (10/31/2026), else month first (05/06/2026 is May 6; 31/31/2026 is no date either way and says nothing). A row with
   no DOW, a DOW that is no date or no user name is left out and counted.
 - **People.** Each name is matched to an active person of the uploader's span (a team lead's team, a manager's,
-  the VP's and the admin's span): the Emp ID first, then the name in any case, extra spaces ignored. Brahmastra never
+  the VP's and the admin's span): the Emp ID first, then the name in any case, extra spaces ignored. A row whose Emp ID is
+  someone else's (another team's person, or someone switched off) is never counted by its name: it is left out as not found.
+  The name is used only for a row with no Emp ID, or one Brahmastra does not know (the line then shows the file's Emp ID
+  beside the person's). Brahmastra never
   guesses between two people with the same name: those rows are left out, and an Emp ID column tells them apart. A
   name not found, and someone Team status does not count (a team lead, an SME, a desk person), are named with how many
   rows each, and not counted. When the same file was loaded before by someone with a wider span, a name it already
-  counts for a person the uploader does not see is said to be so: it stays counted there and is never counted twice.
+  counts for a person the uploader does not see is said to be so, with the rows counted there: they stay counted there
+  and are never counted twice. Rows the file gained since for such a person are named apart: they are counted once
+  their team lead or a manager loads the file again.
 - **Before anything is saved**, the check shows the rows read and to count, each name of the file on a line (who it
   counts for, Emp ID, team lead, rows, days, from and to), the dates, the months, what is left out and why, the months
-  already locked, and what the same file counted before. **Count** saves it.
+  already locked, and what the same file counted before. **Count** saves it. Hand edits made in the check are kept
+  until then: Escape, a click outside it, Back or a reload asks first ("Discard your changes?"), as every pop-up does for
+  typed text (and so do the manager's ticks and a Team player Yes or No not saved yet).
 - **Edit.** Each line has **Edit**, in the check before saving and later on a file already counted (in the month's
   list, **Open** shows the file's people), so a mistake is corrected without loading the file again. Whoever may
   upload may edit, for the same people.

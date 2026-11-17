@@ -2020,7 +2020,7 @@ const TYPED_MAX = {
   "locations.save": { name: [160, "The location's name"] },
   "tat.hold": { note: [500, "The note"] },
   "tasks.hold": { note: [500, "The note"] },
-  "stack.save": { note: [200, "The note"] },
+  "stack.save": { note: [200, "The reason"] },
   "inventory.enrich": { note: [500, "The note"] },
   "users.save": { name: [120, "The name"], first_name: [60, "The first name"], last_name: [60, "The last name"] },
   "tasks.create": { title: [160, "The task name"] },
@@ -2629,13 +2629,20 @@ async function returnsOf(env, claimId) {
   return (r && r.n) || 0;
 }
 /* People an old roster file brought in who are not in Shastra: switched off by the sync, and removed here when they
-   never signed in and have nothing on any claim. Anyone with work in Brahmastra stays (switched off) for the history. */
+   never signed in and have nothing on any claim. Anyone with work in Brahmastra stays (switched off) for the history, and so
+   does anyone the Stack report still needs: values typed for them, extra production of theirs, and a leaver of the report's
+   months (Shastra's exit date, or a leaving status such as Resigned, in the last 13 months), whom the attrition counts. */
 async function removeLeftovers(env) {
-  const gone = await all(env, `SELECT id FROM users u WHERE u.source = 'roster' AND u.active = 0 AND u.role <> 'admin' AND u.last_login IS NULL AND COALESCE(u.pass_hash, '') = ''
+  // the day they left, as the attrition dates it (stackLeavers): Shastra's exit date, else the day the sync switched off someone
+  // Shastra marks as gone (someone only missing from Shastra may never have been real: an old file's leftover, removed as before)
+  const keepFrom = stackMonthAdd(istISO(Date.now()).slice(0, 7), -12) + "-01";
+  const leaver = (u) => { const d = isoDate(u.exit_date) || (u.off_at && ROSTER_GONE.test(String(u.roster_status || "").trim()) ? istISO(u.off_at) : ""); return !!d && d >= keepFrom; };
+  const gone = (await all(env, `SELECT id, exit_date, off_at, roster_status FROM users u WHERE u.source = 'roster' AND u.active = 0 AND u.role <> 'admin' AND u.last_login IS NULL AND COALESCE(u.pass_hash, '') = ''
     AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.user_id = u.id) AND NOT EXISTS (SELECT 1 FROM claim_events e WHERE e.user_id = u.id)
     AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.user_id = u.id) AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.assigned_to = u.id OR c.last_worked_by = u.id)
     AND NOT EXISTS (SELECT 1 FROM handoffs h WHERE h.lead_id = u.id OR h.backup_id = u.id OR h.assigned_to = u.id OR h.done_by = u.id)
-    AND NOT EXISTS (SELECT 1 FROM allocations l WHERE l.by_user = u.id)`);
+    AND NOT EXISTS (SELECT 1 FROM allocations l WHERE l.by_user = u.id)
+    AND NOT EXISTS (SELECT 1 FROM stack_typed t WHERE t.subject_id = u.id) AND NOT EXISTS (SELECT 1 FROM extra_lines x WHERE x.user_id = u.id OR x.auto_id = u.id)`)).filter((u) => !leaver(u));
   if (!gone.length) return 0;
   await batchAll(env, gone.flatMap((u) => [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id), env.DB.prepare("DELETE FROM users WHERE id = ?").bind(u.id)]), 40);
   return gone.length;
@@ -3431,11 +3438,15 @@ function teamSuggestions(rows) {
   const nWord = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   const hm = (m) => { m = Math.round(m || 0); const h = Math.floor(m / 60), mm = m % 60; return h ? h + " h" + (mm ? " " + String(mm).padStart(2, "0") + " m" : "") : mm + " m"; };
   const floorSeen = (r) => `On the floor ${hm(r.on_floor_done_min)} of ${hm(r.floor_needed_done_min)} needed up to yesterday (short ${hm(r.floor_short_min)})`;
-  // claims worked and team task items done both count toward the attainment
-  const what = (claims, items) => (items ? `${nWord(claims, "claim")} + ${nWord(items, "task item")}` : "claims");
-  const attainSeen = (r) => r.attain_basis === "done"
-    ? `Attainment ${r.attain}% (${r.count_done != null ? r.count_done : r.worked_done} of ${Math.round(r.target_done)}${r.task_items_done ? "" : " claims"} up to yesterday${r.task_items_done ? ": " + what(r.worked_done, r.task_items_done) : ""})`
-    : `Attainment ${r.attain}% today (${r.count_today != null ? r.count_today : r.worked_today} of ${Math.round(r.target_today)}${r.task_items_today ? ": " + what(r.worked_today, r.task_items_today) : " claims"})`;
+  // claims worked, team task items done and extra production all count toward the attainment: its parts named as the table
+  // writes them ("70 claims + 3 task items + 7 extra"), and "claims" after the count only when it is claims alone
+  const parts = (claims, items, extra) => (items ? `${nWord(claims, "claim")} + ${nWord(items, "task item")}` : nWord(claims, "claim")) + (extra ? ` + ${extra} extra` : "");
+  const attainSeen = (r) => {
+    const done = r.attain_basis === "done", items = (done ? r.task_items_done : r.task_items_today) || 0, extra = (done ? r.extra_done : r.extra_today) || 0;
+    const n = done ? (r.count_done != null ? r.count_done : r.worked_done) : (r.count_today != null ? r.count_today : r.worked_today), of = Math.round(done ? r.target_done : r.target_today);
+    const more = items || extra ? ": " + parts(done ? r.worked_done : r.worked_today, items, extra) : "";
+    return done ? `Attainment ${r.attain}% (${n} of ${of}${more ? "" : " claims"} up to yesterday${more})` : `Attainment ${r.attain}% today (${n} of ${of}${more || " claims"})`;
+  };
   for (const r of rows) {
     const away = r.out_today === "out";
     if (r.esc_n) {
@@ -4100,8 +4111,13 @@ const STACK_LWP_ZERO = 0.5, STACK_OUT_OF = 40, STACK_TL_OUT_OF = 50;
 // minutes as she confirmed it (one number, easy to change)
 const STACK_BREAK_LIMIT_MIN = 60;
 const stackNum = (v) => (v == null || v === "" || typeof v === "boolean" || !Number.isFinite(Number(v)) ? null : Number(v));
+/* The one rounding rule of the report: a value is judged as the number it is meant to be, never by the computer's tiny float
+   error (three team members typed at 99% average 0.98999999999999999, which is 99%). A percentage is taken at two decimals of a
+   percent, cut, never rounded up (99.509% is 99.5%), exactly as the page and the Excel show it; any other value with the float
+   error taken off. The owner's lines all have two decimals of a percent, so the cut never moves a value across one. */
+const stackJudge = (rule, x) => (rule.unit === "pct" ? Math.floor(x * 1e4 + 1e-6) / 1e4 : Math.round(x * 1e9) / 1e9);
 // which band applies: its index, rule.bands.length for "other", -1 for an empty value
-const stackBandAt = (rule, v) => { const x = stackNum(v); if (x == null) return -1; const i = rule.bands.findIndex(([op, t]) => (op === ">" ? x > t : x >= t)); return i < 0 ? rule.bands.length : i; };
+const stackBandAt = (rule, v) => { const x0 = stackNum(v); if (x0 == null) return -1; const x = stackJudge(rule, x0); const i = rule.bands.findIndex(([op, t]) => (op === ">" ? x > t : x >= t)); return i < 0 ? rule.bands.length : i; };
 const stackBand = (rule, v) => { const i = stackBandAt(rule, v); return i < 0 ? 0 : i < rule.bands.length ? rule.bands[i][2] : rule.other; };
 const stackAttendance = (al, lwp) => (lwp >= STACK_LWP_ZERO ? 0 : stackBand(STACK_RULES.leave, al + lwp));
 /* One associate's month. x: pct (Achieved / Expected), quality, al and lwp (days), late (late logins), brk (days the break ran
@@ -4202,14 +4218,15 @@ async function stackLeavers(env, users, first, last, cutoff) {
   return out;
 }
 const stackAvg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-/* The month's rows for the whole floor, worked out now. today: India's date. */
-async function stackLive(env, month, today) {
+/* The month's rows for the whole floor, worked out now. today: India's date. skip: the people already locked for the month (in a
+   snapshot, whichever team they were locked with): left out of the rows and of every team's numbers, so nobody counts twice. */
+async function stackLive(env, month, today, skip) {
   const first = month + "-01", last = stackMonthEnd(month), through = last < today ? last : addDays(today, -1);
   const out = { month, first, last, through, current: last >= today, rows: [], tls: [], floor: { state: "off", error: "", unknown: 0 } };
   if (through < first) return out;
   const users = await all(env, "SELECT * FROM users");
   const byId = new Map(users.map((u) => [u.id, u]));
-  const people = users.filter((u) => u.role === "user" && u.active && !(isoDate(u.doj) && u.doj > through));
+  const people = users.filter((u) => u.role === "user" && u.active && !(isoDate(u.doj) && u.doj > through) && !(skip && skip.has(u.id)));
   if (!people.length) return out;
   // Productivity: Team status's own figures for these dates (the finished days of a month under way)
   const ts = await OPS["team.status"]({ env, user: stackSys(), payload: { from: first, to: last, today, tz_offset_min: IST_MIN } });
@@ -4284,22 +4301,43 @@ async function stackLocks(env, month) {
   for (const x of await all(env, "SELECT scope, rows_json, by_id, by_name, at FROM stack_locks WHERE month = ?", month)) out.set(x.scope, { by: x.by_name, by_id: x.by_id, at: x.at, data: jsonObj(x.rows_json) });
   return out;
 }
+/* Who is locked for a month: the people whose row is in one of its snapshots, whichever team it was locked with. Someone who
+   changed team lead after their team was locked stays there (one row, counted once); someone in no snapshot (moved into a team
+   already locked) is still a draft, and is locked on their own by the next lock of their span. */
+const stackLockedIds = (locks) => { const ids = new Set(); for (const L of locks.values()) for (const r of L.data.rows || []) ids.add(r.id); return ids; };
+/* What a lock by this viewer saves: each draft team of their span (its team lead's row and its people's rows), and on their own
+   ("p:" and their id) the people of their span with no team lead, or whose team is already locked without them. */
+function stackLockPlan(live, span, locks) {
+  const teams = new Map();
+  for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) teams.set(t.scope, { lead: t, rows: [] });
+  for (const r of live.rows) {
+    if (teams.has(r.scope)) teams.get(r.scope).rows.push(r);
+    else if (span.has(r.id) && (!r.lead_id || locks.has(r.scope)) && !locks.has("p:" + r.id)) teams.set("p:" + r.id, { lead: null, rows: [{ ...r, scope: "p:" + r.id }] });
+  }
+  return teams;
+}
 const stackSpan = async (env, user) => new Set((await visibleUsers(env, user, "span")).map((u) => u.id));
+/* When a month is over, so it can be locked: once its last working day is, not at midnight. The day rolls at 05:00 India time
+   (Shastra's day, as Team status counts it), later for a night shift whose working day runs on past it (dayRollMin, 09:00 for
+   22:30 to 07:30). Until then the last day is still being worked, and a lock would leave it out. shifts: the people's shifts. */
+const stackOverAt = (month, shifts) => Date.parse(stackMonthAdd(month, 1) + "-01T00:00:00Z") - IST_MIN * 60000 + Math.max(300, ...shifts.map(dayRollMin)) * 60000;
 /* The month as one viewer sees it: locked teams from their snapshot, the rest worked out now. */
 async function stackView(env, user, span, month, today) {
   const mgr = isManagerUp(user), admin = !!user.is_admin, locks = await stackLocks(env, month);
   const first = month + "-01", last = stackMonthEnd(month), through = last < today ? last : addDays(today, -1);
-  const lockedIds = new Set(); for (const L of locks.values()) for (const r of L.data.rows || []) lockedIds.add(r.id);
-  // worked out now only when someone the viewer sees is still on a draft team
-  const seen = (await all(env, "SELECT id, reports_to, doj FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > through));
-  const live = seen.some((u) => !lockedIds.has(u.id) && !locks.has(u.reports_to || "p:" + u.id)) ? await stackLive(env, month, today) : null;
+  const lockedIds = stackLockedIds(locks);
+  // worked out now only when someone the viewer sees is not locked yet (in no snapshot of the month)
+  const seen = (await all(env, "SELECT id, reports_to, doj, shift FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > through));
+  const over = Date.now() >= stackOverAt(month, seen.map((u) => u.shift));
+  const live = seen.some((u) => !lockedIds.has(u.id)) ? await stackLive(env, month, today, lockedIds) : null;
   const rows = [], tls = [];
   for (const L of locks.values()) {
     for (const r of L.data.rows || []) if (span.has(r.id)) rows.push({ ...r, locked: true });
     const t = L.data.lead; if (t && ((mgr && span.has(t.id)) || t.id === user.id)) tls.push({ ...t, locked: true });
   }
   if (live) {
-    for (const r of live.rows) if (span.has(r.id) && !lockedIds.has(r.id) && !locks.has(r.scope)) rows.push({ ...r, locked: false });
+    // everyone in no snapshot is a draft row, also when their team of today is locked (they moved in after it was)
+    for (const r of live.rows) if (span.has(r.id)) rows.push({ ...r, scope: locks.has(r.scope) ? "p:" + r.id : r.scope, locked: false });
     if (mgr) for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) tls.push({ ...t, locked: false });
   }
   // ranked by percentage, ties: higher productivity first
@@ -4310,7 +4348,7 @@ async function stackView(env, user, span, month, today) {
   const scopes = new Set([...rows.map((r) => r.scope), ...tls.map((t) => t.scope)]), lockedShown = [...scopes].filter((s) => locks.has(s));
   const lockers = []; for (const s of lockedShown) { const L = locks.get(s), x = lockers.find((y) => y.name === L.by); if (x) { x.teams++; x.at = Math.max(x.at, L.at); } else lockers.push({ name: L.by, at: L.at, teams: 1 }); }
   // what a manager can still lock: the draft teams of their span
-  const lockable = live && mgr ? live.tls.filter((t) => span.has(t.id) && !locks.has(t.scope)).length + live.rows.filter((r) => !r.lead_id && span.has(r.id) && !locks.has(r.scope)).length : 0;
+  const lockable = live && mgr ? stackLockPlan(live, span, locks).size : 0;
   const te = { pkt: 0, quality: 0, prod: 0, ticks: 0, attrition: 0 };
   for (const r of rows) if (!r.locked) for (const k of r.to_enter) te[k]++;
   for (const t of tls) if (!t.locked) for (const k of t.to_enter) te[k === "attrition" ? "attrition" : "ticks"]++;
@@ -4320,9 +4358,9 @@ async function stackView(env, user, span, month, today) {
     for (const r of jsonObj(x.rows_json).rows || []) if (span.has(r.id) && r.s) { const h = history[r.id] || (history[r.id] = []); if (!h.some((y) => y.month === x.month)) h.push({ month: x.month, stack: r.s.stack, pct: r.s.pct, total: r.s.total }); }
   }
   const snap = [...locks.values()][0];
-  return { month, label: stackMonthLabel(month), first, last, through, current: last >= today, over: last < today, rows, tls, history, to_enter: te,
+  return { month, label: stackMonthLabel(month), first, last, through, current: !over, over, rows, tls, history, to_enter: te,
     lock: { teams: scopes.size, locked: lockedShown.length, by: lockers.sort((a, b) => b.teams - a.teams) },
-    manager: mgr, admin, me: user.id, can_lock: mgr && last < today && lockable > 0, lockable, can_unlock: admin && locks.size > 0,
+    manager: mgr, admin, me: user.id, can_lock: mgr && over && lockable > 0, lockable, can_unlock: admin && locks.size > 0,
     floor: live ? live.floor : snap && snap.data.floor ? snap.data.floor : { state: "off", error: "", unknown: 0 }, ticks: STACK_TICKS, criteria: stackCriteria(), lines: stackLines() };
 }
 // the percentage each Stack starts at (5, 4, 3, 2, 1), for "N points short of Stack k"
@@ -4387,15 +4425,16 @@ const extraTyped = (v) => { const t = typeof v === "number" ? String(v) : typeof
 const extraDay = (iso) => stackShort(iso) + ", " + iso.slice(0, 4);
 const extraDays = (a, b) => (a === b ? extraDay(a) : a.slice(0, 4) === b.slice(0, 4) ? stackShort(a) + " to " + extraDay(b) : extraDay(a) + " to " + extraDay(b));
 const EXTRA_WHY = { none: "left out: not found", same: "left out: two people share the name" };
-// the months' locks: a month is locked for a person when their team's snapshot is kept, or any snapshot of it has them (as stack.save)
+// the months' locks: a month is locked for a person once a snapshot of it has their row, whichever team it was locked with (as
+// stack.save and the Stack report: stackLockedIds); someone who moved into a team already locked is still a draft there
 async function extraLocks(env, months) {
   const by = new Map();
   if (months.length) for (const x of await all(env, `SELECT month, scope, rows_json FROM stack_locks WHERE month IN ${IN_LIST}`, listArg(months))) {
-    const L = by.get(x.month) || { scopes: new Set(), ids: new Set() };
-    L.scopes.add(x.scope); for (const r of jsonObj(x.rows_json).rows || []) L.ids.add(r.id);
+    const L = by.get(x.month) || { ids: new Set() };
+    for (const r of jsonObj(x.rows_json).rows || []) L.ids.add(r.id);
     by.set(x.month, L);
   }
-  return { of: (u, month) => { const L = by.get(month); return !!(L && u && (L.scopes.has(u.reports_to || "p:" + u.id) || L.ids.has(u.id))); } };
+  return { of: (u, month) => { const L = by.get(month); return !!(L && u && L.ids.has(u.id)); } };
 }
 // several audit lines in one statement (one line for each hand edit)
 async function auditMany(env, user, action, details) {
@@ -4454,17 +4493,22 @@ async function extraPlan(env, user, payload) {
   const { span, act, byId: spanById, ok: countable } = await extraPeople(env, user);
   const byEmp = new Map(), byName = new Map(), put = (m, k, u) => { if (k) m.set(k, [...(m.get(k) || []), u]); };
   for (const u of act) { put(byEmp, extraKey(u.emp_id), u); put(byName, extraKey(u.name), u); }
+  // every Emp ID Brahmastra knows: one that is someone's (outside the uploader's people, or switched off) is never matched by the
+  // name instead, so another team's Arun Agent is never counted for this team's Arun Agent
+  const empKnown = new Set((await all(env, "SELECT emp_id FROM users WHERE COALESCE(emp_id, '') <> ''")).map((u) => extraKey(u.emp_id)));
   // what this OneDrive file counts now: of it, the uploader's people's counts go (outside a locked month), with the hand edits
   // on them carried over where the file still says the same; what counts for people the uploader does not see stays as it is
   const before = await all(env, `SELECT x.id, x.by_name, x.at, w.line, w.day, w.name, w.user_id, w.file_n, w.n, w.n_by, w.n_at, w.pick_by, w.pick_at
     FROM extra_uploads x JOIN extra_lines w ON w.upload_id = x.id WHERE x.file_key = ?`, fileKey);
   const months = [...new Set([...[...lines.values()].flatMap((L) => [...L.file.keys()].map((d) => d.slice(0, 7))), ...before.map((r) => r.day.slice(0, 7))])];
   const lk = await extraLocks(env, months);
-  const elsewhere = new Set(), oldPick = new Map(), oldEdit = new Map(), ups = new Map(); let replaces = 0, keeps = 0;
+  // elsewhere: the names this file counts for people the uploader does not see, day by day (what is counted there, and the file's
+  // number it was counted from), so the check says what really stays counted there, and which rows of the file are new
+  const elsewhere = new Map(), oldPick = new Map(), oldEdit = new Map(), ups = new Map(); let replaces = 0, keeps = 0;
   for (const r of before) {
     if (!r.user_id) continue;   // a name left out before counts nothing: it is read afresh
     const u = spanById.get(r.user_id), goes = !!u && !lk.of(u, r.day.slice(0, 7));
-    if (!u) elsewhere.add(r.line);
+    if (!u) { const m = elsewhere.get(r.line) || new Map(), x = m.get(r.day) || { n: 0, file_n: 0 }; x.n += r.n; x.file_n += r.file_n; m.set(r.day, x); elsewhere.set(r.line, m); }
     if (goes) replaces += r.n; else keeps += r.n;
     const up = ups.get(r.id) || { id: r.id, by: r.by_name, at: r.at, rows: 0 }; up.rows += r.n; ups.set(r.id, up);
     if (r.pick_at != null && (!oldPick.has(r.line) || oldPick.get(r.line).at < r.pick_at)) oldPick.set(r.line, { user_id: r.user_id, by: r.pick_by, at: r.pick_at });
@@ -4477,12 +4521,16 @@ async function extraPlan(env, user, payload) {
     const asked = picks.has(L.line) || days.some((d) => counts.has(L.line + "|" + d));
     if (elsewhere.has(L.line)) {
       if (asked) throw bad(L.name + " is already counted from an earlier upload of this file, for people you do not see: it cannot be counted twice.");
-      o.why = "elsewhere"; for (const d of days) { if (d > today) future += L.file.get(d); else o.days.push({ day: d, file_n: L.file.get(d), n: 0, state: "out" }); }
+      // there: what the earlier upload counts for them now; fresh: the file's rows it never counted (a day it did not have, or a
+      // day with more rows now), which wait for their team lead or a manager to load the file again
+      const there = elsewhere.get(L.line);
+      o.why = "elsewhere"; o.there = [...there.values()].reduce((t, x) => t + x.n, 0); o.fresh = 0;
+      for (const d of days) { const fn = L.file.get(d), was = there.get(d); if (d > today) future += fn; else { o.fresh += Math.max(0, fn - (was ? was.file_n : 0)); o.days.push({ day: d, file_n: fn, n: 0, state: "out" }); } }
       continue;
     }
-    // the file's own match
+    // the file's own match: the Emp ID first; the name only when the row has no Emp ID, or one nobody in Brahmastra has
     const e = extraKey(L.emp_id); let hit = e ? byEmp.get(e) || [] : [];
-    if (!hit.length) hit = byName.get(extraKey(L.name)) || [];
+    if (!hit.length && !(e && empKnown.has(e))) hit = byName.get(extraKey(L.name)) || [];
     if (!hit.length) o.why = "none"; else if (hit.length > 1) { o.why = "same"; o.people = hit.length; } else if (isArBiller(hit[0])) o.auto = hit[0]; else { o.why = "noton"; o.other = hit[0]; }
     // who it counts for: a person picked now, else the one picked before for this name in this file (while they can still be
     // counted), else the file's own match
@@ -4553,15 +4601,21 @@ async function extraSummary(env, P) {
   let from = "", to = ""; for (const x of people) { if (!from || x.from < from) from = x.from; if (!to || x.to > to) to = x.to; }
   const byMonth = new Map(), mo = (m) => { if (!byMonth.has(m)) byMonth.set(m, { month: m, label: stackMonthLabel(m), rows: 0, locked_rows: 0, people: new Set() }); return byMonth.get(m); };
   for (const o of counted) for (const d of o.days) { if (d.state === "counted") mo(d.day.slice(0, 7)).rows += d.n; else if (d.state === "locked") { const m = mo(d.day.slice(0, 7)); m.locked_rows += d.file_n; m.people.add(o.p.id); } }
-  const fileRows = (o) => o.days.reduce((t, d) => t + d.file_n, 0), names = (why) => P.lines.filter((o) => o.why === why && !o.p && fileRows(o) > 0)
-    .map((o) => ({ line: o.line, name: why === "noton" ? o.other.name : o.name, emp_id: o.emp_id, rows: fileRows(o), ...(why === "same" ? { people: o.people } : {}),
+  // a name counted for people the uploader does not see: the rows that stay counted there (the earlier upload's), not the file's
+  const fileRows = (o) => o.days.reduce((t, d) => t + d.file_n, 0), names = (why) => P.lines.filter((o) => o.why === why && !o.p && (why === "elsewhere" ? o.there : fileRows(o)) > 0)
+    .map((o) => ({ line: o.line, name: why === "noton" ? o.other.name : o.name, emp_id: o.emp_id, rows: why === "elsewhere" ? o.there : fileRows(o), ...(why === "same" ? { people: o.people } : {}),
       ...(why === "noton" ? { why: o.other.role === "user" ? (o.other.department || "another department") + ", not AR" : "a team lead, SME or manager" } : {}),
       ...(why === "none" || why === "same" ? { days: o.days.map((d) => ({ day: d.day, file_n: d.file_n })) } : {}) }))
     .sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
   const locked = [...byMonth.values()].filter((m) => m.locked_rows).map((m) => ({ month: m.month, label: m.label, rows: m.locked_rows, people: m.people.size }));
-  const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: names("none"), same_name: names("same"), not_counted: names("noton"), elsewhere: names("elsewhere"), locked };
+  // and the rows of this file that the earlier upload never counted for them: counted nowhere until their team lead or a manager
+  // loads the file again
+  const elsewhereNew = P.lines.filter((o) => o.why === "elsewhere" && o.fresh > 0).map((o) => ({ line: o.line, name: o.name, emp_id: o.emp_id, rows: o.fresh }))
+    .sort((a, b) => b.rows - a.rows || String(a.name).localeCompare(String(b.name)));
+  const left = { no_date: P.noDate, bad_date: P.badDate, bad_examples: P.badEx, no_name: P.noName, future: P.future, not_found: names("none"), same_name: names("same"), not_counted: names("noton"), elsewhere: names("elsewhere"),
+    elsewhere_new: elsewhereNew, locked };
   const sumRows = (xs) => xs.reduce((t, x) => t + x.rows, 0);
-  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + sumRows(left.elsewhere) + sumRows(left.locked);
+  left.rows = P.noDate + P.badDate + P.noName + P.future + sumRows(left.not_found) + sumRows(left.same_name) + sumRows(left.not_counted) + P.lines.filter((o) => o.why === "elsewhere").reduce((t, o) => t + fileRows(o), 0) + sumRows(left.locked);
   return { file: { name: P.name, web_url: P.webUrl }, sheets: P.sheets, rows: P.rowsRead, counted: total, file_counted: lines.reduce((t, l) => t + l.file_rows, 0), people, lines, from, to,
     months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)).map((m) => ({ month: m.month, label: m.label, rows: m.rows, locked_rows: m.locked_rows })), left_out: left,
     pickable: extraPickable(P.act, leads), dropped: P.dropped, dropped_picks: P.droppedPicks, edits: { counts: lines.reduce((t, l) => t + l.edits, 0), picks: lines.filter((l) => l.picked).length },
@@ -5542,13 +5596,22 @@ const OPS = {
     if (month && !stackMonthOk(month)) throw bad("Pick a month.");
     if (month > cur) throw bad(stackMonthLabel(month) + " has not started yet.");
     if (!month) {
-      const prev = stackMonthAdd(cur, -1), locked = new Set((await all(env, "SELECT scope FROM stack_locks WHERE month = ?", prev)).map((x) => x.scope));
-      const mine = (await all(env, "SELECT id, reports_to FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id)).map((u) => u.reports_to || "p:" + u.id);
-      month = mine.length && mine.every((s) => locked.has(s)) ? cur : prev;
+      // everyone the viewer sees on the month before is locked (in a snapshot of it): then this month
+      const prev = stackMonthAdd(cur, -1), locked = stackLockedIds(await stackLocks(env, prev)), end = stackMonthEnd(prev);
+      const mine = (await all(env, "SELECT id, doj FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id) && !(isoDate(u.doj) && u.doj > end));
+      month = mine.length && mine.every((u) => locked.has(u.id)) ? cur : prev;
     }
     const v = await stackView(env, user, span, month, today);
-    const lockedMonths = new Map((await all(env, "SELECT month, COUNT(*) AS n FROM stack_locks GROUP BY month")).map((x) => [x.month, x.n]));
-    v.months = Array.from({ length: 13 }, (_, i) => stackMonthAdd(cur, -i)).map((m) => ({ month: m, label: stackMonthLabel(m), locked: lockedMonths.get(m) || 0 }));
+    // the month list, for this viewer: "locked" when everyone they see on the month is locked (in a snapshot of it), "partly
+    // locked" when some are; another span's lock says nothing here
+    const lockedOf = new Map();
+    for (const x of await all(env, "SELECT s.month, json_extract(r.value, '$.id') AS id FROM stack_locks s, json_each(s.rows_json, '$.rows') r WHERE s.month >= ?", stackMonthAdd(cur, -12))) {
+      if (!lockedOf.has(x.month)) lockedOf.set(x.month, new Set()); lockedOf.get(x.month).add(x.id); }
+    const seenNow = (await all(env, "SELECT id, doj FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id));
+    v.months = Array.from({ length: 13 }, (_, i) => stackMonthAdd(cur, -i)).map((m) => {
+      const L = lockedOf.get(m), end = stackMonthEnd(m), on = seenNow.filter((u) => !(isoDate(u.doj) && u.doj > end)), n = L ? on.filter((u) => L.has(u.id)).length : 0;
+      return { month: m, label: stackMonthLabel(m), locked: n > 0 && n === on.length, partly: n > 0 && n < on.length };
+    });
     // extra production: the files counted for the month (team leads and above, not desk people, who alone see the files)
     if (mayExtra(user)) v.extra = { can_upload: true, files: await extraFiles(env, user, span, v.month), max_rows: EXTRA_MAX_ROWS };
     else { v.extra = null; for (const r of v.rows) r.extra_files = []; }
@@ -5567,20 +5630,20 @@ const OPS = {
     if (!who) throw bad("Unknown person.");
     if (!(await stackSpan(env, user)).has(id)) throw denied("That person is not in your span.");
     const label = stackMonthLabel(month), locks = await stackLocks(env, month), first = month + "-01", last = stackMonthEnd(month);
-    // locked: the team's snapshot, or any snapshot of the month with this person in it
-    const isLocked = (scope) => locks.has(scope) || [...locks.values()].some((L) => (L.data.rows || []).some((r) => r.id === id));
     if (field === "attrition" || /^(th|cf)[1-5]$/.test(field)) {
       if (!isManagerUp(user)) throw denied("The ticks and the attrition are typed by the manager.");
       if (id === user.id && !user.is_admin) throw denied("Your own ticks are typed by your manager.");
       if (!(await one(env, "SELECT 1 AS x FROM users WHERE role = 'user' AND active = 1 AND reports_to = ? LIMIT 1", id))) throw bad(who.name + " has no team on the Stack report.");
-      if (isLocked(id)) throw bad(label + " is locked for " + who.name + "'s team: ask the admin to unlock it first.");
+      // a team lead's row is locked with their team's snapshot
+      if (locks.has(id)) throw bad(label + " is locked for " + who.name + "'s team: ask the admin to unlock it first.");
       if (field === "attrition") {
         const lv = (await stackLeavers(env, await all(env, "SELECT * FROM users"), first, last, last < today ? last : today)).get(id);
         if (!lv || !lv.unknown.length) throw bad("Brahmastra counts who left " + who.name + "'s team itself (" + (lv ? lv.n : 0) + " in " + label + "), so it is not typed.");
       }
     } else {
       if (who.role !== "user" || !who.active) throw bad(who.name + " is not an associate on the Stack report.");
-      if (isLocked(who.reports_to || "p:" + who.id)) throw bad(label + " is locked for " + who.name + ": ask the admin to unlock it first.");
+      // an associate is locked once their row is in a snapshot of the month, whichever team it was locked with (stackLockedIds)
+      if (stackLockedIds(locks).has(id)) throw bad(label + " is locked for " + who.name + ": ask the admin to unlock it first.");
       if ((field === "achieved" || field === "expected") && isArBiller(who)) throw bad("Brahmastra works out " + who.name + "'s productivity (the same numbers as Team status), so it is not typed.");
     }
     const raw = payload.value == null ? "" : str(payload.value, 40).trim();
@@ -5589,11 +5652,13 @@ const OPS = {
     else if (field === "pkt" || field === "quality") {
       const p = Number(raw.replace(/\s*%$/, ""));
       if (!/^\d+(\.\d+)?\s*%?$/.test(raw) || !(p >= 0 && p <= 100)) throw bad(STACK_FIELDS[field] + " is a percentage from 0 to 100.");
-      value = String(Math.round(p * 100) / 10000);
+      // the report's one rounding rule (stackJudge): two decimals of a percent, cut, never rounded up over a line (98.999 is 98.99)
+      value = String(Math.floor(p * 100 + 1e-6) / 10000);
     } else if (field === "achieved" || field === "expected") {
       const x = Number(raw);
       if (!/^\d+(\.\d+)?$/.test(raw) || !(x >= 0 && x <= 100000) || (field === "expected" && x === 0)) throw bad(STACK_FIELDS[field] + " is a number" + (field === "expected" ? " above 0." : " from 0."));
-      value = String(Math.round(x * 100) / 100);
+      // kept as typed (never rounded): their percentage is judged by the one rule
+      value = String(x);
     } else if (field === "attrition") {
       if (!/^\d{1,3}$/.test(raw)) throw bad("Attrition is the number of people who left: 0 or more.");
       value = String(Number(raw));
@@ -5602,9 +5667,18 @@ const OPS = {
       if (value !== "yes" && value !== "no") throw bad(STACK_FIELDS[field] + " is Yes or No.");
     }
     const note = field === "tp" && value ? str(payload.note, 200).trim() : "", at = Date.now();
+    const was = await one(env, "SELECT value, note, by_name FROM stack_typed WHERE subject_id = ? AND month = ? AND field = ?", id, month, field);
     if (!value) await run(env, "DELETE FROM stack_typed WHERE subject_id = ? AND month = ? AND field = ?", id, month, field);
     else await run(env, `INSERT INTO stack_typed (subject_id, month, field, value, note, by_id, by_name, at) VALUES (?,?,?,?,?,?,?,?)
       ON CONFLICT(subject_id, month, field) DO UPDATE SET value = excluded.value, note = excluded.note, by_id = excluded.by_id, by_name = excluded.by_name, at = excluded.at`, id, month, field, value, note, user.id, user.name || "", at);
+    // the audit trail keeps every typed value, typed over or cleared, with the old and the new value and who typed the old one
+    if (value !== (was ? was.value : "") || note !== (was ? was.note || "" : "")) {
+      const tick = /^(th|cf)[1-5]$/.test(field);
+      const txt = (v) => (field === "pkt" || field === "quality" ? STACK_FMT.pct(Number(v)) : field === "tp" || tick ? (v === "yes" ? "Yes" : "No") : v);
+      const old = was ? txt(was.value) : field === "tp" ? "Yes (as it starts)" : tick ? "not ticked" : "empty", now = value ? txt(value) : field === "tp" ? "Yes" : tick ? "not ticked" : "cleared";
+      await audit(env, user, "stack.save", null, label + ", " + who.name + ": " + (tick ? 'tick "' + STACK_FIELDS[field] + '"' : STACK_FIELDS[field]) + " " + old + " → " + now + (note ? ': "' + note + '"' : "")
+        + (was && was.by_name && was.by_name !== (user.name || "") ? " (" + old + " was typed by " + was.by_name + ")" : ""));
+    }
     return { ok: true, field, value, note, by: user.name || "", at };
   },
   /* Lock the month (managers and above): every draft team of their span is saved as it is now (one snapshot per team), and from
@@ -5614,11 +5688,11 @@ const OPS = {
     const today = istISO(Date.now()), month = str(payload.month, 10);
     if (!stackMonthOk(month)) throw bad("Pick a month.");
     const label = stackMonthLabel(month);
-    if (stackMonthEnd(month) >= today) throw bad(label + " can be locked once it is over, from " + stackShort(addDays(stackMonthEnd(month), 1)) + ".");
-    const span = await stackSpan(env, user), locks = await stackLocks(env, month), live = await stackLive(env, month, today);
-    const teams = new Map();
-    for (const t of live.tls) if (span.has(t.id) && !locks.has(t.scope)) teams.set(t.scope, { lead: t, rows: [] });
-    for (const r of live.rows) { if (teams.has(r.scope)) teams.get(r.scope).rows.push(r); else if (!r.lead_id && span.has(r.id) && !locks.has(r.scope)) teams.set(r.scope, { lead: null, rows: [r] }); }
+    const span = await stackSpan(env, user), overAt = stackOverAt(month, (await all(env, "SELECT id, shift FROM users WHERE role = 'user' AND active = 1")).filter((u) => span.has(u.id)).map((u) => u.shift));
+    if (Date.now() < overAt) throw bad(label + " can be locked once it is over, from " + istWhen(overAt) + " India time, when its last working day ends (night shifts too).");
+    // nobody already locked for the month is locked again (with their team of today), and nobody is left out of it
+    const locks = await stackLocks(env, month), live = await stackLive(env, month, today, stackLockedIds(locks));
+    const teams = stackLockPlan(live, span, locks);
     if (!teams.size) throw bad(locks.size ? "Every team you see is already locked for " + label + "." : "Nobody on the Stack report for " + label + ".");
     const at = Date.now(), meta = { month, through: live.through, floor: live.floor };
     await batchAll(env, [...teams].map(([scope, x]) => env.DB.prepare("INSERT OR IGNORE INTO stack_locks (month, scope, rows_json, by_id, by_name, at) VALUES (?,?,?,?,?,?)")

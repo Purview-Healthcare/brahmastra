@@ -876,13 +876,17 @@ function typedLayerFor(cur, h) {
   if (!cur || !cur.view || !h || (cur.view === h.view && JSON.stringify(cur.params) === JSON.stringify(h.params))) return null;
   return [...LAYER_GUARDS].reverse().find((x) => x.typed()) || null;
 }
-function useLayer(onClose, guard = true) {
-  const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose);
-  closeFn.current = onClose;
-  const [asking, setAsking] = useState(false);
+/* unsaved: changes the pop-up holds that are not typed in a box of it (a person picked, a count edited in a pop-up that has closed,
+   a tick): closing asks first for them too. */
+function useLayer(onClose, guard = true, unsaved = false) {
+  const ref = useRef(null), box = useRef(null), seen = useRef(new Map()), closeFn = useRef(onClose), held = useRef(unsaved);
+  closeFn.current = onClose; held.current = !!unsaved;
+  const [asking, setAsking] = useState(false), [askKind, setAskKind] = useState("typed");
   const after = useRef(null);   // what follows a Discard asked for by Back or Forward: going where the person was going
   const [opener] = useState(() => document.activeElement);
-  const close = () => { const f = closeFn.current; if (!f) return; if (guard && ref.current && typedIn(seen.current, ref.current)) setAsking(true); else f(); };
+  // "typed": text typed in a box of it; "changes": only changes made otherwise
+  const lose = () => (!guard || !ref.current ? "" : typedIn(seen.current, ref.current) ? "typed" : held.current ? "changes" : "");
+  const close = () => { const f = closeFn.current; if (!f) return; const k = lose(); if (k) { setAskKind(k); setAsking(true); } else f(); };
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
@@ -901,7 +905,7 @@ function useLayer(onClose, guard = true) {
       if (to) { e.preventDefault(); (to === "box" ? box.current || el : to).focus(); }
     };
     window.addEventListener("keydown", key);
-    const g = { typed: () => !!(guard && closeFn.current && el.isConnected && typedIn(seen.current, el)), ask: (then) => { after.current = then; setAsking(true); } };
+    const g = { typed: () => !!(closeFn.current && el.isConnected && lose()), ask: (then) => { after.current = then; setAskKind(lose() || "typed"); setAsking(true); } };
     const unload = (e) => { if (g.typed()) { e.preventDefault(); e.returnValue = ""; } };
     LAYER_GUARDS.add(g); window.addEventListener("beforeunload", unload);
     return () => {
@@ -916,7 +920,7 @@ function useLayer(onClose, guard = true) {
     if (e.target !== s || e.clientX >= r.left + s.clientWidth || e.clientY >= r.top + s.clientHeight) return;
     e.preventDefault(); close();
   };
-  const ask = asking ? <DiscardAsk onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
+  const ask = asking ? <DiscardAsk changes={askKind === "changes"} onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (closeFn.current) closeFn.current(); if (then) then(); }} /> : null;
   return { ref, box, close, shade, ask };
 }
 /* A form on the page itself, not in a pop-up (My day's work form), held the same way: with typed text in it the browser's Back
@@ -937,12 +941,12 @@ function useTypedGuard() {
   const ask = asking ? <DiscardAsk onKeep={() => { after.current = null; setAsking(false); }} onDiscard={() => { const then = after.current; after.current = null; setAsking(false); if (then) then(); }} /> : null;
   return { ref, ask };
 }
-function DiscardAsk({ onKeep, onDiscard }) {
-  const L = useLayer(onKeep, false);
+function DiscardAsk({ onKeep, onDiscard, changes }) {
+  const L = useLayer(onKeep, false), q = changes ? "Discard your changes?" : "Discard what you typed?";
   return (
     <div className="overlay ask-overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
-      <div className="modal narrow" ref={L.box} tabIndex={-1} role="alertdialog" aria-modal="true" aria-label="Discard what you typed?">
-        <h2>Discard what you typed?</h2>
+      <div className="modal narrow" ref={L.box} tabIndex={-1} role="alertdialog" aria-modal="true" aria-label={q}>
+        <h2>{q}</h2>
         <div className="sub">It has not been saved.</div>
         <div className="row mt" style={{ justifyContent: "flex-end" }}><button type="button" className="btn" autoFocus onClick={onKeep}>Keep editing</button><button type="button" className="btn danger" onClick={onDiscard}>Discard</button></div>
       </div>
@@ -965,8 +969,8 @@ function SidePanel({ className, label, onClose, children }) {
     </>
   );
 }
-function Modal({ title, sub, onClose, children, wide, narrow, footer }) {
-  const L = useLayer(onClose);
+function Modal({ title, sub, onClose, children, wide, narrow, footer, unsaved }) {
+  const L = useLayer(onClose, true, unsaved);
   return (
     <div className="overlay" data-layer="" ref={L.ref} onMouseDown={L.shade}>
       <div className={"modal" + (wide ? " wide" : "") + (narrow ? " narrow" : "")} ref={L.box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
@@ -2200,8 +2204,10 @@ function DashClientReport({ ctx, me, go, params }) {
    typed: PKT, Team player and the fallbacks by the team lead, the ticks (and an attrition Brahmastra cannot tell) by the
    manager. A locked month shows its snapshot, its cells closed. Download Excel writes her layout (stackWorkbook). */
 const canStack = (me) => !!me && me.role === "supervisor" && !isSmeUI(me);
-// a share as a percentage, cut (not rounded) at two decimals: 110.509% shows as 110.5%, never as a 110.51% it did not reach
+// a share as a percentage, cut (not rounded) at two decimals: 110.509% shows as 110.5%, never as a 110.51% it did not reach. The
+// report's one rounding rule: the server judges the bands (stackJudge) and the Excel writes its cells (stkCut) the same way
 const stkPct = (v) => (v == null || !isFinite(v) ? "–" : Math.floor(v * 1e4 + 1e-6) / 100 + "%");
+const stkCut = (v) => (v == null || !isFinite(v) ? null : Math.floor(v * 1e4 + 1e-6) / 1e4);
 const stkHM = (m) => (m == null ? "–" : Math.floor(m / 60) + " h " + String(Math.floor(m % 60)).padStart(2, "0"));
 const stkN = (v, dec = 2) => (v == null || !isFinite(v) ? "–" : Number(v).toLocaleString(LOC, { maximumFractionDigits: dec }));
 const stkDay = (iso) => { const [y, m, d] = String(iso).split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString(LOC, { month: "short", day: "numeric" }); };
@@ -2302,7 +2308,7 @@ function ExtraLinesTable({ lines, onEdit, maxHeight = 300 }) {
       <tbody>{lines.map((l) => { const locked = l.days.length > 0 && l.days.every((d) => d.locked);
         return <tr key={l.line}>
           <td>{l.picked ? <span className="typed ro" title={extraMark(l.picked, "Picked")}><b>{l.person}</b></span> : <b>{l.person}</b>}
-            {(l.picked || !extraSame(l.name, l.person)) && <div className="tiny muted">in the file: {extraNameIn(l)}</div>}</td>
+            {(l.picked || !extraSame(l.name, l.person) || (l.emp_id && !extraSame(l.emp_id, l.person_emp))) && <div className="tiny muted">in the file: {extraNameIn(l)}</div>}</td>
           <td className="small">{l.person_emp || "–"}</td><td className="small">{l.lead_name || "–"}</td>
           <td className="num">{l.edits ? <span className="typed ro" title={plural(l.edits, "day") + " edited by hand: " + l.days.filter((d) => d.edited).map((d) => stkDay(d.day) + " " + d.n + " (file: " + d.file_n + "), " + extraMark(d.edited).toLowerCase()).join("; ")}>{fmtInt(l.rows)} (file: {fmtInt(l.file_rows)})</span> : fmtInt(l.rows)}</td>
           <td className="num">{l.n_days}</td><td className="small nowrap">{extraSpan(l.from, l.to)}</td>
@@ -2332,7 +2338,7 @@ function ExtraLineModal({ l, pickable, note, onSave, onClose }) {
   };
   const total = days.reduce((t, d) => t + (d.locked || left || bad(vals[d.day]) ? d.n || 0 : Number(vals[d.day])), 0), fileTotal = days.reduce((t, d) => t + d.file_n, 0);
   return (
-    <Modal title={left ? "Pick the person" : "Edit extra production"} sub={<>In the file: <b>{extraNameIn(l)}</b>{left ? <> · {plural(fileTotal, "row")} left out</> : <> · counts for {l.person}</>}</>} onClose={busy ? undefined : onClose}
+    <Modal title={left ? "Pick the person" : "Edit extra production"} sub={<>In the file: <b>{extraNameIn(l)}</b>{left ? <> · {plural(fileTotal, "row")} left out</> : <> · counts for {l.person}</>}</>} onClose={busy ? undefined : onClose} unsaved={moved}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || anyBad || (left ? !who : !moved && !changed.length)} onClick={() => save()}>{busy ? "Saving…" : left ? "Count for this person" : "Save"}</button></>}>
       <div className="stack xp-edit">
         <Field label={left ? "Who these rows count for" : "Who it counts for"} hint={left ? "One of the people you see who is counted on Team status. The name in the file stays as it is written." : "Pick another of your people to count these rows for them. The name written in the file stays visible."}>
@@ -2384,9 +2390,11 @@ function ExtraPreviewModal({ x, label, onClose, onSaved }) {
     L.same_name.length ? ["More than one person you see has this name, so Brahmastra does not guess (an Emp ID column tells them apart)", L.same_name, (n) => n.people + " people", true] : null,
     L.not_counted.length ? ["Not on Team status, so not counted", L.not_counted, (n) => n.why] : null,
     L.elsewhere && L.elsewhere.length ? ["Already counted from an earlier upload of this file, for people you do not see (it stays counted there, and is not counted twice)", L.elsewhere] : null,
+    L.elsewhere_new && L.elsewhere_new.length ? ["New rows of this file for people you do not see: counted for nobody until their team lead or a manager loads the file again", L.elsewhere_new] : null,
   ].filter(Boolean);
   return (<>
     <Modal wide title="Extra production" sub={"Check what this file from OneDrive would count, for " + label + " and any other month it has rows for, then count it."} onClose={onClose}
+      unsaved={!busy && Object.keys(edits.picks).length + Object.keys(edits.counts).length > 0}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !p.counted} onClick={save}>{busy ? "Counting…" : p.counted ? "Count " + plural(p.counted, "row") : "Nothing to count"}</button></>}>
       <div className="stack xp">
         <div className="small">{p.file.web_url ? <a href={p.file.web_url} target="_blank" rel="noopener noreferrer"><b>{p.file.name}</b></a> : <b>{p.file.name}</b>}
@@ -2523,7 +2531,7 @@ function StackReportTab({ me, params }) {
         <div className="stk-l">
           {showTl && <div className="seg2" role="tablist" aria-label="Which stack">{[["assoc", "Associate stack"], ["tl", "Team lead stack"]].map(([k, l]) =>
             <button key={k} type="button" role="tab" aria-selected={(isTl ? "tl" : "assoc") === k} className={(isTl ? "tl" : "assoc") === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>)}</div>}
-          <div className="stk-f"><Field label="Month"><Combo value={d.month} clearable={false} onChange={(v) => v && setMonth(v)} options={d.months.map((m) => ({ id: m.month, label: m.label, sub: m.locked ? "locked" : "" }))} /></Field></div>
+          <div className="stk-f"><Field label="Month"><Combo value={d.month} clearable={false} onChange={(v) => v && setMonth(v)} options={d.months.map((m) => ({ id: m.month, label: m.label, sub: m.locked ? "locked" : m.partly ? "partly locked" : "" }))} /></Field></div>
           {leads.length > 1 && <div className="stk-f"><Field label="Team lead"><Combo value={leadF} onChange={setLeadF} placeholder="All team leads" options={leads.map(([id, n]) => ({ id, label: n }))} /></Field></div>}
           {clients.length > 1 && <div className="stk-f"><Field label="Client"><Combo value={clientF} onChange={setClientF} placeholder="All clients" options={clients.map((c) => ({ id: c, label: c }))} /></Field></div>}
         </div>
@@ -2691,7 +2699,9 @@ function StackLeadModal({ t, label, lines, ticks, onTick, onClose }) {
     </Modal>
   );
 }
-/* Typing one of an associate's yellow cells: PKT, Quality, Team player (with a reason), or Achieved and Expected. */
+/* Typing one of an associate's yellow cells: PKT, Quality, Team player (with a reason), or Achieved and Expected. The reason is
+   never cut: over its limit the box says so, and the server refuses it with a message naming the box. */
+const STACK_NOTE_MAX = 200;
 function StackEditModal({ month, label, r, field, onClose, onSaved }) {
   const pctOf = (v) => (v == null ? "" : String(Math.round(v * 1e4) / 100));
   const [v1, setV1] = useState(() => (field === "pkt" ? pctOf(r.pkt) : field === "quality" ? pctOf(r.quality) : field === "prod" ? (r.achieved == null ? "" : String(r.achieved)) : r.tp ? "yes" : "no"));
@@ -2703,20 +2713,21 @@ function StackEditModal({ month, label, r, field, onClose, onSaved }) {
     setBusy(true);
     try {
       const put = (f, value, note) => rpc("stack.save", { month, user_id: r.id, field: f, value, note });
+      let kept = "";
       if (field === "prod") { await put("achieved", clear ? "" : v1); await put("expected", clear ? "" : v2); }
       else if (field === "tp") await put("tp", clear ? "" : v1, v2);
-      else await put(field, clear ? "" : v1);
-      toast((clear ? "Cleared " : "Saved ") + TITLE[field] + " for " + r.name + "."); onSaved();
+      else { const x = await put(field, clear ? "" : v1); kept = x && x.value ? stkPct(Number(x.value)) : ""; }
+      toast((clear ? "Cleared " : "Saved ") + TITLE[field] + " for " + r.name + (kept ? ": " + kept : "") + "."); onSaved();
     } catch (e) { toast(e.message, "err"); setBusy(false); }
   };
   return (
-    <Modal narrow title={TITLE[field] + " · " + r.name} sub={label + (typed ? " · last typed by " + stkTyped(typed) : "")} onClose={onClose}
+    <Modal narrow title={TITLE[field] + " · " + r.name} sub={label + (typed ? " · last typed by " + stkTyped(typed) : "")} onClose={onClose} unsaved={!busy && field === "tp" && v1 !== (r.tp ? "yes" : "no")}
       footer={<>{typed && <button className="btn" disabled={busy} onClick={() => save(true)}>{field === "tp" ? "Back to Yes" : "Clear"}</button>}<button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => save(false)}>{busy ? "Saving…" : "Save"}</button></>}>
-      {field === "pkt" || field === "quality" ? <Field label={TITLE[field] + " (%)"} hint={field === "pkt" ? "A percentage from 0 to 100. Empty counts as 0." : "The month's quality, a percentage from 0 to 100."}>
+      {field === "pkt" || field === "quality" ? <Field label={TITLE[field] + " (%)"} hint={(field === "pkt" ? "A percentage from 0 to 100. Empty counts as 0." : "The month's quality, a percentage from 0 to 100.") + " Two decimals are kept, cut, never rounded up (98.999 is kept as 98.99)."}>
         <input className="input" type="number" min="0" max="100" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
         : field === "tp" ? <div className="stack">
           <div className="seg2" role="radiogroup">{[["yes", "Yes"], ["no", "No"]].map(([k, l]) => <button key={k} type="button" role="radio" aria-checked={v1 === k} className={v1 === k ? "on" : ""} onClick={() => setV1(k)}>{l}</button>)}</div>
-          <Field label="Reason (optional)"><input className="input" type="text" maxLength={200} value={v2} onChange={(e) => setV2(e.target.value)} placeholder="For example: covered the team's backlog" /></Field></div>
+          <Field label="Reason (optional)"><input className="input" type="text" value={v2} onChange={(e) => setV2(e.target.value)} placeholder="For example: covered the team's backlog" /><TextLimit v={v2} max={STACK_NOTE_MAX} /></Field></div>
         : <div className="grid g2"><Field label="Achieved"><input className="input" type="number" min="0" step="0.01" value={v1} onChange={(e) => setV1(e.target.value)} autoFocus /></Field>
           <Field label="Expected"><input className="input" type="number" min="0" step="0.01" value={v2} onChange={(e) => setV2(e.target.value)} /></Field>
           <div className="tiny muted" style={{ gridColumn: "1 / -1" }}>Brahmastra has no work numbers for {r.name}'s role, so the team lead types the month's work done and the work expected.</div></div>}
@@ -2741,7 +2752,7 @@ function StackTicksModal({ month, label, t, ticks, onClose, onSaved }) {
     return <div key={k} className="stk-tickrow"><div><div>{lbl}</div>{x && <div className="tiny muted">{stkTyped(x)}</div>}</div>
       <div className="seg2">{[["yes", "Yes"], ["no", "No"]].map(([v, l]) => <button key={v} type="button" className={vals[k] === v ? "on" : ""} onClick={() => setVals((o) => ({ ...o, [k]: v }))}>{l}</button>)}</div></div>; })}</div>;
   return (
-    <Modal title={"Ticks · " + t.name} sub={label + ". 1 point for each Yes; a tick not ticked counts as No."} onClose={onClose}
+    <Modal title={"Ticks · " + t.name} sub={label + ". 1 point for each Yes; a tick not ticked counts as No."} onClose={onClose} unsaved={!busy && ticks.some(([k]) => vals[k] !== ((t.ticks[k] && t.ticks[k].v) || ""))}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button></>}>
       <div className="grid g2">{part("Team handling", STK_TH)}{part("Client forefront", STK_CF)}</div>
       {t.left_unknown.length > 0 && <div className="mt"><Field label="Attrition: people who left in the month" hint={"Brahmastra cannot tell: " + t.left_unknown.join(", ") + " left with no exit date in Shastra. " + (t.left.length ? "It counts " + t.left.length + " by exit date." : "")}>
@@ -2793,7 +2804,8 @@ function StackUnlockModal({ d, onClose, onDone }) {
 }
 /* The Stack report in the owner's Excel layout: "Stack Sheet" (the Team Member Stack table under her group headers, and the TL
    STACK table under it), then "Associate Stack" and "TL Stack" stating the bands. Values, not formulas: dates are dates, percentages
-   percentages, numbers numbers, and text is a text cell (a name or typed text starting with = + - @ stays text, never a formula). */
+   percentages, numbers numbers, and text is a text cell (a name or typed text starting with = + - @ stays text, never a formula).
+   A percentage is written cut at two decimals (stkCut), as the page shows it: Excel's 0.00% would round 99.506% up to 99.51%. */
 function stackWorkbook(d, rows, tls) {
   const serial = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); return m ? Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000) : null; };
   const MON = "mmm-yy", DAY = "mm/dd/yyyy", PCT = "0.00%", DEC = "0.00", TIME = "[h]:mm";
@@ -2812,9 +2824,9 @@ function stackWorkbook(d, rows, tls) {
   HEAD.forEach((h, i) => put(st, 1, i, h));
   const ordered = groupByLead(rows, true).flatMap((g) => g.rows);
   ordered.forEach((r, i) => { const R = 2 + i, s = r.s;
-    [[month, MON], [r.emp_id], [r.name], [serial(r.doj), DAY], [r.title], [r.achieved], [r.expected], [r.pct, PCT], [r.avr_prod, DEC], [r.avr_target, DEC], [s.prod], [r.quality, PCT], [null], [s.qual],
-      [r.al], [r.lwp], [r.al + r.lwp], [r.working], [r.present], [r.shrink, PCT], [s.att], [r.late], [s.late], [r.brk], [s.brk], [r.adherence], [r.tp ? "Yes" : "No"], [s.tp], [r.pkt, PCT], [s.pkt], [s.others],
-      [r.tos == null ? null : r.tos / 1440, TIME], [s.tos], [s.total], [s.pct, PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z)); });
+    [[month, MON], [r.emp_id], [r.name], [serial(r.doj), DAY], [r.title], [r.achieved], [r.expected], [stkCut(r.pct), PCT], [r.avr_prod, DEC], [r.avr_target, DEC], [s.prod], [stkCut(r.quality), PCT], [null], [s.qual],
+      [r.al], [r.lwp], [r.al + r.lwp], [r.working], [r.present], [stkCut(r.shrink), PCT], [s.att], [r.late], [s.late], [r.brk], [s.brk], [r.adherence], [r.tp ? "Yes" : "No"], [s.tp], [stkCut(r.pkt), PCT], [s.pkt], [s.others],
+      [r.tos == null ? null : r.tos / 1440, TIME], [s.tos], [s.total], [stkCut(s.pct), PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z)); });
   // the TL STACK under it
   let R = 2 + ordered.length + 2;
   const thK = d.ticks.filter(([k]) => k[0] === "t"), cfK = d.ticks.filter(([k]) => k[0] === "c");
@@ -2824,7 +2836,7 @@ function stackWorkbook(d, rows, tls) {
   TLH.forEach((h, i) => put(st, R, i, h)); R++;
   for (const t of tls) { const s = t.s;
     [[month, MON], [t.emp_id], [t.name], [serial(t.doj), DAY], [s.prod], [s.qual], [s.shrink], [s.attr], [s.adh], ...thK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.th],
-      ...cfK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.cf], [t.addition, DEC], [s.total, DEC], [s.pct, PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z));
+      ...cfK.flatMap(([k]) => [[tick(t, k)], [tick(t, k) === "Yes" ? 1 : 0]]), [s.cf], [t.addition, DEC], [s.total, DEC], [stkCut(s.pct), PCT], [s.stack]].forEach(([v, z], col) => put(st, R, col, v, z));
     R++; }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, done(st, HEAD.map((h, i) => (i === 2 ? 22 : i === 4 ? 20 : Math.max(9, Math.min(16, h.length + 2))))), "Stack Sheet");
@@ -4867,7 +4879,7 @@ function TaskFormModal({ ctx, clientId, task, onClose, onDone }) {
             <FieldGroup label="Received from" hint="Optional"><div className="seg2">{["Client", "Manager", "Internal"].map((s) => <button key={s} type="button" className={f.source === s ? "on" : ""} onClick={() => set("source", f.source === s ? "" : s)}>{s}</button>)}</div></FieldGroup>
           </div>
           <FieldGroup label="Scope"><div className="seg2" style={{ flexWrap: "wrap" }}>{TASK_SCOPES_UI.map((s) => <button key={s} type="button" className={f.scope === s ? "on" : ""} onClick={() => set("scope", s)}>{s}</button>)}</div></FieldGroup></>}
-        <Field label={<>Task <TextLimit v={f.title} max={160} /></>}><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="What is to be done, in a few words" /></Field>
+        <Field label="Task"><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="What is to be done, in a few words" /><TextLimit v={f.title} max={160} /></Field>
         <Field label="Description" hint={f.description.length > 3600 ? f.description.length + " of 4,000 characters" : "What, where, how; never patient details you don't need"}><textarea className="textarea" style={{ minHeight: 76 }} value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Details, the list or the portal, what to note…" /></Field>
         <div className="grid g2">
           <FieldGroup label="TAT" hint={(dueHint ? "Due about " + dueHint + " · " : "") + (edit && (f.tat === "24" || f.tat === "72" || f.tat === "hours") ? "counted from when it was given · " : "") + "Monday to Friday, Shastra holidays skipped"}>
@@ -7715,18 +7727,23 @@ const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took 
   "user.save": "Changed a team member", "client.log": "Logged a client call", "client.logRemove": "Removed a client call log entry", "monthend.sla": "Scored the SLA", "monthend.pack": "Month-end: pack built", "monthend.sent": "Month-end: pack sent", "creport.edit": "Edited the Client 360 report", "creport.ev": "EV file for the Client 360 report", "client.logo": "Changed the client's logo",
   "monthend.internal": "Month-end: internal reports reviewed", "monthend.inventory": "Month-end: inventory", "monthend.sla_inventory": "Month-end: AR Inventory to the scorecard", "digest.sendNow": "Sent the Monday digest by hand", "payers.limit": "Changed an insurance TFL / AFL",
   "project.map": "Matched a roster project to a client", "user.code": "Gave a sign-in code", "user.reset": "Reset a password", "user.email": "Changed an email address",
-  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails", "roster.dupEmp": "The same Emp ID on two Shastra rows", "roster.nameClash": "The same name on two Shastra rows" };
+  "user.delete": "Deleted an account", "roster.emails": "Changed the extra sign-in emails", "roster.dupEmp": "The same Emp ID on two Shastra rows", "roster.nameClash": "The same name on two Shastra rows",
+  "stack.save": "Typed a Stack report value", "stack.lock": "Locked the Stack report", "stack.unlock": "Unlocked the Stack report", "stack.extra": "Counted an extra production file",
+  "stack.extraEdit": "Edited extra production by hand", "stack.extraRemove": "Removed an extra production file", "attention.review": "Reviewed a claim and gave it to a biller",
+  "client.folders": "Made a client's OneDrive folders", "client.location": "Changed a location", "client.team": "Changed a client's billers", "escalation.reason": "Gave why an escalation is still open",
+  "roster.sync": "Synced the roster", "task.create": "Gave a team task", "task.close": "Closed a team task", "team.alert": "Dismissed a not logged in alert", "team.note": "Changed a Team status note",
+  "team.rebalance": "Shared out a person's claims" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
   const q = useRpc("audit.list", { client_id: f.client_id || undefined, action: f.action || undefined }, [f.client_id, f.action]);
   const rows = (q.data && q.data.rows) || [];
   return (
     <div className="stack">
-      <div><h1>Audit trail</h1><div className="sub">Who changed access, the RACI, who gets feedback, client settings, responsibilities, team members and month-end, newest first (last 500).</div></div>
+      <div><h1>Audit trail</h1><div className="sub">Who changed access, the RACI, who gets feedback, client settings, responsibilities, team members, month-end and the Stack report, newest first (last 500).</div></div>
       <div className="card tight row" style={{ gap: 10, flexWrap: "wrap" }}>
         <span style={{ minWidth: 240 }}><Combo sm value={f.client_id} onChange={(v) => setF({ ...f, client_id: v })} placeholder="Every client" options={ctx.clients.map((c) => ({ id: c.id, label: c.name }))} /></span>
         <select className="input sm" style={{ width: "auto" }} value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })}>
-          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="feedback">Feedback</option><option value="settings">Settings</option></select>
+          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="stack">Stack report</option><option value="feedback">Feedback</option><option value="settings">Settings</option></select>
         <span className="small muted" style={{ marginLeft: "auto" }}>{rows.length} changes</span></div>
       {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No changes recorded yet. They are recorded from now on.</Empty></div> :
         <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Client</th><th>Detail</th></tr></thead>
