@@ -3784,6 +3784,8 @@ function ProjectMapModal({ names, clients, onDone, onClose, canCreate, onCreate 
 const ACCESS_LABEL = { agent: "Biller", lead: "TL / SME", manager: "Manager", all: "Every project" };
 const ACTION_TONE = { new: "green", update: "blue", same: "gray" };
 /* Purview Shastra sends the roster by itself every hour; Sync now does it at once. Changes apply straight away. */
+/* A roster change in plain words: "reports to", "also in departments", "Emp ID". */
+function changeLabel(c) { return c === "emp_id" ? "Emp ID" : String(c).replace(/_name$/, "").replace(/_/g, " "); }
 function ShastraSync({ data, onDone }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
@@ -3795,7 +3797,7 @@ function ShastraSync({ data, onDone }) {
     catch (e) { toast(e.message, "err"); onDone(null); }
     setBusy(false);
   };
-  const what = (e) => e.action === "new" ? "joined" : e.action === "left" ? "left" : e.changes && e.changes.length ? e.changes.map((c) => c.replace(/_name$/, "").replace(/_/g, " ")).join(", ") : "updated";
+  const what = (e) => e.action === "new" ? "joined" : e.action === "left" ? "left" : e.changes && e.changes.length ? e.changes.map(changeLabel).join(", ") : "updated";
   return (
     <div className="card stack">
       <div className="row between">
@@ -3841,7 +3843,7 @@ function RosterView({ ctx, reload, me }) {
           <div className="row between"><h3>Details of this sync</h3><button className="btn sm" onClick={() => setPreview(null)}>Hide</button></div>
           <div className="row" style={{ gap: 6 }}>{[["people", `People (${preview.people.length})`], ["warnings", `To fix in Shastra (${preview.warnings.length})`], ["projects", `Projects (${preview.projects.length})`], ["excluded", `No access (${preview.excluded.length})`], ["leaving", `Leaving (${preview.leaving.length})`]].map(([k, l]) => <button key={k} className={"chip " + (tab === k ? "on" : "")} onClick={() => setTab(k)}>{l}</button>)}</div>
           {tab === "people" && <div className="table-wrap" style={{ maxHeight: 520 }}><table className="t"><thead><tr><th></th><th>Name</th><th>Position · dept</th><th>Access</th><th>Projects</th><th>Reports to</th><th>Status</th><th>Email</th></tr></thead>
-            <tbody>{preview.people.map((p, i) => <tr key={i} style={p.active ? undefined : { opacity: 0.55 }}><td><span className={"badge " + (ACTION_TONE[p.action] || "gray")}>{p.action}</span>{p.changes.length ? <div className="tiny muted">{p.changes.join(", ")}</div> : null}</td>
+            <tbody>{preview.people.map((p, i) => <tr key={i} style={p.active ? undefined : { opacity: 0.55 }}><td><span className={"badge " + (ACTION_TONE[p.action] || "gray")}>{p.action}</span>{p.changes.length ? <div className="tiny muted">{p.changes.map(changeLabel).join(", ")}</div> : null}</td>
               <td><b>{p.name}</b><div className="tiny muted mono">{p.emp_id || "no emp id"}</div></td><td className="small">{p.position}<div className="tiny muted">{p.department}</div></td><td className="small">{ACCESS_LABEL[p.access] || p.access}</td>
               <td className="small">{p.projects.map((x) => x.name + (x.share != null ? ` ${x.share}%` : "")).join(", ") || "–"}</td><td className="small">{p.reports_to || "–"}</td><td className="small">{p.active ? p.status : <span className="badge red">off</span>}</td>
               <td className="small">{p.email || <span className="badge amber">no email</span>}{p.issues.length ? <div className="tiny" style={{ color: "var(--amber-ink)" }}>{p.issues.join("; ")}</div> : null}</td></tr>)}</tbody></table></div>}

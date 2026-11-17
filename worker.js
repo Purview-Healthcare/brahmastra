@@ -2339,8 +2339,11 @@ async function importRoster(env, user, payload) {
       const k = String(row.reports_to).trim().toLowerCase(), c = clashes.get(k) || { name: boss[0].name, emp_ids: ids, people: [] };
       c.people.push(row.name); clashes.set(k, c);
     }
+    // what changed: every field the sync writes for a person (V-08: a shift, "also in" department, Emp ID, position or city
+    // changed was written but counted as no change, so the summary and the Roster page's list of what changed left it out)
     const changes = [];
-    if (match) for (const k of ["name", "email", "role", "designation", "department", "roster_status", "exit_date", "doj", "reports_to_name", "projects_json", "active"]) if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push(k === "projects_json" ? "projects" : k);
+    if (match) for (const k of ["name", "email", "role", "designation", "department", "departments_also", "emp_id", "position", "shift", "city", "roster_status", "exit_date", "doj", "reports_to_name", "projects_json", "active"])
+      if (String(match[k] ?? "") !== String(next[k] ?? "")) changes.push({ projects_json: "projects", departments_also: "also_in_departments", emp_id: "emp_id" }[k] || k);
     if (match && next.free_email_from && !changes.includes("email")) changes.push("email");
     plan.push({ row, cls, match, next, issues, boss, action: !match ? (next.active ? "new" : "skip") : changes.length || match.source !== "roster" ? "update" : "same", changes });
     if (issues.length) warnings.push({ name: row.name, emp_id: row.emp_id, project: row.project, reports_to: row.reports_to, issues, ...(boss.length > 1 && next.active ? { clash: true } : {}) });

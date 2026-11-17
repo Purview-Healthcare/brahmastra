@@ -983,7 +983,8 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
 The Worker pulls the roster from Shastra's database every hour (`[triggers]` in `wrangler.toml`). Any supervisor
 can press **⟳ Sync from Purview Shastra** on the Team tab (at most once every 2 minutes, recorded in the audit
 trail), and an admin can press **Sync now** on the Roster page. It applies the changes at once
-and keeps a list of what changed (joined, changed, left). Date of joining (DOJ) is kept too. If Shastra sends an
+and keeps a list of what changed (joined, changed, left; a change names each field, the shift, an "also in" department,
+the Emp ID, position and city too). Date of joining (DOJ) is kept too. If Shastra sends an
 empty or very short list (under half of the active people), nothing is changed and the Roster page says why.
 
 Shastra answers through one read-only database function, `brahmastra_roster(p_key)` (`dev/shastra-roster-feed.sql`, run once in Shastra's Supabase SQL Editor), which returns the roster

@@ -357,6 +357,33 @@ S("V-06: the team lead's row on Team status rounds the team's attainment as the 
   ok("V-06: with only today picked the row is today's figure to one decimal as well", F.rig.app.groupAttain(today.rows.filter((r) => r.lead_id === F.id("Tina Lead"))) === today.totals.attain, [today.totals.attain]);
 }
 
+S("V-08: the roster sync counts and lists every change it writes");
+{
+  const feed = stdFeed();
+  const F = await floor({ now: IST(2026, 11, 16, 11), feed });
+  const MO = await F.who("Mona Manager");
+  F.clock(IST(2026, 11, 16, 11, 5));
+  feed.find((x) => x.emp_id === "A1").shift = "13:00-22:00";                // Arun moves to the afternoon shift
+  feed.find((x) => x.emp_id === "A2").also_in_departments = "Posting";       // Bela is also in Posting now
+  feed.find((x) => x.emp_id === "A3").emp_id = "A3-CORR";                    // Cara's Emp ID corrected (matched by her email)
+  feed.find((x) => x.emp_id === "A4").location = "Hyderabad";                // Dev moves city
+  const r = await MO("team.syncRoster");
+  await F.refresh();
+  ok("V-08: the changes are written", F.U("Arun Agent").shift === "13:00-22:00" && F.U("Bela Agent").departments_also === "Posting" && F.U("Cara Agent").emp_id === "A3-CORR", [F.U("Arun Agent").shift, F.U("Bela Agent").departments_also, F.U("Cara Agent").emp_id]);
+  ok("V-08: and counted: the sync says 4 changed (the Team tab's toast)", r.summary.updated === 4 && r.summary.new === 0, r.summary);
+  const log = JSON.parse((await F.rows("SELECT value_json FROM settings WHERE key = 'shastra_log'"))[0].value_json), e = log[0];
+  const ch = (n) => ((e.names || []).find((x) => x.name === n) || {}).changes || [];
+  ok("V-08: the Roster page's list of what changed names each one with what changed",
+    e.at === IST(2026, 11, 16, 11, 5) && e.updated === 4 && ch("Arun Agent").includes("shift") && ch("Bela Agent").includes("also_in_departments") && ch("Cara Agent").includes("emp_id") && ch("Dev Agent").includes("city"), e);
+  const aud = await F.rows("SELECT detail FROM audit_log WHERE action = 'roster.sync' ORDER BY at DESC LIMIT 1");
+  ok("V-08: the audit line says 4 changed", aud.length && /4 changed/.test(aud[0].detail), aud);
+  ok("V-08: the page names them in plain words", F.rig.app.changeLabel("emp_id") === "Emp ID" && F.rig.app.changeLabel("also_in_departments") === "also in departments" && F.rig.app.changeLabel("reports_to_name") === "reports to");
+  // the next sync with nothing changed writes nothing and counts nothing
+  F.clock(IST(2026, 11, 16, 12, 5));
+  const r2 = await F.sync();
+  ok("V-08: the next sync with nothing new counts no change and adds no entry", r2.summary.updated === 0 && JSON.parse((await F.rows("SELECT value_json FROM settings WHERE key = 'shastra_log'"))[0].value_json)[0].at === IST(2026, 11, 16, 11, 5), r2.summary);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
