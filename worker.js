@@ -8767,13 +8767,15 @@ const OPS = {
     if (!clientId) throw bad("Pick the client.");
     if (!inScope(user, clientId)) throw outOfScope();
     const loc = payload.location_id ? " AND c.location_id = ?" : "", locArgs = payload.location_id ? [str(payload.location_id, 60)] : [];
-    const rows = await all(env, `SELECT c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.billed, c.balance, c.age_days, c.state, c.file_status, c.file_sub_status, c.file_action,
+    // each claim aged by its date of service to the day the file is written (as Client 360 ages it), not the age it had at upload
+    const today = isoDate(payload.today) || istISO(Date.now());
+    const rows = await all(env, `SELECT c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.billed, c.balance, ${AGE_SQL("c.")} AS age, c.state, c.file_status, c.file_sub_status, c.file_action,
         c.last_status_code, c.last_sub_status, c.last_action_code, c.last_note, c.file_comments, c.last_worked_on, l.name AS location_name
-      FROM claims c LEFT JOIN locations l ON l.id = c.location_id WHERE c.client_id = ? AND c.state IN ${WORKABLE}${loc} ORDER BY c.age_days DESC LIMIT 60000`, clientId, ...locArgs);
+      FROM claims c LEFT JOIN locations l ON l.id = c.location_id WHERE c.client_id = ? AND c.state IN ${WORKABLE}${loc} ORDER BY age DESC LIMIT 60000`, today, clientId, ...locArgs);
     const header = ["Claim ID", "Account No", "Patient Name", "Payer", "Date of Service", "CPT", "Provider", "Location", "Charges", "Balance", "Aging Bucket", "Status", "Sub Status", "Action", "Comment", "Last Worked"];
     const label = (age) => { const b = ageBucketLetter(age); return b ? b.replace(/^[A-G]: /, "").replace(" Days", "").replace(" plus", "+") : ""; };
     return { header, rows: rows.map((c) => [c.claim_no || "", c.account_no || "", c.patient || "", c.payer || "", c.dos || "", c.cpt || "", c.provider || "", c.location_name || "",
-      c.billed == null ? "" : c.billed, Number(c.balance) || 0, label(c.age_days), c.last_status_code || c.file_status || "", c.last_sub_status || c.file_sub_status || "",
+      c.billed == null ? "" : c.billed, Number(c.balance) || 0, label(c.age == null ? null : Math.max(0, Math.round(c.age))), c.last_status_code || c.file_status || "", c.last_sub_status || c.file_sub_status || "",
       c.last_action_code || c.file_action || "", c.last_note || c.file_comments || "", c.last_worked_on || ""]) };
   },
   "supervisor.productivity": async ({ env, user, payload }) => {

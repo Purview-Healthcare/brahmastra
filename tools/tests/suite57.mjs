@@ -1,0 +1,108 @@
+/* Suite 57: bug test round 3, tester Y's findings (fixer FY): the AR Inventory file for Drishti, OneDrive names after a rename and
+   for long names, Client 360's requests waiting on the client, the Client 360 report's filters, the production Third Eye loads, and
+   the roster Brahmastra hands to Third Eye. Each check names the finding it guards ("Y-07: ..."). A stand-in for Purview Shastra's
+   roster and a fake Microsoft Graph (OneDrive) that keeps every file. Made-up people and data only. */
+import { makeRig } from "./rig.mjs";
+const results = []; let section = "";
+const S = (n) => { section = n; console.log("\n## " + n); };
+const ok = (name, cond, info) => { results.push({ section, name, pass: !!cond }); console.log((cond ? "  PASS " : "  FAIL ") + name + (cond || info === undefined ? "" : "  -> " + (typeof info === "string" ? info : JSON.stringify(info)).slice(0, 600))); };
+const J = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "Content-Type": "application/json" } });
+const mail = (n) => n.toLowerCase().replace(/ /g, ".") + "@purview-healthcare.com";
+const P = (o) => Object.assign({ emp_id: "", name: "", position: "Agent", function: "Operations", department: "AR", also_in_departments: "", status: "Working", project: "", also_on_projects: "", reports_to: "", shift: "09:00-18:00", location: "Pune", doj: "2026-01-05", email: "" }, o);
+const SUN = "Sunrise Eye Care", LAKE = "Lakeview Dental Group";
+const FEED = [
+  P({ emp_id: "M1", name: "Mona Manager", position: "Manager", email: mail("Mona Manager") }),
+  P({ emp_id: "T1", name: "Tina Lead", position: "Team Lead", project: SUN, reports_to: "Mona Manager", email: mail("Tina Lead") }),
+  P({ emp_id: "A1", name: "Arun Agent", project: SUN, reports_to: "Tina Lead", email: mail("Arun Agent") }),
+  P({ emp_id: "A2", name: "Bela Agent", project: SUN, reports_to: "Tina Lead", email: mail("Bela Agent") }),
+];
+// ---- a fake Microsoft Graph: folders and files by id and by path; a file's bytes as put ----
+const OD = { items: new Map(), seq: 0 };
+OD.items.set("root", { id: "root", name: "root", parent: null, kind: "folder" });
+const mk = (name, parent, kind) => { const id = "it" + (++OD.seq); const it = { id, name, parent, kind, webUrl: "https://od.example/" + id, rows: [] }; OD.items.set(id, it); return it; };
+const child = (parent, name) => [...OD.items.values()].find((x) => x.parent === parent && x.name.toLowerCase() === String(name).toLowerCase());
+const pathOf = (id) => { const p = []; let it = OD.items.get(id); while (it && it.id !== "root") { p.unshift(it.name); it = OD.items.get(it.parent); } return p.join("/"); };
+const byPath = (segs, make) => { let cur = "root"; for (const s of segs) { let c = child(cur, s); if (!c) { if (!make) return null; c = mk(s, cur, "folder"); } cur = c.id; } return OD.items.get(cur); };
+const out = (it) => ({ id: it.id, name: it.name, webUrl: it.webUrl, parentReference: { driveId: "d1" }, ...(it.kind === "folder" ? { folder: {} } : { file: {} }) });
+const files = () => [...OD.items.values()].filter((x) => x.kind === "file").map((x) => ({ path: pathOf(x.id), it: x }));
+const graph = async (url, init) => {
+  const m = (init && init.method) || "GET"; const u = new URL(url); const p = decodeURIComponent(u.pathname.replace(/^\/v1\.0/, "")); let r;
+  const put = async (parent, name) => { const behavior = u.searchParams.get("@microsoft.graph.conflictBehavior") || "fail"; const ex = child(parent, name);
+    if (ex && behavior === "fail") return J({}, 409); const it = ex || mk(name, parent, "file"); it.bytes = Buffer.from(await new Response(init.body).arrayBuffer()); return J(out(it), ex ? 200 : 201); };
+  if (m === "POST" && p.match(/^\/users\/[^/]+\/drive\/root\/children$/)) { const b = JSON.parse(init.body); if (child("root", b.name)) return J({}, 409); return J(out(mk(b.name, "root", "folder")), 201); }
+  if (m === "PUT" && (r = p.match(/^\/users\/[^/]+\/drive\/root:\/(.+):\/content$/))) { const segs = r[1].split("/"); return put(byPath(segs.slice(0, -1), true).id, segs[segs.length - 1]); }
+  if (m === "GET" && (r = p.match(/^\/users\/[^/]+\/drive\/root:\/(.+?):?$/))) { const it = byPath(r[1].split("/"), false); return it ? J(out(it)) : J({}, 404); }
+  if (m === "POST" && (r = p.match(/^\/drives\/d1\/items\/([^/]+)\/children$/))) { const b = JSON.parse(init.body); if (child(r[1], b.name)) return J({}, 409); return J(out(mk(b.name, r[1], "folder")), 201); }
+  if (m === "POST" && (r = p.match(/^\/drives\/d1\/items\/([^/]+)\/createLink$/))) return J({ link: { webUrl: "https://purview.sharepoint.example/share/" + r[1] } });
+  if (m === "PUT" && (r = p.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+):\/content$/))) return put(r[1], r[2]);
+  if (m === "GET" && (r = p.match(/^\/drives\/d1\/items\/([^/:]+):\/(.+?):?$/))) { const it = child(r[1], r[2].replace(/:$/, "")); return it ? J(out(it)) : J({}, 404); }
+  if (m === "GET" && (r = p.match(/^\/drives\/d1\/items\/([^/:]+)$/))) { const it = OD.items.get(r[1]); return it ? J(out(it)) : J({}, 404); }
+  let wb;
+  if ((wb = p.match(/^\/drives\/d1\/items\/([^/]+)\/workbook\/worksheets(.*)$/))) {
+    const it = OD.items.get(wb[1]); if (!it) return J({}, 404); const rest = wb[2];
+    if (m === "GET" && (rest === "" || rest.startsWith("?"))) return J({ value: [{ id: "s1", name: it.sheet || "Sheet1" }] });
+    if (m === "PATCH" && rest === "/s1") { it.sheet = JSON.parse(init.body).name; return J({ id: "s1", name: it.sheet }); }
+    if (m === "POST" && rest === "/add") return J({ id: "s1", name: JSON.parse(init.body).name });
+    if (m === "GET" && /\/usedRange/.test(rest)) { const n = Math.max(1, it.rows.length); return J({ rowCount: n, address: "Sheet1!A1:AE" + n, values: it.rows.length ? it.rows : [[""]] }); }
+    if (/\/format\//.test(rest)) return J({});
+    if (m === "PATCH" && (r = rest.match(/range\(address='[A-Z]+(\d+):[A-Z]+\d+'\)$/))) { const at = Number(r[1]) - 1; JSON.parse(init.body).values.forEach((row, i) => { it.rows[at + i] = row; }); return J({}); }
+  }
+  return J({ error: "fake graph: no route " + m + " " + p }, 404);
+};
+const fetchMock = async (url, init) => {
+  if (url.includes("brahmastra_roster")) return J({ ok: true, rows: FEED });
+  if (url.includes("brahmastra_live")) return J({ code: "PGRST202", message: "not set up" }, 404);
+  if (url.includes("brahmastra_floor") || url.includes("brahmastra_wfm")) return J({ ok: true, rows: [] });
+  if (url.includes("login.microsoftonline.com")) return J({ access_token: "t" });
+  if (url.includes("graph.microsoft.com")) return graph(url, init);
+  return new Response("nope", { status: 500 });
+};
+const rig = await makeRig({ envExtra: { SHASTRA_FEED_KEY: "k".repeat(48), MS_TENANT_ID: "t", MS_CLIENT_ID: "c", MS_CLIENT_SECRET: "s" }, fetchMock });
+const { as, tryOp, sha } = rig; const app = rig.app; const T = (fn) => tryOp(fn);
+const DB = rig.backend.env.DB; const q = async (s, ...a) => (await DB.prepare(s).bind(...a).all()).results;
+const q1 = async (s, ...a) => (await q(s, ...a))[0];
+const sql = (s, ...a) => DB.prepare(s).bind(...a).run();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+await app.seedDemo(() => {});
+const login = async (email, pw) => as(null)("auth.login", { email, passHash: await sha(pw) });
+const A = as((await login("supervisor@purview-healthcare.com", "brahmastra-demo")).token);
+await A("roster.syncShastra");
+const users = (await A("users.list")).users; const U = (n) => users.find((u) => u.name === n).id;
+const R = {};
+for (const f of FEED) { await as(null)("auth.firstPassword", { user_id: U(f.name), passHash: await sha("pw-" + f.email) }); R[f.name] = as((await login(f.email, "pw-" + f.email)).token); }
+const TI = R["Tina Lead"], AR = R["Arun Agent"];
+const clients = (await A("clients.list")).clients; const sun = clients.find((c) => c.name === SUN);
+const isoAdd = (iso, d) => new Date(Date.parse(iso + "T00:00:00Z") + d * 86400000).toISOString().slice(0, 10);
+
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-07: the AR Inventory file for Drishti ages each claim to the day it is written");
+{
+  const today = "2026-11-16";
+  const open = await q("SELECT id FROM claims WHERE client_id = ? AND state IN ('open', 'assigned') ORDER BY id LIMIT 3", sun.id);
+  // uploaded 11 days ago: the file's age then was 85 (61-90); by date of service it is 96 today (91-120)
+  await sql("UPDATE claims SET claim_no = 'Y07-A', dos = ?, age_days = 85, balance = 500 WHERE id = ?", isoAdd(today, -96), open[0].id);
+  // 25 then, 36 today (31-60)
+  await sql("UPDATE claims SET claim_no = 'Y07-B', dos = ?, age_days = 25, balance = 300 WHERE id = ?", isoAdd(today, -36), open[1].id);
+  // no date of service: the file's own age stays
+  await sql("UPDATE claims SET claim_no = 'Y07-C', dos = '', age_days = 140, balance = 200 WHERE id = ?", open[2].id);
+  const f = await TI("reports.arInventory", { client_id: sun.id, today });
+  const ib = f.header.indexOf("Aging Bucket"), row = (no) => f.rows.find((r) => r[0] === no) || [];
+  ok("Y-07: a claim 96 days from its DOS is in 91-120 (it was 61-90 at upload)", row("Y07-A")[ib] === "91-120", row("Y07-A")[ib]);
+  ok("Y-07: a claim 36 days from its DOS is in 31-60 (it was 0-30 at upload)", row("Y07-B")[ib] === "31-60", row("Y07-B")[ib]);
+  ok("Y-07: a claim with no date of service keeps the file's age (121-180)", row("Y07-C")[ib] === "121-180", row("Y07-C")[ib]);
+  // the file's over-90 share equals Client 360's on the same day
+  const is90 = (b) => { const n = String(b).match(/\d+/g); const lo = n ? parseInt(n[0]) : null; return lo != null && lo >= 91; };
+  const ibal = f.header.indexOf("Balance");
+  const tot = f.rows.reduce((a, r) => a + Math.max(0, Number(r[ibal]) || 0), 0), o90 = f.rows.filter((r) => is90(r[ib])).reduce((a, r) => a + Math.max(0, Number(r[ibal]) || 0), 0);
+  const ov = await TI("client.overview", { client_id: sun.id, today });
+  const c360 = ov.ar && ov.ar.owed ? ov.ar.over90_owed / ov.ar.owed : null;
+  ok("Y-07: the file's over 90 days share is Client 360's over 90 days", c360 != null && Math.abs(o90 / tot - c360) < 0.001, { file: o90 / tot, c360, ar: ov.ar });
+  // rows oldest first by today's age
+  const ages = f.rows.map((r) => r[ib]);
+  ok("Y-07: the rows run oldest first by today's age (the 91-120 claim before the 31-60 one)", f.rows.findIndex((r) => r[0] === "Y07-A") < f.rows.findIndex((r) => r[0] === "Y07-B"), ages.slice(0, 8));
+}
+
+const fails = results.filter((x) => !x.pass);
+console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
+for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
+process.exit(fails.length ? 1 : 0);

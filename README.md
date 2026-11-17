@@ -577,7 +577,9 @@ Brahmastra's theme (Light, Navy or Gold, flat cards and all), with Drishti's own
 Formulas, Guide, Q&A and Feedback) in Brahmastra's tab row and two tabs of Brahmastra's own beside them, **SLA
 scorecard** and **Monday digest**. Drishti's pages are where the period's reports are uploaded or a value is typed;
 the scorecard reads them a few minutes later. **Save AR Inventory to OneDrive** above the page writes today's AR
-Inventory report to the client's SLA & KPI folder for Drishti to pick.
+Inventory report to the client's SLA & KPI folder for Drishti to pick. Its Aging Bucket is each claim's age by its
+date of service on the day the file is written, as Client 360 ages it (not the age it had when the inventory was
+uploaded), so Drishti's AR Aging matches Client 360's over 90 days.
 
 **SLA scorecard** is Drishti's scorecard for one client and period in Client 360's style, read by Brahmastra
 (nothing in Drishti changes): the score dial with its band (green 90 and above, amber 80 to 89, red under 80), how
