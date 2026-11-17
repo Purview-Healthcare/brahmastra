@@ -9471,9 +9471,15 @@ function ClientReportStudio({ ctx, me, go, clientId }) {
     tip.innerHTML = `<b>${crEsc(d.t)}</b>` + (d.r || []).map(([k, v]) => `<div><span>${crEsc(k)}</span><em>${crEsc(v)}</em></div>`).join("");
     tip.style.display = "block"; const w = tip.offsetWidth, h = tip.offsetHeight; let x = e.clientX + 14, y = e.clientY + 14; if (x + w > window.innerWidth - 8) x = e.clientX - w - 14; if (y + h > window.innerHeight - 8) y = e.clientY - h - 14; tip.style.left = x + "px"; tip.style.top = y + "px"; };
   // the stage: the 1280 × 720 slide shrunk to the width there is
-  const stageRef = useRef(null);
   const [stageW, setStageW] = useState(1000);
-  useEffect(() => { const el = stageRef.current; if (!el || !window.ResizeObserver) return; const ro = new ResizeObserver(() => setStageW(Math.max(320, el.clientWidth - 32))); ro.observe(el); return () => ro.disconnect(); }, [!!raw]);
+  // the stage is drawn only once the dashboard is made (after the start screen), so the slide's width is watched from the moment
+  // the stage is there (a callback ref), not from when the data came (Y-10)
+  const stageRO = useRef(null);
+  const stageRef = useCallback((el) => {
+    if (stageRO.current) { stageRO.current.disconnect(); stageRO.current = null; }
+    if (!el || !window.ResizeObserver) return;
+    const ro = new ResizeObserver(() => setStageW(Math.max(200, el.clientWidth - 32))); ro.observe(el); stageRO.current = ro;
+  }, []);
   const scale = Math.min(1, stageW / CR_W);
   const step = (n) => { if (ptype === "week") setAnchor((a) => crAddD(crWS(a), 7 * n)); else if (ptype === "month") setAnchor((a) => crAddM(crMS(a), n)); else { const r = crShift(range, n); setCustom({ from: crF.iso(r.start), to: crF.iso(r.end) }); } };
   const pIdx = included.findIndex((p) => p.id === page), numOf = (pid) => included.findIndex((p) => p.id === pid) + 1;

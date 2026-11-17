@@ -305,6 +305,14 @@ S("Y-08: counts of one read in the singular");
   ok("Y-08: the change history's count too (\"1 change\")", /\{plural\(rows\.length, "change"\)\}/.test(src) && !/\{rows\.length\} changes/.test(src));
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+S("Y-10: the Client 360 report's slide shrinks to the width there is");
+{
+  const src = fs.readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8"), html = fs.readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+  ok("Y-10: the slide's width is watched from when the stage is drawn (a callback ref), not from when the data came", /const stageRef = useCallback\(\(el\) =>/.test(src) && /ref=\{stageRef\}/.test(src) && !/stageRef\.current/.test(src));
+  ok("Y-10: on a narrow screen the stage may be narrower than the slide (no min-content column)", /\.crx-stage\{[^}]*min-width:0/.test(html) && /@media \(max-width:1100px\)\{\.crx-studio\{grid-template-columns:minmax\(0,1fr\)\}/.test(html));
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);
