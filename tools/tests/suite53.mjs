@@ -393,6 +393,33 @@ S("V-09: Live status's Needs you lines wrap on a phone (the page's own CSS)");
   ok("V-09: and the strip is the one Live status draws", /className="card tight row needs-strip"/.test((await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8")));
 }
 
+S("V-10: with Shastra down, a finished day is not judged on a figure sent while its shift was still open");
+{
+  const F = await floor({ now: IST(2026, 11, 17, 13) });   // Tuesday 17 Nov, 13:00
+  // Shastra: Arun worked Monday 09:00-18:00 (480 on the floor); Tuesday his shift is open (240 so far). Bela's Monday shift
+  // was never punched out in Shastra (still open there, 300).
+  F.S.floorRows = [FL("A1", "2026-11-16", "present", 480, 45), FL("A1", "2026-11-17", "present", 240, 0, { open: true }), FL("A2", "2026-11-16", "present", 300, 30, { open: true }), FL("A2", "2026-11-17", "present", 240, 0, { open: true })];
+  const TI = await F.who("Tina Lead");
+  let ts = await F.ts(TI, "2026-11-16", "2026-11-17");
+  ok("V-10: Tuesday 13:00: Arun's Tuesday is today (not judged), Monday met", F.row(ts, "Arun Agent").floor === "met" && F.row(ts, "Arun Agent").floor_needed_done_min === 480, F.row(ts, "Arun Agent"));
+  // Shastra stops answering from Tuesday afternoon until Wednesday (it would have sent 480 for Tuesday)
+  F.S.floorRows = [FL("A1", "2026-11-16", "present", 480, 45), FL("A1", "2026-11-17", "present", 480, 45)];
+  F.S.floorFail = "timeout";
+  F.clock(IST(2026, 11, 18, 10));
+  ts = await F.ts(TI, "2026-11-16", "2026-11-18");
+  const a = F.row(ts, "Arun Agent");
+  ok("V-10: Wednesday, Shastra down: Arun's Tuesday is not known (1 day), not judged on the 240 sent at 13:00", a.floor_unknown_days === 1 && a.floor !== "short" && a.floor_needed_done_min === 480 && a.on_floor_done_min === 480, a);
+  ok("V-10: his Tuesday still has its target (he was present)", a.target_done === 20, a.target_done);
+  ok("V-10: and no suggestion about the 8-hour rule for him", ![...ts.suggestions.today, ...ts.suggestions.week].some((x) => x.who === "Arun Agent" && /floor|8-hour/i.test(x.seen + " " + x.do)), ts.suggestions);
+  // a day Shastra itself still has open after it ended (a missed punch-out) is Shastra's figure: judged as before
+  F.S.floorFail = null; F.S.floorRows = [FL("A1", "2026-11-16", "present", 480, 45), FL("A1", "2026-11-17", "present", 480, 45), FL("A2", "2026-11-16", "present", 300, 30, { open: true }), FL("A2", "2026-11-17", "present", 480, 45)];
+  await F.sql("DELETE FROM settings WHERE key = 'floor_sync'");
+  ts = await F.ts(TI, "2026-11-16", "2026-11-18");
+  const b = F.row(ts, "Bela Agent"), a2 = F.row(ts, "Arun Agent");
+  ok("V-10: Shastra answering again: Arun's Tuesday is known and met (960 of 960)", a2.floor === "met" && a2.floor_unknown_days === 0 && a2.on_floor_done_min === 960, a2);
+  ok("V-10: a shift Shastra still has open after the day ended (no punch-out) is judged on Shastra's figure, as before", b.floor === "short" && b.floor_unknown_days === 0 && b.on_floor_done_min === 780, b);
+}
+
 const fails = results.filter((x) => !x.pass);
 console.log("\n==== " + (results.length - fails.length) + " passed, " + fails.length + " failed of " + results.length);
 for (const f of fails) console.log("FAILED: [" + f.section + "] " + f.name);

@@ -2536,7 +2536,7 @@ async function shastraFloor(env, from, to, today, off) {
     for (const x of await all(env, "SELECT * FROM floor_days WHERE day BETWEEN ? AND ?", from, last)) { if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Map()); byUser.get(x.user_id).set(x.day, x); known.add(x.day); }
     for (let d = from; d <= last; d = addDays(d, 1)) if (st.days[d]) known.add(d);
   }
-  return { state, error: st.fail_at && st.fail_at >= (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser, known };
+  return { state, error: st.fail_at && st.fail_at >= (st.ok_at || 0) ? st.error : "", at: st.ok_at || null, byUser, known, fetched: st.days };
 }
 /* Shastra's attendance status for a day: in (a full day), a half day, unplanned (absent, sick, leave without pay),
    leave (approved, maternity, sabbatical) or off (week off, holiday, comp off: not a working day). Unknown or missing:
@@ -5687,6 +5687,8 @@ const OPS = {
       // day, week off, a Saturday worked); otherwise a weekday is a full day unless marked Out today here (Half day: half).
       // Days before the date of joining have no target and no floor time, and are not days out.
       const fd = fl.byUser.get(u.id), myDay = dayOf(u), doj = isoDate(u.doj);
+      // when the person's working day d is over (a night shift's: the morning after, with its roll)
+      const dayOver = (d) => Date.parse(d + "T00:00:00Z") - off * 60000 + 86400000 + (wdOf.get(u.id).roll || 0) * 60000;
       let full = 0, half = 0, out = 0, unplanned = 0, tDone = 0, tToday = 0, shares = 0, needAll = 0, needDone = 0, onAll = 0, onDone = 0, idleAll = 0, idleDone = 0, lockedAll = 0, guard = false, brkAll = 0, brkDays = 0, brkOver = 0, unknownDone = 0;
       for (const d of span) {
         // Overtime is a day in, on a working day and also on a Saturday, Sunday or Shastra holiday: like a Saturday marked Present,
@@ -5698,11 +5700,14 @@ const OPS = {
           else if (wd) { const a = att.find((y) => y.user_id === u.id && y.day === d); share = !a ? 1 : /half/i.test(a.reason || "") ? 0.5 : 0;
             if (!a) full++; else if (share) half++; else { out++; unplanned++; } }
         }
-        // floor time is needed, and judged, only on the days Shastra has answered for: a day it never answered is not known
-        const known = fl.state !== "ok" || (fl.known && fl.known.has(d));
+        // floor time is needed, and judged, only on the days Shastra has answered for: a day it never answered is not known, and
+        // nor is a finished day whose only figure Shastra sent while the shift was still open (it has not answered since: V-10);
+        // its attendance still counts for the target
+        const partial = !!(x && x.open && d < myDay && ((fl.fetched && fl.fetched[d]) || 0) < dayOver(d));
+        const known = fl.state !== "ok" || (fl.known && fl.known.has(d) && !partial);
         shares += share; if (known) needAll += share * 480;
         if (d < myDay) { tDone += share * cap; if (known) needDone += share * 480; else if (share) unknownDone++; } else if (d === myDay) tToday = share * cap;
-        if (x) { const tof = x.tof_min || 0, idl = x.guard ? (x.idle_min || 0) + (x.locked_min || 0) : 0;
+        if (x && !partial) { const tof = x.tof_min || 0, idl = x.guard ? (x.idle_min || 0) + (x.locked_min || 0) : 0;
           onAll += tof; idleAll += idl; if (x.guard) { lockedAll += x.locked_min || 0; guard = true; }
           // breaks taken that day (Shastra's own figure); Shastra allows 60 minutes a day
           brkAll += x.break_min || 0; if (tof > 0) brkDays++; if ((x.break_min || 0) > SH_BREAK_ALLOW_MIN) brkOver++;
