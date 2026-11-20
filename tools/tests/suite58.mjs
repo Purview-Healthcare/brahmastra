@@ -34,6 +34,31 @@ ok("the bucket is Aging Bucket, not Aging", m.file_bucket === "Aging Bucket", m.
 ok("a real location column is still found (Service Location, Practice Location Name)", app.autoMap(["Claim #", "Service Location"]).location === "Service Location" && app.autoMap(["Claim #", "Practice Location Name"]).location === "Practice Location Name");
 ok("a file with only Plan Name still takes it for the payer", app.autoMap(["Claim #", "Plan Name"]).payer === "Plan Name");
 
+S("Allocation: every biller gets the same number of claims");
+{
+  const team = ["Arun Agent", "Bela Agent", "Cara Agent", "Dev Agent", "Esha Agent"].map((name, i) => ({ id: "u" + i, name, cap: 40 }));
+  // 150 claims, one claim per patient, from three payers: grouping by payer used to fill one biller up to the target before the next
+  const claims = Array.from({ length: 150 }, (_, i) => ({ id: "c" + i, patient: "Testpatient, P" + i, payer: ["Aetna", "Cigna", "Humana"][i % 3], priority: 50, balance: 100 + i }));
+  const counts = (plan) => plan.perUser.map((u) => u.count);
+  const old = app.planAllocation({ claims, users: team.map((u) => ({ id: u.id, name: u.name, capacity: u.cap })), strategy: "smart" });
+  const share = app.evenShares(team, (u) => u.cap, claims.length);
+  const even = app.planAllocation({ claims, users: team.map((u) => ({ id: u.id, name: u.name, capacity: share[u.id] })), strategy: "smart" });
+  ok("set-up: with each target as the limit, the split was uneven (the last biller got none)", Math.min(...counts(old)) < Math.max(...counts(old)), counts(old));
+  ok("split evenly: 150 claims for 5 billers is 30 each", counts(even).every((n) => n === 30), counts(even));
+  for (const strategy of ["patient", "payer", "round_robin", "even_dollars"]) {
+    const p = app.planAllocation({ claims, users: team.map((u) => ({ id: u.id, name: u.name, capacity: share[u.id] })), strategy });
+    ok("the same 30 each with the " + strategy + " way of keeping claims together", counts(p).every((n) => n === 30), counts(p));
+  }
+  const s2 = app.evenShares([{ id: "a", cap: 10 }, { id: "b", cap: 40 }, { id: "c", cap: 40 }], (u) => u.cap, 60);
+  ok("a lower target is kept (10), and the rest is shared evenly (25 and 25)", s2.a === 10 && s2.b === 25 && s2.c === 25, s2);
+  const s3 = app.evenShares(team, (u) => u.cap, 300);
+  ok("more claims than the team's targets: each gets their full target (40), the rest stays in the pool", Object.values(s3).every((n) => n === 40), s3);
+  const s4 = app.evenShares(team, (u) => u.cap, 152);
+  ok("when it does not divide, some get one more (31, 31, 30, 30, 30)", Object.values(s4).sort().join(",") === "30,30,30,31,31", s4);
+  const src = (await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+  ok("the Allocate screen and the upload's own allocation both use the even split", (src.match(/evenShares\(/g) || []).length >= 3 && /capacity: shareIn\[m\.id\]/.test(src));
+}
+
 const failed = results.filter((x) => !x.pass);
 console.log(`\n==== ${results.length - failed.length} passed, ${failed.length} failed of ${results.length}`);
 process.exit(failed.length ? 1 : 0);

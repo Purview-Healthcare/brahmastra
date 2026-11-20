@@ -986,8 +986,10 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   to (or a new client). Matching it to any other client is the admin's call
   (Roster). Every match is in the audit trail.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
-  when it has one), each up to their daily target, minus anyone marked **Out today** on Live status. Automatic
-  allocation after an upload and the Allocate screen both use that; there is no daily ticking. Someone on a
+  when it has one), minus anyone marked **Out today** on Live status. The claims are split evenly between them, never
+  more than each one's daily target (what one cannot take is shared by the others), so everyone gets the same number,
+  one more for some when it does not divide; claims of one patient or payer are kept together inside each share.
+  Automatic allocation after an upload and the Allocate screen both use that; there is no daily ticking. Someone on a
   location's own team who no longer works the client (Shastra moved them to another client, or a share of it was
   taken back or made view only) is left out, so every claim goes to the people who do.
 - Roster people sign in only with a Purview email, or an address the admin

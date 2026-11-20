@@ -683,6 +683,13 @@ const STRATEGIES = [
   { key: "round_robin", label: "Straight priority, round robin", desc: "Top priority first, dealt evenly across the team. No batching." },
   { key: "even_dollars", label: "Balance the dollars", desc: "Each claim goes to whoever holds the least AR so far." },
 ];
+/* Each person's share of n claims: an even split, never more than their daily target; what one cannot take is shared by the
+   others. So everyone gets the same number (one more for some when it does not divide), whatever the order or grouping. */
+function evenShares(users, capOf, n) {
+  const share = {}; let left = n;
+  [...users].sort((a, b) => capOf(a) - capOf(b)).forEach((u, i, all) => { share[u.id] = Math.min(capOf(u), Math.ceil(left / (all.length - i))); left -= share[u.id]; });
+  return share;
+}
 function planAllocation({ claims, users, strategy }) {
   const sorted = [...claims].sort((a, b) => b.priority - a.priority || b.balance - a.balance);
   const patientCount = {};
@@ -3770,8 +3777,7 @@ async function autoAllocate({ ctx, client, loc }) {
   if (!pool.length) return { applied: 0, perUser: [], reason: "no open claims" };
   // An even share of the pool for each person, never more than their daily target (what one cannot take is shared by the others);
   // patients and payers are kept together inside each share.
-  const share = {}; let left = pool.length;
-  [...users].sort((a, b) => capOf[a.id] - capOf[b.id]).forEach((u, i, all) => { share[u.id] = Math.min(capOf[u.id], Math.ceil(left / (all.length - i))); left -= share[u.id]; });
+  const share = evenShares(users, (u) => capOf[u.id], pool.length);
   const plan = planAllocation({ claims: pool, users: users.map((u) => ({ id: u.id, name: u.name, capacity: share[u.id] })), strategy: "smart" });
   let applied = 0;
   for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: client.id, location_id: loc ? loc.id : undefined, strategy: "auto", assignments: part, summary: { auto: true, perUser: plan.perUser } }); applied += r.applied; }
@@ -6890,7 +6896,11 @@ function AllocateView({ ctx, params, go, embedded }) {
       return true;
     });
   }, [pool, filters]);
-  const teamUsers = (members || []).filter((m) => !m.out).map((m) => ({ id: m.id, name: m.name, capacity: Math.max(0, Math.round(Number(m.cap) || 35)) }));
+  // the claims shown are split evenly between the people in today, never more than each one's daily target (as the automatic
+  // allocation after an upload does): claims kept together by payer or patient never fill one person up before the next gets any
+  const teamIn = (members || []).filter((m) => !m.out), capIn = (m) => Math.max(0, Math.round(Number(m.cap) || 35));
+  const shareIn = evenShares(teamIn, capIn, filtered.length);
+  const teamUsers = teamIn.map((m) => ({ id: m.id, name: m.name, capacity: shareIn[m.id] }));
   const preview = () => { setPlan(planAllocation({ claims: filtered, users: teamUsers, strategy })); setApplied(null); };
   const apply = async () => {
     if (!plan || !plan.assignments.length) return;
@@ -6935,7 +6945,7 @@ function AllocateView({ ctx, params, go, embedded }) {
             <div className="card stack">
               <div className="row between"><h3>2 · Who works it</h3>{clientId && go && <button className="btn sm" onClick={() => go("clients", { client_id: clientId, focus: "people" })} title="Opens this client's card, where its people are added or taken off">Change people on the client card</button>}</div>
               {!members ? <Spinner label="Loading the client's people…" /> : !members.length ? <div className="alert warn" style={{ fontSize: 13 }}>Nobody is on this client yet. Add its people on the client card, then come back.</div> : <>
-                <div className="small">Goes to the people on <b>{(ctx.clients.find((c) => c.id === clientId) || {}).name}</b>, each up to their daily target:</div>
+                <div className="small">Split evenly between the people on <b>{(ctx.clients.find((c) => c.id === clientId) || {}).name}</b>, never more than each one's daily target:</div>
                 <div className="pill-list">{members.map((m) => <span key={m.id} className={"badge " + (m.out ? "gray" : "teal")} title={m.out ? "Marked out today in Team today" : "Daily target"} style={m.out ? { opacity: .7 } : null}>{m.name} {m.out ? <span className="red-ink">out today</span> : <b>{m.cap}</b>}</span>)}</div>
               </>}
               <div className="small muted">Capacity today: <b>{fmtInt(capTotal)}</b> claims across {teamUsers.length} {teamUsers.length === 1 ? "person" : "people"}. Someone off today? Mark them in <b>Work › Team today › Out today</b>; they are skipped here and in automatic allocation after an upload.</div>
