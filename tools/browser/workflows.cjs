@@ -82,6 +82,8 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
 
   S("Allocation");
   await step("allocate", async () => {
+    // a new working day: the claims the earlier steps gave the billers count for an earlier day (each one's limit is a day's)
+    await p.evaluate(async () => { const db = (await getLocalBackend()).env.DB; await db.prepare("UPDATE claims SET assigned_at = assigned_at - 2 * 86400000 WHERE assigned_at IS NOT NULL").run(); });
     await open("#/allocate"); await t(800);
     await pick(p.locator(".main"), "Sunrise"); await t(1500);
     const txt = await p.innerText(".main");
