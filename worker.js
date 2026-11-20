@@ -10180,8 +10180,11 @@ const OPS = {
     // A location's own team is kept by hand and the roster sync leaves it as it is: someone on it who no longer works the client
     // (Purview Shastra moved them, a share was taken back or made view only) is left out, as the server would refuse them the
     // claims (alloc.apply) and the allocation would promise claims nobody gets. The client's own team is the roster's, kept current.
-    const onClient = new Set(parseTeam(c.team_json)), users = [];
-    for (const u of listed) if (onClient.has(u.id) || (await billerFor(env, u.id, c.id))) users.push(u);
+    // Everyone listed must be someone alloc.apply will give claims to (an active AR biller who works the client): a team lead,
+    // a desk person or the admin added to a team by hand was planned on screen but silently refused by the server, so the
+    // claims shown for them never reached any list.
+    const users = [];
+    for (const u of listed) if (await billerFor(env, u.id, c.id)) users.push(u);
     const caps = jsonObj(c.caps_json);
     const saved = await one(env, "SELECT a.on_json, a.at, u.name AS by_name FROM availability a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? AND a.day = ?", c.id, day);
     const on = saved ? jsonList(saved.on_json) : null;

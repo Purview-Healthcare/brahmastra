@@ -196,6 +196,26 @@ S("A different daily target, and someone out today");
   await TI("team.setOut", { user_id: U("Cara Agent"), out: false });
 }
 
+S("Every planned claim reaches a biller's own list (a team lead added to the team by hand is never planned)");
+{
+  await sql("UPDATE claims SET state = 'excluded' WHERE client_id = ? AND state = 'open'", sun.id);
+  await newDay();
+  // the client's own team (Locations, the client-level row) with the team lead added by hand; Downtown has no team of its own
+  await TI("clients.saveTeam", { client_id: sun.id, team: [...THREE.map(U), U("Tina Lead")] });
+  await TI("clients.saveTeam", { location_id: downtown.id, team: [] });
+  const names = Object.keys(await day());
+  ok("the day's team lists only the three billers, not the team lead added by hand", JSON.stringify(names.sort()) === JSON.stringify(THREE), names);
+  const a = await load(made("EV", 24));
+  const said = Object.fromEntries(a.perUser.filter((u) => u.count).map((u) => [u.name, u.count]));
+  const db = Object.fromEntries((await q("SELECT u.name, COUNT(*) AS n FROM claims c JOIN users u ON u.id = c.assigned_to WHERE c.claim_no LIKE 'EV-%' AND c.state = 'assigned' GROUP BY u.name")).map((r) => [r.name, r.n]));
+  ok("what the allocation says each got is exactly what the database has: 8 each, none left in the pool", a.applied === 24 && JSON.stringify(said) === JSON.stringify(db) && THREE.every((n) => db[n] === 8), [a.applied, said, db]);
+  const seen = {};
+  for (const n of THREE) seen[n] = (await as(TOK[n])("queue.summary", { day_from_ms: 0, day_to_ms: Date.now() + 86400000 })).ready;
+  ok("each biller's own My queue, read fresh (as after a refresh), counts their claims", THREE.every((n) => seen[n] && seen[n].n >= db[n]), seen);
+  await TI("clients.saveTeam", { client_id: sun.id, team: THREE.map(U) });
+  await TI("clients.saveTeam", { location_id: downtown.id, team: THREE.map(U) });
+}
+
 S("On the page");
 {
   ok("what someone can take today: the day's team's number (room), 0 when they have had their limit", app.roomOf({ room: 0, cap: 35 }) === 0 && app.roomOf({ room: 12, cap: 35 }) === 12);
