@@ -332,16 +332,33 @@ function readWorkbook(buffer, fileName) {
   const wb = isText ? XLSX.read(new TextDecoder("utf-8").decode(buffer), { type: "string", cellDates: false, raw: true }) : XLSX.read(buffer, { type: "array", cellDates: false });
   return wb.SheetNames.map((name) => ({ name, rows: XLSX.utils.sheet_to_json(isText ? wb.Sheets[name] : zeroPaddedAsShown(wb.Sheets[name]), { header: 1, raw: true, defval: "" }) })).filter((s) => s.rows.length);
 }
+/* The row of column names: of the first 40 rows that look like names (three or more cells, mostly words), the one whose cells
+   Brahmastra recognises as the most inventory columns (claim #, patient, date of service, balance and the rest), so a few
+   summary or title lines above the table ("Billed 301", "18 claims assigned to ...") never pass for its header. A file with
+   no row recognised (another kind of file) takes the first row that looks like names, as before. */
+const looksLikeNames = (r) => { const cells = (r || []).filter((c) => String(c).trim() !== "");
+  return cells.length >= 3 && cells.filter((c) => typeof c === "string" && /[a-zA-Z]/.test(c)).length >= Math.ceil(cells.length * 0.6); };
+const namesKnown = (r) => Object.keys(autoMap((r || []).map((c) => String(c).trim()).filter(Boolean))).length;
 function detectHeaderRow(rows) {
+  let first = -1, best = -1, bestHits = 0;
   for (let i = 0; i < Math.min(rows.length, 40); i++) {
-    const r = rows[i] || [];
-    const cells = r.filter((c) => String(c).trim() !== "");
-    if (cells.length >= 3 && cells.filter((c) => typeof c === "string" && /[a-zA-Z]/.test(c)).length >= Math.ceil(cells.length * 0.6)) return i;
+    if (!looksLikeNames(rows[i])) continue;
+    if (first < 0) first = i;
+    const hits = namesKnown(rows[i]);
+    if (hits > bestHits) { best = i; bestHits = hits; }
   }
-  return 0;
+  return bestHits >= 2 ? best : first >= 0 ? first : 0;
 }
-function tableFromSheet(rows) {
-  const hi = detectHeaderRow(rows);
+/* The sheet an inventory is on: the one whose row of column names Brahmastra recognises best (a summary or pivot sheet first in
+   the workbook is passed over); with none recognised, the first sheet. */
+function bestInventorySheet(sheets) {
+  let best = 0, bestHits = -1;
+  sheets.forEach((s, i) => { const hits = namesKnown(s.rows[detectHeaderRow(s.rows)]); if (hits > bestHits) { best = i; bestHits = hits; } });
+  return best;
+}
+/* hi: the row of column names when the team lead picked it (0-based); otherwise it is found */
+function tableFromSheet(rows, pickedRow) {
+  const hi = pickedRow != null && rows[pickedRow] ? pickedRow : detectHeaderRow(rows);
   const seen = {};
   const headers = (rows[hi] || []).map((h, i) => { let t = String(h).trim() || `Column ${i + 1}`; seen[t] = (seen[t] || 0) + 1; if (seen[t] > 1) t = `${t} (${seen[t]})`; return t; });
   const data = rows.slice(hi + 1).filter((r) => r && r.some((c) => String(c).trim() !== "")).map((r) => { const o = {}; headers.forEach((h, i) => { o[h] = r[i] == null ? "" : r[i]; }); return o; });
@@ -377,7 +394,7 @@ const HEADER_RULES = {
   claim_no: [["ig claim id number charge id number", "claim id", "claim number", "claim no", "claim num", "claimid", "claim ref", "claim reference", "claim control number", "icn", "tcn", "charge id", "encounter id", "encounter number", "invoice number", "invoice no", "claim"], ["invoice", "encounter", "charge id"]],
   account_no: [["account number", "account no", "acct number", "acct no", "account", "acct", "mrn", "patient id", "patient account", "patient account number", "chart number", "medical record number", "account id"], ["chart", "record"]],
   patient: [["patient name", "patient", "pt name", "patient full name", "member name", "guarantor", "guarantor name", "name"], ["name"]],
-  payer: [["payer", "payer name", "payor", "payor name", "insurance", "insurance name", "insurance company", "carrier", "primary insurance", "primary payer", "plan name", "financial class", "ins"], ["plan"]],
+  payer: [["payer", "payer name", "payor", "payor name", "insurance", "insurance name", "insurance company", "carrier", "carrier name", "primary insurance", "primary payer", "plan name", "financial class", "ins"], ["plan"]],
   dos: [["date of service", "dos", "service date", "svc date", "dos from", "from date", "date of svc", "encounter date", "visit date", "from dos"], []],
   cpt: [["cpt", "cpt code", "cpt codes", "procedure", "procedure code", "procedure codes", "proc code", "hcpcs", "cpt hcpcs", "service code"], []],
   provider: [["provider", "provider name", "rendering provider", "servicing provider", "doctor", "physician", "clinician", "billing provider"], ["rendering"]],
@@ -389,7 +406,7 @@ const HEADER_RULES = {
   comments: [["comments notes", "comments", "notes", "comment", "note", "remarks", "ar notes", "last note"], []],
   date_worked: [["date worked", "date of work", "work date", "worked date", "dow", "dateworked", "last worked", "last worked on", "last touch", "last touched", "last action date"], []],
   follow_up: [["follow up date", "followup date", "next follow up", "next follow up date", "follow up", "next action date", "tickler", "review date", "fu date"], []],
-  file_bucket: [["bucket responsibility", "bucket", "aging bucket", "age bucket", "aging", "ar bucket", "age"], []],
+  file_bucket: [["bucket responsibility", "aging bucket", "age bucket", "ar bucket", "bucket", "aging", "age"], []],
   location: [["location", "location name", "facility", "site", "practice location", "office", "service location"], []],
 };
 /* The key columns (claim number, account, patient, date of service, balance): claims are told apart and valued by them, so a
@@ -400,6 +417,11 @@ const HEADER_RULES = {
    balance); and a generic word (name, invoice, chart) only in a header made of the column's own words (Last Name, First Name).
    A file whose key columns are not all recognised stops at the column check (UploadWizard's afterPick). */
 const hdrWords = (s) => s.split(" ");
+/* "Allocation type" holds the letters of "location" but is no location: a location is matched as a whole word only. */
+const WORD_ONLY = new Set(["location"]);
+/* Fields whose exact names are listed best first: with two such columns the better name wins whatever their order in the file
+   (Carrier Name before Plan Name for the payer, Aging Bucket before Aging for the bucket). */
+const BY_PREFERENCE = new Set(["payer", "file_bucket"]);
 const KEY_WHOLE_ONLY = { claim_no: ["claim"], account_no: ["account", "acct"], patient: ["name"], balance: ["amount"] };
 const NOT_AN_ID = hdrWords("date dt dob birth day days month year time submitted received sent posted paid amount amt balance bal payment payments charges fee total due status state type kind class category reason code flag stage frequency age aging bucket note notes comment comments remark remarks memo description desc name count qty quantity lines");
 const KEY_NOT = {
@@ -417,6 +439,7 @@ function autoMap(headers) {
   // a name inside a longer header: anywhere for the other columns; for a key column as whole words (a plural s allowed), in a
   // header whose other words say nothing else (KEY_NOT)
   const inside = (key, n, name) => {
+    if (WORD_ONLY.has(key)) return (" " + n + " ").includes(" " + name + " ");
     if (!KEY_NOT[key]) return n.includes(name);
     const w = " " + n + " ";
     if (!w.includes(" " + name + " ") && !w.includes(" " + name + "s ")) return false;
@@ -424,9 +447,10 @@ function autoMap(headers) {
     return !hdrWords(n).some((x) => !own.includes(x) && !own.includes(x.replace(/s$/, "")) && KEY_NOT[key].includes(x));
   };
   const onlyOwn = (key, n) => !KEY_GENERIC_WORDS[key] || hdrWords(n).every((x) => KEY_GENERIC_WORDS[key].includes(x) || KEY_GENERIC_WORDS[key].includes(x.replace(/s$/, "")));
-  for (const f of FIELDS) { // pass 1: exact names
+  for (const f of FIELDS) { // pass 1: exact names (for a field whose names are in order of preference, the best name first)
     const names = (HEADER_RULES[f.key] || [[], []])[0];
-    const hit = normed.find((x) => !used.has(x.h) && names.includes(x.n));
+    const hit = BY_PREFERENCE.has(f.key) ? names.map((nm) => normed.find((x) => !used.has(x.h) && x.n === nm)).find(Boolean)
+      : normed.find((x) => !used.has(x.h) && names.includes(x.n));
     claim(f.key, hit);
   }
   for (const f of FIELDS) { // pass 2: header contains a confident name
@@ -4129,8 +4153,9 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const inputRef = useRef();
   const client = ctx.clients.find((c) => c.id === clientId);
   const today = todayISO();
-  const applySheet = (sheets, i) => { const t = tableFromSheet(sheets[i].rows); const m = autoMap(t.headers); setSheetIdx(i); setTable(t); setMapping(m); return m; };
+  const applySheet = (sheets, i, row) => { const t = tableFromSheet(sheets[i].rows, row); const m = autoMap(t.headers); setSheetIdx(i); setTable(t); setMapping(m); return m; };
   const pickSheet = (sheets, i) => { applySheet(sheets, i); };
+  const pickHeaderRow = (row) => { if (file && file.sheets[sheetIdx]) applySheet(file.sheets, sheetIdx, row); };
   /* Columns recognised and the client already chosen: load at once. Otherwise ask where it goes (and show the columns if they were not recognised).
      Only a file whose key columns (claim number, patient, date of service, balance) were all recognised loads at once: one with no
      column Brahmastra can trust for the claim number or the balance stops at the column check, so claims are never merged by a
@@ -4145,7 +4170,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       const sheets = readWorkbook(buf, f.name);
       if (!sheets.length) throw new Error("No rows were found in this file.");
       setFile({ name: f.name, sheets, size: f.size });
-      afterPick(applySheet(sheets, 0));
+      afterPick(applySheet(sheets, bestInventorySheet(sheets)));
     } catch (e) { toast("Could not read the file: " + e.message, "err"); }
     setBusy(false);
   };
@@ -4156,7 +4181,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
       const sheets = readWorkbook(buf, name);
       if (!sheets.length) throw new Error("No rows were found in " + name + ".");
       setFile({ name, sheets, size: bytes.byteLength, source: "onedrive", webUrl });
-      afterPick(applySheet(sheets, 0));
+      afterPick(applySheet(sheets, bestInventorySheet(sheets)));
       setOdOpen(false);
     } catch (e) { toast("Could not read the file: " + e.message, "err"); }
     setBusy(false);
@@ -4272,7 +4297,13 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
         <div className="stack">
           <div className="row between">
             <div className="small"><b>{file.name}</b> · {plural(table.rows.length, "row")}{built ? <> · <b>{plural(built.summary.included, "claim")}</b> found</> : null}</div>
-            {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({plural(s.rows.length, "row")})</option>)}</select></Field>}
+            <div className="row" style={{ gap: 8, alignItems: "flex-end" }}>
+              {file.sheets.length > 1 && <Field label="Sheet"><select className="select sm" value={sheetIdx} onChange={(e) => pickSheet(file.sheets, +e.target.value)}>{file.sheets.map((s, i) => <option key={i} value={i}>{s.name} ({plural(s.rows.length, "row")})</option>)}</select></Field>}
+              {file.sheets[sheetIdx] && <Field label="Column names are in"><select className="select sm" value={table.headerRow} onChange={(e) => pickHeaderRow(+e.target.value)} title="The row of the sheet that holds the column names (Claim #, Patient name, ...)">
+                {file.sheets[sheetIdx].rows.slice(0, 40).map((r, i) => [r, i]).filter(([r]) => (r || []).some((c) => String(c).trim() !== "")).map(([r, i]) =>
+                  <option key={i} value={i}>{"Row " + (i + 1) + ": " + (r || []).map((c) => String(c).trim()).filter(Boolean).slice(0, 3).join(" | ").slice(0, 60)}</option>)}
+              </select></Field>}
+            </div>
           </div>
           <div className="grid g3">
             <ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={(v) => { setLocId(v); if (v) setLocMode("pick"); }} />

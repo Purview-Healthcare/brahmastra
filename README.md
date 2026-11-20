@@ -1352,7 +1352,12 @@ and the upload says how many dates it could not read (the EV upload leaves such 
 (`IG Claim ID#/Charge ID#`, `Claim ID`, `Patient Name`, `Payer`, `DOS`, `CPT`,
 `Provider`, `Balance Amount($)`, `Status`, `Sub Status`, `Action`,
 `Comments/Notes`, `Date Worked`, and the usual variants); when a claim column
-cannot be found the column check lets you point at the right ones. A longer header is taken for a key column only
+cannot be found the column check lets you point at the right ones. The row of column names is the one Brahmastra recognises
+best among the sheet's first 40 rows, so summary or title lines above the table are passed over; in a workbook of several
+sheets the sheet whose columns it recognises best is opened first. The column check shows **Sheet** and **Column names are
+in** (the row), to pick by hand when the file is laid out differently. A location column is matched as a whole word
+(Allocation type is no location); with both, Carrier Name is taken for the payer before Plan Name, and Aging Bucket for the
+bucket before Aging. A longer header is taken for a key column only
 when it really is one: Claim Submitted Date or Claim Type is no claim number, Account Balance no account number,
 Patient DOB no patient name, Next Visit Date no date of service and Paid Amount or Patient Balance no balance. A claim is recognised across uploads by its claim number, or,
 without one, by patient + date of service + payer + provider. A claim that came without a claim number gets a
