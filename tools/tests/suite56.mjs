@@ -207,12 +207,14 @@ ok("R4-G: the page keys and labels the rows by person (the Emp ID shows when two
 S("R4-H: a big floor's lists and counts are not cut at a fixed number");
 const hnow2 = Date.now(), seq = (n) => `WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < ${n})`;
 const anyClaim = (await poolOf(1, sun.id))[0];
+// what Needs you now already counts before these (the demo's own hand-offs past their TAT, which depends on today's date)
+const base0 = (await PIA("handoffs.dashboard", { dept: "posting", from_ms: hnow2 - 7 * 86400000, to_ms: hnow2 + 60000 })).attention_total || 0;
 // Needs you now: 350 open posting tasks past their TAT, then one waiting on the client, due last, whose chase date has come
 await sql(`${seq(350)} INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, assigned_to) SELECT 'ho-r4h-' || i, ?, ?, 'posting', 'assigned', ?, ? + i, ?, ? FROM s`,
   anyClaim, sun.id, hnow2 - 5 * 86400000, hnow2 - 4 * 86400000, U("Paula Post"), U("Paula Post"));
 await sql("INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, due_at, lead_id, chase_at, paused_at) VALUES (?,?,?,?,?,?,?,?,?,?)", "ho-r4h-chase", anyClaim, sun.id, "posting", "client", hnow2 - 86400000, hnow2 + 30 * 86400000, U("Paula Post"), hnow2 - 60000, hnow2 - 86400000);
 const dsh = await PIA("handoffs.dashboard", { dept: "posting", from_ms: hnow2 - 7 * 86400000, to_ms: hnow2 + 60000 });
-ok("R4-H: Needs you now counts every one (351), not the first 300 looked at, and lists the first 60", dsh.attention_total === 351 && dsh.attention.length === 60, [dsh.attention_total, dsh.attention.length]);
+ok("R4-H: Needs you now counts every one (351 more than before), not the first 300 looked at, and lists the first 60", dsh.attention_total === base0 + 351 && dsh.attention.length === 60, [base0, dsh.attention_total, dsh.attention.length]);
 ok("R4-H: the page says how many there are when it lists only the first 60", /The first \{fmtInt\(d\.attention\.length\)\} of \{fmtInt\(d\.attention_total\)\} by due time/.test(src));
 await sql("DELETE FROM handoffs WHERE id LIKE 'ho-r4h-%'");
 // a week of desk tasks over 20,000: the desk dashboard's days and the TAT counts take every one
