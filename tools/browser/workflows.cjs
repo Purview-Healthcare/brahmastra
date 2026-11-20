@@ -95,6 +95,9 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     const prev = p.locator('.main button:has-text("Preview allocation")').first();
     if (await prev.isDisabled()) { const boxes = p.locator('.main label:has-text("Arun Agent") input[type="checkbox"], .main tr:has-text("Arun Agent") input[type="checkbox"]'); if (await boxes.count()) await boxes.first().check(); await t(400); }
     await prev.click(); await t(1500);
+    // fewer claims than the team can take today: the pop-up asks first; keep the even split
+    const keep = p.locator('.overlay .modal:has-text("Today\'s inventory is less") button:has-text("Keep the even split")');
+    if (await keep.count()) { await keep.first().click(); await t(1200); }
     ok("Preview allocation shows the plan", await p.locator('.main button:has-text("Assign ")').count() > 0);
     await p.locator('.main button:has-text("Assign ")').first().click(); await t(2500);
     const pool1 = (await rpc("claims.list", { client_id: tok.sun, assigned_to: "__none", state: "open", page_size: 10 })).total;

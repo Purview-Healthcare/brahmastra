@@ -380,7 +380,7 @@ S("A-11: the allocation after loading shares the claims evenly");
   const run = async (name, rows, before) => { await newDay(); const cl = await mkClient(name); await A("clients.saveTeam", { client_id: cl.id, team: three.map((b) => b.id) }); if (before) await before(cl); await upload(cl, [HA, ...rows]);
     const al = await app.autoAllocate({ ctx: null, client: { id: cl.id }, loc: { id: cl.loc } }); return { cl, al, per: await perBiller(cl) }; };
   const a = await run("Made-up Clinic S35 A11", rowsOf(60, 9811000));
-  ok("A-11: 60 new claims and three billers (daily target 35, so 45 each today): 20 each, and the team lead is asked about the short day", a.al.applied === 60 && a.per.join() === "20,20,20" && !!a.al.short && a.al.short.room === 135, [a.al.applied, a.per]);
+  ok("A-11: 60 new claims and three billers (the client's AR target 40, so 50 each today): 20 each, and the team lead is asked about the short day", a.al.applied === 60 && a.per.join() === "20,20,20" && !!a.al.short && a.al.short.room === 150, [a.al.applied, a.per]);
   const payersOf = await q("SELECT assigned_to, COUNT(DISTINCT payer) AS n FROM claims WHERE client_id = ? GROUP BY assigned_to", a.cl.id);
   ok("A-11: payers stay batched inside each share (no biller has more than the two payers)", payersOf.every((r) => r.n <= 2) && payersOf.filter((r) => r.n === 1).length >= 2, payersOf);
   // a patient's claims stay with one biller
@@ -389,12 +389,12 @@ S("A-11: the allocation after loading shares the claims evenly");
   ok("A-11: 30 claims, 10 each, and the four claims of one patient go to one biller", b.per.join() === "10,10,10" && many.length === 1, [b.per, many.length]);
   // a smaller daily target: that biller gets their target and 10 more, the others share the rest evenly
   const capWas = (await q1("SELECT capacity FROM users WHERE id = ?", three[0].id)).capacity;
-  const c = await run("Made-up Clinic S35 A11 c", rowsOf(80, 9811200), async () => x("UPDATE users SET capacity = 10 WHERE id = ?", three[0].id));
+  const c = await run("Made-up Clinic S35 A11 c", rowsOf(80, 9811200), async (cl) => { await x("UPDATE users SET capacity = 10 WHERE id = ?", three[0].id); await x("UPDATE clients SET targets_json = '{}' WHERE id = ?", cl.id); });
   await x("UPDATE users SET capacity = ? WHERE id = ?", capWas, three[0].id);
-  ok("A-11: a biller with a daily target of 10 can take 20 (10 and 10 more); with 80 claims the other two share the other 60 (30 each)", c.per.join() === "20,30,30", c.per);
+  ok("A-11: a client without an AR target uses each person's own: a daily target of 10 can take 20; with 80 claims the other two share the other 60 (30 each)", c.per.join() === "20,30,30", c.per);
   // more claims than the team can take: each gets their daily target and 10 more, the rest stays in the pool (the owner's rule)
-  const d = await run("Made-up Clinic S35 A11 d", rowsOf(150, 9811400));
-  ok("A-11: 150 claims: 45 each (the daily target 35 and 10 more), 15 stay in the pool, no question asked", d.per.join() === "45,45,45" && d.al.applied === 135 && !d.al.short, [d.per, d.al.applied]);
+  const d = await run("Made-up Clinic S35 A11 d", rowsOf(160, 9811400));
+  ok("A-11: 160 claims: 50 each (the client's AR target 40 and 10 more), 10 stay in the pool, no question asked", d.per.join() === "50,50,50" && d.al.applied === 150 && !d.al.short, [d.per, d.al.applied]);
 }
 
 S("A-16: the Claims exports hold every claim, past 10,000");

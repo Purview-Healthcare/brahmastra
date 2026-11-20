@@ -10171,9 +10171,12 @@ const OPS = {
      day began, on any client; room: what they can still be given today (cap less given_today), so a second upload the same
      day tops them up instead of giving them a whole day's claims again. */
   "team.today": async ({ env, payload }) => {
-    const c = await one(env, "SELECT id, name, team_json, caps_json, roster_names_json FROM clients WHERE id = ?", payload.client_id);
+    const c = await one(env, "SELECT id, name, team_json, caps_json, roster_names_json, targets_json FROM clients WHERE id = ?", payload.client_id);
     if (!c) throw bad("Unknown client.");
     const day = isoDate(payload.day) || isoToday();
+    // the owner's rule: the client's AR follow-up target (its profile, "25 a day") is each biller's daily target on that client;
+    // a client without one uses the person's own (Team › Claims per day)
+    const arTarget = Math.round(Number(jsonObj(c.targets_json).ar) || 0);
     const loc = payload.location_id ? await one(env, "SELECT team_json FROM locations WHERE id = ? AND client_id = ?", str(payload.location_id, 60), c.id) : null;
     const ids = loc && parseTeam(loc.team_json).length ? parseTeam(loc.team_json) : parseTeam(c.team_json);
     const listed = ids.length ? await all(env, `SELECT * FROM users WHERE active = 1 AND id IN ${IN_LIST} ORDER BY name`, listArg(ids)) : [];
@@ -10196,7 +10199,7 @@ const OPS = {
     // the daily target is the person's own (Team › Claims per day), the one Team status counts; numbers once kept per client
     // (caps_json, no longer set anywhere on the page) are not used, so the limit is always the one the team lead sees
     const members = users.map((u) => { const p = jsonList(u.projects_json).find((x) => names.has(projKey(x.name)));
-      const target = Math.max(1, Math.round(Number(u.capacity) || 35)), cap = target + ALLOC_BUFFER, g = given.get(u.id) || 0;
+      const target = arTarget > 0 ? arTarget : Math.max(1, Math.round(Number(u.capacity) || 35)), cap = target + ALLOC_BUFFER, g = given.get(u.id) || 0;
       return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
         target, buffer: ALLOC_BUFFER, cap, given_today: g, room: Math.max(0, cap - g), on: on ? on.includes(u.id) : true }; });
     // on_ids: everyone ticked for the day (Allocate can tick people outside the project team too); caps: numbers set per person.
