@@ -2657,6 +2657,10 @@ const LIVE_IN = new Set(["present", "late", "break"]);
 /* The untouched claims (allocated, not started) of one biller, shared equally per client between the people on the
    client's team who are in today: logged in to Shastra (or, without Shastra, not marked out), highest priority first,
    one each in turn starting with the lightest desk. dry: only the plan. */
+/* Claims a person may be given in a day: their daily target (Team › Claims per day) and this many more, so they never run out of
+   work (the owner's rule: a daily target of 25 gets 35). When today's inventory is less than that for the whole team it is split
+   evenly, and the team lead may set each person's number by hand (alloc.resplit). */
+const ALLOC_BUFFER = 10;
 async function shareEqually(env, user, src, o) {
   const today = o.today || istISO(Date.now()), live = o.live || { state: "off", byUser: new Map() }, now = Date.now();
   const team = (await visibleUsers(env, user)).filter((u) => u.role === "user" && u.active && u.id !== src.id);
@@ -8240,6 +8244,41 @@ const OPS = {
     return { changed };
   },
 
+  /* The team lead's own numbers after a short allocation (today's inventory less than the team's daily target and ALLOC_BUFFER
+     each, so it was split evenly): each claim moves from the biller it was given to (from) to another biller on the client (to),
+     or back to the pool (no to). A claim moves only while it is still untouched on that biller's list (not open on their desk
+     right now, not moved since): the counts, the history and the bell say what really moved. */
+  "alloc.resplit": async ({ env, user, payload }) => {
+    const client_id = str(payload.client_id, 60);
+    if (!client_id) throw bad("Pick a client.");
+    const moves = (Array.isArray(payload.moves) ? payload.moves : []).filter((m) => m && typeof m === "object")
+      .map((m) => ({ id: str(m.id, 60), from: str(m.from, 60), to: m.to ? str(m.to, 60) : "" })).filter((m) => m.id && m.from && m.from !== m.to).slice(0, 2000);
+    if (!moves.length) throw bad("Nothing to move.");
+    for (const uid of new Set(moves.map((m) => m.to).filter(Boolean))) if (!(await billerFor(env, uid, client_id))) throw bad("Claims can only go to active billers on this client.");
+    const people = [...new Set(moves.flatMap((m) => [m.from, m.to]).filter(Boolean))];
+    const names = new Map((await all(env, `SELECT id, name FROM users WHERE id IN ${IN_LIST}`, listArg(people))).map((u) => [u.id, u.name]));
+    const now = Date.now();
+    const ran = await batchAll(env, moves.map((m) => (m.to
+      ? env.DB.prepare(`UPDATE claims SET assigned_to = ?, assigned_at = ?, skipped_at = NULL, updated_at = ? WHERE id = ? AND client_id = ? AND state = 'assigned' AND assigned_to = ?${editScopeSql(user, "client_id")} RETURNING id`)
+        .bind(m.to, now, now, m.id, client_id, m.from, ...editScopeArgs(user))
+      : env.DB.prepare(`UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, first_up = 0, updated_at = ? WHERE id = ? AND client_id = ? AND state = 'assigned' AND assigned_to = ?${editScopeSql(user, "client_id")} RETURNING id`)
+        .bind(now, m.id, client_id, m.from, ...editScopeArgs(user)))), 50);
+    const made = moves.filter((m, i) => ((ran[i] && ran[i].results) || []).length);
+    if (made.length) await batchAll(env, made.map((m) => (m.to ? claimEvent(env, m.id, user, "assigned", names.get(m.to) || "", { from: names.get(m.from) || "", via: "own" })
+      : claimEvent(env, m.id, user, "unassigned", names.get(m.from) || ""))), 50);
+    const gotN = new Map(), lostN = new Map();
+    for (const m of made) { lostN.set(m.from, (lostN.get(m.from) || 0) + 1); if (m.to) gotN.set(m.to, (gotN.get(m.to) || 0) + 1); }
+    const cname = ((await one(env, "SELECT name FROM clients WHERE id = ?", client_id)) || {}).name || "";
+    await noticeAlloc(env, [...gotN.entries()], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}${cname ? " (" + cname + ")" : ""}.`);
+    // the billers who had them are told (the bell), so a shorter list is no surprise
+    if (lostN.size) await batchAll(env, [...lostN.entries()].map(([uid, n]) => env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)")
+      .bind(uuid(), uid, now, str(`${n} claim${n === 1 ? " was" : "s were"} taken off your list: today's inventory is less, so ${user.name || "your team lead"} set how many each person gets${cname ? " (" + cname + ")" : ""}.`, 300), "queue", client_id)), 50);
+    const moved = made.filter((m) => m.to).length, back = made.length - moved, skipped = moves.length - made.length;
+    await audit(env, user, "alloc.resplit", client_id, `Own numbers after a short allocation: ${moved} claim${moved === 1 ? "" : "s"} moved to another biller, ${back} back to the pool`
+      + (skipped ? `, ${skipped} left where ${skipped === 1 ? "it was" : "they were"} (opened or moved already)` : ""));
+    return { moved, back, skipped, done: made.map((m) => m.id) };
+  },
+
   /* ---- the user's queue ---- */
   "queue.summary": async ({ env, user, payload }) => {
     const today = isoDate(payload.today) || isoToday();
@@ -10126,8 +10165,11 @@ const OPS = {
   },
 
   /* ---- the day's team for a project: who receives claims today, and how many each ---- */
-  /* Who gets this client's (or location's) claims today: its people (the location's own team when it has one), each up
-     to their daily target, minus anyone marked out today in Team today. */
+  /* Who gets this client's (or location's) claims today: its people (the location's own team when it has one), minus anyone
+     marked out today in Team today, each up to their daily target and ALLOC_BUFFER more for the day. target: the daily target
+     (Team › Claims per day); cap: the day's limit (target + ALLOC_BUFFER); given_today: claims given to them since their working
+     day began, on any client; room: what they can still be given today (cap less given_today), so a second upload the same
+     day tops them up instead of giving them a whole day's claims again. */
   "team.today": async ({ env, payload }) => {
     const c = await one(env, "SELECT id, name, team_json, caps_json, roster_names_json FROM clients WHERE id = ?", payload.client_id);
     if (!c) throw bad("Unknown client.");
@@ -10144,12 +10186,19 @@ const OPS = {
     const saved = await one(env, "SELECT a.on_json, a.at, u.name AS by_name FROM availability a LEFT JOIN users u ON u.id = a.by_user WHERE a.client_id = ? AND a.day = ?", c.id, day);
     const on = saved ? jsonList(saved.on_json) : null;
     const names = new Set(jsonList(c.roster_names_json).map(projKey));
+    // what each was given today: claims on them since their own working day began (a night shift's day is the one it began)
+    const now = Date.now(), fromOf = new Map(users.map((u) => [u.id, workDayOf(u.shift, now, istISO(now)).from])), given = new Map();
+    if (users.length) for (const r of await all(env, `SELECT assigned_to, assigned_at FROM claims WHERE assigned_to IN ${IN_LIST} AND assigned_at >= ?`, listArg(users.map((u) => u.id)), Math.min(...fromOf.values())))
+      if (r.assigned_at >= fromOf.get(r.assigned_to)) given.set(r.assigned_to, (given.get(r.assigned_to) || 0) + 1);
+    // the daily target is the person's own (Team › Claims per day), the one Team status counts; numbers once kept per client
+    // (caps_json, no longer set anywhere on the page) are not used, so the limit is always the one the team lead sees
     const members = users.map((u) => { const p = jsonList(u.projects_json).find((x) => names.has(projKey(x.name)));
+      const target = Math.max(1, Math.round(Number(u.capacity) || 35)), cap = target + ALLOC_BUFFER, g = given.get(u.id) || 0;
       return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
-        cap: caps[u.id] != null ? caps[u.id] : u.capacity, cap_set: caps[u.id] != null, on: on ? on.includes(u.id) : true }; });
+        target, buffer: ALLOC_BUFFER, cap, given_today: g, room: Math.max(0, cap - g), on: on ? on.includes(u.id) : true }; });
     // on_ids: everyone ticked for the day (Allocate can tick people outside the project team too); caps: numbers set per person.
     const out = new Set(ids.length ? (await all(env, `SELECT user_id FROM attendance WHERE day = ? AND status = 'out' AND user_id IN ${IN_LIST}`, day, listArg(ids))).map((r) => r.user_id) : []);
-    members.forEach((m) => { m.out = out.has(m.id); m.cap = m.cap || 35; });
+    members.forEach((m) => { m.out = out.has(m.id); });
     return { client: { id: c.id, name: c.name }, day, members, on_ids: on, caps, saved: saved ? { at: saved.at, by_name: saved.by_name || "" } : null };
   },
   "team.saveToday": async ({ env, user, payload }) => {

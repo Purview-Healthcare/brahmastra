@@ -56,7 +56,7 @@ S("Allocation: every biller gets the same number of claims");
   const s4 = app.evenShares(team, (u) => u.cap, 152);
   ok("when it does not divide, some get one more (31, 31, 30, 30, 30)", Object.values(s4).sort().join(",") === "30,30,30,31,31", s4);
   const src = (await import("fs")).readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
-  ok("the Allocate screen and the upload's own allocation both use the even split", (src.match(/evenShares\(/g) || []).length >= 3 && /capacity: shareIn\[m\.id\]/.test(src));
+  ok("the Allocate screen and the upload's own allocation both use the even split", (src.match(/evenShares\(/g) || []).length >= 3 && /: shareIn\[m\.id\] \}\)\);/.test(src));
 }
 
 const failed = results.filter((x) => !x.pass);

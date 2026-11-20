@@ -986,12 +986,27 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   to (or a new client). Matching it to any other client is the admin's call
   (Roster). Every match is in the audit trail.
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
-  when it has one), minus anyone marked **Out today** on Live status. The claims are split evenly between them, never
-  more than each one's daily target (what one cannot take is shared by the others), so everyone gets the same number,
-  one more for some when it does not divide; claims of one patient or payer are kept together inside each share.
-  Automatic allocation after an upload and the Allocate screen both use that; there is no daily ticking. Someone on a
-  location's own team who no longer works the client (Shastra moved them to another client, or a share of it was
-  taken back or made view only) is left out, so every claim goes to the people who do.
+  when it has one), minus anyone marked **Out today** on Live status. Each person can be given their daily target
+  (Claims per day on Team) and 10 more in a day, less what they were given that day already, on any client: a daily
+  target of 25 gets 35, and a second upload the same day tops people up to that instead of giving them a whole day's
+  claims again (the day is the person's working day, as My day counts it). The claims are split evenly between them,
+  never more than that (what one cannot take is shared by the others), so everyone gets the same number, one more for
+  some when it does not divide; claims of one patient or payer are kept together inside each share. More claims than
+  the team can take: each gets their limit and the rest stays in the pool. Automatic allocation after an upload and
+  the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
+  the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
+  so every claim goes to the people who do.
+- **Today's inventory is less** than the team can take (30 claims for 3 people with a daily target of 25, who could
+  take 105): the claims are still split evenly (10 each), and the team lead is asked in a pop-up whether to set each
+  person's number by hand instead, so someone given fewer claims, or none, can be given other tasks. After an upload
+  (and Allocate now on Locations) the even split is already on the lists: the team lead's numbers move the claims
+  (`alloc.resplit`), the lowest priority ones of whoever is over their number, a patient's claims kept together where
+  someone has room for them; numbers that add up to less send the rest back to the pool. A claim moves only while it
+  is still untouched on the list it was given to (never one open on a desk, or moved by someone else since). Whoever
+  gets claims, or loses them, is told in the bell; each claim's history says "team lead's own numbers" and the audit
+  trail (Allocation) keeps the counts. On Allocate nothing is assigned yet: Preview asks first, and the numbers go into
+  the preview (Change, or Back to the even split, until it is assigned). The pop-up is offered once per upload line;
+  "Set the numbers myself" on the line (or on Allocate) opens it again.
 - Roster people sign in only with a Purview email, or an address the admin
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in
   Shastra, or past their exit date, are switched off and their open claims go back
@@ -1332,9 +1347,10 @@ Automate OneDrive or from the computer, done. When the file's claim number,
 patient, date of service and balance columns are recognised the claims load at
 once; a file where any of them is not recognised stops at a column check, which
 names the ones not found. As soon as the claims load they are handed to the
-billers mapped to that location (evenly, each up to their daily target, highest
-priority first, patients and payers kept together inside each share) unless you
-untick "Allocate after loading"; a team lead
+billers mapped to that location (evenly, each up to their daily target and 10 more for
+the day, highest priority first, patients and payers kept together inside each share)
+unless you untick "Allocate after loading"; when the file has fewer claims than the team
+can take, a pop-up offers the team lead their own numbers for each person; a team lead
 can move them afterwards on Allocate or Claims.
 
 - **Fresh inventory**: claims never worked. New claims are added; claims already

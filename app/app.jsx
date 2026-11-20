@@ -683,12 +683,58 @@ const STRATEGIES = [
   { key: "round_robin", label: "Straight priority, round robin", desc: "Top priority first, dealt evenly across the team. No batching." },
   { key: "even_dollars", label: "Balance the dollars", desc: "Each claim goes to whoever holds the least AR so far." },
 ];
-/* Each person's share of n claims: an even split, never more than their daily target; what one cannot take is shared by the
-   others. So everyone gets the same number (one more for some when it does not divide), whatever the order or grouping. */
+/* Each person's share of n claims: an even split, never more than what they can take (capOf); what one cannot take is shared by
+   the others. So everyone gets the same number (one more for some when it does not divide), whatever the order or grouping. */
 function evenShares(users, capOf, n) {
   const share = {}; let left = n;
   [...users].sort((a, b) => capOf(a) - capOf(b)).forEach((u, i, all) => { share[u.id] = Math.min(capOf(u), Math.ceil(left / (all.length - i))); left -= share[u.id]; });
   return share;
+}
+/* What a person on the day's team (team.today) can still be given today: their daily target and 10 more (ALLOC_BUFFER on the
+   server), less the claims given to them today already. A server older than the page sends the daily target alone (cap). */
+function roomOf(m) { return Math.max(0, Math.round(m && m.room != null ? Number(m.room) || 0 : Number(m && m.cap) || 35)); }
+/* "10 each" or "10 or 11 each": the even split of a short day, in words. */
+function evenWords(counts) { const v = counts.filter((n) => n > 0); if (!v.length) return "none each"; const lo = Math.min(...v), hi = Math.max(...v);
+  return (lo === hi ? fmtInt(lo) : fmtInt(lo) + " or " + fmtInt(hi)) + (v.length < counts.length ? " each for " + v.length + " of them" : " each"); }
+/* The moves that take an allocation's claims (owner: claim id → person) to the team lead's own numbers (want: person → claims),
+   changing as little as possible: whoever is over their number gives back their lowest priority claims (all of a patient's
+   together when they fit); those go to whoever is under theirs, a patient's claims to one person and a payer's kept together
+   where there is room; what nobody takes goes back to the pool (to: null). */
+function resplitMoves({ claims, owner, want }) {
+  const mine = new Map(), wantOf = (p) => Math.max(0, Math.round(Number(want[p]) || 0));
+  claims.forEach((c) => { const o = owner[c.id]; if (o) { if (!mine.has(o)) mine.set(o, []); mine.get(o).push(c); } });
+  const pk = (c) => normKey(c.account_no || c.patient || "") || "#" + c.id;
+  const released = [];
+  for (const [p, list] of mine) {
+    let need = list.length - wantOf(p);
+    if (need <= 0) continue;
+    const asc = [...list].sort((a, b) => (a.priority || 0) - (b.priority || 0) || (a.balance || 0) - (b.balance || 0));
+    const groups = new Map(); asc.forEach((c) => { const k = pk(c); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); });
+    const out = new Set();
+    for (const c of asc) { if (need <= 0) break; if (out.has(c.id)) continue; const g = groups.get(pk(c)).filter((x) => !out.has(x.id)); if (g.length <= need) { g.forEach((x) => out.add(x.id)); need -= g.length; } }
+    for (const c of asc) { if (need <= 0) break; if (!out.has(c.id)) { out.add(c.id); need--; } }
+    asc.filter((c) => out.has(c.id)).forEach((c) => released.push({ c, from: p }));
+  }
+  const keeps = (p) => (mine.get(p) || []).length - released.filter((r) => r.from === p).length;
+  const left = new Map(Object.keys(want).map((id) => [id, wantOf(id) - keeps(id)]).filter(([, n]) => n > 0)), to = new Map();
+  // what nobody takes goes back to the pool: the lowest priority of the claims given back
+  const room = [...left.values()].reduce((t, n) => t + n, 0);
+  const placed = [...released].sort((a, b) => (b.c.priority || 0) - (a.c.priority || 0) || (b.c.balance || 0) - (a.c.balance || 0)).slice(0, room).map((r) => r.c);
+  // all of a patient's claims to one person when someone has room for them (bigger patients first, the tightest room that fits)
+  const groups = new Map(); placed.forEach((c) => { const k = pk(c); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); });
+  for (const g of [...groups.values()].filter((x) => x.length > 1).sort((a, b) => b.length - a.length)) {
+    let t = null; for (const [id, n] of left) if (n >= g.length && (!t || n < left.get(t))) t = id;
+    if (t) { g.forEach((c) => to.set(c.id, t)); left.set(t, left.get(t) - g.length); }
+  }
+  // the others by payer: each payer's claims to one person while they have room, then to whoever has the most room left
+  const most = () => { let b = null; for (const [id, n] of left) if (n > 0 && (!b || n > left.get(b))) b = id; return b; };
+  let cur = null, curPayer = null;
+  for (const c of placed.filter((x) => !to.has(x.id)).sort((a, b) => String(a.payer || "").localeCompare(String(b.payer || "")) || (b.priority || 0) - (a.priority || 0))) {
+    if (!(cur && left.get(cur) > 0 && c.payer === curPayer)) { cur = most(); curPayer = c.payer; }
+    if (!cur) break;
+    to.set(c.id, cur); left.set(cur, left.get(cur) - 1);
+  }
+  return released.map((r) => ({ id: r.c.id, from: r.from, to: to.get(r.c.id) || null }));
 }
 function planAllocation({ claims, users, strategy }) {
   const sorted = [...claims].sort((a, b) => b.priority - a.priority || b.balance - a.balance);
@@ -3764,24 +3810,83 @@ function PinFolderModal({ me, current, onClose, onSaved }) {
 
 /* ---------- automatic allocation: every open claim of a client / location goes to the billers mapped to it ---------- */
 async function autoAllocate({ ctx, client, loc }) {
-  // The client's people (the location's own team when it has one), minus anyone out today, each up to their daily target.
+  // The client's people (the location's own team when it has one), minus anyone out today, each up to their daily target and
+  // 10 more for the day, less what they were given today already.
   let dt = null; try { dt = await rpc("team.today", { client_id: client.id, location_id: loc ? loc.id : undefined, day: todayISO() }); } catch (e) {}
   const members = dt ? dt.members : [];
   const users = members.filter((m) => !m.out);
-  const capOf = Object.fromEntries(members.map((m) => [m.id, Number(m.cap) || 35]));
   const offToday = new Set(members.filter((m) => m.out).map((m) => m.id));
   if (!users.length) return { applied: 0, perUser: [], reason: offToday.size ? "everyone on the client is out today" : "no people on the client yet" };
   const today = todayISO();
   const el = await rpc("claims.eligible", { client_id: client.id, location_id: loc ? loc.id : undefined });
   const pool = rescore(el.claims.filter((c) => (loc ? c.location_id === loc.id : !c.location_id)), today);
   if (!pool.length) return { applied: 0, perUser: [], reason: "no open claims" };
-  // An even share of the pool for each person, never more than their daily target (what one cannot take is shared by the others);
-  // patients and payers are kept together inside each share.
-  const share = evenShares(users, (u) => capOf[u.id], pool.length);
+  const room = sum(users, roomOf);
+  if (!room) return { applied: 0, perUser: [], reason: "everyone has been given their daily target and 10 more today" };
+  // An even share of the pool for each person, never more than they can still take today (what one cannot take is shared by the
+  // others); patients and payers are kept together inside each share.
+  const share = evenShares(users, roomOf, pool.length);
   const plan = planAllocation({ claims: pool, users: users.map((u) => ({ id: u.id, name: u.name, capacity: share[u.id] })), strategy: "smart" });
   let applied = 0;
   for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: client.id, location_id: loc ? loc.id : undefined, strategy: "auto", assignments: part, summary: { auto: true, perUser: plan.perUser } }); applied += r.applied; }
-  return { applied, perUser: plan.perUser };
+  // Today's inventory is less than the team can take: it was split evenly, and the team lead is asked whether to set each
+  // person's number by hand instead (someone given fewer claims, or none, can be given other tasks).
+  const owner = Object.fromEntries(plan.assignments.map((a) => [a.id, a.user_id]));
+  const short = pool.length < room && applied ? { total: pool.length, room, claims: pool.filter((c) => owner[c.id]), owner,
+    people: users.map((u) => ({ id: u.id, name: u.name, target: u.target, cap: u.cap, given: u.given_today || 0, room: roomOf(u), got: (plan.perUser.find((p) => p.id === u.id) || {}).count || 0 })) } : null;
+  return { applied, perUser: plan.perUser, short };
+}
+
+/* Today's inventory is less than the team can take (each person's daily target and 10 more): the claims are split evenly, and the
+   team lead may set each person's number by hand instead, so someone given fewer claims (or none) can be given other tasks.
+   short: what autoAllocate returns (total claims, people with target / limit / given today / got). after: the even split is on
+   their lists already (the allocation after an upload): Apply moves the claims (alloc.resplit) and onDone gets the new counts.
+   Otherwise nothing is assigned yet (Allocate): onUse gets the numbers for the preview. editing: opens on the numbers. */
+function ShortInventoryModal({ where, short, after, clientId, locId, editing, onKeep, onUse, onDone, onClose }) {
+  const people = short.people;
+  const [edit, setEdit] = useState(!!editing);
+  const [nums, setNums] = useState(() => Object.fromEntries(people.map((p) => [p.id, String(p.got)])));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const numOf = (id) => { const t = String(nums[id] == null ? "" : nums[id]).trim(); return /^\d{1,4}$/.test(t) ? Number(t) : NaN; };
+  const given = people.reduce((t, p) => t + (Number.isNaN(numOf(p.id)) ? 0 : numOf(p.id)), 0);
+  const problem = people.some((p) => Number.isNaN(numOf(p.id))) ? "Type a whole number for each person (0 for none)."
+    : given > short.total ? `That is ${plural(given, "claim")}, and there are only ${fmtInt(short.total)}.` : !given ? "Give the claims to at least one person." : "";
+  const anyGiven = people.some((p) => p.given > 0), hasTarget = people.some((p) => p.target != null);
+  const apply = async () => {
+    const want = Object.fromEntries(people.map((p) => [p.id, numOf(p.id)]));
+    if (!after) { onUse(want); return; }
+    const moves = resplitMoves({ claims: short.claims, owner: short.owner, want });
+    if (!moves.length) { onClose(); return; }
+    setBusy(true); setErr(null);
+    try {
+      let r = { moved: 0, back: 0, skipped: 0, done: [] };
+      for (const part of chunk(moves, 1000)) { const x = await rpc("alloc.resplit", { client_id: clientId, location_id: locId || undefined, moves: part }); r = { moved: r.moved + x.moved, back: r.back + x.back, skipped: r.skipped + x.skipped, done: r.done.concat(x.done || []) }; }
+      const done = new Set(r.done), owner = { ...short.owner };
+      moves.forEach((m) => { if (done.has(m.id)) { if (m.to) owner[m.id] = m.to; else delete owner[m.id]; } });
+      toast(`Done: ${plural(r.moved, "claim")} moved${r.back ? ", " + fmtInt(r.back) + " back to the pool" : ""}${r.skipped ? `; ${plural(r.skipped, "claim")} had been opened or moved already and stayed where ${r.skipped === 1 ? "it was" : "they were"}` : ""}.`);
+      onDone(owner);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  const split = people.map((p) => p.got);
+  return (
+    <Modal title="Today's inventory is less" sub={`${where}: ${plural(short.total, "claim")} for ${plural(people.length, "person", "people")}, who can take ${fmtInt(short.room)} today (each one's daily target and 10 more).`}
+      onClose={busy ? undefined : onClose} footer={edit
+        ? <><button className="btn" disabled={busy} onClick={() => (editing ? onClose() : setEdit(false))}>{editing ? "Cancel" : "Back"}</button><button className="btn primary" disabled={busy || !!problem} onClick={apply}>{busy ? "Moving the claims…" : after ? "Apply these numbers" : "Use these numbers"}</button></>
+        : <><button className="btn" onClick={() => setEdit(true)}>Set the numbers myself</button><button className="btn primary" onClick={onKeep}>Keep the even split</button></>}>
+      <div className="stack">
+        {!edit && <div>{after ? "The claims were split evenly: " : "Split evenly, that is "}<b>{evenWords(split)}</b>.</div>}
+        <div className="table-wrap"><table className="t"><thead><tr><th>Person</th>{hasTarget && <th className="r">Daily target</th>}<th className="r">Limit today</th>{anyGiven && <th className="r">Given today</th>}<th className="r">{edit ? "Claims" : after ? "Got" : "Gets"}</th></tr></thead>
+          <tbody>{people.map((p) => { const v = numOf(p.id); return <tr key={p.id}><td><b>{p.name}</b></td>{hasTarget && <td className="num">{p.target != null ? fmtInt(p.target) : "–"}</td>}<td className="num">{fmtInt(p.cap != null ? p.cap : p.room)}</td>{anyGiven && <td className="num">{fmtInt(p.given)}</td>}
+            <td className="num">{edit ? <><input className="input sm" style={{ width: 80, textAlign: "right" }} inputMode="numeric" aria-label={"Claims for " + p.name} value={nums[p.id]} disabled={busy} onChange={(e) => setNums({ ...nums, [p.id]: e.target.value })} />
+              {!Number.isNaN(v) && v > p.room && <div className="tiny amber-ink">above today's limit ({fmtInt(p.room)})</div>}</> : fmtInt(p.got)}</td></tr>; })}</tbody></table></div>
+        {edit ? <div className="small">{fmtInt(given)} of {plural(short.total, "claim")} given out{given < short.total && !problem ? ` · ${fmtInt(short.total - given)} ${after ? "go back to the pool" : "stay in the pool"}` : ""}.{problem && <div className="red-ink">{problem}</div>}</div>
+          : <div className="small">Do you want to set the number of claims for each person yourself? Someone given fewer claims, or none, can be given other tasks.</div>}
+        {edit && after && <div className="tiny muted">Claims move only while they are still untouched on a biller's list. Whoever gets claims, or loses them, is told in the bell.</div>}
+        <ErrorBox error={err} />
+      </div>
+    </Modal>
+  );
 }
 
 
@@ -3930,18 +4035,20 @@ function LocationsView({ ctx, reload, go, embedded }) {
     catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
+  const [short, setShort] = useState(null);   // { short, where, client_id }: fewer claims than the team can take today
   const allocateNow = async (r) => {
     setBusy(r.key);
     try {
       const team = get(r).team;
       const res = await autoAllocate({ ctx, client: { ...r.client, team: r.loc ? r.client.team : team }, loc: r.loc ? { ...r.loc, team } : null });
       toast(res.applied ? `Assigned ${plural(res.applied, "claim")}: ` + res.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)}`).join(", ") : "Nothing to assign: " + (res.reason || "no open claims") + ".");
+      if (res.short) setShort({ short: res.short, where: r.client.name + (r.loc ? " · " + r.loc.name : ""), client_id: r.client.id });
     } catch (e) { toast(e.message, "err"); }
     setBusy(null);
   };
   return (
     <div className="stack">
-      <div>{!embedded && <h1>Locations</h1>}<div className="sub">Map billers to each client and location. When inventory is loaded for a location, its open claims are handed to these billers at once (evenly, highest priority first, patients and payers kept together). A team lead can still move claims on Allocate or Claims.</div></div>
+      <div>{!embedded && <h1>Locations</h1>}<div className="sub">Map billers to each client and location. When inventory is loaded for a location, its open claims are handed to these billers at once (evenly, each up to their daily target and 10 more for the day, highest priority first, patients and payers kept together). A team lead can still move claims on Allocate or Claims.</div></div>
       {!rows.length && <div className="card"><Empty>No clients yet. <button className="btn link sm" onClick={() => go("clients")}>Add clients and locations</button> first.</Empty></div>}
       {rows.length > 0 && (
         <div className="card tight">
@@ -3957,6 +4064,7 @@ function LocationsView({ ctx, reload, go, embedded }) {
         </div>
       )}
       <div className="small muted">Tip: a location without billers falls back to the client-level billers. Claims already on someone's desk are never moved by automatic allocation. Billers from the roster are added to their projects automatically; Today's team sets who works a project today.</div>
+      {short && <ShortInventoryModal where={short.where} short={short.short} after clientId={short.client_id} onKeep={() => setShort(null)} onClose={() => setShort(null)} onDone={() => { setShort(null); reload(); }} />}
     </div>
   );
 }
@@ -4150,6 +4258,11 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
   const [over, setOver] = useState(false);
   const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
+  // a location whose claims were fewer than its team can take today: the pop-up that offers the team lead their own numbers
+  // (index in result; each short location is offered once, one after another, and can be opened again from its line)
+  const [shortAt, setShortAt] = useState(null);   // { i, edit }: edit opens it on the numbers (Set the numbers myself on the line)
+  const shortSeen = useRef(new Set());
+  const nextShort = (rows) => { const i = (rows || []).findIndex((r, k) => r.assigned && r.assigned.short && !shortSeen.current.has(k)); if (i >= 0) shortSeen.current.add(i); setShortAt(i >= 0 ? { i, edit: false } : null); };
   const [leftOut, setLeftOut] = useState([]);   // rows for a switched-off location: left out, never loaded
   const [stopped, setStopped] = useState(null);   // a load that stopped half way: the server's message and the claims loaded before it
   // this person's uploads that did not finish (the page was closed, reloaded or cut off while it loaded) and were not loaded again since
@@ -4249,12 +4362,19 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
         done++;
       }
       setResult(results); setLeftOut(off); setProgress(1);
+      shortSeen.current = new Set(); nextShort(results);
       toast(!live.length ? "Nothing was loaded: the location is switched off." : off.length ? "Inventory loaded. Some rows were left out: see below." : "Inventory loaded.", live.length ? "ok" : "err");
       reload();
     } catch (e) { toast(e.message, "err"); setStopped({ msg: e.message, loaded: loaded + (e.loaded || 0) }); setProgress(null); if (loaded + (e.loaded || 0)) reload(); }
     setBusy(false);
   };
-  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setLeftOut([]); setProgress(null); setStopped(null); mineQ.reload(); };
+  const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setShortAt(null); setLeftOut([]); setProgress(null); setStopped(null); mineQ.reload(); };
+  // the team lead's own numbers were applied: the line shows each person's new count and amount
+  const resplitDone = (i, owner) => setResult((rows) => rows.map((r, k) => { if (k !== i) return r;
+    const a = r.assigned, cl = a.short.claims, count = {}, amt = {};
+    cl.forEach((c) => { const o = owner[c.id]; if (o) { count[o] = (count[o] || 0) + 1; amt[o] = (amt[o] || 0) + (Number(c.balance) || 0); } });
+    const perUser = a.perUser.map((u) => ({ ...u, count: count[u.id] || 0, amt: amt[u.id] || 0 }));
+    return { ...r, assigned: { ...a, applied: sum(perUser, (u) => u.count), perUser, own: true, short: { ...a.short, owner, people: a.short.people.map((p) => ({ ...p, got: count[p.id] || 0 })) } } }; }));
   const downloadSample = (k) => {
     const rows = makeSampleRows({ kind: k, seed: k === "worked" ? 5 : 3, count: 120, today });
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -4363,8 +4483,12 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
               {result.length > 0 && <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>}
               {leftOut.map((x) => <div key={x.location} className="alert warn"><b>{x.location}: {plural(x.rows, "row")} left out.</b> {x.location} is switched off because the team stopped working it, so nothing was loaded into it. If the work starts again, switch it on in Clients &amp; locations, then upload the file again. <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => go("clients", { client_id: clientId })}>Open Clients &amp; locations</button></div>)}
               {built && built.summary.datesUnread > 0 && <div className="alert warn">{plural(built.summary.datesUnread, "date")} in the file could not be read (no year or no day, as in 26-Oct, or not a date) and {built.summary.datesUnread === 1 ? "was" : "were"} left empty. Check the date columns in the file.</div>}
-              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
+              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.
+                {r.assigned.short && <div className="small" style={{ marginTop: 4 }}>{r.assigned.own ? "Today's inventory is less than the team can take: you set each person's number." : `Today's inventory is less than the team can take (${fmtInt(r.assigned.short.room)} today, each one's daily target and 10 more), so it was split evenly.`} <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => setShortAt({ i, edit: true })}>Set the numbers myself</button></div>}</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
+              {shortAt && result[shortAt.i] && result[shortAt.i].assigned && result[shortAt.i].assigned.short && (() => { const k = shortAt.i, r = result[k];
+                return <ShortInventoryModal key={k + ":" + shortAt.edit + ":" + (r.assigned.own ? "own" : "even")} where={(client ? client.name : "") + (r.location && r.location !== "(no location)" ? " · " + r.location : "")} short={r.assigned.short} after clientId={clientId}
+                  editing={shortAt.edit} onKeep={() => nextShort(result)} onClose={() => nextShort(result)} onDone={(owner) => { resplitDone(k, owner); nextShort(result); reload(); }} />; })()}
             </>
           )}
         </div>
@@ -4460,7 +4584,9 @@ function AllocationLogicButton() {
               <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
                 <li>Claims are taken in score order, highest first.</li>
                 <li>A patient with 2+ claims goes to one biller as a batch; other claims are grouped by payer, so one biller calls one payer.</li>
-                <li>Each claim goes to the biller with the most capacity left (claims per day on the Team screen); ties go to whoever has fewer so far.</li>
+                <li>Each person can be given their daily target (Claims per day on the Team screen) and 10 more in a day, less what they were given that day already: a daily target of 25 gets 35.</li>
+                <li>The claims are split evenly between the people in today, never more than that; each claim goes to the biller with the most room left; ties go to whoever has fewer so far.</li>
+                <li>Fewer claims than the team can take: they are still split evenly (30 claims for 3 people: 10 each), and the team lead is asked whether to set each person's number by hand, so someone given fewer, or none, can be given other tasks.</li>
                 <li>Automatic allocation after an upload uses the billers mapped on the Locations tab and splits evenly between them.</li>
                 <li>Claims already on someone's desk are never moved automatically; a team lead can move them on Allocate or Claims.</li>
               </ul></div>
@@ -5857,7 +5983,7 @@ function HistEvent({ it, onEdit, onFile }) {
     case "returned": dot = D("#EEF1F0", "↩"); title = "Put back on the list" + who; break;
     case "opened": dot = D("#FDF2D9", "✏️"); title = "Opened" + who; body = it.text ? <div className="m">{it.text}</div> : null; break;
     case "file": dot = D("#EEE7FB", "📎"); title = "File attached" + who; body = <div className="x"><button className="btn sm link" style={{ padding: 0 }} onClick={() => onFile && onFile(it.file)}>📄 {it.file.name}</button> <span className="tiny muted">· {fmtBytes(it.file.size)}</span></div>; break;
-    case "assigned": dot = D("#E4EEFA", "👤"); title = "Assigned to " + (it.text || "someone"); body = <>{(it.who || (it.data && it.data.via)) && <div className="m">{it.who ? "by " + it.who : ""}{it.data && it.data.via ? (it.who ? " · " : "") + ({ smart: "Allocate", auto: "auto allocation", reassign: "reassigned", allocate: "Allocate" }[it.data.via] || it.data.via) : ""}</div>}{it.data && it.data.from ? <div className="chg">Assigned: <s>{it.data.from}</s> → <b>{it.text}</b></div> : null}</>; break;
+    case "assigned": dot = D("#E4EEFA", "👤"); title = "Assigned to " + (it.text || "someone"); body = <>{(it.who || (it.data && it.data.via)) && <div className="m">{it.who ? "by " + it.who : ""}{it.data && it.data.via ? (it.who ? " · " : "") + ({ smart: "Allocate", auto: "auto allocation", reassign: "reassigned", allocate: "Allocate", own: "team lead's own numbers (short inventory)" }[it.data.via] || it.data.via) : ""}</div>}{it.data && it.data.from ? <div className="chg">Assigned: <s>{it.data.from}</s> → <b>{it.text}</b></div> : null}</>; break;
     case "unassigned": dot = D("#EEF1F0", "👤"); title = "Unassigned" + (it.text ? " from " + it.text : "") + who; break;
     case "state": dot = D("#EEF1F0", "⇄"); title = "State changed" + who; body = <><Changes changes={it.changes} />{it.text ? <div className="m">{it.text}</div> : null}</>; break;
     case "loaded": dot = D("#EEF1F0", "⤴"); title = "Loaded from inventory"; body = <><div className="m">{[it.text, it.who ? "by " + it.who : ""].filter(Boolean).join(" · ")}</div>{it.data && it.data.file_status ? <div className="x">File said: {it.data.file_status}</div> : null}</>; break;
@@ -6874,15 +7000,23 @@ function AllocateView({ ctx, params, go, embedded }) {
   };
   useEffect(() => { poolAsk.current++; setPool(null); setPlan(null); setApplied(null); setLoading(false); if (clientId) loadPool(); }, [clientId, locId]);
   // Who gets the claims: the client's people (the location's own team when it has one), minus anyone out today in
-  // Team today, each up to their daily target. People are changed on the client card.
+  // Team today, each up to their daily target and 10 more for the day (less what they were given today already). People are
+  // changed on the client card.
   const [members, setMembers] = useState(null);
+  // fewer claims than the team can take today: the team lead's own numbers (person → claims) instead of the even split, and
+  // whether the pop-up was answered for this client / location (it is not asked again on every preview)
+  const [manual, setManual] = useState(null);
+  const [shortAsk, setShortAsk] = useState(null);   // null, or { edit } while the pop-up is open
+  const shortAnswered = useRef(false);
+  const [teamTick, setTeamTick] = useState(0);   // read the day's team again after claims are given out or returned (given today)
   useEffect(() => {
+    setManual(null); setShortAsk(null); shortAnswered.current = false;
     if (!clientId) { setMembers(null); return undefined; }
     let alive = true;
     setMembers(null);
     rpc("team.today", { client_id: clientId, location_id: locId || undefined, day: todayISO() }).then((dt) => { if (alive) setMembers(dt.members); }).catch(() => alive && setMembers([]));
     return () => { alive = false; };
-  }, [clientId, locId]);
+  }, [clientId, locId, teamTick]);
   const payersAll = useMemo(() => { if (!pool) return []; const m = {}; pool.forEach((c) => { const k = c.payer || "Unknown"; m[k] = m[k] || { payer: k, n: 0, amt: 0 }; m[k].n++; m[k].amt += c.balance; }); return Object.values(m).sort((a, b) => b.amt - a.amt); }, [pool]);
   const filtered = useMemo(() => {
     if (!pool) return [];
@@ -6896,26 +7030,29 @@ function AllocateView({ ctx, params, go, embedded }) {
       return true;
     });
   }, [pool, filters]);
-  // the claims shown are split evenly between the people in today, never more than each one's daily target (as the automatic
-  // allocation after an upload does): claims kept together by payer or patient never fill one person up before the next gets any
-  const teamIn = (members || []).filter((m) => !m.out), capIn = (m) => Math.max(0, Math.round(Number(m.cap) || 35));
-  const shareIn = evenShares(teamIn, capIn, filtered.length);
-  const teamUsers = teamIn.map((m) => ({ id: m.id, name: m.name, capacity: shareIn[m.id] }));
-  const preview = () => { setPlan(planAllocation({ claims: filtered, users: teamUsers, strategy })); setApplied(null); };
+  // the claims shown are split evenly between the people in today, never more than each one's daily target and 10 more for the
+  // day (as the automatic allocation after an upload does): claims kept together by payer or patient never fill one person up
+  // before the next gets any. Fewer claims than that for the whole team: the team lead is asked whether to set the numbers.
+  const teamIn = (members || []).filter((m) => !m.out);
+  const shareIn = evenShares(teamIn, roomOf, filtered.length);
+  const roomIn = sum(teamIn, roomOf), isShort = teamIn.length > 0 && filtered.length > 0 && filtered.length < roomIn;
+  const teamUsers = teamIn.map((m) => ({ id: m.id, name: m.name, capacity: manual ? Math.max(0, manual[m.id] || 0) : shareIn[m.id] }));
+  const planWith = (caps) => { setPlan(planAllocation({ claims: filtered, users: teamIn.map((m) => ({ id: m.id, name: m.name, capacity: Math.max(0, caps[m.id] || 0) })), strategy })); setApplied(null); };
+  const preview = () => { if (isShort && !manual && !shortAnswered.current) { setShortAsk({ edit: false }); return; } planWith(Object.fromEntries(teamUsers.map((u) => [u.id, u.capacity]))); };
+  const shortInfo = { total: filtered.length, room: roomIn, people: teamIn.map((m) => ({ id: m.id, name: m.name, target: m.target, cap: m.cap, given: m.given_today || 0, room: roomOf(m), got: manual ? manual[m.id] || 0 : shareIn[m.id] || 0 })) };
   const apply = async () => {
     if (!plan || !plan.assignments.length) return;
     setApplying(true);
     try {
       let total = 0;
-      for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: clientId, location_id: locId || undefined, strategy, assignments: part, summary: { perUser: plan.perUser, leftover: plan.leftover, filters } }); total += r.applied; }
+      for (const part of chunk(plan.assignments, 300)) { const r = await rpc("alloc.apply", { client_id: clientId, location_id: locId || undefined, strategy, assignments: part, summary: { perUser: plan.perUser, leftover: plan.leftover, filters, own_numbers: !!manual } }); total += r.applied; }
       setApplied(total); toast(`Assigned ${plural(total, "claim")}.`);
-      setPlan(null); stats.reload(); loadPool();
+      setPlan(null); stats.reload(); loadPool(); setTeamTick((t) => t + 1);
     } catch (e) { toast(e.message, "err"); }
     setApplying(false);
   };
-  const unassignUser = async (u) => { try { const r = await rpc("alloc.unassign", { user_id: u.user_id, client_id: clientId }); toast(`Returned ${fmtInt(r.changed)} unworked claims from ${u.name} to the pool.`); stats.reload(); loadPool(); } catch (e) { toast(e.message, "err"); } };
+  const unassignUser = async (u) => { try { const r = await rpc("alloc.unassign", { user_id: u.user_id, client_id: clientId }); toast(`Returned ${fmtInt(r.changed)} unworked claims from ${u.name} to the pool.`); stats.reload(); loadPool(); setTeamTick((t) => t + 1); } catch (e) { toast(e.message, "err"); } };
   const ToggleSet = ({ obj, keyName, label, onChange }) => <label className="check small"><input type="checkbox" checked={obj[keyName] !== false} onChange={(e) => onChange(keyName, e.target.checked)} /> {label}</label>;
-  const capTotal = sum(teamUsers, (u) => u.capacity);
   const sel = filtered;
   return (
     <div className="stack">
@@ -6945,10 +7082,13 @@ function AllocateView({ ctx, params, go, embedded }) {
             <div className="card stack">
               <div className="row between"><h3>2 · Who works it</h3>{clientId && go && <button className="btn sm" onClick={() => go("clients", { client_id: clientId, focus: "people" })} title="Opens this client's card, where its people are added or taken off">Change people on the client card</button>}</div>
               {!members ? <Spinner label="Loading the client's people…" /> : !members.length ? <div className="alert warn" style={{ fontSize: 13 }}>Nobody is on this client yet. Add its people on the client card, then come back.</div> : <>
-                <div className="small">Split evenly between the people on <b>{(ctx.clients.find((c) => c.id === clientId) || {}).name}</b>, never more than each one's daily target:</div>
-                <div className="pill-list">{members.map((m) => <span key={m.id} className={"badge " + (m.out ? "gray" : "teal")} title={m.out ? "Marked out today in Team today" : "Daily target"} style={m.out ? { opacity: .7 } : null}>{m.name} {m.out ? <span className="red-ink">out today</span> : <b>{m.cap}</b>}</span>)}</div>
+                <div className="small">Each person on <b>{(ctx.clients.find((c) => c.id === clientId) || {}).name}</b> can be given their daily target and 10 more today, less what they were given today already. Fewer claims than that: they are split evenly.</div>
+                <div className="pill-list">{members.map((m) => <span key={m.id} className={"badge " + (m.out ? "gray" : "teal")} style={m.out ? { opacity: .7 } : null}
+                  title={m.out ? "Marked out today in Team today" : m.target != null ? `Daily target ${m.target} and 10 more: ${m.cap} today` + (m.given_today ? `, ${m.given_today} given already, so ${roomOf(m)} more` : "") : "Daily target"}>{m.name} {m.out ? <span className="red-ink">out today</span> : <b>{roomOf(m)}</b>}{!m.out && m.given_today > 0 && <span className="tiny"> ({m.given_today} given today)</span>}</span>)}</div>
               </>}
-              <div className="small muted">Capacity today: <b>{fmtInt(capTotal)}</b> claims across {teamUsers.length} {teamUsers.length === 1 ? "person" : "people"}. Someone off today? Mark them in <b>Work › Team today › Out today</b>; they are skipped here and in automatic allocation after an upload.</div>
+              <div className="small muted">Can take today: <b>{fmtInt(roomIn)}</b> {roomIn === 1 ? "claim" : "claims"} across {teamIn.length} {teamIn.length === 1 ? "person" : "people"}. Someone off today? Mark them in <b>Work › Team today › Out today</b>; they are skipped here and in automatic allocation after an upload.</div>
+              {isShort && !manual && <div className="alert warn" style={{ fontSize: 13 }}><b>Today's inventory is less:</b> {plural(filtered.length, "claim")} for people who can take {fmtInt(roomIn)}, so they are split evenly ({evenWords(teamIn.map((m) => shareIn[m.id] || 0))}). <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => setShortAsk({ edit: true })}>Set the numbers myself</button></div>}
+              {manual && <div className="alert info" style={{ fontSize: 13 }}><b>Your own numbers:</b> {teamIn.map((m) => `${m.name} ${fmtInt(manual[m.id] || 0)}`).join(" · ")} ({fmtInt(sum(teamIn, (m) => manual[m.id] || 0))} of {plural(filtered.length, "claim")}). <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => setShortAsk({ edit: true })}>Change</button> · <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => { setManual(null); setPlan(null); }}>Back to the even split</button></div>}
               <h3>3 · How to split it</h3>
               <div className="stack" style={{ gap: 6 }}>{STRATEGIES.map((s) => <label key={s.key} className="check" style={{ alignItems: "flex-start" }}><input type="radio" name="strategy" checked={strategy === s.key} onChange={() => setStrategy(s.key)} style={{ marginTop: 3 }} /><span><b>{s.label}</b><div className="tiny muted">{s.desc}</div></span></label>)}</div>
               <button className="btn primary" disabled={!sel.length || !teamUsers.length} onClick={preview}>Preview allocation</button>
@@ -6971,6 +7111,11 @@ function AllocateView({ ctx, params, go, embedded }) {
           </div>
         </>
       )}
+      {shortAsk && <ShortInventoryModal key={"s" + shortAsk.edit} where={[(ctx.clients.find((c) => c.id === clientId) || {}).name, ((ctx.clients.find((c) => c.id === clientId) || {}).locations || []).filter((l) => l.id === locId).map((l) => l.name)[0]].filter(Boolean).join(" · ")}
+        short={shortInfo} editing={shortAsk.edit}
+        onKeep={() => { shortAnswered.current = true; setShortAsk(null); setManual(null); planWith(shareIn); }}
+        onUse={(want) => { shortAnswered.current = true; setShortAsk(null); setManual(want); planWith(want); }}
+        onClose={() => setShortAsk(null)} />}
     </div>
   );
 }
@@ -7851,7 +7996,7 @@ const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took 
   "stack.extraEdit": "Edited extra production by hand", "stack.extraRemove": "Removed an extra production file", "attention.review": "Reviewed a claim and gave it to a biller",
   "client.folders": "Made a client's OneDrive folders", "client.location": "Changed a location", "client.team": "Changed a client's billers", "escalation.reason": "Gave why an escalation is still open",
   "roster.sync": "Synced the roster", "task.create": "Gave a team task", "task.close": "Closed a team task", "team.alert": "Dismissed a not logged in alert", "team.note": "Changed a Team status note",
-  "team.rebalance": "Shared out a person's claims",
+  "team.rebalance": "Shared out a person's claims", "alloc.resplit": "Set each person's claims by hand (short inventory)",
   "template.add": "Added a note template", "template.edit": "Edited a note template", "template.remove": "Removed a note template", "template.restore": "Restored a note template" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
@@ -7863,7 +8008,7 @@ function AuditView({ ctx }) {
       <div className="card tight row" style={{ gap: 10, flexWrap: "wrap" }}>
         <span style={{ minWidth: 240 }}><Combo sm value={f.client_id} onChange={(v) => setF({ ...f, client_id: v })} placeholder="Every client" options={ctx.clients.map((c) => ({ id: c.id, label: c.name }))} /></span>
         <select className="input sm" style={{ width: "auto" }} value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })}>
-          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="stack">Stack report</option><option value="feedback">Feedback</option><option value="settings">Settings</option><option value="template">Note templates</option></select>
+          <option value="">Every change</option><option value="access">Sharing</option><option value="raci">RACI</option><option value="user">Team members</option><option value="client">Clients</option><option value="creport">Client 360 report</option><option value="monthend">Month-end</option><option value="stack">Stack report</option><option value="feedback">Feedback</option><option value="settings">Settings</option><option value="template">Note templates</option><option value="alloc">Allocation</option></select>
         <span className="small muted" style={{ marginLeft: "auto" }}>{plural(rows.length, "change")}</span></div>
       {q.error ? <div className="alert err">{q.error}</div> : !q.data ? <Spinner label="Loading…" /> : !rows.length ? <div className="card"><Empty>No changes recorded yet. They are recorded from now on.</Empty></div> :
         <div className="card tight"><div className="table-wrap"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Client</th><th>Detail</th></tr></thead>
