@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.110.0";
+const VERSION = "2.110.1";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -9225,6 +9225,12 @@ const OPS = {
         const due = addWorkingHours(now, tatHours(cl, "submission")), nd = toRej ? "rejection" : "submission", to = rej || sub;
         stmts.push(env.DB.prepare(`INSERT INTO handoffs (id, claim_id, client_id, dept, status, created_at, created_by, created_by_name, saag_action, due_at, lead_id, backup_id, note, biller_id) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?)`)
           .bind(uuid(), c.id, h.client_id, nd, now, user.id, user.name, "Rejected: " + reason, due, to.lead, to.backup, note, h.biller_id || c.assigned_to || c.last_worked_by || null));
+        // the owner's rule: the client's team lead(s) are told as well, to email the client about the repeat rejection (the claim
+        // number only); the line opens the client's claims
+        const clr = await one(env, "SELECT name FROM clients WHERE id = ?", h.client_id);
+        const tlText = `${c.claim_no ? "Claim " + c.claim_no : "A claim"} was rejected again at its recheck (${reason}) and went to ${toRej ? "Rejections" : "Submission"} to correct and resubmit. Email ${(clr && clr.name) || "the client"} about it.`;
+        for (const u of await escalationPeople(env, h.client_id))
+          stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id, kind) VALUES (?,?,?,?,?,?,?)").bind(uuid(), u.id, now, tlText.slice(0, 300), "claims", h.client_id, "rejected"));
         // A claim already closed (Posting, AR or the team lead closed it) or excluded stays as it is: the Rejections hand-off is there,
         // the claim is not opened again.
         stmts.push(env.DB.prepare("UPDATE claims SET handoff_status = ?, state = ?, state_reason = ?, follow_up_on = '', updated_at = ? WHERE id = ?" + KEEP).bind("with_" + nd, IN_PROCESS, "With " + DEPT_LABEL[nd], now, c.id));

@@ -150,6 +150,8 @@ await part("C-03: a recheck marked Need assistance leaves a claim Posting closed
   rc = await openH(ids[2], "subcheck");
   r = await T(() => call(QU, "handoffs.close", { id: rc.id, outcome: "rejected", reason: "Taxonomy missing", note: "Payer rejected it for the taxonomy" }));
   ok("C-03: a rejected recheck on a posted claim goes to Rejections and leaves the claim posted", r.ok && !!(await openH(ids[2], "rejection")) && await posted(ids[2]), r);
+  { const told = (await rows("SELECT text FROM user_notices WHERE kind = 'rejected'")).filter((n) => /rejected again at its recheck \(Taxonomy missing\) and went to Rejections to correct and resubmit\. Email .+ about it\./.test(n.text));
+    ok("C-03: the client's team lead is told in the bell to email the client (claim number only)", told.length >= 1 && !/Testpatient|patient/i.test(told[0].text), told); }
   r = await T(() => submitIt(RX, ids[2], "rejection"));
   ok("C-03: ...Rejections resubmitting it keeps the claim Posting Closed and read only", r.ok && await posted(ids[2]), [r, await brief(ids[2])]);
 });
