@@ -310,10 +310,14 @@ S("W-12, X-07, V-04: someone who no longer works a client gives its claims back 
   const e = FEED.find((x) => x.emp_id === "A5"); e.reports_to = "Leo Lead"; e.project = LAKE;
   const b = FEED.find((x) => x.emp_id === "A2"); b.reports_to = "Mona Manager";
   await A("roster.syncShastra");
-  ok("V-04: after the sync her 6 Sunrise claims are back in the pool", (await onList("Esha Agent")) === 0 && (await q("SELECT state, assigned_to FROM claims WHERE id IN (" + p4.map(() => "?").join(",") + ")", ...p4)).every((x) => x.state === "open" && !x.assigned_to));
+  // since 2.116.0 (the owner's rule) nothing automatic takes anyone off a client: Esha keeps Sunrise and its claims until Tina takes her off
+  ok("V-04 (2.116.0): after the sync Esha is still on Sunrise's billers, with her 6 claims", (await onList("Esha Agent")) === 6, await onList("Esha Agent"));
+  const sunT = JSON.parse((await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json);
+  await TI("clients.saveTeam", { client_id: sun.id, base: sunT, team: sunT.filter((x) => x !== U("Esha Agent")) });
+  ok("V-04: Tina takes her off Sunrise: her 6 Sunrise claims are back in the pool", (await onList("Esha Agent")) === 0 && (await q("SELECT state, assigned_to FROM claims WHERE id IN (" + p4.map(() => "?").join(",") + ")", ...p4)).every((x) => x.state === "open" && !x.assigned_to));
   const enx = await ESHA("queue.next", {});
   ok("V-04: Next claim gives her no Sunrise claim; her bell says why", (!enx.claim || enx.claim.client_id !== sun.id) && Number(((await bellOf("Esha Agent")).match(/^(\d+) claims were taken off your list: you no longer work Sunrise Eye Care/) || [])[1]) >= 6, await bellOf("Esha Agent"));
-  ok("V-04: the history names who ran the sync", (await q1("SELECT COUNT(*) AS n FROM claim_events WHERE claim_id = ? AND kind = 'unassigned' AND user_name <> ''", p4[0])).n === 1);
+  ok("V-04: the history names who took her off", (await q1("SELECT COUNT(*) AS n FROM claim_events WHERE claim_id = ? AND kind = 'unassigned' AND user_name <> ''", p4[0])).n === 1);
   ok("V-04: someone who moves to another team lead on the same client keeps the claims", (await onList("Bela Agent")) >= 2);
   users = (await A("users.list")).users;
 }

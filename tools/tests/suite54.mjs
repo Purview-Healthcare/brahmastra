@@ -44,7 +44,7 @@ const allocNotices = async (who) => (await q1("SELECT COUNT(*) AS n FROM user_no
 const made = (prefix, n) => Array.from({ length: n }, (_, i) => { const no = prefix + "-" + String(7300000 + i + 1); return { match_key: "claim:" + no.toLowerCase(), claim_no: no, patient: "Testpatient, " + prefix + (i + 1),
   payer: i % 2 ? "Aetna" : "Cigna", dos: "2026-09-" + String(1 + (i % 28)).padStart(2, "0"), balance: 100 + i, status_class: "denied", tier: "Medium", priority: 50, file_status: "Denied", cpt: "99213" }; });
 
-S("CW-01: a location's own team, after Purview Shastra moves one of its billers to another client");
+S("CW-01: a location's own team, after Purview Shastra moves one of its billers to another client and its team lead takes her off the client");
 {
   await TI("clients.saveTeam", { location_id: downtown.id, team: [U("Arun Agent"), U("Bela Agent")] });
   const before = await team();
@@ -52,6 +52,10 @@ S("CW-01: a location's own team, after Purview Shastra moves one of its billers 
   // Shastra moves Bela to Lakeview under Leo; the hourly sync takes it
   Object.assign(FEED.find((f) => f.name === "Bela Agent"), { project: LAKE, reports_to: "Leo Lead" });
   await A("roster.syncShastra");
+  // since 2.116.0 (the owner's rule) nothing automatic takes anyone off a client: she stays on Sunrise's billers until Tina takes her off
+  const sunT = JSON.parse((await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json);
+  ok("2.116.0: after the move Bela is still on Sunrise's billers", sunT.includes(U("Bela Agent")), sunT);
+  await TI("clients.saveTeam", { client_id: sun.id, base: sunT, team: sunT.filter((x) => x !== U("Bela Agent")) });
   const after = await team();
   ok("CW-01: the day's team for Downtown leaves Bela out: she no longer works Sunrise", JSON.stringify(after) === JSON.stringify(["Arun Agent"]), after);
   ok("the client's own team (no location picked) leaves her out too, as before", !(await team(null)).includes("Bela Agent"));
