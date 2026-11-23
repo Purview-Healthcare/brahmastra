@@ -314,6 +314,8 @@ entries before the shift time too, as Team status and My day do (a night shift's
   that client's team who are logged in to Shastra and not marked out: the same number each (the extra one to the
   lightest desk), highest priority first. Claims they already started stay with them. They are marked Out today
   (*In after all* gives the day back). **Rebalance**, for someone marked **Out today**, follows the same equal rule.
+  A claim of a location with its own team (Locations) goes to the people of that team who are in, as the allocation
+  does; to the client's team only when none of them is in.
   Each move is in the audit trail and on the claim's history.
 - **New claims notice**: whenever claims are given to a biller (Allocate, reassigning, Rebalance, Reallocate), they
   see "N new claims were allocated to you" at the top of their screen with who gave them and why, in the bell and,
@@ -321,6 +323,7 @@ entries before the shift time too, as Team status and My day do (a night shift's
 - **Out today** marks someone absent with a reason (**Half day** counts 4 hours of floor time on Team status). The mark,
   and a dismissed or snoozed not-logged-in alert, hold for the person's working day: a night shift's is the day it began,
   until it is over, so they are not lost at midnight and the alert does not come back at 05:00 for the same missed shift.
+  The allocation reads the mark the same way: a night-shift biller marked out at 03:00 gets no claims.
 - The **coaching card** (entries a day over 30 days against target, skips, carried over, escalations, hand-offs sent
   back, average note length, days out, the statuses they enter most, and **1:1 notes** that team leads and up see and
   the biller never does) opens from **Search** (Ctrl+K) on a biller's name. QA scores stay in Sasha's Third Eye.
@@ -725,7 +728,7 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 "Extra client access"):
 
 - **View only**: the client, its claims, dashboards and reports become visible to
-  them, nothing can be changed. The card shows "shared · view only". Its claims open read only, marked **View only**:
+  them (search finds its claims too), nothing can be changed. The card shows "shared · view only". Its claims open read only, marked **View only**:
   the claim, its history, its notes and files, with no entry, note, file, assignment or other action, and the server
   refuses any change, whatever else the person once was on the claim. A view-only share never puts the client's claims on
   anyone's list (Can edit does), and it does not take Payment posting or Submission people past their desk.
@@ -993,7 +996,8 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   when it has one), minus anyone marked **Out today** on Live status. Each person can be given their daily target
   (the client's AR follow-up target on its profile, "25 a day", for each biller; for a client without one, the
   person's Claims per day on Team) and 10 more in a day, or exactly the number a team lead set for them on Team
-  (Claims to assign a day; blank uses the rule before), less what they were given that day already, on any client: a daily
+  (Claims to assign a day; blank uses the rule before), less what they were given that day already (still on their list,
+  or worked by them; one a later file closed or excluded before they touched it does not count), on any client: a daily
   target of 25 gets 35, and a second upload the same day tops people up to that instead of giving them a whole day's
   claims again (the day is the person's working day, as My day counts it). The claims are split evenly between them,
   never more than that (what one cannot take is shared by the others), so everyone gets the same number, one more for
@@ -1021,7 +1025,10 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   department, switched off for a while; switched back on, they are in the allocation again), not the roster taking over
   an account made by hand, and not a Shastra project matched to the client or moved off it: someone Shastra moves to
   another project is on both clients until the old client's team lead takes them off. Someone a team lead takes off
-  stays off (kept in `team_off_json`): the hourly refresh does not put them back until a team lead adds them again. The
+  stays off (kept in `team_off_json`): the hourly refresh does not put them back until a team lead adds them again, and
+  they no longer work the client, even when it is their Shastra project or they were added by hand with no project: their
+  claims of it go back to the pool with a bell line (being responsible on its profile, or a share, still gives it). A list
+  holds up to 500 people (people who left stay on it until a lead takes them off); asking for more says so. The
   page saves only the change made on screen (the list it showed and the list wanted), so an older screen never takes off
   someone another team lead or the hourly refresh put on meanwhile. Before 2.115.0, the hourly refresh took the added
   people off and their claims were hidden from them while Live status still counted them.
@@ -1050,7 +1057,10 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
 - Roster people sign in only with a Purview email, or an address the admin
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in
   Shastra, or past their exit date, are switched off and their open claims go back
-  to the pool; those who never signed in and have no work in Brahmastra are removed.
+  to the pool, each claim's history saying so (someone Shastra moves off AR also gets a bell line); those who never
+  signed in and have no work in Brahmastra are removed after a week, unless something still names them (a client
+  profile's person, a client's or location's list, a share, the RACI), so someone Shastra leaves out of one hourly answer
+  comes back as the same account. Names match ignoring letter case and extra spaces.
 
 
 #### Straight from Purview Shastra (automatic)
@@ -1396,7 +1406,8 @@ can move them afterwards on Allocate or Claims.
 - **Fresh inventory**: claims never worked. New claims are added; claims already
   on file are refreshed (balance, status, payer...). Rows whose status reads
   paid/closed, or whose balance is zero, close the claim; credit balances and
-  unbilled rows are excluded from work.
+  unbilled rows are excluded from work. A claim with several lines takes its status from the lines that still owe money:
+  a paid first line does not close a claim whose other line still owes $250.
 - **Previously worked inventory**: claims the team or the client already
   touched. Map the **Date worked** and **Comments** columns; each claim gets a
   follow-up date (date worked + the client's follow-up days, or the file's own

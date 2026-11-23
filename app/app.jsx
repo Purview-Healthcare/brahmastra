@@ -656,7 +656,10 @@ function buildClaims({ rows, mapping, kind, today }) {
     const dosMin = lines.map((l) => l.dos).filter(Boolean).sort()[0] || "";
     const cpts = [...new Set(lines.map((l) => l.cpt).filter(Boolean))];
     const comments = [...new Set(lines.map((l) => l.comments).filter(Boolean))].join(" | ");
-    const texts = { sub_status: first(lines, "sub_status"), status: first(lines, "status"), action: first(lines, "action"), file_bucket: first(lines, "file_bucket") };
+    // the status of a claim with several lines is read from the lines that still owe money, when the file has a balance: a claim
+    // whose first line is Paid while another still owes $250 was closed as paid (QA2-02); the same lines the other way round were not
+    const owing = hasBalance ? lines.filter((l) => (l.balance || 0) > 0) : [], src = owing.length && owing.length < lines.length ? owing : lines;
+    const texts = { sub_status: first(src, "sub_status"), status: first(src, "status"), action: first(src, "action"), file_bucket: first(src, "file_bucket") };
     const status_class = classifyStatus(texts);
     const age = dosMin ? Math.max(0, daysBetween(dosMin, today)) : null;
     let exclude = "";
