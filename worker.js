@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.116.1";
+const VERSION = "2.117.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -241,7 +241,9 @@ const EXTRA_COLUMNS = {
     ["denial_date", "TEXT NOT NULL DEFAULT ''"],
     ["patient_dob", "TEXT NOT NULL DEFAULT ''"], ["member_id", "TEXT NOT NULL DEFAULT ''"], ["patient_phone", "TEXT NOT NULL DEFAULT ''"],
     // First on the biller's list until they save an entry: sent back by a department, or given to them by the supervisor after a review.
-    ["first_up", "INTEGER NOT NULL DEFAULT 0"], ["reviewed_at", "INTEGER"], ["reviewed_by_name", "TEXT NOT NULL DEFAULT ''"]],
+    ["first_up", "INTEGER NOT NULL DEFAULT 0"], ["reviewed_at", "INTEGER"], ["reviewed_by_name", "TEXT NOT NULL DEFAULT ''"],
+    // Urgent allocation (alloc.urgent): when, for whom and by whom; urgent while it is still on that person's list from then and not worked
+    ["urgent_at", "INTEGER"], ["urgent_to", "TEXT"], ["urgent_by_name", "TEXT NOT NULL DEFAULT ''"]],
   // The supervisors' escalation format: who it was reported to at Purview, the email subject, whether it was a Purview error,
   // a comment, corrective and preventive action (with the root cause in rca) and the close date.
   escalations: [["reported_to", "TEXT NOT NULL DEFAULT ''"], ["email_subject", "TEXT NOT NULL DEFAULT ''"], ["is_error", "TEXT NOT NULL DEFAULT ''"], ["comment", "TEXT NOT NULL DEFAULT ''"],
@@ -1924,7 +1926,6 @@ async function slaScores(env, clients, today, ov) {
 const NOTE_SOURCES = ["Call", "Portal", "IVR", "EOB/ERA", "Email", "Clearinghouse", "Client", "Other"];
 const BUCKETS4 = ["Payer", "Client", "Closed", "Purview"];
 const CLOSED_EFFECTIVE = /^(processing-closed|payment-cash in bank|ar closed-pending posting|posting closed)$/i;
-const EFFECTIVE_DAYS = { "Pending-Collectible Insurance": 30, "Pending-Client Assistance": 14, "Pending-Collectible Patient": 30, "Pending-Purview internal review": 7, "Pending-Submission": 15 };
 /* Purview's workflow for the actions that go to a desk. Sending a claim for posting closes it for AR (AR's part is done;
    Posting closes it when the payment is posted, then only QA is left). Sending it for submission does not close it: it is
    pending with Submission, then comes back to AR for its follow-up (15 days or a month), the 48-hour recheck and rejections.
@@ -2018,7 +2019,13 @@ const claimEvent = (env, claimId, user, kind, text, data) =>
   env.DB.prepare("INSERT INTO claim_events (id, claim_id, at, user_id, user_name, kind, text, data_json) VALUES (?,?,?,?,?,?,?,?)")
     .bind(uuid(), claimId, Date.now(), user ? user.id : null, user ? user.name || "" : "", kind, str(text, 500), JSON.stringify(data || {}));
 const isClosedWork = (saag) => saag.bucket === "Closed" || CLOSED_EFFECTIVE.test(saag.effective);
-const followUpDays = (effective, clientDays) => EFFECTIVE_DAYS[effective] || clientDays || 30;
+/* The owner's rule: a claim's follow-up is due 15 days after the date it was worked (DOW + 15), for every client and every
+   SAAG status, moved to the next working day when it falls on a weekend or holiday; a biller may pick another date (the payer
+   gave one). The client's own "default follow-up" days and the per-status days of the effective matrix are no longer used. */
+const FOLLOW_UP_DAYS = 15;
+/* An urgent claim: given by a team lead's urgent allocation (alloc.urgent) and still on that person's list from then, not
+   worked since (queue.complete clears urgent_to). It comes first on their list and in Next claim, whatever its follow-up date. */
+const URGENT = (p = "") => `(${p}urgent_to IS NOT NULL AND ${p}urgent_to = ${p}assigned_to AND ${p}assigned_at <= ${p}urgent_at)`;
 const noteFields = (n) => { let f = {}; try { f = JSON.parse(n.fields_json || "{}"); } catch {} return f; };
 
 /* ------------------------------------------------------------- helpers */
@@ -7675,7 +7682,7 @@ const OPS = {
         priority: num(c.priority, 0), priority_reason: str(c.priority_reason, 300), raw_json: str(JSON.stringify(c.raw || {}), 20000),
       };
       const lastWorked = kind === "worked" ? isoDate(c.last_worked_on) : "";
-      const followUp = kind === "worked" ? (isoDate(c.follow_up_on) || (lastWorked ? addDays(lastWorked, client.follow_up_days || 30) : "")) : "";
+      const followUp = kind === "worked" ? (isoDate(c.follow_up_on) || (lastWorked ? addDays(lastWorked, FOLLOW_UP_DAYS) : "")) : "";
       // Each upload's own copy of what the file said (status, action, comment, who worked it and when), so a claim in both the
       // September and the October worked file keeps both entries in its history even though the claim shows the latest file.
       const fileWork = (id) => (kind === "worked" || vals.file_comments ? claimEvent(env, id, user, "file_work", str(file_name, 200), fileSnapshot(kind, vals, c, lastWorked, followUp)) : null);
@@ -8281,6 +8288,65 @@ const OPS = {
     if (changed && u.id !== user.id) await noticeAlloc(env, [[u.id, changed]], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}.`);
     return { changed };
   },
+  /* Urgent allocation (the owner's rule): a team lead picks claims of one client (ticked on the Claims page, or claim numbers
+     pasted and found with alloc.lookup) and gives them all to one biller, or splits them evenly in priority order across the
+     billers they pick. They go to the top of each one's list with an Urgent tag (URGENT) and a bell notice, whatever their
+     follow-up date, and come on top of the day's target + 10 (team.today does not count them). A claim already on that person's
+     list stays as it is there (counted as before) and is marked urgent too. Closed, excluded and desk claims are left out. */
+  "alloc.urgent": async ({ env, user, payload }) => {
+    const cid = str(payload.client_id, 60);
+    const cl = cid ? await one(env, "SELECT id, name FROM clients WHERE id = ?", cid) : null;
+    if (!cl) throw bad("Pick the client of the urgent claims.");
+    editableOr(user, cid);
+    const ids = [...new Set((Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 2000);
+    const to = [...new Set((Array.isArray(payload.user_ids) ? payload.user_ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
+    if (!ids.length) throw bad("Pick the urgent claims.");
+    if (!to.length) throw bad("Pick who gets the urgent claims.");
+    const people = [];
+    for (const uid of to) {
+      const u = await billerFor(env, uid, cid);
+      if (!u) { const n = await one(env, "SELECT name FROM users WHERE id = ?", uid); throw bad(`${(n && n.name) || "Someone you picked"} cannot be given ${cl.name}'s claims: pick active billers who work it.`); }
+      people.push(u);
+    }
+    const rows = await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN ${IN_LIST} AND c.client_id = ? AND c.state IN ${WORKABLE}
+      ORDER BY c.priority DESC, c.balance DESC, c.id`, listArg(ids), cid);
+    if (!rows.length) throw bad("None of these claims can be given now: they are closed, excluded or with a desk.");
+    const now = Date.now(), stmts = [], count = new Map();
+    rows.forEach((r, i) => {
+      const u = people[i % people.length];
+      count.set(u.id, (count.get(u.id) || 0) + 1);
+      stmts.push(env.DB.prepare(`UPDATE claims SET assigned_at = CASE WHEN assigned_to = ? AND state IN ('assigned','in_progress') THEN assigned_at ELSE ? END,
+          started_at = CASE WHEN assigned_to = ? AND state = 'in_progress' THEN started_at ELSE NULL END,
+          state = CASE WHEN assigned_to = ? AND state = 'in_progress' THEN 'in_progress' ELSE 'assigned' END,
+          assigned_to = ?, skipped_at = NULL, urgent_at = ?, urgent_to = ?, urgent_by_name = ?, updated_at = ? WHERE id = ? AND client_id = ? AND state IN ${WORKABLE}`)
+        .bind(u.id, now, u.id, u.id, u.id, now, u.id, user.name || "", now, r.id, cid));
+      stmts.push(claimEvent(env, r.id, user, "assigned", u.name + " (urgent)", { from: r.prev || "", via: "urgent" }));
+    });
+    await batchAll(env, stmts, 50);
+    const per = people.filter((u) => count.get(u.id)).map((u) => ({ id: u.id, name: u.name, count: count.get(u.id) }));
+    const others = per.filter((x) => x.id !== user.id).map((x) => [x.id, x.count]);
+    if (others.length) await noticeAlloc(env, others, (n) => `${n} urgent claim${n === 1 ? "" : "s"} of ${cl.name} from ${user.name || "your team lead"}: ${n === 1 ? "it is" : "they are"} at the top of your list. Work ${n === 1 ? "it" : "them"} first.`);
+    const left = ids.length - rows.length;
+    await audit(env, user, "alloc.urgent", cid, "Urgent: " + per.map((x) => x.name + " " + x.count).join(", ") + (left ? `; ${left} not given (closed, excluded or with a desk)` : ""));
+    return { given: rows.length, per, left_out: left };
+  },
+  /* Urgent allocation by pasted claim numbers: this client's claims with those numbers (any letter case), whether each can be
+     given now, and the numbers it does not have. */
+  "alloc.lookup": async ({ env, user, payload }) => {
+    const cid = str(payload.client_id, 60);
+    if (!cid) throw bad("Pick the client.");
+    editableOr(user, cid);
+    const nos = [...new Set((Array.isArray(payload.claim_nos) ? payload.claim_nos : []).map((x) => str(x, 60).trim()).filter(Boolean))].slice(0, 2000);
+    if (!nos.length) return { rows: [], not_found: [] };
+    const rows = await all(env, `SELECT c.id, c.claim_no, c.payer, c.balance, c.state, u.name AS assigned_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to
+      WHERE c.client_id = ? AND lower(c.claim_no) IN ${IN_LIST} ORDER BY c.priority DESC LIMIT 4000`, cid, listArg(nos.map((x) => x.toLowerCase())));
+    const has = new Set(rows.map((r) => String(r.claim_no).toLowerCase())), can = new Set(["open", "assigned", "in_progress", "completed"]);
+    return {
+      rows: rows.map((r) => ({ id: r.id, claim_no: r.claim_no, payer: r.payer, balance: r.balance, state: r.state, assigned_name: r.assigned_name || "", workable: can.has(r.state),
+        why: can.has(r.state) ? "" : r.state === "in_process" ? "with a desk" : r.state })),
+      not_found: nos.filter((x) => !has.has(x.toLowerCase())),
+    };
+  },
   "alloc.unassign": async ({ env, user, payload }) => {
     const now = Date.now();
     const logOff = async (where, args) => { const rows = await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE ${where}${editScopeSql(user, "c.client_id")}`, ...args, ...editScopeArgs(user)); if (rows.length) await batchAll(env, rows.map((r) => claimEvent(env, r.id, user, "unassigned", r.prev || "")), 50); };
@@ -8343,15 +8409,16 @@ const OPS = {
     const from = num(payload.day_from_ms, 0), to = num(payload.day_to_ms, Date.now());
     // only the claims they may work (as Next claim opens them): never a view-only share's, or a client they no longer work
     const mine = editScopeSql(user, "client_id"), mineArgs = editScopeArgs(user);
-    const [ready, waiting, current, done, skipped, byClient] = await Promise.all([
-      one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on <= ?)${mine}`, user.id, today, ...mineArgs),
-      one(env, `SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND follow_up_on > ?${mine}`, user.id, today, ...mineArgs),
+    const [ready, waiting, current, done, skipped, byClient, urgent] = await Promise.all([
+      one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(balance),0) AS amt FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on <= ? OR ${URGENT()})${mine}`, user.id, today, ...mineArgs),
+      one(env, `SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND follow_up_on > ? AND NOT ${URGENT()}${mine}`, user.id, today, ...mineArgs),
       one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'in_progress'${mine} LIMIT 1`, user.id, ...mineArgs),
       one(env, "SELECT COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.user_id = ? AND nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?", user.id, from, to),
       one(env, `SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state = 'assigned' AND skipped_at IS NOT NULL${mine}`, user.id, ...mineArgs),
       all(env, `SELECT cl.name AS client_name, l.name AS location_name, COUNT(*) AS n, COALESCE(SUM(c.balance),0) AS amt FROM claims c JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE c.assigned_to = ? AND c.state = 'assigned'${editScopeSql(user, "c.client_id")} GROUP BY c.client_id, c.location_id ORDER BY n DESC`, user.id, ...mineArgs),
+      one(env, `SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND state IN ('assigned','in_progress') AND ${URGENT()}${mine}`, user.id, ...mineArgs),
     ]);
-    return { ready, waiting: waiting ? waiting.n : 0, in_progress_id: current ? current.id : null, done_today: done, skipped: skipped ? skipped.n : 0, by_client: byClient };
+    return { ready, waiting: waiting ? waiting.n : 0, in_progress_id: current ? current.id : null, done_today: done, skipped: skipped ? skipped.n : 0, by_client: byClient, urgent: urgent ? urgent.n : 0 };
   },
   "queue.next": async ({ env, user, payload }) => {
     const today = isoDate(payload.today) || isoToday();
@@ -8364,8 +8431,8 @@ const OPS = {
     let c = await one(env, `SELECT * FROM claims WHERE assigned_to = ? AND state = 'in_progress'${voSql} LIMIT 1`, user.id, ...voa);
     // Pick the top claim in two plain steps (no RETURNING / subquery update), retrying once if it was taken meanwhile.
     for (let attempt = 0; !c && attempt < 2; attempt++) {
-      const cand = await one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ?)${voSql}
-          ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, first_up DESC, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority + ${TURN90_BOOST()} DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, ...voa, skipId || "", today, today);
+      const cand = await one(env, `SELECT id FROM claims WHERE assigned_to = ? AND state = 'assigned' AND (follow_up_on = '' OR follow_up_on IS NULL OR follow_up_on <= ? OR ${URGENT()})${voSql}
+          ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, CASE WHEN ${URGENT()} THEN 0 ELSE 1 END, first_up DESC, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority + ${TURN90_BOOST()} DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, ...voa, skipId || "", today, today);
       if (!cand) break;
       const r = await run(env, "UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned'", now, now, cand.id);
       if (changesOf(r)) { c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id); await claimEvent(env, c.id, user, "opened", "Next claim").run(); }
@@ -8411,7 +8478,7 @@ const OPS = {
     // An action that sends the claim to Posting / Submission / Rejections (a person is set on the client) takes it off the
     // biller's list with no follow-up until the desk is done: the note and the answer carry no follow-up date then.
     const toDesk = !closed && !!((await entryDesk(env, c.client_id, saag)).people || {}).lead;
-    const followUp = closed || toDesk ? "" : workingDayOnOrAfter((wanted && wanted >= today ? wanted : "") || addDays(today, followUpDays(saag.effective, c.client_follow_up_days)));
+    const followUp = closed || toDesk ? "" : workingDayOnOrAfter((wanted && wanted >= today ? wanted : "") || addDays(today, FOLLOW_UP_DAYS));
     const comment = composeNote(fields, saag, followUp);
     const escalate = payload.escalate ? 1 : 0;
     const now = Date.now();
@@ -8434,7 +8501,7 @@ const OPS = {
           VALUES (?,?,?,?,'work',?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .bind(uuid(), t.id, user.id, user.name, saag.status, saag.action, text, followUp, now, saag.status, saag.sub_status, saag.action, saag.bucket, saag.effective, "", JSON.stringify(f), t.id === c.id ? callMinOf(f) : null));
       stmts.push(env.DB.prepare(`UPDATE claims SET state = ?, state_reason = ?, started_at = NULL, completed_at = ?, last_status_code = ?, last_action_code = ?, last_sub_status = ?, last_bucket = ?, last_effective = ?, last_note_action = ?,
-          last_note = ?, last_worked_by = ?, last_worked_on = ?, follow_up_on = ?, touches = touches + 1, worked_before = 1, escalated = ?, skipped_at = NULL, first_up = 0, updated_at = ?,
+          last_note = ?, last_worked_by = ?, last_worked_on = ?, follow_up_on = ?, touches = touches + 1, worked_before = 1, escalated = ?, skipped_at = NULL, first_up = 0, urgent_to = NULL, updated_at = ?,
           escalated_at = CASE WHEN ? = 1 AND (escalated = 0 OR escalated_at IS NULL) THEN ? ELSE escalated_at END, escalated_by = CASE WHEN ? = 1 AND (escalated = 0 OR escalated_by IS NULL) THEN ? ELSE escalated_by END,
           escalation_answered_at = CASE WHEN escalated = 1 AND ? = 0 THEN ? ELSE escalation_answered_at END WHERE id = ?`)
         .bind(newState, reason, now, saag.status, saag.action, saag.sub_status, saag.bucket, saag.effective, "", text.slice(0, 600), user.id, today, followUp, escalate, now, escalate, now, escalate, user.id, escalate, now, t.id));
@@ -8490,9 +8557,10 @@ const OPS = {
     if (payload.location_id) { where.push("c.location_id = ?"); params.push(str(payload.location_id, 60)); }
     const rows = await all(env, `SELECT c.id, c.client_id, c.location_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.cpt, c.provider, c.balance, c.age_days, c.bucket, c.tier, c.status_class,
         c.file_status, c.file_sub_status, c.inventory_kind, c.worked_before, c.follow_up_on, c.priority, c.priority_reason, c.state, c.assigned_at, c.started_at, c.completed_at, c.skips, c.escalated,
-        c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action, c.last_worked_on, c.handoff_status, cl.name AS client_name, l.name AS location_name
+        c.last_status_code, c.last_action_code, c.last_sub_status, c.last_bucket, c.last_effective, c.last_note_action, c.last_worked_on, c.handoff_status, cl.name AS client_name, l.name AS location_name,
+        CASE WHEN c.state IN ('assigned','in_progress') AND ${URGENT("c.")} THEN 1 ELSE 0 END AS urgent, c.urgent_by_name
       FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id WHERE ${where.join(" AND ")}
-      ORDER BY CASE c.state WHEN 'in_progress' THEN 0 WHEN 'assigned' THEN 1 ELSE 2 END, c.first_up DESC, CASE WHEN c.skipped_at IS NULL THEN 0 ELSE 1 END, c.priority + ${TURN90_BOOST("c.")} DESC, c.balance DESC LIMIT 1000`, ...params, isoDate(payload.today) || istISO(Date.now()), isoDate(payload.today) || istISO(Date.now()));
+      ORDER BY CASE c.state WHEN 'in_progress' THEN 0 WHEN 'assigned' THEN 1 ELSE 2 END, CASE WHEN ${URGENT("c.")} THEN 0 ELSE 1 END, c.first_up DESC, CASE WHEN c.skipped_at IS NULL THEN 0 ELSE 1 END, c.priority + ${TURN90_BOOST("c.")} DESC, c.balance DESC LIMIT 1000`, ...params, isoDate(payload.today) || istISO(Date.now()), isoDate(payload.today) || istISO(Date.now()));
     return { rows };
   },
   /* Edit a work note at any time (its author or a team lead). Each edit is kept in the claim history. */
@@ -8526,7 +8594,7 @@ const OPS = {
     const held = (c.state === "closed" && !/^Closed: /.test(c.state_reason || "")) || c.state === "excluded";
     const sends = sets && !held && !!handoffDeptOf(saag.action) && handoffDeptOf(saag.action) !== handoffDeptOf(n.action || n.action_code);
     const toDesk = sends && !closed && !!((await entryDesk(env, c.client_id, saag)).people || {}).lead;
-    const autoFu = () => addDays(today, followUpDays(saag.effective, c.client_follow_up_days));
+    const autoFu = () => addDays(today, FOLLOW_UP_DAYS);
     const followUp = closed || toDesk ? "" : sends ? workingDayOnOrAfter((wantedFu && wantedFu >= today ? wantedFu : "") || autoFu())
       : ((wantedFu && wantedFu >= today ? wantedFu : "") || n.follow_up_on || autoFu());
     const comment = composeNote(fields, saag, followUp);
@@ -10255,7 +10323,8 @@ const OPS = {
     const names = new Set(jsonList(c.roster_names_json).map(projKey));
     // what each was given today: claims on them since their own working day began (a night shift's day is the one it began)
     const now = Date.now(), fromOf = new Map(users.map((u) => [u.id, workDayOf(u.shift, now, istISO(now)).from])), given = new Map();
-    if (users.length) for (const r of await all(env, `SELECT assigned_to, assigned_at FROM claims WHERE assigned_to IN ${IN_LIST} AND assigned_at >= ?`, listArg(users.map((u) => u.id)), Math.min(...fromOf.values())))
+    // (claims given by an urgent allocation come on top of the day's target + 10, the owner's rule: they are not counted)
+    if (users.length) for (const r of await all(env, `SELECT assigned_to, assigned_at FROM claims WHERE assigned_to IN ${IN_LIST} AND assigned_at >= ? AND NOT (urgent_at IS NOT NULL AND assigned_at = urgent_at)`, listArg(users.map((u) => u.id)), Math.min(...fromOf.values())))
       if (r.assigned_at >= fromOf.get(r.assigned_to)) given.set(r.assigned_to, (given.get(r.assigned_to) || 0) + 1);
     // the daily target is the person's own (Team › Claims per day), the one Team status counts; numbers once kept per client
     // (caps_json, no longer set anywhere on the page) are not used, so the limit is always the one the team lead sees

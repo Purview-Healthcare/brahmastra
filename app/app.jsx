@@ -16,7 +16,7 @@ function domainMatches(pattern, domain) {
 }
 const domainHint = () => ALLOWED_DOMAINS.map((p) => (p === "*" ? "any domain" : p.startsWith("*") && p.endsWith("*") ? `any domain with "${p.slice(1, -1)}" in it` : p)).join(", ");
 const PURVIEW_MARK = "data:image/png;base64,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";
-const APP_VERSION = "2.130.0";
+const APP_VERSION = "2.131.0";
 
 /* ---------- SAAG matrix (lib/saag.js) and the team's standard note ---------- */
 const SAAG = window.SAAG || { statuses: [], subStatuses: [], actions: [], effective: [], rows: [] };
@@ -49,7 +49,15 @@ const saagActions = (status, sub) => (SAAG_INDEX.actsByKey.get(status + "\u0001"
 const BUCKETS4 = ["Payer", "Client", "Closed", "Purview"];
 const EFFECTIVE_BUCKET = { "Pending-Collectible Insurance": "Payer", "Pending-Client Assistance": "Client", "Pending-Collectible Patient": "Client", "Pending-Purview internal review": "Purview", "Processing-Closed": "Closed", "Payment-Cash In Bank": "Closed",
   "AR Closed-Pending Posting": "Closed", "Pending-Submission": "Purview", "Posting Closed": "Closed" };
-const EFFECTIVE_DAYS = { "Pending-Collectible Insurance": 30, "Pending-Client Assistance": 14, "Pending-Collectible Patient": 30, "Pending-Purview internal review": 7, "Pending-Submission": 15 };
+/* The owner's rule: a claim's follow-up is due 15 days after the date it was worked (DOW + 15), for every client and status,
+   moved to the next working day when it falls on a weekend; a biller may pick another date when the payer gives one. */
+const FOLLOW_UP_DAYS = 15;
+/* "Follow-up due 08 Dec 2026 · worked 23 Nov + 15 days" (the last part only when the date is the 15-day one). */
+function FollowUpDue({ c }) {
+  if (!c.follow_up_on) return "–";
+  const auto = c.last_worked_on && weekdayOnOrAfter(addDaysISO(c.last_worked_on, FOLLOW_UP_DAYS)) === c.follow_up_on;
+  return <>{fmtDate(c.follow_up_on)}{auto ? <span className="tiny muted"> · worked {fmtDate(c.last_worked_on)} + 15 days</span> : null}</>;
+}
 /* Purview's workflow for the actions that go to a desk (the server applies the same rule, ROUTED_EFFECTIVE in worker.js): sending a
    claim for posting closes it for AR, and Posting closes it when the payment is posted; sending it for submission does not close it. */
 const ROUTED_EFFECTIVE = (action) => /^Need to Post\/Posting Correction$/i.test(action || "") ? "AR Closed-Pending Posting"
@@ -3312,7 +3320,6 @@ const profileFrom = (c) => {
 function profileMissing(f, locCount) {
   const m = [];
   if (!f.name.trim()) m.push("client name");
-  if (!wholeIn(f.follow_up_days, 1, 365)) m.push("a default follow-up of 1 to 365 days");
   if (!f.scope.length) m.push("scope of work");
   if (!locCount) m.push("a location");
   for (const s of f.scope) {
@@ -3363,7 +3370,7 @@ function ClientProfileForm({ ctx, client, onClose, onSaved, initialName }) {
           <div className="grid g3">
             <Field label="Client name"><input className="input" value={f.name} onChange={(e) => set({ name: e.target.value })} autoFocus={isNew} placeholder="e.g. Dr. Montella Eye Care" /></Field>
             <Field label={<>Short code <TextLimit v={f.code} max={12} /></>} hint="Shown on badges and reports"><input className="input" value={f.code} onChange={(e) => set({ code: e.target.value.toUpperCase() })} /></Field>
-            <Field label="Default follow-up (days)" hint={wholeIn(f.follow_up_days, 1, 365) ? "1 to 365" : <span className="red-ink">A whole number of days from 1 to 365.</span>}><input className="input" type="number" min={1} max={365} step={1} value={f.follow_up_days} onChange={(e) => set({ follow_up_days: e.target.value })} /></Field>
+            <Field label="Follow-up" hint="The same for every client"><div style={{ paddingTop: 7 }}>Due 15 days after the date worked</div></Field>
           </div>
           {!isNew && <label className="check mt8"><input type="checkbox" checked={!!f.active} onChange={(e) => set({ active: e.target.checked })} /> Active (inactive clients are hidden from uploads and allocation)</label>}
         </Step>
@@ -3565,7 +3572,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
         <div className="card" key={c.id}>
           <div className="row between top">
             <div><h2>{c.name} {c.code && <span className="badge ink">{c.code}</span>} {!c.active && <span className="badge red">inactive</span>} {c.can_edit === false && !ro && <span className="badge amber" title="This client was shared with you view-only.">shared · view only</span>}</h2>
-              <div className="sub">Default follow-up after a claim is worked: {plural(c.follow_up_days, "day")} · added {fmtDate(istISOOf(c.created_at))}</div></div>
+              <div className="sub">Follow-up due 15 days after the date worked · added {fmtDate(istISOOf(c.created_at))}</div></div>
             {c.can_edit === false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}{!ro && <button className="btn sm" onClick={() => setHist(c)}>Change history</button>}</div>}
             {c.can_edit !== false && <div className="row" style={{ gap: 6 }}>{c.responsible_me && <span className="badge teal">you are responsible here</span>}<button className="btn sm" onClick={() => setHist(c)}>Change history</button><button className="btn sm" onClick={() => setProf({ client: c })}>Edit profile</button>{go && <button className="btn sm" onClick={() => go("client", { client_id: c.id })}>Open Client 360</button>}{me && me.is_admin && <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setFreshTyped(""); setFresh(c); }} title="Clear this client's inventory and the work on it; keep its setup">Start fresh</button>}{!isSmeUI(me) && <button className="btn sm link" style={{ color: "var(--red-ink)" }} onClick={() => { setDelTyped(""); setDel(c); }}>Delete</button>}</div>}
           </div>
@@ -3616,7 +3623,7 @@ function ClientsView({ ctx, reload, embedded, me, go, params }) {
             <Field label="Client name"><input className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus /></Field>
             <div className="grid g2">
               <Field label={<>Short code <TextLimit v={edit.code} max={12} /></>} hint="Shown on badges and reports"><input className="input" value={edit.code} onChange={(e) => setEdit({ ...edit, code: e.target.value.toUpperCase() })} /></Field>
-              <Field label="Default follow-up (days)" hint="Used when a status code has no follow-up of its own"><input className="input" type="number" min={1} max={365} value={edit.follow_up_days} onChange={(e) => setEdit({ ...edit, follow_up_days: e.target.value })} /></Field>
+              <Field label="Follow-up" hint="The same for every client"><div style={{ paddingTop: 7 }}>Due 15 days after the date worked</div></Field>
             </div>
             <Field label="OneDrive workbook where billers' work is copied (optional)" hint="Leave empty and Brahmastra saves it by itself in Brahmastra Reports › team lead › client › Production, one file a month. Paste a link only to keep using an existing workbook."><input className="input" value={edit.workbook_link || ""} onChange={(e) => setEdit({ ...edit, workbook_link: e.target.value })} placeholder="https://…/Billers-work.xlsx" /></Field>
             {edit.id && <label className="check"><input type="checkbox" checked={!!edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active (inactive clients are hidden from uploads and allocation)</label>}
@@ -4633,7 +4640,7 @@ function SaagCell({ r }) {
 function ClaimsView({ ctx, params, me, initialTab }) {
   const p = params || {};
   const [tab, setTab] = useState(initialTab === "entries" || p.tab === "entries" ? "entries" : "claims");
-  const [f, setF] = useState({ client_id: p.clientId || "", location_id: p.locationId || "", state: p.state != null ? p.state : (p.follow_up_due || p.overdue || p.assigned_to || p.escalated ? "" : "workable"), tier: p.tier || "", bucket: p.bucket || "", status_class: p.status_class || "", inventory_kind: p.inventory_kind || "", assigned_to: p.assigned_to || "", q: p.payer || "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: p.saag_status || "", saag_bucket: p.saag_bucket || "", follow_up_due: !!p.follow_up_due, overdue: !!p.overdue, escalated: !!p.escalated, min_age: p.min_age || "", turning90: p.turning90 || "", stage: INV_STAGES.some(([k]) => k === p.stage) ? p.stage : "", sort: p.sort || "priority", dir: p.dir || "desc", page: 1, page_size: 50 });
+  const [f, setF] = useState({ client_id: p.clientId || "", location_id: p.locationId || "", state: p.state != null ? p.state : "", tier: p.tier || "", bucket: p.bucket || "", status_class: p.status_class || "", inventory_kind: p.inventory_kind || "", assigned_to: p.assigned_to || "", q: p.payer || "", provider: "", cpt: "", min_balance: "", max_balance: "", saag_status: p.saag_status || "", saag_bucket: p.saag_bucket || "", follow_up_due: !!p.follow_up_due, overdue: !!p.overdue, escalated: !!p.escalated, min_age: p.min_age || "", turning90: p.turning90 || "", stage: INV_STAGES.some(([k]) => k === p.stage) ? p.stage : "", sort: p.sort || "priority", dir: p.dir || "desc", page: 1, page_size: 50 });
   const set = (k, v) => setF((x) => ({ ...x, [k]: v, page: k === "page" ? v : 1 }));
   const payload = useMemo(() => { const o = {}; for (const k in f) if (f[k] !== "" && f[k] !== false) o[k] = f[k]; return o; }, [f]);
   const q = useRpc("claims.list", payload, [JSON.stringify(payload)]);
@@ -4644,6 +4651,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   const [bulkUser, setBulkUser] = useState("");
   const [busy, setBusy] = useState(false);
   const [prio, setPrio] = useState(null);
+  const [urgent, setUrgent] = useState(null);
   const [prioLog, setPrioLog] = useState(false);
   const rows = q.data ? q.data.rows : [];
   const toggle = (id) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -4714,6 +4722,8 @@ function ClaimsView({ ctx, params, me, initialTab }) {
           <Combo sm width={220} value={bulkUser} onChange={setBulkUser} placeholder="Assign to…" options={users.map((u) => ({ id: u.id, label: u.name, sub: u.designation || undefined }))} />
           <button className="btn sm primary" disabled={!bulkUser || busy} onClick={() => bulk("Assigned", (ids) => rpc("alloc.reassign", { ids, user_id: bulkUser }))}>Assign</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Unassigned", (ids) => rpc("alloc.unassign", { ids }))}>Unassign</button>
+          <button className="btn sm danger" disabled={busy} title="Give them to the top of a biller's list, on top of the day's target + 10"
+            onClick={() => { const cs = [...new Set(rows.filter((r) => sel.has(r.id)).map((r) => r.client_id))]; if (cs.length !== 1) toast("Tick claims of one client at a time for an urgent allocation.", "err"); else setUrgent({ clientId: cs[0], ids: [...sel] }); }}>Urgent…</button>
           <button className="btn sm" disabled={busy} onClick={() => setPrio({ ids: [...sel], rows: rows.filter((r) => sel.has(r.id)) })}>Change priority</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Reopened", (ids) => rpc("claims.setState", { ids, state: "open" }))}>Reopen</button>
           <button className="btn sm" disabled={busy} onClick={() => bulk("Excluded", (ids) => rpc("claims.setState", { ids, state: "excluded" }))}>Exclude</button>
@@ -4737,6 +4747,7 @@ function ClaimsView({ ctx, params, me, initialTab }) {
         {q.data && <div className="mt8"><Pager page={q.data.page} pageSize={q.data.page_size} total={q.data.total} onPage={(pg) => set("page", pg)} /></div>}
       </div>
       {open && <ClaimDrawer id={open} ctx={ctx} me={me} onClose={() => setOpen(null)} onChanged={() => q.reload()} />}
+      {urgent && <UrgentModal ctx={ctx} clientId={urgent.clientId} ids={urgent.ids} onClose={() => setUrgent(null)} onDone={() => { setUrgent(null); setSel(new Set()); q.reload(); }} />}
       {prio && <PriorityModal ids={prio.ids} rows={prio.rows} onClose={() => setPrio(null)} onDone={() => { setPrio(null); setSel(new Set()); q.reload(); }} />}
       {prioLog && <PriorityLogModal onClose={() => setPrioLog(false)} onOpen={(id) => { setPrioLog(false); setOpen(id); }} />}
     </>}
@@ -4744,6 +4755,60 @@ function ClaimsView({ ctx, params, me, initialTab }) {
   );
 }
 /* A team lead changes the priority of one or more claims, always with the reason. */
+/* Urgent allocation (the owner's rule): claims of one client, ticked on the Claims page (ids) or pasted as claim numbers, given
+   to one biller or split evenly across the billers picked. They go to the top of each list with a red Urgent tag and a bell
+   notice, on top of the day's target + 10 (alloc.urgent). */
+function UrgentModal({ ctx, clientId: fixed, ids: ticked, onClose, onDone }) {
+  const [clientId, setClientId] = useState(fixed || "");
+  const [text, setText] = useState("");
+  const [found, setFound] = useState(null);
+  const [mode, setMode] = useState("one");
+  const [one, setOne] = useState("");
+  const [off, setOff] = useState(new Set());
+  const [busy, setBusy] = useState(false);
+  const team = useRpc("team.today", { client_id: clientId }, [clientId], !!clientId);
+  const members = (team.data && team.data.members) || [];
+  const ids = ticked && ticked.length ? ticked : ((found && found.rows) || []).filter((r) => r.workable).map((r) => r.id);
+  const who = mode === "one" ? (one ? [one] : []) : members.filter((m) => !off.has(m.id)).map((m) => m.id);
+  const shareOf = (i) => Math.floor(ids.length / who.length) + (i < ids.length % who.length ? 1 : 0);
+  const find = async () => {
+    setBusy(true);
+    try { setFound(await rpc("alloc.lookup", { client_id: clientId, claim_nos: text.split(/[\s,;]+/).filter(Boolean) })); } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const go = async () => {
+    setBusy(true);
+    try {
+      const r = await rpc("alloc.urgent", { client_id: clientId, ids, user_ids: who });
+      toast("Urgent: " + r.per.map((x) => x.name + " " + x.count).join(", ") + (r.left_out ? ` · ${r.left_out} not given (closed, excluded or with a desk)` : ""));
+      onDone && onDone(r);
+    } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const cannot = ((found && found.rows) || []).filter((r) => !r.workable);
+  return (
+    <Modal title="Urgent allocation" sub="They go to the top of the biller's list with a red Urgent tag and a bell notice, on top of the day's target + 10." onClose={onClose}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={go} disabled={busy || !ids.length || !who.length}>{busy ? "Giving…" : "Allocate " + plural(ids.length, "claim") + " as urgent"}</button></>}>
+      <div className="stack">
+        {!fixed && <Field label="Client"><Combo value={clientId} onChange={(v) => { setClientId(v); setFound(null); setOne(""); setOff(new Set()); }} placeholder="Pick the client…"
+          options={ctx.clients.filter((c) => c.active && c.can_edit !== false).map((c) => ({ id: c.id, label: c.name }))} /></Field>}
+        {ticked && ticked.length ? <div className="small"><b>{plural(ticked.length, "claim")}</b> ticked on the Claims page.</div> : <>
+          <Field label="Claim numbers" hint="Paste them as they are: one per line, or separated by commas or spaces."><textarea className="textarea" style={{ minHeight: 90 }} value={text}
+            onChange={(e) => { setText(e.target.value); setFound(null); }} placeholder={"ACL-1001\nACL-1002"} disabled={!clientId} /></Field>
+          <div className="row"><button className="btn sm" disabled={busy || !clientId || !text.trim()} onClick={find}>Find these claims</button>
+            {found && <span className="small"><b>{plural(ids.length, "claim")}</b> found to give{found.not_found.length ? <> · <span className="red-ink">not found: {found.not_found.join(", ")}</span></> : null}
+              {cannot.length ? <> · <span className="muted">cannot be given now: {cannot.map((r) => r.claim_no + " (" + r.why + ")").join(", ")}</span></> : null}</span>}</div></>}
+        {clientId && <Field label="Give them to">
+          <div className="seg2" style={{ marginBottom: 8 }}>{[["one", "One biller"], ["split", "Split evenly"]].map(([k, l]) => <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</div>
+          {team.loading ? <Spinner label="Loading the client's billers…" /> : !members.length ? <div className="small red-ink">No biller can be given this client's claims yet.</div>
+            : mode === "one" ? <Combo value={one} onChange={setOne} placeholder="Pick the biller…" options={members.map((m) => ({ id: m.id, label: m.name, sub: m.designation || undefined }))} />
+            : <div className="stack" style={{ gap: 4 }}>{members.map((m) => { const k = who.indexOf(m.id); return <label key={m.id} className="check small"><input type="checkbox" checked={!off.has(m.id)}
+                onChange={() => setOff((o) => { const n = new Set(o); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; })} /> {m.name}{k >= 0 && ids.length ? <span className="muted"> · {plural(shareOf(k), "claim")}</span> : null}</label>; })}</div>}
+        </Field>}
+      </div>
+    </Modal>
+  );
+}
 function PriorityModal({ ids, rows, onClose, onDone }) {
   const one = rows.length === 1 ? rows[0] : null;
   const [level, setLevel] = useState(one && one.priority_set ? one.priority_set : "top");
@@ -5904,7 +5969,7 @@ function ClaimInfo({ c, siblings }) {
             <dt>Date of service</dt><dd>{fmtDate(c.dos)}</dd><dt>Age</dt><dd>{ageNow(c) != null ? `${plural(ageNow(c), "day")} · ${bucketOf(ageNow(c))}` : "–"}</dd>
             <dt>CPT</dt><dd className="mono">{c.cpt || "–"}</dd><dt>Billed</dt><dd>{c.billed != null ? fmtMoney(c.billed, 2) : "–"}</dd>
             <dt>Balance</dt><dd className="mono">{fmtMoney(c.balance, 2)}{lines.length > 1 ? <span className="muted"> · {lines.length} lines</span> : null}</dd><dt>File status</dt><dd>{c.file_status || "–"}{c.file_sub_status ? <span className="muted"> · {c.file_sub_status}</span> : null}</dd>
-            <dt>Follow-up on</dt><dd>{c.follow_up_on ? fmtDate(c.follow_up_on) : "–"}</dd><dt>Priority</dt><dd title={c.priority_reason}>{c.priority} · {c.tier}</dd>
+            <dt>Follow-up due</dt><dd><FollowUpDue c={c} /></dd><dt>Priority</dt><dd title={c.priority_reason}>{c.priority} · {c.tier}</dd>
             <dt>TFL</dt><dd><LimitTfl c={c} /></dd><dt>AFL</dt><dd><LimitAfl c={c} /></dd>
           </dl>
         </div>
@@ -6570,6 +6635,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
         {c && (
           <div className="stack" style={{ gap: 14, paddingRight: 30 }}>
             <ClaimHeader c={c}>{c.view_share && <span className="badge amber" title="This client is shared with you view-only">view only</span>}{!ro && <button className="btn sm" onClick={() => setPatientOf(c.id)}>All claims of this patient</button>}<button className="btn sm" onClick={L.close}>Close</button></ClaimHeader>
+            {c.urgent_to && c.urgent_to === c.assigned_to && c.assigned_at <= c.urgent_at && (c.state === "assigned" || c.state === "in_progress") && <div className="alert err"><b>Urgent.</b> {c.urgent_by_name ? c.urgent_by_name + " gave" : "Your team lead gave"} this claim as urgent: work it first.</div>}
             {c.view_share && <div className="alert warn view-only-note"><b>View only.</b> {c.client_name || "This client"} is shared with you to look at: you can read this claim, its history and its notes. Nothing can be added, changed or assigned here.</div>}
             {c.locked && <div className="alert info"><b>Posting closed this claim: the payment is posted.</b> {ro ? "Anyone can open it to read; it is not on your desk, so there is nothing to work here." : "Anyone can open it to read."} Its notes can no longer be edited (only QA is left).</div>}
             <ClaimInfo c={c} siblings={q.data.siblings} />
@@ -6634,7 +6700,7 @@ function ClaimFacts({ c }) {
           <dt>Suggested action</dt><dd>{STATUS_ACTION[c.status_class] || STATUS_ACTION.unknown}</dd>
           {c.state_reason && <><dt>State note</dt><dd>{c.state_reason}</dd></>}
           {c.assigned_name && <><dt>Assigned to</dt><dd>{c.assigned_name}{c.assigned_at ? <span className="muted"> · {fmtWhen(c.assigned_at)}</span> : null}</dd></>}
-          {c.follow_up_on && <><dt>Follow-up on</dt><dd>{fmtDate(c.follow_up_on)}</dd></>}
+          {c.follow_up_on && <><dt>Follow-up due</dt><dd><FollowUpDue c={c} /></dd></>}
           {c.last_status_code && <><dt>Last SAAG</dt><dd><span className="badge ink">{c.last_status_code}</span> {c.last_sub_status && <span className="badge gray">{c.last_sub_status}</span>} <span className="badge">{c.last_action_code}</span> {c.last_bucket && <span className={"badge " + (c.last_bucket === "Closed" ? "green" : "teal")}>{c.last_bucket}</span>} {c.last_effective && <span className="badge blue">{c.last_effective}</span>} <span className="muted">on {fmtDate(c.last_worked_on)}</span></dd></>}
         </dl>
       </div>
@@ -6755,7 +6821,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
   const subs = saagSubs(saag.status);
   const acts = saagActions(saag.status, saag.sub_status);
   const closed = isClosedSaag(saag);
-  const autoFollow = saag.effective ? weekdayOnOrAfter(addDaysISO(today, EFFECTIVE_DAYS[saag.effective] || claim.client_follow_up_days || 30)) : "";
+  const autoFollow = saag.effective ? weekdayOnOrAfter(addDaysISO(today, FOLLOW_UP_DAYS)) : "";
   // sent to a desk that has an active person: no follow-up date now (the server sets it when the desk is done). Same rule as
   // queue.complete: a rejected claim goes to the Rejections person first, when the client has one.
   const subDesk = saag.effective !== "Pending-Submission" ? "" : /reject/i.test(saag.status || "") && claim.desk_rejection ? "Rejections" : claim.desk_submission ? "Submission" : "";
@@ -6826,7 +6892,7 @@ function WorkForm({ claim, initial, buttons, onSave, onCancel, onChange, compact
       <div className="group">
         <div className="gt row" style={{ gap: 8 }}><span className="stepn">3</span>Follow-up</div>
         <div className="row" style={{ gap: 18, alignItems: "flex-end", flexWrap: "wrap" }}>
-          {!closed && !toDesk && <Field label="Follow-up date" hint={autoFollow ? `Auto ${fmtDate(autoFollow)} from the effective matrix${EFFECTIVE_DAYS[saag.effective] ? ` (${EFFECTIVE_DAYS[saag.effective]} days)` : ""}. Change it if the payer gave a date.` : "set once you pick the action"}><input className="input" type="date" style={{ width: 190 }} value={fu} min={today} onChange={(e) => setFollowUp(e.target.value)} /></Field>}
+          {!closed && !toDesk && <Field label="Follow-up due" hint={autoFollow ? <>Due {fmtDate(autoFollow)}: <b>date worked + 15 days</b>{autoFollow !== addDaysISO(today, FOLLOW_UP_DAYS) ? " (moved off the weekend)" : ""}. Change it only if the payer gave a date.</> : "set once you pick the action"}><input className="input" type="date" style={{ width: 190 }} value={fu} min={today} onChange={(e) => setFollowUp(e.target.value)} /></Field>}
           {saag.effective === "AR Closed-Pending Posting" ? <div className="alert info"><b>AR closed, posting pending.</b> {claim.desk_posting ? "It goes to Posting and leaves your list; Posting closes it when the payment is posted (then only QA is left)." : "This client's profile has no active Posting person yet: the claim closes for AR, ask your team lead to set one so the payment gets posted."}</div>
             : saag.effective === "Pending-Submission" ? <div className="alert info"><b>Pending submission, not closed.</b> {subDesk ? `It goes to ${subDesk}; once it is submitted it comes back to AR for its follow-up (15 days), with the recheck ${claim.recheck_hours || 48} working hours after submitting and any rejection.` : "This client's profile has no active Submission person yet: it stays on your list with a follow-up in 15 days."}</div>
             : closed && saag.status && <div className="alert info">This entry closes the claim: it leaves the desk and the follow-up list.</div>}
@@ -7013,6 +7079,7 @@ function Siblings({ rows, users, selectable, selected, onToggle, meId }) {
 /* ---------- allocation ---------- */
 function AllocateView({ ctx, params, go, embedded }) {
   const [clientId, setClientId] = useState((params && params.clientId) || "");
+  const [urgentOpen, setUrgentOpen] = useState(false);
   const [locId, setLocId] = useState("");
   const [pool, setPool] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -7091,7 +7158,8 @@ function AllocateView({ ctx, params, go, embedded }) {
   const sel = filtered;
   return (
     <div className="stack">
-      {embedded ? <div className="row" style={{ justifyContent: "flex-end" }}><AllocationLogicButton /></div> : <div className="row between top"><div><h1>Allocate claims</h1><div className="sub">Build the day's work order from the inventory and hand it out. Highest priority first; batches by patient and payer so one call covers several claims.</div></div><AllocationLogicButton /></div>}
+      {urgentOpen && <UrgentModal ctx={ctx} onClose={() => setUrgentOpen(false)} onDone={() => { setUrgentOpen(false); if (clientId) loadPool(); }} />}
+      {embedded ? <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}><button className="btn danger" onClick={() => setUrgentOpen(true)}>Urgent allocation</button><AllocationLogicButton /></div> : <div className="row between top"><div><h1>Allocate claims</h1><div className="sub">Build the day's work order from the inventory and hand it out. Highest priority first; batches by patient and payer so one call covers several claims.</div></div><div className="row" style={{ gap: 8 }}><button className="btn danger" onClick={() => setUrgentOpen(true)}>Urgent allocation</button><AllocationLogicButton /></div></div>}
       <div className="card">
         <div className="grid g3"><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={setLocId} /><div className="field"><span>Pool</span><div style={{ paddingTop: 6 }}>{loading ? <Spinner label="Loading claims…" /> : pool ? <span><b>{fmtInt(pool.length)}</b> eligible claims · {fmtMoney(sum(pool, (c) => c.balance))} <span className="muted">(unassigned, plus worked claims whose follow-up is due)</span></span> : <span className="muted">Pick a client to load its pool.</span>}</div></div></div>
       </div>
@@ -10527,7 +10595,7 @@ function QueueView({ ctx, me, go, refreshTasks }) {
       <ErrorBox error={summary.error} />
       {s && (
         <div className="grid g4">
-          <Kpi label="Ready to work" value={fmtInt(s.ready.n)} sub={fmtMoney(s.ready.amt) + (s.waiting ? ` · ${fmtInt(s.waiting)} parked until follow-up` : "")} tone="accent" />
+          <Kpi label="Ready to work" value={fmtInt(s.ready.n)} sub={<>{s.urgent ? <><span className="red-ink"><b>{fmtInt(s.urgent)} urgent</b> at the top</span> · </> : null}{fmtMoney(s.ready.amt) + (s.waiting ? ` · ${fmtInt(s.waiting)} parked until follow-up` : "")}</>} tone="accent" />
           <Kpi label="Worked today" value={fmtInt(s.done_today.n)} sub={fmtMoney(s.done_today.amt) + " touched"} tone="good" />
           <Kpi label="Skipped (back of the line)" value={fmtInt(s.skipped)} sub="come up again after the rest" tone={s.skipped ? "warn" : ""} />
           <div className="kpi"><div className="l">By client</div>{(s.by_client || []).slice(0, 3).map((c, i) => <div key={i} className="small"><b>{c.client_name}</b>{c.location_name ? <span className="muted"> · {c.location_name}</span> : null} <span className="mono muted">{fmtInt(c.n)}</span></div>)}{!(s.by_client || []).length && <div className="small muted">Nothing assigned.</div>}</div>
@@ -10566,7 +10634,7 @@ function QueueView({ ctx, me, go, refreshTasks }) {
         <div className="table-wrap"><table className="t"><thead><tr>{qSort.Th("due", "Due")}{qSort.Th("claim_no", "Claim #")}{qSort.Th("patient", "Patient")}{qSort.Th("payer", "Payer")}{qSort.Th("provider", "Provider")}{qSort.Th("cpt", "CPT")}{qSort.Th("dos", "DOS")}{qSort.Th("age_days", "Age", "r")}{qSort.Th("balance", "Balance", "r")}{qSort.Th("tier", "Tier")}{qSort.Th("file_status", "File status")}{qSort.Th("saag", "SAAG")}{qSort.Th("bucket", "Bucket")}{qSort.Th("follow_up_on", "Follow-up")}{qSort.Th("state", "State")}</tr></thead>
           <tbody>{shownRows.map((r) => (
             <tr key={r.id} className={"click " + workTone(r)} onClick={() => open(r.id)}>
-              <td title={"Priority " + r.priority + (r.priority_reason ? " · " + r.priority_reason : "")}>{dueOf[r.id] ? <span className={"badge " + (dueOf[r.id].days === 0 ? "red" : dueOf[r.id].days === 1 ? "amber" : dueOf[r.id].days < 0 ? "green" : "")}>{dueOf[r.id].label}</span> : ""}</td><td className="mono small">{r.claim_no || "–"}</td><td><button className="btn link sm" style={{ padding: 0, fontWeight: 600 }} title="All claims of this patient" onClick={(e) => { e.stopPropagation(); setPatientOf(r.id); }}>{r.patient}</button><div className="tiny muted">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</div></td><td className="small">{r.payer}</td><td className="small">{r.provider}</td><td className="mono small">{r.cpt}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{ageNow(r) ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
+              <td title={"Priority " + r.priority + (r.priority_reason ? " · " + r.priority_reason : "")}>{dueOf[r.id] ? <span className={"badge " + (dueOf[r.id].days === 0 ? "red" : dueOf[r.id].days === 1 ? "amber" : dueOf[r.id].days < 0 ? "green" : "")}>{dueOf[r.id].label}</span> : ""}</td><td className="mono small">{r.urgent ? <span className="badge red" style={{ marginRight: 4 }} title={"Urgent" + (r.urgent_by_name ? " · from " + r.urgent_by_name : "") + ": work it first"}>Urgent</span> : null}{r.claim_no || "–"}</td><td><button className="btn link sm" style={{ padding: 0, fontWeight: 600 }} title="All claims of this patient" onClick={(e) => { e.stopPropagation(); setPatientOf(r.id); }}>{r.patient}</button><div className="tiny muted">{r.client_name}{r.location_name ? " · " + r.location_name : ""}</div></td><td className="small">{r.payer}</td><td className="small">{r.provider}</td><td className="mono small">{r.cpt}</td><td className="small">{fmtDate(r.dos)}</td><td className="num">{ageNow(r) ?? "–"}</td><td className="num">{fmtMoney(r.balance)}</td>
               <td><TierBadge tier={r.tier} /></td><td className="small">{r.file_status}{r.file_sub_status ? <div className="tiny muted">{r.file_sub_status}</div> : null}</td>
               <td className="small"><SaagCell r={r} /></td>
               <td>{r.last_bucket ? <span className={"badge " + (r.last_bucket === "Closed" ? "green" : "teal")}>{r.last_bucket}</span> : ""}</td><td className="small">{r.follow_up_on ? fmtDate(r.follow_up_on) : ""}</td>

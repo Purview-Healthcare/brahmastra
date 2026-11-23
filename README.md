@@ -1002,6 +1002,18 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
   the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
   so every claim goes to the people who do.
+- **Follow-up: 15 days after the date worked.** Every claim's follow-up is due 15 days after the date it was worked
+  (DOW + 15), for every client and every SAAG status, moved to the next working day when it falls on a weekend or
+  holiday. The work form says so ("Due 09 Dec: date worked + 15 days"); a biller picks another date only when the payer
+  gave one. A worked file's claim with a date worked and no follow-up date gets the same. (Before, it was 30, 14 or 7
+  days by status, or the client's own default; the client profile no longer has that setting.)
+- **Urgent allocation.** A team lead gives claims of one client as urgent: ticked on the Claims page (Urgent...) or claim
+  numbers pasted on Allocate (Urgent allocation; numbers it does not have, and claims closed, excluded or with a desk,
+  are listed). They go all to one biller or are split evenly, most important first, across the billers picked. Each
+  goes to the top of the biller's list with a red Urgent tag, whatever its follow-up date, Work the next claim opens it
+  first, the Ready to work card says how many, and the biller gets a bell line. Urgent claims come on top of the day's
+  target + 10 (they are not counted in it). Worked, a claim is no longer urgent; its history says it was given as urgent.
+- **Claims page** opens with every state (Any state); a link from a dashboard figure still opens with its own filter.
 - **Only a team lead takes anyone off a client.** A client's billers are everyone on its list: the people of its Purview
   Shastra projects, added by themselves every hour, and everyone a team lead adds on the client card or Locations. Once
   someone is on it, nothing automatic takes them off or changes it; only a team lead who may change that client does, by
