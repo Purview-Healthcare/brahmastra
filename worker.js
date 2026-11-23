@@ -25,13 +25,23 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.116.3";
+const VERSION = "2.116.4";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
 const DEFAULT_BOOTSTRAP_EMAIL = "supervisor@purview-healthcare.com";
 const DEFAULT_BOOTSTRAP_PASSWORD = "brahmastra-setup";
 const WORKABLE = "('open','assigned','in_progress','completed')";
+// "Closed" on Team status, Live status and the team range: the claims a biller's own entry closed, on the day it closed them.
+// closed_at is stamped from the closing save's updated_at, and an entry sets completed_at in that same statement, so a claim
+// closed by someone else later (a team lead, Posting) has closed_at after its last entry and is nobody's closing. A claim
+// closed before closed_at was kept counts as before, on its last entry (QA3-06).
+const BILLER_CLOSED = "c.state = 'closed' AND (c.closed_at IS NULL OR c.closed_at <= c.completed_at)", CLOSED_ON = "COALESCE(c.closed_at, c.completed_at)";
+// A claim the biller opened and leaves without saving (another claim opened, Back to My day, Next) goes back exactly as it was:
+// Worked when it was worked since it was given, else on the list (QA3-05). The state it was opened from (the last "opened" line
+// in its history) says which; a claim opened before that was kept: Worked when its last entry is since it was given.
+const LEFT_STATE = `CASE WHEN COALESCE((SELECT json_extract(e.data_json, '$.from') FROM claim_events e WHERE e.claim_id = claims.id AND e.kind = 'opened' ORDER BY e.at DESC, e.rowid DESC LIMIT 1),
+  CASE WHEN completed_at IS NOT NULL AND completed_at >= COALESCE(assigned_at, 0) THEN 'completed' END, 'assigned') = 'completed' THEN 'completed' ELSE 'assigned' END`;
 /* Inventory status's stages as claims.list filters (claims c): an open hand-off wins, then the state, then the follow-up date. */
 const INV_HO = (st) => `EXISTS (SELECT 1 FROM handoffs hx WHERE hx.claim_id = c.id AND hx.status IN (${st}))`;
 const INV_NO_OPEN_HO = `NOT ${INV_HO("'pending','assigned','client'")}`;
@@ -3999,6 +4009,26 @@ async function releaseLostClaims(env, by, userId, clientId) {
     .bind(uuid(), userId, Date.now(), `${k.n} claim${k.n === 1 ? " was" : "s were"} taken off your list: you no longer work ${k.name || "that client"}, so ${k.n === 1 ? "it went" : "they went"} back to the pool.`, "queue", cid)), 50);
   return [...per.values()].reduce((t, k) => t + k.n, 0);
 }
+/* A claim coming back to AR from a desk (sent back, a rejected recheck with nobody to resubmit it, a Needs attention answer that
+   sends it back) goes to the biller whose list it is on only while they still work its client: active, and the client theirs for
+   a reason other than holding its claims (releaseLostClaims' test). Otherwise it goes to the pool, first in the next allocation,
+   with a line in its history, and the client's team leads hear it in the bell, the claim number only (QA3-02). Returns null when
+   it stays with them, else { why, stmts }: the history line and the notices, for the caller's batch. */
+async function backToPool(env, c, by, from, then = "") {
+  if (!c.assigned_to) return null;
+  const row = await one(env, "SELECT * FROM users WHERE id = ?", c.assigned_to);
+  const u = row ? publicUser(row) : null;
+  if (u && row.active) { const scope = await scopeOf(env, u, null, { noHeld: true }); if (scope == null || (scope.includes(c.client_id) && !viewOnlyOf(u, c.client_id))) return null; }
+  const cl = await one(env, "SELECT name FROM clients WHERE id = ?", c.client_id), name = (u && u.name) || "its biller";
+  const why = u && row.active ? `${name} no longer works ${(cl && cl.name) || "the client"}` : `${name} is switched off`, now = Date.now();
+  const text = `${c.claim_no ? "Claim " + c.claim_no : "A claim"} ${from}, but ${why}, ${then || "so it went to the pool, first in the next allocation"}.`;
+  const stmts = [claimEvent(env, c.id, by, "unassigned", (u && u.name) || "", { why })];
+  for (const p of await escalationPeople(env, c.client_id))
+    stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), p.id, now, text.slice(0, 300), "claims", c.client_id));
+  return { why, stmts };
+}
+// what sends a claim to the pool, first in the next allocation (backToPool: its biller no longer works the client)
+const POOL_SET = "assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', first_up = 1";
 async function unassignOpen(env, userId, by) {
   await releaseList(env, by, userId, "they were switched off", false);
   await rerouteHandoffs(env, userId);
@@ -5636,7 +5666,8 @@ const OPS = {
     // a person's entries on every client (the target is theirs, not the picked client's); "here" marks the picked client's
     const notes = await all(env, `SELECT nt.user_id, nt.kind, nt.created_at, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here FROM notes nt JOIN claims c ON c.id = nt.claim_id
       WHERE nt.kind IN ('work','skip') AND nt.created_at > ? AND nt.user_id IN ${IN_LIST}`, ...ca, ...la, since, ida);
-    const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, c.completed_at FROM claims c WHERE c.state = 'closed' AND c.completed_at > ? AND c.last_worked_by IN ${IN_LIST}${cw}${lw}`, since, ida, ...ca, ...la);
+    // the claims each person's own entry closed, on that day (BILLER_CLOSED, QA3-06)
+    const closedRows = await all(env, `SELECT c.last_worked_by AS user_id, ${CLOSED_ON} AS completed_at FROM claims c WHERE ${BILLER_CLOSED} AND ${CLOSED_ON} > ? AND c.last_worked_by IN ${IN_LIST}${cw}${lw}`, since, ida, ...ca, ...la);
     // the claim each person last worked (their latest entry in the last 7 days, on any client) and when: shown when no claim is open
     const lastWork = new Map((await all(env, `SELECT n.user_id, n.claim_id, MAX(n.created_at) AS at, c.claim_no, c.client_id, cl.name AS client_name FROM notes n JOIN claims c ON c.id = n.claim_id
       LEFT JOIN clients cl ON cl.id = c.client_id WHERE n.kind = 'work' AND n.user_id IN ${IN_LIST} AND n.created_at > ? GROUP BY n.user_id`, ida, now - 7 * 86400000)).map((r) => [r.user_id, r]));
@@ -5722,7 +5753,8 @@ const OPS = {
     const work = await all(env, `SELECT nt.user_id, COUNT(*) AS worked, COUNT(DISTINCT nt.claim_id) AS claims, SUM(nt.call_min IS NOT NULL) AS calls, COALESCE(SUM(nt.call_min), 0) AS call_min,
         COUNT(DISTINCT date((nt.created_at / 1000) + ?, 'unixepoch')) AS days_worked
       FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN ${IN_LIST}${cw}${lw} GROUP BY nt.user_id`, off * 60, start, end, ida, ...ca, ...la);
-    const closed = await all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?
+    // closed: the claims each person's own entry closed, on that day (BILLER_CLOSED, QA3-06)
+    const closed = await all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE ${BILLER_CLOSED} AND ${CLOSED_ON} BETWEEN ? AND ?
       AND c.last_worked_by IN ${IN_LIST}${cw}${lw} GROUP BY c.last_worked_by`, start, end, ida, ...ca, ...la);
     const outs = await all(env, `SELECT user_id, day FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}`, from, to, ida);
     // extra production (Stack report › Extra production) on its day of work: work done, as on Team status
@@ -5733,7 +5765,10 @@ const OPS = {
     if (f.narrow) people = people.filter((u) => wk.has(u.id) || f.teamIds.has(u.id));
     const rows = people.map((u) => {
       const w = wk.get(u.id) || {}, c = cl.get(u.id) || {};
-      const out = outs.filter((o) => o.user_id === u.id && weekday(o.day)).length, daysIn = Math.max(0, workdays - out);
+      // days before the date of joining have no target and are not days out, as on Team status (QA3-04)
+      const doj = isoDate(u.doj), mine = (d) => weekday(d) && !(doj && d < doj);
+      let wd = 0; for (let d = doj && doj > from ? doj : from; d <= to; d = addDays(d, 1)) if (weekday(d)) wd++;
+      const out = outs.filter((o) => o.user_id === u.id && mine(o.day)).length, daysIn = Math.max(0, wd - out);
       const cap = Math.max(1, u.capacity || 35), target = daysIn * cap, x = extra.get(u.id) || 0, done = (w.worked || 0) + x;
       return { id: u.id, name: u.name, capacity: cap, lead_id: f.leadOf(u).id, lead_name: f.leadOf(u).name, days_in: daysIn, days_out: out, days_worked: w.days_worked || 0,
         worked: w.worked || 0, extra: x, done, claims: w.claims || 0, closed: c.n || 0, closed_amt: c.amt || 0, calls: w.calls || 0, call_min: w.call_min || 0, target, pct: target ? Math.round(done / target * 100) : null };
@@ -5781,7 +5816,8 @@ const OPS = {
           SELECT nt.user_id, date((nt.created_at / 1000) + ? - ${rollSql("nt.user_id")}, 'unixepoch') AS bday, ${cw || lw ? `CASE WHEN 1 = 1${cw}${lw} THEN 1 ELSE 0 END` : "1"} AS here
           FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ? AND nt.user_id IN ${IN_LIST})
         WHERE bday BETWEEN ? AND ? GROUP BY user_id`, ...doneArgs, off * 60, ...rollArgs, ...ca, ...la, start, end + maxRollMs, ida, from, to),
-      all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ? AND c.last_worked_by IN ${IN_LIST}${cw}${lw} GROUP BY c.last_worked_by`, start, end, ida, ...ca, ...la),
+      // closed: the claims each person's own entry closed, on that day (BILLER_CLOSED, QA3-06)
+      all(env, `SELECT c.last_worked_by AS user_id, COUNT(*) AS n FROM claims c WHERE ${BILLER_CLOSED} AND ${CLOSED_ON} BETWEEN ? AND ? AND c.last_worked_by IN ${IN_LIST}${cw}${lw} GROUP BY c.last_worked_by`, start, end, ida, ...ca, ...la),
       all(env, `SELECT user_id, day, reason FROM attendance WHERE status = 'out' AND day BETWEEN ? AND ? AND user_id IN ${IN_LIST}`, from, to, ida),
       all(env, `SELECT * FROM team_notes WHERE user_id IN ${IN_LIST}`, ida),
       // left over: allocated before the person's working day began (a night shift's: the day it began) and not started
@@ -6243,7 +6279,8 @@ const OPS = {
     const w = where.length ? " AND " + where.join(" AND ") : "";
     const [work, closed, loaded, assigned] = await Promise.all([
       one(env, `SELECT COUNT(*) AS n, COUNT(DISTINCT nt.claim_id) AS claims FROM notes nt JOIN claims c ON c.id = nt.claim_id WHERE nt.kind = 'work' AND nt.created_at BETWEEN ? AND ?${w}`, from, to, ...args),
-      one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at BETWEEN ? AND ?${w}`, from, to, ...args),
+      // the worked claims closed in the dates, on the day they were closed (by anyone), as Inventory status dates it (QA3-06)
+      one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.state = 'closed' AND c.completed_at IS NOT NULL AND ${CLOSED_ON} BETWEEN ? AND ?${w}`, from, to, ...args),
       one(env, `SELECT COUNT(*) AS n, COALESCE(SUM(c.balance), 0) AS amt FROM claims c WHERE c.created_at BETWEEN ? AND ?${w}`, from, to, ...args),
       one(env, `SELECT COUNT(*) AS n FROM claims c WHERE c.assigned_at BETWEEN ? AND ?${w}`, from, to, ...args),
     ]);
@@ -6566,9 +6603,12 @@ const OPS = {
       // past TAT and due soon on this person's clients: every supervisor, SME and above on the client sees them until they are closed
       const tcl = (await all(env, "SELECT id, name, posting_tat_hours, submission_tat_hours FROM clients WHERE active = 1 ORDER BY name")).filter((c) => leadFor(user, c.id));
       const tb = await tatBoard(env, tcl.map((c) => c.id), now);
+      // a desk person (team leads too) hears about their own desk only, never AR's Needs attention: as tat.list and the email (QA3-07)
+      const dd = deskDepts(user);
       for (const c of tcl) {
         const t = tb.get(c.id); if (!t) continue;
         for (const [k, label] of TAT_DEPTS) {
+          if (dd && !dd.includes(k)) continue;
           const b = t.desks[k], what = (n) => `${n} ${label} ${n === 1 ? "claim" : "claims"}`;
           // the oldest one's own TAT (the one its due time came from), not the client's TAT now
           const oldest = t.late.filter((x) => x.group === "desks" && x.dept === k).reduce((m, x) => (!m || x.waited_h > m.waited_h ? x : m), null);
@@ -6576,7 +6616,7 @@ const OPS = {
           if (b.soon) items.push({ key: `soon:${c.id}:${k}`, cat: "desks", tone: "amber", n: b.soon, text: `${what(b.soon)} due in the next ${DUE_SOON_HOURS} hours · ${c.name}`, sub: "Still within TAT", view: "handoffs", params: { client_id: c.id } });
         }
         const a = t.attn;
-        if (a.late) {
+        if (a.late && !dd) {
           const one = { flagged: ["flagged by a biller", "flagged by billers"], back: ["sent back by Posting / Submission", "sent back by Posting / Submission"], requests: ["client request to send", "client requests to send"] };
           const parts = ATTN_PARTS.filter(([p]) => a[p].late).map(([p]) => a[p].late + " " + one[p][a[p].late === 1 ? 0 : 1]);
           items.push({ key: `tat:${c.id}:attn`, cat: "tat", tone: "red", n: a.late, text: `${a.late} Needs attention ${a.late === 1 ? "item" : "items"} past ${ATTN_TAT_HOURS} working hours · ${c.name}`, sub: parts.join(" · ") + ` · oldest ${a.oldest_late_h} working hours`, view: "attention", params: { client_id: c.id, tab: { flagged: "esc", back: "desks", requests: "client" }[(ATTN_PARTS.find(([p]) => a[p].late) || ["flagged"])[0]] } });
@@ -8410,7 +8450,7 @@ const OPS = {
     const skipId = str(payload.skip_id, 60);
     // a claim of a client this person only has a view-only share of, or no longer works at all, is never opened for work
     const voSql = editScopeSql(user, "client_id"), voa = editScopeArgs(user);
-    if (skipId) await run(env, `UPDATE claims SET state = 'assigned', started_at = NULL, updated_at = ? WHERE id = ? AND assigned_to = ? AND state = 'in_progress'${voSql}`, now, skipId, user.id, ...voa);
+    if (skipId) await run(env, `UPDATE claims SET state = ${LEFT_STATE}, started_at = NULL, updated_at = ? WHERE id = ? AND assigned_to = ? AND state = 'in_progress'${voSql}`, now, skipId, user.id, ...voa);
     let c = await one(env, `SELECT * FROM claims WHERE assigned_to = ? AND state = 'in_progress'${voSql} LIMIT 1`, user.id, ...voa);
     // Pick the top claim in two plain steps (no RETURNING / subquery update), retrying once if it was taken meanwhile.
     for (let attempt = 0; !c && attempt < 2; attempt++) {
@@ -8418,7 +8458,7 @@ const OPS = {
           ORDER BY CASE WHEN id = ? THEN 1 ELSE 0 END, first_up DESC, CASE WHEN skipped_at IS NULL THEN 0 ELSE 1 END, priority + ${TURN90_BOOST()} DESC, balance DESC, age_days DESC LIMIT 1`, user.id, today, ...voa, skipId || "", today, today);
       if (!cand) break;
       const r = await run(env, "UPDATE claims SET state = 'in_progress', started_at = ?, updated_at = ? WHERE id = ? AND state = 'assigned'", now, now, cand.id);
-      if (changesOf(r)) { c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id); await claimEvent(env, c.id, user, "opened", "Next claim").run(); }
+      if (changesOf(r)) { c = await one(env, "SELECT * FROM claims WHERE id = ?", cand.id); await claimEvent(env, c.id, user, "opened", "Next claim", { from: "assigned" }).run(); }
     }
     if (!c) return { claim: null };
     const full = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", c.id);
@@ -8432,7 +8472,8 @@ const OPS = {
     const now = Date.now();
     const reason = str(payload.reason, 500).trim();
     const count = payload.count === false ? 0 : 1;
-    const stmts = [env.DB.prepare("UPDATE claims SET state = 'assigned', started_at = NULL, skipped_at = CASE WHEN ? = 1 THEN ? ELSE skipped_at END, skips = skips + ?, first_up = CASE WHEN ? = 1 THEN 0 ELSE first_up END, updated_at = ? WHERE id = ?").bind(count, now, count, count, now, c.id)];
+    // a counted skip puts it at the back of the list; Back to My day leaves it as it was when opened (Worked stays Worked: QA3-05)
+    const stmts = [env.DB.prepare(`UPDATE claims SET state = ${count ? "'assigned'" : LEFT_STATE}, started_at = NULL, skipped_at = CASE WHEN ? = 1 THEN ? ELSE skipped_at END, skips = skips + ?, first_up = CASE WHEN ? = 1 THEN 0 ELSE first_up END, updated_at = ? WHERE id = ?`).bind(count, now, count, count, now, c.id)];
     // Every counted skip is a skip note (the reason is optional), so coaching and the reports count it. Back to my day is not a skip.
     if (count) stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'skip',?,?)").bind(uuid(), c.id, user.id, user.name, reason, now));
     else stmts.push(claimEvent(env, c.id, user, "returned", ""));
@@ -8513,9 +8554,10 @@ const OPS = {
     if (!["assigned", "in_progress", "completed"].includes(c.state)) throw bad("This claim is " + c.state + " and cannot be opened for work.");
     const now = Date.now();
     await env.DB.batch([
-      env.DB.prepare("UPDATE claims SET state = 'assigned', started_at = NULL, updated_at = ? WHERE assigned_to = ? AND state = 'in_progress' AND id <> ?").bind(now, user.id, c.id),
+      env.DB.prepare(`UPDATE claims SET state = ${LEFT_STATE}, started_at = NULL, updated_at = ? WHERE assigned_to = ? AND state = 'in_progress' AND id <> ?`).bind(now, user.id, c.id),
       env.DB.prepare("UPDATE claims SET state = 'in_progress', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ?").bind(now, now, c.id),
-      ...(c.state !== "in_progress" ? [claimEvent(env, c.id, user, "opened", "From the day list")] : []),
+      // from: the state it is opened from, so leaving it without a save puts it back so (QA3-05)
+      ...(c.state !== "in_progress" ? [claimEvent(env, c.id, user, "opened", "From the day list", { from: c.state })] : []),
     ]);
     const full = await one(env, "SELECT c.*, u.name AS assigned_name, l.name AS location_name, cl.name AS client_name, cl.follow_up_days AS client_follow_up_days FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?", c.id);
     return claimBundle(env, user, full);
@@ -9124,12 +9166,13 @@ const OPS = {
         SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now, SUM(CASE WHEN ${openNow} AND h.due_at < ? AND NOT ${held} THEN 1 ELSE 0 END) AS overdue_now
       FROM handoffs h LEFT JOIN clients cl ON cl.id = h.client_id WHERE ${W} GROUP BY h.client_id ORDER BY overdue_now DESC, open_now DESC, cl.name`, from, to, from, to, from, to, now, ...a);
     // By person: one row a person (their id: who did it, else whom it is with), never one row for two people with the same name (R4-G)
+    // Open now counts the rechecks too, as the card and By client do; done, completed and the average leave them out (QA3-01)
     const pKey = "CASE WHEN COALESCE(h.done_by_name, '') <> '' THEN COALESCE(h.done_by, 'n:' || h.done_by_name) ELSE COALESCE(h.assigned_to, h.lead_id, '') END";
     const byPerson = await all(env, `SELECT ${pKey} AS id, MAX(COALESCE(NULLIF(h.done_by_name, ''), u.name, 'Not assigned')) AS name, SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done,
         SUM(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ${from} AND ${to} THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN ${done} AND h.done_at BETWEEN ? AND ? AND h.done_at <= h.due_at THEN 1 ELSE 0 END) AS met, SUM(CASE WHEN ${openNow} THEN 1 ELSE 0 END) AS open_now,
         AVG(CASE WHEN ${work} AND h.status = 'complete' AND h.done_at BETWEEN ? AND ? THEN (h.done_at - h.created_at) / 3600000.0 END) AS avg_hours
-      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} AND ${work} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
+      FROM handoffs h LEFT JOIN users u ON u.id = COALESCE(h.assigned_to, h.lead_id) WHERE ${W} GROUP BY 1 HAVING done > 0 OR open_now > 0 ORDER BY done DESC, name`, from, to, from, to, from, to, ...a);
     const empOf = new Map((await all(env, `SELECT id, emp_id FROM users WHERE id IN ${IN_LIST}`, listArg(byPerson.map((p) => p.id)))).map((u) => [u.id, u.emp_id || ""]));
     for (const p of byPerson) p.emp_id = empOf.get(p.id) || "";
     // time to complete in working hours, as the TAT counts (a task sent Friday 18:00 and done Monday 10:00 took 16, not 64)
@@ -9250,8 +9293,8 @@ const OPS = {
     // afterwards (a recheck, a Rejections task) is kept on the hand-off and in the history, and never opens the claim again or
     // lifts the read-only lock of a claim Posting closed.
     const KEEP = " AND state NOT IN ('closed','excluded')", kept = c.state === "closed" || c.state === "excluded";
-    // Back to AR: on the biller's desk today (or the pool when nobody has it).
-    const backToAr = (status, extra = "") => env.DB.prepare(`UPDATE claims SET handoff_status = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,
+    // Back to AR: on the biller's desk today (or the pool when nobody has it, or they no longer work the client: toPool, QA3-02).
+    const backToAr = (status, extra = "", toPool = false) => env.DB.prepare(`UPDATE claims SET handoff_status = ?, ${toPool ? POOL_SET + "," : `state = CASE WHEN state IN ('completed','assigned','in_process') THEN (CASE WHEN assigned_to IS NOT NULL THEN 'assigned' ELSE 'open' END) ELSE state END,`}
         state_reason = '', follow_up_on = ?, skipped_at = NULL, first_up = 1${extra}, updated_at = ? WHERE id = ?${KEEP}`);
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const note = str(payload.note, 2000).trim();
@@ -9260,7 +9303,8 @@ const OPS = {
     // on the client), so two choices at once cannot both go through: the first one wins, whatever the two choices are.
     const STILL = h.status === "client" ? "status = 'client'" : "status IN ('pending','assigned')";
     // went: where a rejected recheck went (rejection, submission, biller, or kept: the claim was already closed and stays so)
-    let guard = null, listed = false, went = "";
+    // pool: the claim came back to AR but its biller no longer works the client, so it went to the pool (backToPool, QA3-02)
+    let guard = null, listed = false, went = "", pool = null;
     if (outcome === "complete") {
       const p = payload.proof || {};
       // amounts: optional, a number when given (Paid is the "amount posted" the reports add up)
@@ -9304,9 +9348,14 @@ const OPS = {
         // A team lead's review gave the claim to a biller while this desk had it ("comes to your list when they finish"):
         // it goes on that biller's list now instead of waiting for the 15-day follow-up.
         listed = c.state === IN_PROCESS && !!c.assigned_to && !!(await one(env, "SELECT 1 AS x FROM claim_events WHERE claim_id = ? AND kind = 'review_to_biller' AND at >= ? LIMIT 1", c.id, h.created_at));
+        // Its biller no longer works the client (QA3-02): a claim the review listed goes to the pool, first in the next allocation;
+        // otherwise it stays Worked with its follow-up but on nobody, and allocation hands it out when the follow-up is due.
+        pool = ["completed", "assigned", "in_process"].includes(c.state) ? await backToPool(env, c, user, "came back to AR from " + DEPT_LABEL[h.dept], listed ? "" : `so it is Worked on nobody's list: allocation hands it out when its follow-up is due (${mdy(fu)})`) : null;
+        const off = pool ? ", assigned_to = CASE WHEN state IN ('completed','assigned','in_process') THEN NULL ELSE assigned_to END, assigned_at = CASE WHEN state IN ('completed','assigned','in_process') THEN NULL ELSE assigned_at END" : "";
         // a claim Posting closed meanwhile (a rejected recheck sent it here) keeps its Posting Closed status and read-only lock
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN ? ELSE state END, state_reason = '', first_up = CASE WHEN ? = 1 THEN 1 ELSE first_up END, updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`)
-          .bind(listed ? today : fu, listed ? "assigned" : "completed", listed ? 1 : 0, now, c.id));
+        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submitted', last_effective = CASE WHEN state = 'closed' THEN last_effective ELSE 'Pending-Collectible Insurance' END, last_bucket = CASE WHEN state = 'closed' THEN last_bucket ELSE 'Payer' END, follow_up_on = ?, state = CASE WHEN state IN ('completed','assigned','in_process') THEN ? ELSE state END${off}, state_reason = '', first_up = CASE WHEN ? = 1 THEN 1 ELSE first_up END, updated_at = ? WHERE id = ? AND NOT (state = 'closed' AND handoff_status = 'posted')`)
+          .bind(listed ? today : fu, listed ? (pool ? "open" : "assigned") : "completed", listed ? 1 : 0, now, c.id));
+        if (pool) { stmts.push(...pool.stmts); listed = false; }
         const cl = await one(env, "SELECT submission_check_mode, submission_check_person, submission_tat_hours, subcheck_hours FROM clients WHERE id = ?", h.client_id);
         // "The biller" is the AR biller of the claim (biller_id): on a Rejections hand-off created_by is whoever rejected the last recheck.
         const checker = cl && cl.submission_check_mode === "person" && cl.submission_check_person ? await one(env, "SELECT id FROM users WHERE id = ? AND active = 1", cl.submission_check_person) : null;
@@ -9350,8 +9399,12 @@ const OPS = {
       } else {
         // Nobody set to resubmit: back to the biller today; a claim already closed or excluded stays as it is (the rejection is on
         // the recheck and in the claim history).
-        stmts.push(env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ?${KEEP}`).bind(today, now, c.id));
-        went = kept ? "kept" : "biller";
+        // (to the pool instead when the biller no longer works the client, QA3-02)
+        pool = !kept && ["completed", "assigned", "in_progress"].includes(c.state) ? await backToPool(env, c, user, "was rejected at its recheck and came back to AR") : null;
+        stmts.push(pool ? env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, ${POOL_SET}, skipped_at = NULL, updated_at = ? WHERE id = ? AND state IN ('completed','assigned','in_progress')`).bind(today, now, c.id)
+          : env.DB.prepare(`UPDATE claims SET handoff_status = 'submission_rejected', follow_up_on = ?, state = CASE WHEN assigned_to IS NOT NULL AND state IN ('completed','assigned') THEN 'assigned' ELSE state END, updated_at = ? WHERE id = ?${KEEP}`).bind(today, now, c.id));
+        if (pool) stmts.push(...pool.stmts);
+        went = kept ? "kept" : pool ? "pool" : "biller";
         // the client's team lead(s) hear it in the bell: the claim number only, and that nobody active is set on the profile; the
         // line opens the client's profile (kind "profile") so they can set someone
         const cl2 = await one(env, "SELECT name FROM clients WHERE id = ?", h.client_id);
@@ -9371,11 +9424,14 @@ const OPS = {
       const bounced = returns >= BOUNCE_LIMIT && !kept;
       const text = `${DEPT_LABEL[h.dept]} needs assistance from AR (${reason}): ${note}` + (bounced ? ` [returned ${returns} times: for both team leads to review]` : "");
       guard = env.DB.prepare(`UPDATE handoffs SET status = 'back', done_at = ?, done_by = ?, done_by_name = ?, reason = ?, note = ? WHERE id = ? AND ${STILL}`).bind(now, user.id, user.name, reason, note, h.id);
+      // the biller whose list it is on no longer works the client: to the pool, and the team leads are told (QA3-02)
+      pool = kept ? null : await backToPool(env, c, user, "came back to AR from " + DEPT_LABEL[h.dept]);
       // The third return goes to the AR team lead's Needs attention as well (the department lead sees it on their dashboard).
       stmts.push(bounced
         // "Sent by" for the team lead's review is the AR biller of the claim, not the department person who returned it.
-        ? backToAr(pfx + "_back", ", last_note = ?, escalated = 1, escalated_at = ?, escalated_by = ?").bind(pfx + "_back", today, text.slice(0, 600), now, h.biller_id || c.assigned_to || c.last_worked_by || h.created_by || null, now, c.id)
-        : backToAr(pfx + "_back", ", last_note = ?").bind(pfx + "_back", today, text.slice(0, 600), now, c.id));
+        ? backToAr(pfx + "_back", ", last_note = ?, escalated = 1, escalated_at = ?, escalated_by = ?", !!pool).bind(pfx + "_back", today, text.slice(0, 600), now, h.biller_id || c.assigned_to || c.last_worked_by || h.created_by || null, now, c.id)
+        : backToAr(pfx + "_back", ", last_note = ?", !!pool).bind(pfx + "_back", today, text.slice(0, 600), now, c.id));
+      if (pool) stmts.push(...pool.stmts);
       stmts.push(env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, text, now));
       stmts.push(claimEvent(env, c.id, user, "handoff_back", DEPT_LABEL[h.dept], { dept: h.dept, reason, note, within_tat: now <= h.due_at, returns, bounced, ...(kept ? { kept: c.state } : {}) }));
     } else if (outcome === "pending") {
@@ -9427,12 +9483,12 @@ const OPS = {
     if (billerId && tellBiller && h.dept !== "subcheck" && !(outcome === "back" && kept)) {
       const cno = c.claim_no || c.account_no || "a claim";
       const text = outcome === "complete" ? `${user.name} ${tellBiller} claim ${cno} (${DEPT_LABEL[h.dept]} complete)` + (listed ? ". It is first on your list now." : "")
-        : outcome === "back" ? `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${cno} back to you (${str(payload.reason, 80).trim()})`
+        : outcome === "back" ? `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${cno} back to ${pool ? "AR" : "you"} (${str(payload.reason, 80).trim()})` + (pool ? `. ${pool.why}, so it went to the pool.` : "")
         : `${DEPT_LABEL[h.dept]}: claim ${cno} is waiting on the client (${str(payload.reason, 80).trim()})`;
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), billerId, now, text.slice(0, 300), outcome === "back" || listed ? "queue" : "history", h.client_id));
     }
     // Sent back to AR: the biller whose list it is on hears too (when that is someone else), and it is first on their list.
-    if (outcome === "back" && !kept && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
+    if (outcome === "back" && !kept && !pool && c.assigned_to && c.assigned_to !== billerId && c.assigned_to !== user.id)
       stmts.push(env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)").bind(uuid(), c.assigned_to, now,
         `${DEPT_LABEL[h.dept]}: ${user.name} sent claim ${c.claim_no || c.account_no || ""} back to AR (${str(payload.reason, 80).trim()}). It is first on your list.`.slice(0, 300), "queue", h.client_id));
     if (guard && !changesOf(await guard.run())) {
@@ -9443,7 +9499,8 @@ const OPS = {
     await env.DB.batch(stmts);
     if (!env.DEMO && env.MS_CLIENT_SECRET) { const p = deskProduction(env, user, h.id, outcome); if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p; }
     // listed: the claim went on a biller's list now (a team lead's review gave it to them while the desk had it)
-    return { ok: true, ...(listed ? { listed: true } : {}), ...(went ? { went } : {}) };
+    // pool: it came back to AR but its biller no longer works the client, so nobody has it now (QA3-02)
+    return { ok: true, ...(listed ? { listed: true } : {}), ...(went ? { went } : {}), ...(pool ? { pool: true } : {}) };
   },
 
   /* ---- needs attention: claims a biller escalated to a team lead. 24 hours to answer (TAT); after that they show red. ---- */
@@ -9583,12 +9640,14 @@ const OPS = {
         cl.posting_mode, cl.submission_mode, cl.rejection_mode,
         (SELECT h.dept FROM handoffs h WHERE h.claim_id = c.id AND h.status IN ('back','assistance') ORDER BY h.done_at DESC LIMIT 1) AS last_dept,
         (SELECT hb.dept FROM handoffs hb WHERE hb.claim_id = c.id AND hb.status IN ('assistance','back') AND hb.done_at = c.escalated_at LIMIT 1) AS bounced_dept,
-        (SELECT COUNT(*) FROM handoffs hr WHERE hr.claim_id = c.id AND hr.status IN ('assistance','back')) AS returns
+        (SELECT COUNT(*) FROM handoffs hr WHERE hr.claim_id = c.id AND hr.status IN ('assistance','back')) AS returns,
+        EXISTS (SELECT 1 FROM tat_holds t WHERE t.kind = 'flag' AND t.ref_id = c.id AND t.cleared_at IS NULL AND t.until >= ? AND (t.since IS NULL OR t.since = c.escalated_at)) AS held
       FROM claims c LEFT JOIN users u ON u.id = c.assigned_to LEFT JOIN users e ON e.id = c.escalated_by LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN locations l ON l.id = c.location_id
-      WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")} ORDER BY c.escalated_at ASC`, ...scopeArgs(user));   // every one, as the tab counts them
+      WHERE c.escalated = 1 AND c.state IN ${ESCALATION_STATES} AND NOT ${BOUNCE_WAITING_SQL("c")}${scopeSql(user, "c.client_id")} ORDER BY c.escalated_at ASC`, istISO(Date.now()), ...scopeArgs(user));   // every one, as the tab counts them
     const now = Date.now();
-    const out = rows.map((r) => ({ ...reviewShape(r), flag_label: r.bounced_dept ? `Returned ${r.returns} times by ${DEPT_LABEL[r.bounced_dept] || r.bounced_dept}` : "", waiting_ms: r.escalated_at ? workingHoursBetween(r.escalated_at, now) * 3600000 : 0, overdue: !!r.escalated_at && addWorkingHours(r.escalated_at, ATTN_TAT_HOURS) < now, sent_by_id: r.escalated_by || r.assigned_to || null,
-      sent_by_name: r.escalated_by_name || r.assigned_name || "" }));
+    // past the TAT only when not on hold (Can't close yet), as the badge and Live status count it (QA3-03)
+    const out = rows.map((r) => ({ ...reviewShape(r), flag_label: r.bounced_dept ? `Returned ${r.returns} times by ${DEPT_LABEL[r.bounced_dept] || r.bounced_dept}` : "", waiting_ms: r.escalated_at ? workingHoursBetween(r.escalated_at, now) * 3600000 : 0, overdue: !!r.escalated_at && !r.held && addWorkingHours(r.escalated_at, ATTN_TAT_HOURS) < now, sent_by_id: r.escalated_by || r.assigned_to || null,
+      sent_by_name: r.escalated_by_name || r.assigned_name || "", held: undefined }));
     return { rows: out, overdue: out.filter((r) => r.overdue).length, tat_hours: ATTN_TAT_HOURS, people: await reviewPeople(env, user) };
   },
   /* Client requests: claims Posting / Submission / Rejections need the client for. Sending them to the client is the AR team
@@ -10184,7 +10243,7 @@ const OPS = {
   },
   /* Answer an escalation: the reply goes into the claim history and the flag comes off. Optionally the claim goes back on the biller's list today. */
   "attention.answer": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT id, client_id, assigned_to, state, escalated FROM claims WHERE id = ?", str(payload.id, 60));
+    const c = await one(env, "SELECT id, client_id, claim_no, assigned_to, state, escalated FROM claims WHERE id = ?", str(payload.id, 60));
     if (!c) throw bad("Claim not found.");
     editableOr(user, c.client_id);
     if (!c.escalated) throw bad("This claim is not escalated (or the escalation was already answered).");
@@ -10192,12 +10251,15 @@ const OPS = {
     if (!commentOk(comment)) throw bad("Write your answer for the biller, a few words at least.");
     const now = Date.now(), today = isoDate(payload.today) || isoToday();
     const back = payload.send_back && c.assigned_to && ["completed", "assigned"].includes(c.state);
+    // sent back to a biller who no longer works the client: to the pool instead, and the team leads are told (QA3-02)
+    const pool = back ? await backToPool(env, c, user, "was sent back to the biller with a Needs attention answer") : null;
     await env.DB.batch([
       env.DB.prepare("INSERT INTO notes (id, claim_id, user_id, user_name, kind, comment, created_at) VALUES (?,?,?,?,'note',?,?)").bind(uuid(), c.id, user.id, user.name, "Escalation answered: " + comment, now),
       env.DB.prepare(`UPDATE claims SET escalated = 0, escalation_answered_at = ?, escalation_answered_by = ?, updated_at = ?,
-          state = CASE WHEN ? THEN 'assigned' ELSE state END, follow_up_on = CASE WHEN ? THEN ? ELSE follow_up_on END, skipped_at = NULL WHERE id = ?`).bind(now, user.id, now, back ? 1 : 0, back ? 1 : 0, today, c.id),
+          ${pool ? POOL_SET : "state = CASE WHEN ? THEN 'assigned' ELSE state END"}, follow_up_on = CASE WHEN ? THEN ? ELSE follow_up_on END, skipped_at = NULL WHERE id = ?`).bind(now, user.id, now, ...(pool ? [] : [back ? 1 : 0]), back ? 1 : 0, today, c.id),
+      ...(pool ? pool.stmts : []),
     ]);
-    return { ok: true, sent_back: !!back };
+    return { ok: true, sent_back: !!back, ...(pool ? { pool: true } : {}) };
   },
 
   /* ---- roster (admin): load the Purview Shastra export. dry_run shows what would change; nothing is written until it is applied. ---- */

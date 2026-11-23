@@ -161,8 +161,8 @@ it must be fixed in Shastra.
   coaching cards, AR entries or Client 360 report, and no excluding or
   reprioritising claims; Search, Claims
   and the claim profile give them the claims sent to their own desk (and every
-  claim of a client they are set responsible for), the Past TAT list and its
-  reminder emails their own desk's tasks only. Someone Shastra moves off AR gives
+  claim of a client they are set responsible for), the Past TAT list, its
+  reminder emails and the bell's Past TAT lines their own desk's tasks only (never AR's Needs attention). Someone Shastra moves off AR gives
   their AR claims back to the pool, as when someone leaves; someone Shastra moves to another client (another
   project) gives back the claims of the client they no longer work. So does someone a team lead takes off a client's
   team, someone whose responsibility for a client goes to another person, and the people of a roster project that is
@@ -280,6 +280,8 @@ location) and **team lead** (assistant managers, managers and the VP; a team lea
 worked today against the target, closed today and **left over** (allocated before this shift and not worked) split
 into **high priority** (the High tier) and other. Worked and closed today count the whole day from midnight IST,
 entries before the shift time too, as Team status and My day do (a night shift's count to the day it began).
+Closed (here, on Team status and in the claims activity) counts a claim on the day it was closed, as Inventory status
+does, and a biller's closed only the claims their own entry closed, never one a team lead or Posting closed later.
 
 - **Working now** (on the floor now): each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
   after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
@@ -350,7 +352,7 @@ roster, grouped by team lead (no Emp ID):
 - **Status** and date of joining from Purview Shastra: Production, Training, OJT, Serving notice, Sabbatical.
 - **Ramp-up**: Training and OJT are due in production 6 weeks from their start (the start date kept on Team status,
   otherwise the date of joining), or on the date the lead agreed. People past it show in a red banner.
-- **Attainment**: entries against the target (the daily target for each working day in the dates from the date of joining; a half day counts
+- **Attainment**: entries against the target (the daily target for each working day in the dates from the date of joining, in the team range figures too; a half day counts
   half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a day worked
   on a Saturday, Sunday or holiday: marked Present or Overtime there, it gets the day's target and 8 hours of floor
   time like any working day; Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
@@ -807,7 +809,7 @@ A claim AR closed itself (not posted) stays with its own people.
 cards for Open, Past TAT, On hold, Done, Within TAT and Waiting on client (a card filters the list; the client
 filter and the dates narrow the cards too), and **Needs attention** has one client filter for all its lists, its tab
 counts and its cards for Past 48 working hours, Due in the next 4 hours and On hold. Claims past their TAT are at the
-top of each list; one on hold goes after the rest and is no longer counted or shown in red as past the TAT. **Hide claims waiting on the client** takes those out of Open and of the Past
+top of each list; one on hold goes after the rest and is no longer counted or shown in red as past the TAT (the Needs attention list's own past-48-hours flag and count included). **Hide claims waiting on the client** takes those out of Open and of the Past
 TAT count. A team lead with edit access to the client clicks **Can't close yet** on a row past its TAT (why, and the
 expected close date, up to 30 days): no reminders for it until that date, then it is back, marked as past the
 expected date; **Clear hold** undoes it. The bell, the red bar on other pages, the Dashboard's pending card and the
@@ -870,7 +872,10 @@ that biller.
 **Sent back to AR.** Need assistance from AR goes straight to the biller, first on their list with a notice, and also lands in the client's AR team leads' (and managers') **Needs attention →
 Sent back by Posting / Submission**: when, who sent it, the department, the reason and comment, the biller, and how many
 times the claim has come back. It counts on the Needs attention badge, turns red after 48 working hours, and leaves the
-list once a biller saves an entry on the claim.
+list once a biller saves an entry on the claim. A claim coming back to AR (sent back, a rejected recheck with nobody set
+for Rejections or Submission, a Needs attention answer that sends it back) whose biller is switched off or no longer works
+the client goes to the pool instead, first in the next allocation, and the client's team lead(s) get a bell line with the
+claim number saying why (one Submission completes stays Worked with its follow-up on nobody's list until allocation hands it out).
 
 ### Team tasks (Needs attention → Team tasks, and My tasks)
 
@@ -983,7 +988,7 @@ how many, and the rest are on the desk list), **why claims needed AR's help** (b
 biller) and, for Submission, **rejections by code** (by code, client and biller). Rejected rechecks and
 resubmitted rejections carry a rejection code. Received, Submitted, Within TAT and the average count the desk's own
 tasks; the recheck after a submission is the same claim again, so it is not a second claim received and submitted
-(it still shows under Open now and Needs you now).
+(it still shows under Open now and Needs you now). Open now counts every open hand-off, rechecks included, alike in the card, By client and By person, so By person adds up to the card.
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once; a project that is a new client opens the
   Add client setup with its name, so it gets its whole profile). Active AR agents
@@ -1504,7 +1509,8 @@ provider, CPT, amount, SAAG status, bucket and state. Rows are coloured:
 - **white**: not worked yet.
 
 **Work the next claim** opens the highest-priority claim; clicking any row opens
-that claim instead. Only one claim is open per biller at a time.
+that claim instead. Only one claim is open per biller at a time. A claim opened and left without a save (another claim
+opened, Back to My day, Next) goes back exactly as it was: Worked stays Worked, a claim on the list stays on the list.
 
 ### The claim profile
 
