@@ -1002,6 +1002,11 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
   the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
   so every claim goes to the people who do.
+- **Server errors are kept.** The server keeps no logs of its own, so an unexpected error (the page says "Server error.")
+  is written to the audit trail as "Server error (send this line to support)": the action that failed and the error text,
+  never the request's data, at most one a minute for each action. Manage › Audit trail › Server errors lists them. A fresh
+  start of the server reads a setup mark instead of checking every table (6 queries for a sign-in instead of over 100),
+  and two copies starting together after an update no longer trip over the same new column.
 - **Download the allocation as a CSV.** A biller's My allocations has Download CSV (the claims shown, filters applied); a team
   lead's Allocate has Download allocation CSV under Currently on desks (every biller's claims on a desk for the client, a
   Biller column first). The file has each claim's details (Claim #, Account #, Patient, Payer, DOS, CPT, Balance, Age, File

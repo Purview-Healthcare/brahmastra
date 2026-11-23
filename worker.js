@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.113.0";
+const VERSION = "2.114.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -2196,6 +2196,19 @@ async function batchAll(env, stmts, size = 50) {
 }
 
 /* --------------------------------------------------------- first run */
+/* An unexpected server error ("Server error." on the page) is kept in the audit trail as "server.error": the action and the error
+   text only (never the request's data), at most one a minute for each action in each copy of the server. The server keeps no
+   logs of its own, so this is how the admin can see what failed and send it on. */
+const ERR_SEEN = new Map();
+function noteServerError(env, ctx, op, e, user) {
+  try {
+    const key = String(op || "(no action)").slice(0, 60), now = Date.now();
+    if ((ERR_SEEN.get(key) || 0) > now - 60000) return;
+    ERR_SEEN.set(key, now);
+    const p = audit(env, user || null, "server.error", null, `${key}: ${String((e && (e.message || e)) || "").replace(/\s+/g, " ").slice(0, 300)}`);
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(p);
+  } catch (x) { /* never let the note itself fail the answer */ }
+}
 let READY = null, READY_DB = null;
 /* The table check at a fresh start (ensureReady) is skipped when this database was already brought up to this release and these
    admin emails: one read instead of about 240 queries, so the first sign-in after Cloudflare starts the server fresh stays quick
@@ -2216,7 +2229,10 @@ function ensureReady(env) {
     // inserted: the bootstrap row below already uses them.
     for (const table of Object.keys(EXTRA_COLUMNS)) {
       const have = new Set((await all(env, `PRAGMA table_info(${table})`)).map((r) => r.name));
-      for (const [name, def] of EXTRA_COLUMNS[table]) if (!have.has(name)) await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
+      // two fresh copies of the server starting together after an update both add a new column: the second finds it there already
+      for (const [name, def] of EXTRA_COLUMNS[table]) if (!have.has(name)) {
+        try { await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run(); } catch (e) { if (!/duplicate column/i.test(String(e && e.message))) throw e; }
+      }
     }
     await env.DB.batch([
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_claims_alt ON claims (client_id, alt_key)"),
@@ -10349,6 +10365,7 @@ export default {
     })());
   },
   async fetch(request, env, ctx) {
+    let opName = "", who = null;   // for the error handler: which action, by whom
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     try {
@@ -10359,7 +10376,7 @@ export default {
       if (url.pathname === "/api" && request.method === "POST") {
         let body;
         try { body = await request.json(); } catch { throw bad("Send a JSON body like {op, payload}."); }
-        const op = String(body && body.op || "");
+        const op = String(body && body.op || ""); opName = op;
         const payload = (body && body.payload) || {};
         // Ids are text (or numbers): an object or a list would reach the database and fail there.
         for (const k of Object.keys(payload)) if ((k === "id" || k.endsWith("_id")) && payload[k] !== null && typeof payload[k] === "object") throw bad("Send " + k + " as text.");
@@ -10371,7 +10388,7 @@ export default {
         // Only the ops themselves: OPS["constructor"], "__proto__", "toString" and the like are inherited from every object.
         const handler = Object.prototype.hasOwnProperty.call(OPS, op) ? OPS[op] : null;
         if (!handler) throw new ApiError(404, "Unknown operation: " + op);
-        const user = await userFromToken(env, token);
+        const user = await userFromToken(env, token); who = user;
         if (!PUBLIC_OPS.has(op) && !user) throw new ApiError(401, "Please sign in.");
         if (user && user.must_change && !["auth.changePassword", "auth.me", "auth.logout", "auth.deleteMyAccount", "meta.info"].includes(op)) throw new ApiError(403, "Please set a new password first.");
         if (SUPERVISOR_OPS.test(op) && (!user || user.role !== "supervisor") && !(user && DESK_READ_OPS.test(op))) throw denied("Supervisor access is needed for this.");
@@ -10396,8 +10413,8 @@ export default {
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 500;
       // A table that vanished (database replaced or emptied) means the schema must be made again on the next request.
-      if (/no such table/i.test(String(e && e.message))) READY = null;
-      if (status >= 500) console.error("brahmastra-api", e);
+      if (/no such table/i.test(String(e && e.message))) { READY = null; try { await env.DB.prepare("DELETE FROM settings WHERE key = 'schema_rev'").run(); } catch (x) { /* no settings table either: a new database */ } }
+      if (status >= 500) { console.error("brahmastra-api", e); noteServerError(env, ctx, opName, e, who); }
       // Our own errors say what to do; anything unexpected is not shown as is (it can carry internals).
       return json({ error: (e instanceof ApiError && e.message) || "Server error." }, status);
     }
