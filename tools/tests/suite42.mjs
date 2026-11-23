@@ -96,7 +96,7 @@ ok("H-11: a new person without Claims per day starts at 35", r.ok && r.r.user.ca
 ok("H-11: the page's own check: 1 to 500 whole numbers only", ev(`[wholeIn(35, 1, 500), wholeIn("500", 1, 500), wholeIn(" 7 ", 1, 500), wholeIn("9999", 1, 500), wholeIn("0", 1, 500), wholeIn("", 1, 500), wholeIn("2.5", 1, 500), wholeIn("1e3", 1, 500), wholeIn("-3", 1, 500), wholeIn(null, 1, 500)].join()`) === "true,true,true,false,false,false,false,false,false,false");
 const team = fnSrc("TeamView");
 ok("H-11: the box says the range (1 to 500), says what is wrong in plain words, and Save is off until it is right",
-  /"1 to 500 · the default for allocation"/.test(team) && /Claims per day must be a whole number from 1 to 500\./.test(team) && /!wholeIn\(edit\.capacity, 1, 500\)\} onClick=\{save\}/.test(team));
+  /"1 to 500 · their pace and Team status count against it"/.test(team) && /Claims per day must be a whole number from 1 to 500\./.test(team) && /!wholeIn\(edit\.capacity, 1, 500\) \|\| !\(edit\.assign_per_day == null \|\| String\(edit\.assign_per_day\)\.trim\(\) === "" \|\| wholeIn\(edit\.assign_per_day, 1, 500\)\)\} onClick=\{save\}/.test(team));
 const cl = (await A("clients.list")).clients[0];
 const fuOf = async () => (await rig.backend.env.DB.prepare("SELECT follow_up_days FROM clients WHERE id = ?").bind(cl.id).all()).results[0].follow_up_days;
 const saveC = (fu) => T(() => A("clients.save", { id: cl.id, name: cl.name, code: cl.code, active: true, ...(fu === undefined ? {} : { follow_up_days: fu }) }));

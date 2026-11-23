@@ -7244,7 +7244,7 @@ function TeamView({ ctx, reload, me }) {
       </div>
       {delFor && <Confirm title={"Delete " + delFor.name + "?"} text="Their sign-in is removed and they are signed out. Claims on their desk go back to the pool. Notes they wrote stay in the claim history." confirmLabel="Delete" danger busy={busy} onYes={doDelete} onNo={() => setDelFor(null)} />}
       {edit && (
-        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || (!edit.id && !String(edit.last_name || "").trim()) || ((!edit.id || edit.email) && !mailOk(edit.email)) || !wholeIn(edit.capacity, 1, 500)} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
+        <Modal title={edit.id ? "Edit team member" : "New team member"} onClose={() => setEdit(null)} narrow footer={<><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" disabled={busy || !String(edit.first_name || "").trim() || (!edit.id && !String(edit.last_name || "").trim()) || ((!edit.id || edit.email) && !mailOk(edit.email)) || !wholeIn(edit.capacity, 1, 500) || !(edit.assign_per_day == null || String(edit.assign_per_day).trim() === "" || wholeIn(edit.assign_per_day, 1, 500))} onClick={save}>{busy ? "Saving…" : edit.id ? "Save" : "Create account"}</button></>}>
           <div className="stack">
             <div className="grid g2">
               <Field label="First name"><input className="input" value={edit.first_name} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} autoFocus /></Field>
