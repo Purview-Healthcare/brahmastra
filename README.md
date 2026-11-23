@@ -281,7 +281,8 @@ worked today against the target, closed today and **left over** (allocated befor
 into **high priority** (the High tier) and other. Worked and closed today count the whole day from midnight IST,
 entries before the shift time too, as Team status and My day do (a night shift's count to the day it began).
 Closed (here, on Team status and in the claims activity) counts a claim on the day it was closed, as Inventory status
-does, and a biller's closed only the claims their own entry closed, never one a team lead or Posting closed later.
+does, and a biller's closed only the claims their own entry closed, never one a team lead closed later; a claim Posting
+closes after the biller's Need to Post entry is that biller's close, on the day of the entry.
 
 - **Working now** (on the floor now): each biller with their **Shastra** status (below), their status in Brahmastra (working, **idle**
   after 30 minutes without an entry in their shift, not started, out today), the claim they have open with its client, payer and balance and how long they have
@@ -799,7 +800,8 @@ own SAAG when the desk finishes.
 
 **After Posting closes a claim, anyone can open it to read.** Search (Ctrl+K) finds it for everyone, marked
 "posted · closed". Someone it is not with sees it read only: no entry, no note, no team lead actions, not the
-patient's other claims. Its notes are **locked** for everyone, the biller who wrote them and team leads included.
+patient's other claims. Its notes are **locked** for everyone, the biller who wrote them and team leads included, and no
+new note can be added to it either (files still can).
 A team lead cannot reopen, exclude or close it again (from the claim or the Claims list), and a Needs attention review
 can only keep it closed. Only a later inventory file that lists the claim as open again (a payer take-back) reopens it
 ("Reopened by upload"), and the entries and files it had before stay locked.
@@ -1051,9 +1053,9 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in
   Shastra, or past their exit date, are switched off and their open claims go back
   to the pool, each claim's history saying so (someone Shastra moves off AR also gets a bell line); those who never
-  signed in and have no work in Brahmastra are removed after a week, unless something still names them (a client
-  profile's person, a client's or location's list, a share, the RACI), so someone Shastra leaves out of one hourly answer
-  comes back as the same account. Names match ignoring letter case and extra spaces.
+  signed in and have no work in Brahmastra are removed, unless a team lead or the admin named them somewhere (a client
+  profile's person, a share, the RACI): then they are kept switched off, so someone Shastra leaves out of one hourly answer
+  comes back as the same account with those still pointing at them. Names match ignoring letter case and extra spaces.
 
 
 #### Straight from Purview Shastra (automatic)
@@ -1516,7 +1518,8 @@ opened, Back to My day, Next) goes back exactly as it was: Worked stays Worked, 
 
 Everything about the claim in one place: the file facts, service lines, the
 priority reasons, the patient's other open claims (an entry can be applied to
-them too), **Suggested next steps** from the Gurukul denial library (matched to
+them too; when its action needs the document, the EOB or letter attached to the first claim is attached to each of them,
+stored once), **Suggested next steps** from the Gurukul denial library (matched to
 the SAAG sub-status or the file's wording, searchable), and the **history** of
 every entry.
 

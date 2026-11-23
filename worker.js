@@ -35,8 +35,10 @@ const WORKABLE = "('open','assigned','in_progress','completed')";
 // "Closed" on Team status, Live status and the team range: the claims a biller's own entry closed, on the day it closed them.
 // closed_at is stamped from the closing save's updated_at, and an entry sets completed_at in that same statement, so a claim
 // closed by someone else later (a team lead, Posting) has closed_at after its last entry and is nobody's closing. A claim
-// closed before closed_at was kept counts as before, on its last entry (QA3-06).
-const BILLER_CLOSED = "c.state = 'closed' AND (c.closed_at IS NULL OR c.closed_at <= c.completed_at)", CLOSED_ON = "COALESCE(c.closed_at, c.completed_at)";
+// closed before closed_at was kept counts as before, on its last entry (QA3-06). A claim Payment posting closed after the
+// biller's AR-closed entry (Need to Post: "AR Closed-Pending Posting") stays that biller's close, on the day of their entry.
+const BILLER_CLOSED = "c.state = 'closed' AND (c.closed_at IS NULL OR c.closed_at <= c.completed_at OR c.handoff_status = 'posted')",
+  CLOSED_ON = "CASE WHEN c.handoff_status = 'posted' THEN c.completed_at ELSE COALESCE(c.closed_at, c.completed_at) END";
 // A claim the biller opened and leaves without saving (another claim opened, Back to My day, Next) goes back exactly as it was:
 // Worked when it was worked since it was given, else on the list (QA3-05). The state it was opened from (the last "opened" line
 // in its history) says which; a claim opened before that was kept: Worked when its last entry is since it was given.
@@ -228,6 +230,9 @@ const SCHEMA = [
 /* Columns added after the first release. ensureReady() adds any that an
    existing database is missing, so upgrades need no manual migration. */
 const EXTRA_COLUMNS = {
+  // a claim's file that is the same as another claim's (an entry's EOB applied to the patient's other claims): its data is that
+  // file's (attachment_parts of source_id), so nothing is stored twice (QA3-Q2)
+  attachments: [["source_id", "TEXT"]],
   // how a sign-in code reached the person: email (sent to the address), lead (a team lead handed it over), screen (demo, no email)
   otps: [["via", "TEXT NOT NULL DEFAULT ''"]],
   // kind 'alloc': "N new claims were allocated to you"; seen_at once the biller has closed the banner
@@ -2793,9 +2798,9 @@ async function returnsOf(env, claimId) {
   return (r && r.n) || 0;
 }
 /* People an old roster file brought in who are not in Shastra: switched off by the sync, and removed here when they
-   never signed in, have nothing on any claim, have been off for a week (someone Shastra leaves out of one hourly answer comes
-   back as the same account) and nothing points at them: a client profile's person, a client's or location's list, a share,
-   the RACI (QA1-05: erased at once, they came back as a new account and those all pointed at nobody). Anyone with work in Brahmastra stays (switched off) for the history, and so
+   never signed in, have nothing on any claim and nothing a team lead or the admin set points at them: a client profile's
+   person, a share, the RACI (QA1-05: erased, someone Shastra left out of one hourly answer came back as a new account and
+   those pointed at nobody). Client lists are not counted: the hourly copy puts AR billers on them by itself. Anyone with work in Brahmastra stays (switched off) for the history, and so
    does anyone the Stack report still needs: values typed for them, extra production of theirs, and a leaver of the report's
    months (Shastra's exit date, or a leaving status such as Resigned, in the last 13 months), whom the attrition counts. */
 async function removeLeftovers(env) {
@@ -2809,10 +2814,9 @@ async function removeLeftovers(env) {
     AND NOT EXISTS (SELECT 1 FROM handoffs h WHERE h.lead_id = u.id OR h.backup_id = u.id OR h.assigned_to = u.id OR h.done_by = u.id)
     AND NOT EXISTS (SELECT 1 FROM allocations l WHERE l.by_user = u.id)
     AND NOT EXISTS (SELECT 1 FROM stack_typed t WHERE t.subject_id = u.id) AND NOT EXISTS (SELECT 1 FROM extra_lines x WHERE x.user_id = u.id OR x.auto_id = u.id)
-    AND COALESCE(u.off_at, 0) < ?
-    AND NOT EXISTS (SELECT 1 FROM clients cl WHERE ${RESP_PEOPLE.map(([, col]) => "cl." + col + " = u.id").join(" OR ")} OR instr(cl.team_json, u.id) > 0 OR instr(cl.team_off_json, u.id) > 0)
-    AND NOT EXISTS (SELECT 1 FROM locations lo WHERE instr(lo.team_json, u.id) > 0) AND NOT EXISTS (SELECT 1 FROM client_access g WHERE g.user_id = u.id)
-    AND NOT EXISTS (SELECT 1 FROM raci r WHERE instr(r.r_json || r.a_json || r.c_json || r.i_json, u.id) > 0)`, Date.now() - 7 * 86400000)).filter((u) => !leaver(u));
+    AND NOT EXISTS (SELECT 1 FROM clients cl WHERE ${RESP_PEOPLE.map(([, col]) => "cl." + col + " = u.id").join(" OR ")})
+    AND NOT EXISTS (SELECT 1 FROM client_access g WHERE g.user_id = u.id)
+    AND NOT EXISTS (SELECT 1 FROM raci r WHERE instr(r.r_json || r.a_json || r.c_json || r.i_json, u.id) > 0)`)).filter((u) => !leaver(u));
   if (!gone.length) return 0;
   await batchAll(env, gone.flatMap((u) => [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id), env.DB.prepare("DELETE FROM users WHERE id = ?").bind(u.id)]), 40);
   return gone.length;
@@ -8515,6 +8519,15 @@ const OPS = {
     const newState = closed ? "closed" : "completed";
     const reason = closed ? "Closed: " + saag.effective + (saag.bucket === "Closed" ? "" : " (bucket " + saag.bucket + ")") : "";
     const stmts = [];
+    // an entry that needs its document (EOB, appeal or reconsideration letter), applied to the patient's other claims: each of them
+    // gets the file attached to the first one, so Payment posting (or whoever works it next) finds the EOB on every claim; the data is
+    // not copied (source_id). Before, only the first claim had it (QA3-Q2).
+    if (targets.length > 1 && attachNeeded(saag)) {
+      const files = await all(env, "SELECT id, user_id, user_name, name, type, size, parts, source_id FROM attachments WHERE claim_id = ? AND created_at > ?", c.id, (lastWork && lastWork.at) || 0);
+      for (const t of targets) if (t.id !== c.id) for (const a of files)
+        stmts.push(env.DB.prepare("INSERT INTO attachments (id, claim_id, user_id, user_name, name, type, size, parts, created_at, source_id) VALUES (?,?,?,?,?,?,?,?,?,?)")
+          .bind(uuid(), t.id, a.user_id, a.user_name, a.name, a.type, a.size, a.parts, now, a.source_id || a.id));
+    }
     for (const t of targets) {
       const ch = {}; const diff = (k, a, b) => { if (String(a || "") !== String(b || "")) ch[k] = [a || "", b || ""]; };
       diff("state", t.state === "in_progress" ? "assigned" : t.state, newState); diff("bucket", t.last_bucket, saag.bucket); diff("follow_up", t.follow_up_on, followUp); diff("status", t.last_status_code, saag.status);
@@ -8661,9 +8674,11 @@ const OPS = {
     return { rows };
   },
   "notes.add": async ({ env, user, payload }) => {
-    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by FROM claims WHERE id = ?", payload.claim_id);
+    const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", payload.claim_id);
     if (!c) throw bad("Claim not found.");
     if (!(await canSeeClaim(env, user, c))) throw denied("This claim is not in your queue.");
+    // a claim Posting closed is read only for everyone, its notes locked (the owner's rule): no new note either (QA3-Q1)
+    if (postedClosed(c)) throw bad("Posting closed this claim (the payment is posted): it is read only, so no note can be added.");
     writableOr(user, c.client_id);
     // A note in the standard format (DOS, CLM#, DENIAL, SOURCE/REF, PRE CALL CHECK, RCA/FINDINGS, ACTION) without a SAAG entry; plain text still works.
     let comment, fields = null;
@@ -8719,7 +8734,7 @@ const OPS = {
     if (!a) throw bad("This file is no longer attached.");
     const c = await one(env, "SELECT id, client_id, assigned_to, last_worked_by, state, handoff_status FROM claims WHERE id = ?", a.claim_id);
     if (!c || !(await canReadClaim(env, user, c))) throw denied("This claim is not in your queue.");
-    const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", a.id);
+    const parts = await all(env, "SELECT data FROM attachment_parts WHERE attachment_id = ? ORDER BY seq", a.source_id || a.id);
     return { name: a.name, type: a.type, size: a.size, data: parts.map((p) => p.data).join("") };
   },
   /* The person who attached a file can remove it for 24 hours; a team lead can remove it any time. */
@@ -8735,7 +8750,9 @@ const OPS = {
     if (postedClosed(ac)) throw bad("Posting closed this claim (the payment is posted): its files can no longer be removed.");
     if (a.created_at <= (await postedLockAt(env, ac))) throw bad("Posting closed this claim (the payment was posted) before an upload reopened it: the files from before can no longer be removed.");
     await env.DB.batch([
-      env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id),
+      // a file attached to the patient's other claims with an entry (source_id) goes alone; the file itself goes with its data and
+      // those copies of it
+      ...(a.source_id ? [] : [env.DB.prepare("DELETE FROM attachment_parts WHERE attachment_id = ?").bind(a.id), env.DB.prepare("DELETE FROM attachments WHERE source_id = ?").bind(a.id)]),
       env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(a.id),
     ]);
     return { ok: true };

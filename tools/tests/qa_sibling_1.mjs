@@ -96,6 +96,11 @@ await part("S1: applying one entry to the patient's other claims", async () => {
   ok("the sibling's note says it was applied with the first claim, with its own claim number and DOS", sibNotes.length === 1 && /applied with claim/.test(sibNotes[0].comment) && sibNotes[0].comment.includes("CLM#: " + (await claim(ids[1])).claim_no), sibNotes);
   const sibAtt = await rows("SELECT COUNT(*) n FROM attachments WHERE claim_id = ?", ids[1]);
   ok("QUESTION: a sibling is sent to posting with no EOB attached to it (the entry's document rule is checked on the first claim only)", sibAtt[0].n > 0, sibAtt[0].n);
+  // 2.116.4: the EOB attached to the first claim is linked to each sibling (QA3-Q2), not stored twice
+  const link = await rows("SELECT id FROM attachments WHERE claim_id = ?", ids[1]), orig = await rows("SELECT id FROM attachments WHERE claim_id = ?", ids[0]);
+  const gs = await T(() => call(AR, "attachments.get", { id: link[0] && link[0].id })), go = await T(() => call(AR, "attachments.get", { id: orig[0].id }));
+  ok("the sibling's EOB opens, and it is the same file as the first claim's", gs.ok && go.ok && gs.r.data === go.r.data && gs.r.data.length > 0, [gs.ok, go.ok]);
+  ok("...stored once: the sibling's copy holds no data of its own", (await rows("SELECT COUNT(*) n FROM attachment_parts WHERE attachment_id = ?", link[0] && link[0].id))[0].n === 0);
   const tm = await call(TI, "team.status", { from: "2026-11-10", to: "2026-11-10", today: "2026-11-10" });
   ok("worked counts every claim the entry was applied to (3)", tm.rows.find((x) => x.name === "Arun Agent").worked === 3, tm.rows.find((x) => x.name === "Arun Agent").worked);
   const q = await call(AR, "queue.summary", { today: "2026-11-10", day_from_ms: IST(2026, 11, 10, 0, 0), day_to_ms: IST(2026, 11, 10, 23, 59) });

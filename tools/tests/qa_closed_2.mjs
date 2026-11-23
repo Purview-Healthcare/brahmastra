@@ -98,4 +98,18 @@ await part("K1: a claim the team lead closes later: whose 'closed' is it, and on
   const row = await claim(ids[0]);
   console.log("   completed_at day:", new Date(row.completed_at + 19800000).toISOString().slice(0, 10), "closed_at", row.closed_at && new Date(row.closed_at + 19800000).toISOString().slice(0, 10));
 });
+await part("K2: a claim Payment posting closes after the biller's Need to Post entry stays the biller's close, on the day of that entry", async () => {
+  setNow(IST(2026, 11, 11, 10, 0));
+  const [id] = await give("Bela Agent", 1);
+  const day = async (d) => (await call(TI, "team.status", { from: d, to: d, today: "2026-11-13" })).rows.find((r) => r.name === "Bela Agent").closed;
+  const before = await day("2026-11-11");
+  await call(BE, "attachments.add", { claim_id: id, name: "eob.pdf", type: "application/pdf", data: PDF });
+  await save(BE, id, SAAG.post);
+  setNow(IST(2026, 11, 12, 15, 0));
+  await postIt(id);
+  const c = await claim(id);
+  ok("set-up: Posting closed the claim on the 12th", c.state === "closed" && c.handoff_status === "posted", await brief(id));
+  ok("Bela's Need to Post entry on the 11th counts as her close on the 11th", (await day("2026-11-11")) === before + 1, [before, await day("2026-11-11")]);
+  ok("...and not again on the 12th, the day Posting closed it", (await day("2026-11-12")) === 0, await day("2026-11-12"));
+});
 const p = results.filter((r) => r.pass).length; console.log("\n==== " + p + " passed, " + (results.length - p) + " failed of " + results.length); process.exit(0);
