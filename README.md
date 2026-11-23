@@ -1002,6 +1002,12 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
   the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
   so every claim goes to the people who do.
+- **Download the allocation as a CSV.** A biller's My allocations has Download CSV (the claims shown, filters applied); a team
+  lead's Allocate has Download allocation CSV under Currently on desks (every biller's claims on a desk for the client, a
+  Biller column first). The file has each claim's details (Claim #, Account #, Patient, Payer, DOS, CPT, Balance, Age, File
+  status, Due) and then the note's own fields in the note's order, empty, for the person to fill in: Denial, Source, Ref, Pre
+  call check, RCA/Findings, Denial date, TFL, AFL, SAAG status, sub status and action, Bucket, Effective, Follow-up, Call
+  start and Call end. Nothing is read back from it: people keep or upload it themselves.
 - **Today's inventory is less** than the team can take (30 claims for 3 people with a daily target of 25, who could
   take 105): the claims are still split evenly (10 each), and the team lead is asked in a pop-up whether to set each
   person's number by hand instead, so someone given fewer claims, or none, can be given other tasks. After an upload
