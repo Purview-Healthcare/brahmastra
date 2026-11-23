@@ -818,7 +818,7 @@ list). Every choice takes a comment, required except on Completed and Client
 answered. Posting complete closes the claim as Payment posted. Submission complete
 sends it back to the biller with a 15-day follow-up and always opens a **recheck after the client's recheck time**
 (48 working hours unless the client needs it sooner; never later than 48) for the follow-up person on the client, or
-whoever submitted:
+whoever submitted (the Completed box and its message give that client's number of hours):
 **Accepted · final check done**, or **Rejected** (to Rejections, then Submission).
 
 **Assigning within the desk.** The lead or backup of a hand-off can give it to a person of the same desk (Payment
@@ -1387,6 +1387,9 @@ two claims. Several service
 lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
 locations automatically: a name the client does not have yet becomes a new location (the result says so).
+When no location is picked (All locations) and the file's Location column is recognised, this split is chosen for it
+(the box is ticked), also when the client was picked before the file and it loads at once, so the rows go to their own
+locations, not to "(no location)". A location that is picked is used for every row, as before.
 A location is switched off only when the team has stopped working it (on the client card it reads
 **stopped working here**), so an upload never loads claims into it and never switches it on: its rows are
 left out, and the result says how many rows, for which location, and that it is switched off because the
@@ -1399,7 +1402,9 @@ handed them to a biller, who is told in the bell; claims already opened or worke
 the file closed, excluded or reopened goes back to how it was, also one it reopened that its own automatic
 allocation then gave to a biller, while nobody has opened it (it leaves their list and they are told). Undo of the
 load that finished an upload stopped part way (**Load the file again**) also removes the untouched claims the
-stopped one added: the two are one file. An upload is undone once.
+stopped one added: the two are one file. An upload is undone once. When an upload whose result is still on the
+Upload inventory screen is undone (in Upload history in another tab, or by another team lead), that screen stops
+showing its numbers and says it was undone, as soon as the page is back in view.
 
 A big file loads in parts of 250 claims. An upload that stops part way (the page was closed or reloaded, or the
 connection dropped, before its last part) keeps the claims that arrived and says so: Upload history marks it

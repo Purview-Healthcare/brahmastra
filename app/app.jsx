@@ -4279,7 +4279,10 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
      Only a file whose key columns (claim number, patient, date of service, balance) were all recognised loads at once: one with no
      column Brahmastra can trust for the claim number or the balance stops at the column check, so claims are never merged by a
      wrong column or loaded at $0 without the team lead seeing it. */
-  const afterPick = (m) => { const ok = UPLOAD_KEYS.every((k) => m[k]) && !(locMode === "file" && !m.location); setShowCols(!ok); if (ok && clientId) setAutoGo(true); else setStep(2); };
+  // no location picked and the file has a Location column: the rows are split by the file's locations (also when the client was
+  // picked first and the file loads at once), never loaded into "(no location)"
+  const afterPick = (m) => { if (m.location && !locId) setLocMode("file");
+    const ok = UPLOAD_KEYS.every((k) => m[k]) && !(locMode === "file" && !m.location); setShowCols(!ok); if (ok && clientId) setAutoGo(true); else setStep(2); };
   const [showCols, setShowCols] = useState(false);
   const onFile = async (f) => {
     if (!f) return;
@@ -4368,6 +4371,14 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
     } catch (e) { toast(e.message, "err"); setStopped({ msg: e.message, loaded: loaded + (e.loaded || 0) }); setProgress(null); if (loaded + (e.loaded || 0)) reload(); }
     setBusy(false);
   };
+  // an upload shown here that was undone since (in Upload history, in another tab or by another team lead): its lines would keep
+  // numbers that no longer hold, so they say it was undone instead (checked again whenever the page comes back into view)
+  const undoneIds = new Set(((mineQ.data && mineQ.data.batches) || []).filter((b) => b.undone_at).map((b) => b.id));
+  const isUndone = (r) => !!r.batch_id && undoneIds.has(r.batch_id);
+  useEffect(() => { if (!result) return;
+    const f = () => { if (document.visibilityState !== "hidden") mineQ.reload(); };
+    window.addEventListener("focus", f); document.addEventListener("visibilitychange", f);
+    return () => { window.removeEventListener("focus", f); document.removeEventListener("visibilitychange", f); }; }, [!!result]);
   const resetAll = () => { setStep(0); setFile(null); setTable(null); setMapping({}); setResult(null); setShortAt(null); setLeftOut([]); setProgress(null); setStopped(null); mineQ.reload(); };
   // the team lead's own numbers were applied: the line shows each person's new count and amount
   const resplitDone = (i, owner) => setResult((rows) => rows.map((r, k) => { if (k !== i) return r;
@@ -4440,7 +4451,7 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
               </select>
             </Field>
           </div>
-          {client && client.locations.length > 0 && (
+          {client && (client.locations.length > 0 || mapping.location) && (
             <label className="check small"><input type="checkbox" checked={locMode === "file"} onChange={(e) => { setLocMode(e.target.checked ? "file" : "pick"); if (e.target.checked) setLocId(""); }} /> The file has a Location column: split it across this client's locations automatically (new names are created; rows for a location the team stopped working, switched off, are left out)</label>
           )}
           {client && locMode !== "file" && (
@@ -4480,13 +4491,14 @@ function UploadWizard({ ctx, reload, go, params, me, folderLink, refreshBatch })
           )}
           {result && (
             <>
-              {result.length > 0 && <div className="alert info"><b>Done.</b> {result.map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>}
+              {result.some(isUndone) && <div className="alert warn"><b>Undone.</b> {result.length > 1 ? "Part of this upload (" + result.filter(isUndone).map((r) => r.location).join(", ") + ")" : "This upload"} was undone in Upload history: the claims it added that nobody had opened or worked are gone, so its numbers are no longer shown here.</div>}
+              {result.some((r) => !isUndone(r)) && <div className="alert info"><b>Done.</b> {result.filter((r) => !isUndone(r)).map((r) => `${r.location}${r.note ? " (" + r.note + ")" : ""}: ${fmtInt(r.inserted)} new, ${fmtInt(r.updated)} refreshed, ${fmtInt(r.reopened)} reopened, ${fmtInt(r.closed)} closed, ${fmtInt(r.excluded)} excluded`).join(" · ")}</div>}
               {leftOut.map((x) => <div key={x.location} className="alert warn"><b>{x.location}: {plural(x.rows, "row")} left out.</b> {x.location} is switched off because the team stopped working it, so nothing was loaded into it. If the work starts again, switch it on in Clients &amp; locations, then upload the file again. <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => go("clients", { client_id: clientId })}>Open Clients &amp; locations</button></div>)}
               {built && built.summary.datesUnread > 0 && <div className="alert warn">{plural(built.summary.datesUnread, "date")} in the file could not be read (no year or no day, as in 26-Oct, or not a date) and {built.summary.datesUnread === 1 ? "was" : "were"} left empty. Check the date columns in the file.</div>}
-              {result.map((r, i) => r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.
+              {result.map((r, i) => isUndone(r) ? null : r.assigned ? <div key={i} className="alert info"><b>{r.location}: {plural(r.assigned.applied, "claim")} allocated</b>{r.assigned.applied ? " · " + r.assigned.perUser.filter((u) => u.count).map((u) => `${u.name} ${fmtInt(u.count)} (${fmtMoney(u.amt)})`).join(", ") : " · " + (r.assigned.reason || "nothing to allocate")}. Change it on Allocate or Claims if needed.
                 {r.assigned.short && <div className="small" style={{ marginTop: 4 }}>{r.assigned.own ? "Today's inventory is less than the team can take: you set each person's number." : `Today's inventory is less than the team can take (${fmtInt(r.assigned.short.room)} today, each one's daily target and 10 more), so it was split evenly.`} <button type="button" className="btn link sm" style={{ padding: 0 }} onClick={() => setShortAt({ i, edit: true })}>Set the numbers myself</button></div>}</div> : r.assignError ? <div key={i} className="alert warn">{r.location}: loaded, but automatic allocation failed: {r.assignError}</div> : <div key={i} className="small muted">{r.location}: not allocated automatically (no billers mapped, or allocation switched off). Use Allocate when ready.</div>)}
               <div className="row"><button className="btn primary" onClick={() => go("allocate", { clientId })}>Open Allocate</button><button className="btn" onClick={() => go("claims", { clientId })}>Browse claims</button><button className="btn" onClick={resetAll}>Upload another file</button></div>
-              {shortAt && result[shortAt.i] && result[shortAt.i].assigned && result[shortAt.i].assigned.short && (() => { const k = shortAt.i, r = result[k];
+              {shortAt && result[shortAt.i] && !isUndone(result[shortAt.i]) && result[shortAt.i].assigned && result[shortAt.i].assigned.short && (() => { const k = shortAt.i, r = result[k];
                 return <ShortInventoryModal key={k + ":" + shortAt.edit + ":" + (r.assigned.own ? "own" : "even")} where={(client ? client.name : "") + (r.location && r.location !== "(no location)" ? " · " + r.location : "")} short={r.assigned.short} after clientId={clientId}
                   editing={shortAt.edit} onKeep={() => nextShort(result)} onClose={() => nextShort(result)} onDone={(owner) => { resplitDone(k, owner); nextShort(result); reload(); }} />; })()}
             </>
@@ -6386,7 +6398,7 @@ function HandoffCloseModal({ act, onClose, onDone }) {
           {h.dept === "submission" && <SubmissionFileFields p={p} setP={setP} />}
           <Field label="Comment (optional)"><textarea className="textarea" style={{ minHeight: 60 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything AR or QA should know about this one." /><TextLimit v={note} max={2000} /></Field>
           <ProofFiles files={files} setFiles={setFiles} why={PROOF_WHY[h.dept] || PROOF_WHY.submission} />
-          <div className="tiny muted">{posting ? "The claim shows Payment posted and closes for AR; posting QA audits it later." : "The claim goes back to the biller with a 15-day follow-up, and a recheck (accepted or rejected?) opens 48 working hours from now."}</div>
+          <div className="tiny muted">{posting ? "The claim shows Payment posted and closes for AR; posting QA audits it later." : "The claim goes back to the biller with a 15-day follow-up, and a recheck (accepted or rejected?) opens " + (h.recheck_hours || 48) + " working hours from now (the client's recheck time)."}</div>
         </>
         <ErrorBox error={err} />
       </div>

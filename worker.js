@@ -10306,7 +10306,7 @@ async function claimBundle(env, user, c, opts = {}) {
   const dc = await one(env, `SELECT ${["posting", "submission", "rejection"].map((d) => `${d}_mode, ${d}_lead, ${d}_backup`).join(", ")}, subcheck_hours FROM clients WHERE id = ?`, c.client_id);
   const [dp, ds, dr] = await Promise.all(["posting", "submission", "rejection"].map((d) => deskPeople(env, dc, d)));
   return { claim: { ...rest, lines, raw, mine: c.assigned_to === user.id, payer_limits: limits || null, desk_posting: !!dp, desk_submission: !!ds, desk_rejection: !!dr, recheck_hours: subcheckHours(dc), locked, view_only: !!opts.viewOnly, view_share: !!opts.viewShare }, notes: shaped, attachments, siblings,
-    handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at })), handoff_role: role, payer_limits: limits || null };
+    handoffs: handoffs.map((h) => ({ ...h, proof: jsonObj(h.proof_json), proof_json: undefined, overdue: ["pending", "assigned"].includes(h.status) && Date.now() > h.due_at, recheck_hours: subcheckHours(dc) })), handoff_role: role, payer_limits: limits || null };
 }
 
 /* ------------------------------------------------------------ fetch */
