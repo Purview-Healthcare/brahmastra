@@ -5866,7 +5866,7 @@ function EscalationsView({ ctx, me, refreshAttention, clientId, pick, tat, onHol
   const rows = attnRows(q.data ? q.data.rows : [], "flag", { clientId, pick, tat }), late = rows.filter((r) => r.overdue && !r.held).length;
   const send = async () => {
     setBusy(true);
-    try { const r = await rpc("attention.answer", { id: answer.row.id, comment: answer.text, send_back: answer.back }); toast(r.sent_back ? "Answered and back on " + (answer.row.assigned_name || "the biller") + "'s list today." : "Answered."); setAnswer(null); q.reload(); refreshAttention && refreshAttention(); }
+    try { const r = await rpc("attention.answer", { id: answer.row.id, comment: answer.text, send_back: answer.back }); toast(r.pool ? "Answered. " + (answer.row.assigned_name || "The biller") + " no longer works this client, so it went to the pool, first in the next allocation." : r.sent_back ? "Answered and back on " + (answer.row.assigned_name || "the biller") + "'s list today." : "Answered."); setAnswer(null); q.reload(); refreshAttention && refreshAttention(); }
     catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
@@ -6420,8 +6420,12 @@ function HandoffCloseModal({ act, onClose, onDone }) {
       // where a rejected recheck went: the Rejections person, the Submission team, the biller's list, or nowhere (the claim was closed)
       const went = r && r.went && { rejection: "Rejected: sent to the Rejections person to correct and resubmit.", submission: "Rejected: sent to the Submission team to correct and resubmit.",
         biller: "Rejected: nobody is set for Rejections or Submission on this client, so it is back on the biller's list.",
-        kept: "Rejected: nobody is set for Rejections or Submission on this client, and the claim was already closed, so it stays closed. The rejection is in its history." }[r.went];
-      toast((went ? went : r && r.listed ? "Completed: submitted, on the biller's list now (the team lead's review gave it to them); recheck in " + (h.recheck_hours || 48) + " working hours." : done[outcome]) + (names.length ? " Proof attached to the claim." : "")); onDone();
+        kept: "Rejected: nobody is set for Rejections or Submission on this client, and the claim was already closed, so it stays closed. The rejection is in its history.",
+        pool: "Rejected: nobody is set for Rejections or Submission on this client, and its biller no longer works the client, so it went to the pool. The team lead is told." }[r.went];
+      // pool: the biller it would go back to no longer works the client, so it went to the pool and the team lead is told (QA3-02)
+      const pooled = r && r.pool && { complete: "Completed: submitted; its biller no longer works this client, so it is on nobody's list until its follow-up is due. The team lead is told.",
+        back: "Sent back to AR: its biller no longer works this client, so it went to the pool, first in the next allocation. The team lead is told." }[outcome];
+      toast((went ? went : pooled ? pooled : r && r.listed ? "Completed: submitted, on the biller's list now (the team lead's review gave it to them); recheck in " + (h.recheck_hours || 48) + " working hours." : done[outcome]) + (names.length ? " Proof attached to the claim." : "")); onDone();
     } catch (e) { if (e.status === 409) { toast(e.message, "err"); onDone(); } else setErr(e.message); }
     setBusy(false);
   };
@@ -6656,7 +6660,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
               </div>
             )}
             {!ro && <Suggestions claim={c} subStatus={c.last_sub_status} />}
-            {!ro && (c.mine || (sup && !q.data.handoff_role && !deskOf(me, null))) && <div className="card stack" style={{ paddingBottom: 0 }}>
+            {!ro && !c.locked && (c.mine || (sup && !q.data.handoff_role && !deskOf(me, null))) && <div className="card stack" style={{ paddingBottom: 0 }}>
               <div className="row between"><h2 style={{ margin: 0 }}>Work this claim</h2><span className="tiny muted">{canSaveEntry(c) ? "Save entry records the SAAG and the note; Add as note keeps just the note (for example on a closed claim)" : c.state === "in_process" ? "It is with a desk now: add a note here; a SAAG entry is saved when it is back on a biller's list." : "Not on a biller's list (" + ((STATE_META[c.state] || [])[1] || c.state) + "): add a note here, or allocate it to save a SAAG entry."}</span></div>
               <WorkForm key={"wf" + ver} claim={c}
                 newFiles={(q.data.attachments || []).filter((a) => a.created_at > Math.max(0, ...q.data.notes.filter((n) => n.kind === "work").map((n) => n.created_at))).length}

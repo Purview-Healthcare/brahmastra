@@ -50,8 +50,10 @@ const lk = (await LE("claims.list", { client_id: lake.id, state: "open", page_si
 await LE("alloc.reassign", { ids: lk.map((c) => c.id), user_id: U("Bela Agent").id });
 for (const c of sun.slice(0, 3)) await AR("queue.complete", { id: c.id, saag, note });
 await BE("queue.complete", { id: lk[0].id, saag, note });
-// one of Arun's closes today
-await sql("UPDATE claims SET state = 'closed', completed_at = ? WHERE id = ?", Date.now() - 60000, sun[0].id);
+// one of Arun's closes today: his closing save stamps the entry time and the save time together (closed_at comes from the save,
+// and a biller's closed counts only the claims their own entry closed: QA3-06)
+const closedAt = Date.now() - 60000;
+await sql("UPDATE claims SET state = 'closed', completed_at = ?, updated_at = ? WHERE id = ?", closedAt, closedAt, sun[0].id);
 // Arun's other five were allocated yesterday: left over today, two of them High
 const leftIds = sun.slice(3, 8).map((c) => c.id);
 // left over = on the list from before this shift, not worked, and not parked for a later follow-up
