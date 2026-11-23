@@ -4561,11 +4561,13 @@ function stackLockPlan(live, span, locks) {
   }
   return teams;
 }
-const stackSpan = async (env, user) => new Set((await visibleUsers(env, user, "span")).map((u) => u.id));
+// the people a viewer sees on the Stack report: their span, and for a Payment posting or Submission person (a desk team lead)
+// only their own desk's people, never the AR billers of the same project (accountSpan, as Team status and the Team list)
+const stackSpan = async (env, user) => new Set((await accountSpan(env, user)).map((u) => u.id));
 /* Whose Stack report values a viewer may type or change (PKT, Quality, Team player, the fallbacks, the ticks and attrition), and
    whose extra production they may count, edit, pick or remove (decided by the owner, U-ACCESS): the people below them in the
    reporting chain, so a person's own team lead and every manager above them (the VP too); the VP and the admin everyone. Another
-   team lead of the same project, a desk team lead included, sees those people (the span) read only. */
+   AR team lead of the same project sees those people (the span) read only; a desk team lead sees only their own desk's people. */
 async function stackMine(env, user) {
   const users = await all(env, "SELECT id, reports_to FROM users");
   if (user.is_admin || isVicePresident(user)) return new Set(users.map((u) => u.id));
@@ -8936,12 +8938,16 @@ const OPS = {
       : view === "assist" ? " AND h.status IN ('assistance','back') AND h.done_at > ?" : view === "late" ? ` AND h.status IN (${onDesk}) AND h.due_at < ? AND NOT ${heldSql}`
       : view === "held" ? ` AND h.status IN ('pending','assigned','client') AND ${heldSql}` : hideClient ? " AND h.status IN ('pending','assigned')" : " AND (h.status IN ('pending','assigned') OR (h.status = 'client' AND h.chase_at <= ?))";
     const vwArgs = view === "mine" ? [user.id] : view === "done" || view === "assist" ? [month] : view === "late" ? [now] : view === "client" || view === "held" || hideClient ? [] : [now];
+    // A page of the list (page, page_size up to 500, total), as claims.list: a busy desk reaches every row, page by page
+    const size = Math.max(10, Math.min(500, Math.round(num(payload.page_size, 500))));
+    const page = Math.max(1, Math.min(1000000, Math.round(num(payload.page, 1))));
+    const total = ((await one(env, `SELECT COUNT(*) AS n FROM handoffs h JOIN claims c ON c.id = h.claim_id WHERE ${base}${vw}`, ...bargs, ...vwArgs)) || {}).n || 0;
     const rows = await all(env, `SELECT h.*, c.claim_no, c.patient, c.payer, c.dos, c.balance, c.billed, c.cpt, c.last_note, c.last_status_code, c.last_sub_status, cl.name AS client_name, lo.name AS location_name, cl.posting_tat_hours AS cl_posting_tat, cl.submission_tat_hours AS cl_submission_tat, cl.subcheck_hours AS cl_subcheck_hours,
         (SELECT COUNT(*) FROM handoffs r WHERE r.claim_id = h.claim_id AND r.status IN ('back','assistance')) AS returns,
         a.name AS assigned_name, l.name AS lead_name, b.name AS backup_name
       FROM handoffs h JOIN claims c ON c.id = h.claim_id LEFT JOIN clients cl ON cl.id = h.client_id LEFT JOIN locations lo ON lo.id = c.location_id
       LEFT JOIN users a ON a.id = h.assigned_to LEFT JOIN users l ON l.id = h.lead_id LEFT JOIN users b ON b.id = h.backup_id
-      WHERE ${base}${vw} ORDER BY CASE WHEN h.dept = 'rejection' AND h.status IN ('pending','assigned') THEN 0 ELSE 1 END, CASE WHEN h.status IN ('pending','assigned') THEN h.due_at WHEN h.status = 'client' THEN h.paused_at ELSE -h.done_at END LIMIT 500`, ...bargs, ...vwArgs);
+      WHERE ${base}${vw} ORDER BY CASE WHEN h.dept = 'rejection' AND h.status IN ('pending','assigned') THEN 0 ELSE 1 END, CASE WHEN h.status IN ('pending','assigned') THEN h.due_at WHEN h.status = 'client' THEN h.paused_at ELSE -h.done_at END, h.rowid LIMIT ? OFFSET ?`, ...bargs, ...vwArgs, size, (page - 1) * size);
     // due soon and the time left are in working hours, as the TAT is (a task due Monday 02:00 is due soon on Friday 23:00)
     const soonCut = addWorkingHours(now, DUE_SOON_HOURS);
     const whLeft = (h) => { const st0 = h.dept === "subcheck" && h.available_at ? h.available_at : h.created_at;
@@ -8979,7 +8985,7 @@ const OPS = {
       for (const r of out) { const k = r.client_id + "|" + (r.dept === "posting" ? "posting" : "submission");
         if (r.can_assign && !assignees[k]) assignees[k] = team.filter((m) => onDeskFor(m, r.dept, r.client_id)).map((m) => ({ id: m.id, name: m.name })); }
     }
-    return { rows: out, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {}, hold_reasons: TAT_HOLD_REASONS, assignees };
+    return { rows: out, total, page, page_size: size, reasons: ASSIST_REASONS, reject_reasons: REJECT_REASONS, reject_codes: REJECT_CODES, tat_hours: tats.size === 1 ? [...tats][0] : HANDOFF_TAT_HOURS, tat_varies: tats.size > 1, due_soon_hours: DUE_SOON_HOURS, stats: st || {}, hold_reasons: TAT_HOLD_REASONS, assignees };
   },
   /* For the tab badge and the red reminder: open hand-offs this person answers for, and how many are past their TAT. */
   /* The Payment posting / Submission dashboard: what came in, what was done and how fast, by client, person and day. */

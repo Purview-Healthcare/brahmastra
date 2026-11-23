@@ -6425,6 +6425,8 @@ function handoffDueKey(h) {
   if (!["pending", "assigned", "client"].includes(h.status)) return h.done_at;
   return h.hold && h.hold.active ? 9e15 + h.due_at : h.dept === "rejection" && h.status !== "client" ? h.due_at - 9e15 : h.due_at;
 }
+// the desk list's page: 500 rows, the most the server sends at once (handoffs.list's page_size)
+const DESK_PAGE = 500;
 function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const desk = deskOf(me, handoffs);
   const hd = (handoffs && handoffs.depts) || [];
@@ -6439,9 +6441,14 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
   const [clientId, setClientId] = useState((params && params.client_id) || "");
   const [dr, setDr] = useState(() => ({ ...newRange("all"), key: "all" }));
   const span = rangeSpan(dr);
+  // the list comes 500 rows a page (the server's order); a new filter starts again on page 1
+  const fkey = [dept, view, pick, clientId, span && span[0], span && span[1], hideClient].join("|");
+  const [pg, setPg] = useState({ k: fkey, n: 1 });
+  const page = pg.k === fkey ? pg.n : 1;
+  if (pg.k !== fkey) setPg({ k: fkey, n: 1 });   // so coming back to the same filters starts on page 1 too
   // a picked card asks the server for exactly what it counts (Past TAT includes the late ones waiting on the client)
-  const q = useRpc("handoffs.list", { dept: dept || undefined, view: pick || view, client_id: clientId || undefined, from_ms: span ? dayBounds(span[0])[0] : undefined, to_ms: span ? dayBounds(span[1])[1] : undefined, hide_client: hideClient || undefined },
-    [dept, view, pick, clientId, span && span[0], span && span[1], hideClient]);
+  const q = useRpc("handoffs.list", { dept: dept || undefined, view: pick || view, client_id: clientId || undefined, from_ms: span ? dayBounds(span[0])[0] : undefined, to_ms: span ? dayBounds(span[1])[1] : undefined, hide_client: hideClient || undefined, page, page_size: DESK_PAGE },
+    [dept, view, pick, clientId, span && span[0], span && span[1], hideClient, page]);
   // A new hand-off (the desk count changed): the list refreshes by itself.
   const deskN = handoffs ? handoffs.n : null, firstN = useRef(true);
   useEffect(() => { if (firstN.current) { firstN.current = false; return; } q.reload(); }, [deskN]);
@@ -6513,6 +6520,8 @@ function HandoffsView({ ctx, me, refreshHandoffs, handoffs, params }) {
               <td className="r"><HandoffActions h={h} canClose={isOpen && h.can_close && !recheckLater(h)} onOpen={() => setOpen(h.claim_id)} onAct={(outcome) => setAct({ h, outcome })} /></td>
             </tr>); })}
             {q.data && !rows.length && <tr><td colSpan={10}><Empty>{view === "open" ? "Nothing waiting. Claims arrive here when a biller saves a posting or submission action on a client that has a person set for it (Clients & locations)." : "Nothing here."}</Empty></td></tr>}</tbody></table></div>
+        {q.data && q.data.total > q.data.page_size && <div className="row between mt8" style={{ flexWrap: "wrap", gap: 8 }}><span className="tiny muted">Rows {fmtInt((q.data.page - 1) * q.data.page_size + 1)} to {fmtInt((q.data.page - 1) * q.data.page_size + all0.length)} of {fmtInt(q.data.total)}, {DESK_PAGE} a page in the desk's order. The counts above count every one.</span>
+          <Pager page={q.data.page} pageSize={q.data.page_size} total={q.data.total} onPage={(n) => setPg({ k: fkey, n })} /></div>}
       </div>
       {act && <HandoffCloseModal act={act} onClose={() => setAct(null)} onDone={() => { setAct(null); changed(); }} />}
       {hold && <HoldModal row={hold} reasons={(q.data && q.data.hold_reasons) || []} maxDays={30} onClose={() => setHold(null)} onDone={() => { setHold(null); changed(); }} />}

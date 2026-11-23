@@ -470,9 +470,11 @@ did not reach): the same in the score, on the page and in the Excel. A team's av
 99% are 99%), and a typed PKT or quality keeps two decimals (98.999 is kept as 98.99).
 
 **Who sees and types what.** A team lead sees their span (as everywhere: the people under them and on their
-projects), draft and locked, and sees their own team lead row once the month is locked. Only a person's own team lead,
+projects), draft and locked, and sees their own team lead row once the month is locked. A Payment posting or Submission
+team lead (Rejections is Submission's) sees only their own desk's people, never the AR billers of the same project, as on
+Team status. Only a person's own team lead,
 and the managers above them, the VP and the admin, type that person's values (PKT, Team player and the fallbacks:
-Achieved and Expected, Quality): another team lead of the same project, a desk team lead included, sees those rows read
+Achieved and Expected, Quality): another AR team lead of the same project sees those rows read
 only, and the server refuses them with a plain message. Managers and above see the teams of their span on both stacks,
 type the ticks (never their own) and the attrition Brahmastra cannot tell of the team leads below them, and lock the
 month. The admin sees everything and alone can unlock. A value Brahmastra works out is never typed over. **Yellow dashed** cells are typed:
@@ -828,7 +830,9 @@ people, and the server refuses anyone else, since the person given a hand-off ca
 **Filters.** Every lead and team member on Payment posting and Submission can narrow the list to one **client**
 and to the dates the claims were **sent to the desk** (All time, Today, This week, This month, Custom). The sent
 date is the day the AR biller saved the entry that sent the claim, so the same filter answers "what AR sent on
-Monday" and "what reached us on Monday". The counts at the top follow the filters.
+Monday" and "what reached us on Monday". The counts at the top follow the filters. The list comes 500 rows a page, in
+the desk's order; when there are more, **Prev** and **Next** under it reach the rest, and the counts on top always count
+every one.
 
 **Each client's TAT.** The person setting up the client sets the Payment posting TAT and the Submission TAT in
 working hours (Saturday and Sunday not counted; 24 to start). Rejections and the recheck after a resubmission use the

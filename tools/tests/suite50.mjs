@@ -557,7 +557,8 @@ S("U-ACCESS: only a person's own team lead and the managers above them (the VP, 
   let r = await F.save(TA, "2026-10", "Arun Agent", "pkt", "50");
   ok("U-ACCESS: another AR team lead of the same project (Tara) cannot type Arun's PKT, with a plain message", !r.ok && r.status === 403 && r.e === NOT, r);
   r = await F.save(PO, "2026-10", "Arun Agent", "quality", "80");
-  ok("U-ACCESS: nor a Payment posting team lead there (Posy)", !r.ok && r.status === 403 && r.e === NOT, r);
+  // a desk team lead does not even see the AR billers of her project on the Stack report (suite 61): refused as not in her span
+  ok("U-ACCESS: nor a Payment posting team lead there (Posy)", !r.ok && r.status === 403 && r.e === "That person is not in your span.", r);
   r = await F.save(MK, "2026-10", "Arun Agent", "tp", "no", "made up");
   ok("U-ACCESS: nor a manager who sees Sunrise but is not above Arun (Mark)", !r.ok && r.status === 403 && r.e === NOT, r);
   const okAll = [await F.save(TI, "2026-10", "Arun Agent", "pkt", "100"), await F.save(MO, "2026-10", "Arun Agent", "quality", "99"), await F.save(VI, "2026-10", "Arun Agent", "tp", "no", "made up"),
