@@ -6660,7 +6660,7 @@ function ClaimDrawer({ id, ctx, me, onClose, onChanged }) {
               </div>
             )}
             {!ro && <Suggestions claim={c} subStatus={c.last_sub_status} />}
-            {!ro && !c.locked && (c.mine || (sup && !q.data.handoff_role && !deskOf(me, null))) && <div className="card stack" style={{ paddingBottom: 0 }}>
+            {!ro && (c.mine || (sup && !q.data.handoff_role && !deskOf(me, null))) && !c.locked && <div className="card stack" style={{ paddingBottom: 0 }}>
               <div className="row between"><h2 style={{ margin: 0 }}>Work this claim</h2><span className="tiny muted">{canSaveEntry(c) ? "Save entry records the SAAG and the note; Add as note keeps just the note (for example on a closed claim)" : c.state === "in_process" ? "It is with a desk now: add a note here; a SAAG entry is saved when it is back on a biller's list." : "Not on a biller's list (" + ((STATE_META[c.state] || [])[1] || c.state) + "): add a note here, or allocate it to save a SAAG entry."}</span></div>
               <WorkForm key={"wf" + ver} claim={c}
                 newFiles={(q.data.attachments || []).filter((a) => a.created_at > Math.max(0, ...q.data.notes.filter((n) => n.kind === "work").map((n) => n.created_at))).length}
