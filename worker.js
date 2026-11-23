@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.112.0";
+const VERSION = "2.113.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -2197,11 +2197,20 @@ async function batchAll(env, stmts, size = 50) {
 
 /* --------------------------------------------------------- first run */
 let READY = null, READY_DB = null;
+/* The table check at a fresh start (ensureReady) is skipped when this database was already brought up to this release and these
+   admin emails: one read instead of about 240 queries, so the first sign-in after Cloudflare starts the server fresh stays quick
+   (and well under a plan's limit of queries a request). A new release (VERSION), a change to the tables, or a change of
+   ADMIN_EMAILS runs the full check once and saves the new mark. */
+const strHash = (t) => { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0; return h.toString(36); };
+const schemaRev = (env) => VERSION + "|" + strHash(JSON.stringify([SCHEMA, EXTRA_COLUMNS])) + "|" + adminEmails(env).join(",");
 function ensureReady(env) {
   // Demo mode swaps the database on "Reset demo data": a new DB object means the tables must be made again.
   if (READY && (!env.DEMO || READY_DB === env.DB)) return READY;
   READY_DB = env.DB;
   READY = (async () => {
+    const rev = schemaRev(env);
+    try { const m = await env.DB.prepare("SELECT value_json FROM settings WHERE key = 'schema_rev'").first(); if (m && JSON.parse(m.value_json) === rev) return; }
+    catch (e) { /* a new database (no settings table yet): check everything */ }
     await env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s)));
     // Add the columns introduced after the first release BEFORE anything is
     // inserted: the bootstrap row below already uses them.
@@ -2239,6 +2248,7 @@ function ensureReady(env) {
       else if (ex.role !== "admin") await run(env, "UPDATE users SET role = 'admin', active = 1 WHERE id = ?", ex.id);
       await run(env, "UPDATE users SET name = ?, first_name = 'Bob', last_name = 'The Builder' WHERE email = ? AND name IN ('Admin', '')", ADMIN_NAME, email);
     }
+    await setSetting(env, "schema_rev", rev);
   })().catch((e) => { READY = null; throw e; });
   return READY;
 }
@@ -4322,7 +4332,7 @@ const EDIT_OPS = /^(escalations\.(save|reason)|client\.log(Add|Delete)|monthend\
 // settings.get / settings.save: who reads and writes which keys (see the two ops).
 const SETTINGS_OPEN = ["onedrive_folder"], SETTINGS_LEAD = ["onedrive_folder", "digest_enabled"], SETTINGS_LEAD_SAVE = ["onedrive_folder"];
 const SETTINGS_ADMIN_OWN = ["extra_emails", "roster_meta", "feedback_to"];
-const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$|roster_dup_emp$|roster_name_clash$)/;
+const SETTINGS_SERVER = /^(cp:|escfile:|odfail:|workbook_status:|live_sync$|floor_sync$|drishti_sync$|shastra_sync$|shastra_log$|wfm_projects$|snap_at$|schema_rev$|roster_dup_emp$|roster_name_clash$)/;
 
 /* ---- stack scoring rules: begin ----
    The Stack report's scores, to the digit, exactly as the owner's April sheet works them out (do not "improve" them).
