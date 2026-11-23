@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.116.0";
+const VERSION = "2.116.1";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -6382,7 +6382,7 @@ const OPS = {
     if (user.role !== "supervisor") throw denied("Templates are managed by team leads and up.");
     const t = await one(env, "SELECT t.*, c.name AS client_name FROM note_templates t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id = ?", str(payload.id, 60));
     if (!t || (t.client_id && !inScope(user, t.client_id))) throw bad("That template was not found.");
-    const log = (await all(env, "SELECT at, by_name, action, old_json, new_json FROM note_template_log WHERE template_id = ? ORDER BY at, id", t.id))
+    const log = (await all(env, "SELECT at, by_name, action, old_json, new_json FROM note_template_log WHERE template_id = ? ORDER BY at, rowid", t.id))
       .map((x) => ({ at: x.at, by_name: x.by_name, action: x.action, old: jsonObj(x.old_json), new: jsonObj(x.new_json) }));
     const added = log.some((x) => x.action === "created") ? null : log.length ? { by_name: log[0].old.by_name || "", at: log[0].old.at || null } : { by_name: t.by_name, at: t.at };
     return { template: { id: t.id, title: t.title, text: t.text, client_name: t.client_name || "", by_name: t.by_name, at: t.at, removed_at: t.removed_at || null, removed_by_name: t.removed_by_name || "" }, added, log };

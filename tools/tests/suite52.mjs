@@ -479,6 +479,11 @@ S("W-14: any team lead may change any note template, and every change shows who 
   const ed = h1.log.find((x) => x.action === "edited");
   ok("W-14: the timeline has Added by Tina, then Edited by Leo with the old and the new title and text", h1.log[0].action === "created" && h1.log[0].by_name === "Tina Lead" && ed && ed.by_name === "Leo Lead"
     && ed.old.title === "Claim in process" && ed.new.title === "Claim in process (Lakeview)" && /15 days/.test(ed.old.text) && /10 days/.test(ed.new.text) && !h1.added, h1.log.map((x) => x.action + " " + x.by_name));
+  // two changes in the same millisecond (as on a fast machine) still read in the order they were made, whatever their random ids
+  await DB.prepare("UPDATE note_template_log SET at = (SELECT MIN(at) FROM note_template_log WHERE template_id = ?) WHERE template_id = ?").bind(t.id, t.id).run();
+  await DB.prepare("UPDATE note_template_log SET id = CASE action WHEN 'created' THEN 'zz-' || id ELSE 'aa-' || id END WHERE template_id = ?").bind(t.id).run();
+  const tie = (await TINA("templates.history", { id: t.id })).log.map((x) => x.action);
+  ok("W-14: two changes saved in the same millisecond still read added, then edited", tie.join(",") === "created,edited", tie);
   const same = await LEO("templates.save", { id: t.id, title: "Claim in process (Lakeview)", text: "Called the payer, the claim is in process since [date], call back in 10 days.", client_id: "" });
   ok("W-14: saving it unchanged adds nothing to the timeline", same.ok && (await TINA("templates.history", { id: t.id })).log.length === 2);
   const rm = await T(() => LEO("templates.delete", { id: t.id }));
