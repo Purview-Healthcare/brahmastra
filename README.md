@@ -1002,6 +1002,11 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
   the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
   so every claim goes to the people who do.
+- **Billers added by hand stay.** A client's billers are its people from Purview Shastra (refreshed every hour) and
+  anyone a team lead adds by hand on the client card or Locations. Someone added by hand whose Shastra project is
+  another client stays on the client through the hourly refresh (kept in `team_hand_json`) until a team lead takes them
+  off, so the claims given to them stay on their own My day. Before, the hourly refresh took them off and their claims
+  were hidden from them while Live status still counted them.
 - **Server errors are kept.** The server keeps no logs of its own, so an unexpected error (the page says "Server error.")
   is written to the audit trail as "Server error (send this line to support)": the action that failed and the error text,
   never the request's data, at most one a minute for each action. Manage › Audit trail › Server errors lists them. A fresh

@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.114.0";
+const VERSION = "2.115.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -252,7 +252,7 @@ const EXTRA_COLUMNS = {
   // the money owed (positive balances, credits left out) and its over-90 part, for the over-90 share on the trend; empty on readings kept before
   client_snapshots: [["ar_owed", "REAL"], ["over90_owed", "REAL"]],
   clients: [["team_json", "TEXT NOT NULL DEFAULT '[]'"], ["auto_allocate", "INTEGER NOT NULL DEFAULT 1"], ["workbook_link", "TEXT NOT NULL DEFAULT ''"],
-    ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"],
+    ["roster_names_json", "TEXT NOT NULL DEFAULT '[]'"], ["caps_json", "TEXT NOT NULL DEFAULT '{}'"], ["team_hand_json", "TEXT NOT NULL DEFAULT '[]'"],
     // Who does payment posting / submission for this client: a person (with a backup), the client itself, or the biller.
     ["posting_mode", "TEXT NOT NULL DEFAULT ''"], ["posting_lead", "TEXT"], ["posting_backup", "TEXT"],
     ["submission_mode", "TEXT NOT NULL DEFAULT ''"], ["submission_lead", "TEXT"], ["submission_backup", "TEXT"],
@@ -3920,10 +3920,14 @@ const isArBiller = (u) => u.role === "user" && !!u.active && (!String(u.departme
 async function syncTeams(env) {
   const users = await all(env, "SELECT id, source, role, active, projects_json, department, departments_also FROM users");
   const roster = new Set(users.filter((u) => u.source === "roster").map((u) => u.id));
-  for (const c of await all(env, "SELECT id, team_json, roster_names_json FROM clients")) {
+  // roster billers a team lead added to a client by hand (team_hand_json, from clients.saveTeam) stay on it while they are active AR
+  // billers: the hourly copy no longer takes them off, so the claims given to them stay on their own list (not hidden from them)
+  const handOk = new Set(users.filter((u) => u.source === "roster" && u.role === "user" && u.active && isAR(u)).map((u) => u.id));
+  for (const c of await all(env, "SELECT id, team_json, roster_names_json, team_hand_json FROM clients")) {
     const names = new Set(jsonList(c.roster_names_json).map(projKey));
     if (!names.size) continue;
-    const keep = parseTeam(c.team_json).filter((id) => !roster.has(id));
+    const hand = new Set(jsonList(c.team_hand_json));
+    const keep = parseTeam(c.team_json).filter((id) => !roster.has(id) || (hand.has(id) && handOk.has(id)));
     const add = users.filter((u) => u.source === "roster" && u.role === "user" && u.active && isAR(u) && jsonList(u.projects_json).some((p) => names.has(projKey(p.name)))).map((u) => u.id);
     const team = [...new Set([...keep, ...add])].slice(0, 100);
     if (JSON.stringify(team) !== JSON.stringify(parseTeam(c.team_json))) await run(env, "UPDATE clients SET team_json = ? WHERE id = ?", JSON.stringify(team), c.id);
@@ -7389,6 +7393,13 @@ const OPS = {
     const team = ids.filter((x) => valid.includes(x));
     const auto = payload.auto_allocate == null ? (old && old.auto_allocate == null ? 1 : old && old.auto_allocate ? 1 : 0) : payload.auto_allocate === false ? 0 : 1;
     await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ?`, JSON.stringify(team), auto, ex.id);
+    if (!payload.location_id) {
+      // roster billers added here whose Shastra projects do not include the client: kept through the hourly roster copy (syncTeams)
+      const cn = await one(env, "SELECT roster_names_json FROM clients WHERE id = ?", ex.id), names = new Set(jsonList(cn && cn.roster_names_json).map(projKey));
+      const rows = team.length ? await all(env, `SELECT id, source, projects_json FROM users WHERE id IN ${IN_LIST}`, listArg(team)) : [];
+      const hand = rows.filter((u) => u.source === "roster" && !jsonList(u.projects_json).some((p) => names.has(projKey(p && p.name)))).map((u) => u.id);
+      await run(env, "UPDATE clients SET team_hand_json = ? WHERE id = ?", JSON.stringify(hand), ex.id);
+    }
     const was = parseTeam(old && old.team_json), add = team.filter((x) => !was.includes(x)), gone = was.filter((x) => !team.includes(x));
     const nm = await namesOf(env, [...add, ...gone]);
     const bits = [...(add.length ? ["added " + add.map((x) => nm.get(x)).join(", ")] : []), ...(gone.length ? ["removed " + gone.map((x) => nm.get(x) || "someone").join(", ")] : []), ...(old && !!old.auto_allocate !== !!auto ? [auto ? "auto-allocation on" : "auto-allocation off"] : [])];
