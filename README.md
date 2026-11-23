@@ -728,7 +728,7 @@ card (Clients & locations, "Shared with", also in the person's Team profile unde
 "Extra client access"):
 
 - **View only**: the client, its claims, dashboards and reports become visible to
-  them, nothing can be changed. The card shows "shared · view only". Its claims open read only, marked **View only**:
+  them (search finds its claims too), nothing can be changed. The card shows "shared · view only". Its claims open read only, marked **View only**:
   the claim, its history, its notes and files, with no entry, note, file, assignment or other action, and the server
   refuses any change, whatever else the person once was on the claim. A view-only share never puts the client's claims on
   anyone's list (Can edit does), and it does not take Payment posting or Submission people past their desk.
@@ -1013,7 +1013,10 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   department, switched off for a while; switched back on, they are in the allocation again), not the roster taking over
   an account made by hand, and not a Shastra project matched to the client or moved off it: someone Shastra moves to
   another project is on both clients until the old client's team lead takes them off. Someone a team lead takes off
-  stays off (kept in `team_off_json`): the hourly refresh does not put them back until a team lead adds them again. The
+  stays off (kept in `team_off_json`): the hourly refresh does not put them back until a team lead adds them again, and
+  they no longer work the client, even when it is their Shastra project or they were added by hand with no project: their
+  claims of it go back to the pool with a bell line (being responsible on its profile, or a share, still gives it). A list
+  holds up to 500 people (people who left stay on it until a lead takes them off); asking for more says so. The
   page saves only the change made on screen (the list it showed and the list wanted), so an older screen never takes off
   someone another team lead or the hourly refresh put on meanwhile. Before 2.115.0, the hourly refresh took the added
   people off and their claims were hidden from them while Live status still counted them.
@@ -1042,7 +1045,10 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
 - Roster people sign in only with a Purview email, or an address the admin
   lists under Extra sign-in emails. Self sign-up is closed. People no longer in
   Shastra, or past their exit date, are switched off and their open claims go back
-  to the pool; those who never signed in and have no work in Brahmastra are removed.
+  to the pool, each claim's history saying so (someone Shastra moves off AR also gets a bell line); those who never
+  signed in and have no work in Brahmastra are removed after a week, unless something still names them (a client
+  profile's person, a client's or location's list, a share, the RACI), so someone Shastra leaves out of one hourly answer
+  comes back as the same account. Names match ignoring letter case and extra spaces.
 
 
 #### Straight from Purview Shastra (automatic)

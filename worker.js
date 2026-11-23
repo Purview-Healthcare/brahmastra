@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.116.2";
+const VERSION = "2.116.3";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -1663,7 +1663,10 @@ async function openSession(env, u, via) {
   return { token, user: publicUser({ ...u, last_login: now, via }) };
 }
 const fullName = (first, last, fallback) => [first, last].map((s) => String(s || "").trim()).filter(Boolean).join(" ") || fallback || "";
-const parseTeam = (s) => { try { const a = JSON.parse(s || "[]"); return Array.isArray(a) ? a.map((x) => String(x)).slice(0, 100) : []; } catch { return []; } };
+/* A client's or location's list of billers: up to TEAM_MAX people (QA1-06: at 100, leavers kept on the list by the owner's rule
+   used up places for ever, and joiners or the 101st biller were left off without a word). */
+const TEAM_MAX = 500;
+const parseTeam = (s) => { try { const a = JSON.parse(s || "[]"); return Array.isArray(a) ? a.map((x) => String(x)).slice(0, TEAM_MAX) : []; } catch { return []; } };
 
 /* ---- Drishti session tokens: the same format and signature as makeToken() in Drishti's Code.gs ----
    base64url(id|role|expiry) + "." + base64url(HMAC-SHA256(payload, TOKEN_SECRET)), padding kept, valid 12 hours. */
@@ -2286,14 +2289,16 @@ async function importRoster(env, user, payload) {
   const byEmail = new Map(existing.map((u) => [u.email, u]));
   // Exact full name also matches accounts created by hand before the roster, so they keep their password and get their Emp ID.
   // Every account of that name is kept (ones with a password or a sign-in first): a name match takes the first that may be theirs.
-  const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") { const k = u.name.trim().toLowerCase(); byName.set(k, [...(byName.get(k) || []), u]); } });
+  // names are matched ignoring letter case and extra spaces ("Mona   Manager" is Mona Manager, QA1-07)
+  const spaced = (t) => String(t || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const byName = new Map(); existing.forEach((u) => { if (u.role !== "admin") { const k = spaced(u.name); byName.set(k, [...(byName.get(k) || []), u]); } });
   byName.forEach((l) => l.sort((a, b) => !!(b.pass_hash || b.last_login) - !!(a.pass_hash || a.last_login)));
   // Emp ID first, then email, whatever order Shastra lists the rows in: an account a row has by its Emp ID is that row's, and
   // no other row takes it by email or name. The no-email placeholder or the name alone joins a row only to an account that no
   // row has by Emp ID or email and that carries no other Emp ID and no other email; the name only when no one else in Shastra
   // has it. So a namesake who joins, or a new joiner with a leaver's name, gets an account of their own, and people with no
   // Emp ID yet keep theirs (it has no Emp ID either).
-  const nameKey = (r) => r.name.trim().toLowerCase();
+  const nameKey = (r) => spaced(r.name);
   const nameRows = new Map(); rows.forEach((r) => nameRows.set(nameKey(r), (nameRows.get(nameKey(r)) || 0) + 1));
   const empHit = (row) => (row.emp_id && byEmp.get(row.emp_id.toUpperCase())) || null;
   const mailHit = (row) => (mailOk(row.email) && byEmail.get(row.email)) || null;
@@ -2326,7 +2331,7 @@ async function importRoster(env, user, payload) {
     if (e) return rowsByEmp.get(e) || [];
     const m = row.reports_to_email || (mailOk(mailClean(t)) ? mailClean(t) : "");
     if (m) return rowsByMail.get(m) || [];
-    return t ? rowsByName.get(t.toLowerCase()) || [] : [];
+    return t ? rowsByName.get(spaced(t)) || [] : [];
   };
   const existingById = new Map(existing.map((u) => [u.id, u])), clashes = new Map();
   for (const row of rows) {
@@ -2389,7 +2394,7 @@ async function importRoster(env, user, payload) {
     if (boss.length > 1 && next.active) {
       const kept = match && match.reports_to ? existingById.get(match.reports_to) : null, ids = boss.map((r) => r.emp_id || "none");
       issues.push(`reports to ${row.reports_to}, a name ${boss.length} people have in Shastra (Emp ID ${ids.join(", ")}): ` + (kept ? `still reports to ${kept.name}${kept.emp_id ? " (Emp ID " + kept.emp_id + ")" : ""} here` : "no team lead set here") + " until it is fixed in Shastra");
-      const k = String(row.reports_to).trim().toLowerCase(), c = clashes.get(k) || { name: boss[0].name, emp_ids: ids, people: [] };
+      const k = spaced(row.reports_to), c = clashes.get(k) || { name: boss[0].name, emp_ids: ids, people: [] };
       c.people.push(row.name); clashes.set(k, c);
     }
     // what changed: every field the sync writes for a person (V-08: a shift, "also in" department, Emp ID, position or city
@@ -2441,13 +2446,13 @@ async function importRoster(env, user, payload) {
         n.emp_id, n.position, n.roster_kind, n.department, n.departments_also, n.roster_status, n.exit_date, n.doj || "", n.reports_to_name, n.projects_json, n.access_all, n.email_missing, n.email_typed, n.shift, n.city, n.active ? 1 : 0, id);
     p.id = id;
     // switched off now: the day is kept (the Stack report's attrition), as is everything else they did
-    if (!n.active && p.match && p.match.active) { await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); await run(env, "UPDATE users SET off_at = ? WHERE id = ?", now, id); }
+    if (!n.active && p.match && p.match.active) { await unassignOpen(env, id, user); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); await run(env, "UPDATE users SET off_at = ? WHERE id = ?", now, id); }
     // Moved off AR in Shastra (to Payment posting or Submission): their AR claims go back to the pool, as when someone leaves.
     // Their desk hand-offs stay with them: the desk is still theirs.
-    else if (n.active && p.match && isAR(p.match) && !isAR(n)) await run(env, "UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', updated_at = ? WHERE assigned_to = ? AND state IN ('assigned','in_progress')", Date.now(), id);
+    else if (n.active && p.match && isAR(p.match) && !isAR(n)) await releaseList(env, user, id, "Purview Shastra moved you off AR", true);
   }
   const off = [...leaving.map((u) => u.id), ...dropped];
-  for (const id of off) { await run(env, "UPDATE users SET active = 0, off_at = ? WHERE id = ?", now, id); await unassignOpen(env, id); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
+  for (const id of off) { await run(env, "UPDATE users SET active = 0, off_at = ? WHERE id = ?", now, id); await unassignOpen(env, id, user); await run(env, "DELETE FROM sessions WHERE user_id = ?", id); }
   const idOfRow = new Map(); plan.forEach((p) => { if (p.id) idOfRow.set(p.row, p.id); });
   for (const p of plan) { if (!p.id) continue;
     // a name two people in Shastra have: who they report to stays as it is here (V-03)
@@ -2778,7 +2783,9 @@ async function returnsOf(env, claimId) {
   return (r && r.n) || 0;
 }
 /* People an old roster file brought in who are not in Shastra: switched off by the sync, and removed here when they
-   never signed in and have nothing on any claim. Anyone with work in Brahmastra stays (switched off) for the history, and so
+   never signed in, have nothing on any claim, have been off for a week (someone Shastra leaves out of one hourly answer comes
+   back as the same account) and nothing points at them: a client profile's person, a client's or location's list, a share,
+   the RACI (QA1-05: erased at once, they came back as a new account and those all pointed at nobody). Anyone with work in Brahmastra stays (switched off) for the history, and so
    does anyone the Stack report still needs: values typed for them, extra production of theirs, and a leaver of the report's
    months (Shastra's exit date, or a leaving status such as Resigned, in the last 13 months), whom the attrition counts. */
 async function removeLeftovers(env) {
@@ -2791,7 +2798,11 @@ async function removeLeftovers(env) {
     AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.user_id = u.id) AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.assigned_to = u.id OR c.last_worked_by = u.id)
     AND NOT EXISTS (SELECT 1 FROM handoffs h WHERE h.lead_id = u.id OR h.backup_id = u.id OR h.assigned_to = u.id OR h.done_by = u.id)
     AND NOT EXISTS (SELECT 1 FROM allocations l WHERE l.by_user = u.id)
-    AND NOT EXISTS (SELECT 1 FROM stack_typed t WHERE t.subject_id = u.id) AND NOT EXISTS (SELECT 1 FROM extra_lines x WHERE x.user_id = u.id OR x.auto_id = u.id)`)).filter((u) => !leaver(u));
+    AND NOT EXISTS (SELECT 1 FROM stack_typed t WHERE t.subject_id = u.id) AND NOT EXISTS (SELECT 1 FROM extra_lines x WHERE x.user_id = u.id OR x.auto_id = u.id)
+    AND COALESCE(u.off_at, 0) < ?
+    AND NOT EXISTS (SELECT 1 FROM clients cl WHERE ${RESP_PEOPLE.map(([, col]) => "cl." + col + " = u.id").join(" OR ")} OR instr(cl.team_json, u.id) > 0 OR instr(cl.team_off_json, u.id) > 0)
+    AND NOT EXISTS (SELECT 1 FROM locations lo WHERE instr(lo.team_json, u.id) > 0) AND NOT EXISTS (SELECT 1 FROM client_access g WHERE g.user_id = u.id)
+    AND NOT EXISTS (SELECT 1 FROM raci r WHERE instr(r.r_json || r.a_json || r.c_json || r.i_json, u.id) > 0)`, Date.now() - 7 * 86400000)).filter((u) => !leaver(u));
   if (!gone.length) return 0;
   await batchAll(env, gone.flatMap((u) => [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id), env.DB.prepare("DELETE FROM users WHERE id = ?").bind(u.id)]), 40);
   return gone.length;
@@ -3598,10 +3609,10 @@ async function noticeResponsibility(env, actor, client, before, after) {
    their own projects (team leads and SMEs too), managers also every project of the people under them, plus
    clients shared with them person-to-person. user.scope is null (everything) or the list of client ids.
    pre: scopePre's one read of the clients and of every share, for many people at once (two queries, not two a person). */
-const SCOPE_CLIENTS_SQL = `SELECT id, roster_names_json, team_json, ar_mode, ar_lead, ar_backup, posting_mode, posting_lead, posting_backup, submission_mode, submission_lead, submission_backup,
+const SCOPE_CLIENTS_SQL = `SELECT id, roster_names_json, team_json, team_off_json, ar_mode, ar_lead, ar_backup, posting_mode, posting_lead, posting_backup, submission_mode, submission_lead, submission_backup,
     submission_check_mode, submission_check_person, rejection_mode, rejection_lead, rejection_backup FROM clients`;
 const scopePre = async (env) => ({ cls: await all(env, SCOPE_CLIENTS_SQL), grants: await all(env, "SELECT user_id, client_id, level FROM client_access") });
-async function scopeOf(env, user, pre = null) {
+async function scopeOf(env, user, pre = null, opt = {}) {
   if (user.is_admin || user.access_all) { user.resp_clients = new Set(); return null; }
   // Anyone set on a client profile as responsible (AR, posting, submission, follow-up, rejections), or on its team,
   // gets that client: the claims and the profile. Supervisors can change it; billers only see it.
@@ -3614,10 +3625,16 @@ async function scopeOf(env, user, pre = null) {
   // A team lead added by hand with no projects sees everything. A biller added by hand with no projects sees the clients they
   // are set on or have claims of, not every client.
   if (!mine.length && user.source !== "roster" && user.role !== "user") return null;
-  const handBiller = !mine.length && user.source !== "roster"
+  // opt.noHeld (releaseLostClaims): whether they still work a client for any reason other than holding its claims, else a biller
+  // added by hand could never lose a client by being taken off its list (QA1-03)
+  const handBiller = !mine.length && user.source !== "roster" && !opt.noHeld
     ? (await all(env, "SELECT DISTINCT client_id FROM claims WHERE assigned_to = ? OR last_worked_by = ?", user.id, user.id)).map((r) => r.client_id) : [];
+  // a biller a team lead took off a client (team_off_json) no longer works it through their Shastra project or the claims they
+  // hold: the lead's x takes the client away (the owner's rule: only a lead takes someone off, and then they are off); being
+  // responsible on its profile, on its list again or a share still gives it
+  const offFor = new Set(user.role === "user" ? cls.filter((c) => jsonList(c.team_off_json).includes(user.id)).map((c) => c.id) : []);
   const names = new Set(mine.map(projKey));
-  const own = [...new Set([...handBiller,...cls.filter((c) => jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id), ...resp, ...onTeam])];
+  const own = [...new Set([...handBiller.filter((id) => !offFor.has(id)), ...cls.filter((c) => !offFor.has(c.id) && jsonList(c.roster_names_json).some((n) => names.has(projKey(n)))).map((c) => c.id), ...resp, ...onTeam])];
   // Clients shared person-to-person (Clients & locations, Shared with): they add to what this person sees; a "view" share cannot be changed.
   const grants = pre ? pre.grants.filter((g) => g.user_id === user.id) : await all(env, "SELECT client_id, level FROM client_access WHERE user_id = ?", user.id);
   user.scope_view_only = new Set(grants.filter((g) => g.level !== "edit" && !own.includes(g.client_id)).map((g) => g.client_id));
@@ -3933,7 +3950,7 @@ async function syncTeams(env) {
     if (!names.size) continue;
     const off = new Set(jsonList(c.team_off_json)), was = parseTeam(c.team_json);
     const add = users.filter((u) => !off.has(u.id) && u.source === "roster" && u.role === "user" && u.active && isAR(u) && jsonList(u.projects_json).some((p) => names.has(projKey(p.name)))).map((u) => u.id);
-    const team = [...new Set([...was, ...add])].slice(0, 100);
+    const team = [...new Set([...was, ...add])].slice(0, TEAM_MAX);
     if (JSON.stringify(team) !== JSON.stringify(was)) await run(env, "UPDATE clients SET team_json = ? WHERE id = ?", JSON.stringify(team), c.id);
   }
 }
@@ -3961,7 +3978,7 @@ async function autoMapProjects(env) {
 async function releaseLostClaims(env, by, userId, clientId) {
   const row = userId ? await one(env, "SELECT * FROM users WHERE id = ?", userId) : null;
   if (!row) return 0;
-  const u = publicUser(row), scope = await scopeOf(env, u);
+  const u = publicUser(row), scope = await scopeOf(env, u, null, { noHeld: true });
   if (scope == null) return 0;
   const held = await all(env, `SELECT c.id, c.client_id, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id
     WHERE c.assigned_to = ? AND c.state IN ('assigned','in_progress')${clientId ? " AND c.client_id = ?" : ""}`, userId, ...(clientId ? [clientId] : []));
@@ -3982,9 +3999,27 @@ async function releaseLostClaims(env, by, userId, clientId) {
     .bind(uuid(), userId, Date.now(), `${k.n} claim${k.n === 1 ? " was" : "s were"} taken off your list: you no longer work ${k.name || "that client"}, so ${k.n === 1 ? "it went" : "they went"} back to the pool.`, "queue", cid)), 50);
   return [...per.values()].reduce((t, k) => t + k.n, 0);
 }
-async function unassignOpen(env, userId) {
-  await run(env, "UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', updated_at = ? WHERE assigned_to = ? AND state IN ('assigned','in_progress')", Date.now(), userId);
+async function unassignOpen(env, userId, by) {
+  await releaseList(env, by, userId, "they were switched off", false);
   await rerouteHandoffs(env, userId);
+}
+/* Everything on someone's list back to the pool (they left or were switched off, or Shastra moved them off AR), each claim's
+   history saying so and, when they still work here, a line in their bell (QA1-02: moved off AR it went silently; Q7: a
+   leaver's claims had no history line). */
+async function releaseList(env, by, userId, why, tell) {
+  const held = await all(env, "SELECT c.id, c.client_id, cl.name AS client_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.assigned_to = ? AND c.state IN ('assigned','in_progress')", userId);
+  if (!held.length) return 0;
+  const who = { id: (by && by.id) || null, name: (by && by.name) || "" }, name = ((await one(env, "SELECT name FROM users WHERE id = ?", userId)) || {}).name || "", per = new Map();
+  for (const part of chunks(held, 80)) {
+    const back = new Set((await all(env, `UPDATE claims SET assigned_to = NULL, assigned_at = NULL, started_at = NULL, state = 'open', skipped_at = NULL, first_up = 0, updated_at = ?
+      WHERE id IN ${IN_LIST} AND assigned_to = ? AND state IN ('assigned','in_progress') RETURNING id`, Date.now(), listArg(part.map((c) => c.id)), userId)).map((x) => x.id));
+    const went = part.filter((c) => back.has(c.id));
+    if (went.length) await batchAll(env, went.map((c) => claimEvent(env, c.id, who, "unassigned", name, { why })), 50);
+    for (const c of went) { const k = per.get(c.client_id) || { name: c.client_name || "", n: 0 }; k.n++; per.set(c.client_id, k); }
+  }
+  if (tell && per.size) await batchAll(env, [...per.entries()].map(([cid, k]) => env.DB.prepare("INSERT INTO user_notices (id, user_id, at, text, view, client_id) VALUES (?,?,?,?,?,?)")
+    .bind(uuid(), userId, Date.now(), `${k.n} claim${k.n === 1 ? "" : "s"} of ${k.name || "a client"} ${k.n === 1 ? "was" : "were"} taken off your list: ${why}, so ${k.n === 1 ? "it went" : "they went"} back to the pool.`, "queue", cid)), 50);
+  return [...per.values()].reduce((t, k) => t + k.n, 0);
 }
 const placeholderEmail = (row) => (row.emp_id || row.name).toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "") + "@no-email.invalid";
 
@@ -5274,7 +5309,7 @@ const OPS = {
         ...(!active ? [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(ex.id)] : []),
       ]);
       // Switched off here as in a roster sync: their claims go back to the pool and their open hand-offs to the backup.
-      if (!active && ex.active) await unassignOpen(env, ex.id);
+      if (!active && ex.active) await unassignOpen(env, ex.id, user);
       if (projects || reportsTo !== undefined || role !== ex.role || active !== ex.active) { await recomputeScopes(env); await syncTeams(env); }
       if (newEmail !== ex.email) await audit(env, user, "user.email", null, `${name}: ${ex.email_missing || !ex.email ? "no email" : ex.email} → ${newEmail}`);
       if (role !== ex.role || active !== ex.active || projects || empChanged) await audit(env, user, "user.save", null, name + (role !== ex.role ? " · role " + ex.role + " → " + role : "") + (active !== ex.active ? (active ? " · reactivated" : " · deactivated") : "")
@@ -6413,7 +6448,7 @@ const OPS = {
     const like = likeAny(q), sup = user.role === "supervisor";
     // A biller or desk person finds what they may open: their list, what they worked, the claims on their desk (hand-offs they
     // lead, back up or were given) and the claims of a client they are responsible for.
-    const rc = sup ? [] : [...(user.resp_clients || [])];
+    const rc = sup ? [] : [...new Set([...(user.resp_clients || []), ...(user.scope_view_only || [])])];   // + view-only shares (QA1-01)
     const mine = "c.assigned_to = ? OR c.last_worked_by = ? OR c.id IN (SELECT claim_id FROM handoffs WHERE lead_id = ? OR backup_id = ? OR assigned_to = ?)" + (rc.length ? ` OR c.client_id IN ${IN_LIST}` : "");
     const rows = await all(env, `SELECT c.id, c.client_id, c.claim_no, c.account_no, c.patient, c.payer, c.dos, c.balance, c.state, c.assigned_to, c.last_worked_by, c.handoff_status,
         cl.name AS client_name, u.name AS assigned_name FROM claims c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.assigned_to
@@ -6426,7 +6461,7 @@ const OPS = {
     for (const c of rows) {
       if (ok.length >= 8) break;
       const may = deskOf(user) ? postedClosed(c) || (await canSeeClaim(env, user, c))
-        : sup ? leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c) : inScope(user, c.client_id) || postedClosed(c);
+        : sup ? leadFor(user, c.client_id) || c.assigned_to === user.id || c.last_worked_by === user.id || postedClosed(c) || viewShareOf(user, c) : inScope(user, c.client_id) || postedClosed(c);
       if (may) ok.push(c);
     }
     return { claims: ok.map(({ assigned_to, last_worked_by, handoff_status, ...c }) => ({ ...c, posted: handoff_status === "posted" && c.state === "closed" })) };
@@ -7390,31 +7425,41 @@ const OPS = {
     const ex = await one(env, `SELECT id, ${payload.location_id ? "client_id" : "id AS client_id"} FROM ${table} WHERE id = ?`, id);
     if (!ex) throw bad("Unknown " + (payload.location_id ? "location" : "client") + ".");
     editableOr(user, ex.client_id);
-    const old = await one(env, `SELECT team_json, auto_allocate, name FROM ${table} WHERE id = ?`, ex.id);
-    const prev = parseTeam(old && old.team_json), prevSet = new Set(prev), clean = (list) => list.map((x) => str(x, 60)).filter(Boolean);
+    const clean = (list) => list.map((x) => str(x, 60)).filter(Boolean), delta = Array.isArray(payload.team) && Array.isArray(payload.base);
+    // read, change and write back only if nobody changed the list meanwhile; otherwise again from the list as it is now, so two
+    // team leads saving at the same moment both count (QA1-04: the later write used to undo the other's change)
+    let old, prev, team, auto;
+    for (let attempt = 0; ; attempt++) {
+    old = await one(env, `SELECT team_json, auto_allocate, name FROM ${table} WHERE id = ?`, ex.id);
+    prev = parseTeam(old && old.team_json); const prevSet = new Set(prev);
     // The page sends what the team lead changed on their screen: base (the list they saw) and team (the list they want). Only that
     // change is made, to the list as it is now, so someone another team lead or the hourly copy put on it meanwhile stays on it (an
     // older screen never takes anyone off). Without base (an older page), team is the whole list; the team or the auto-allocation
     // switch not sent stays as it is.
-    const delta = Array.isArray(payload.team) && Array.isArray(payload.base);
     let ids;
     if (delta) {
       const base = new Set(clean(payload.base)), want = new Set(clean(payload.team)), takeOff = new Set([...base].filter((x) => !want.has(x)));
-      ids = [...new Set([...prev.filter((x) => !takeOff.has(x)), ...[...want].filter((x) => !base.has(x))])].slice(0, 100);
-    } else ids = [...new Set(Array.isArray(payload.team) ? clean(payload.team) : prev)].slice(0, 100);
+      ids = [...new Set([...prev.filter((x) => !takeOff.has(x)), ...[...want].filter((x) => !base.has(x))])];
+    } else ids = [...new Set(Array.isArray(payload.team) ? clean(payload.team) : prev)];
+    if (ids.length > TEAM_MAX) throw bad(`A list of billers holds at most ${TEAM_MAX} people. Take off people who left before adding more.`);
     const rows = new Map(ids.length ? (await all(env, `SELECT id, active FROM users WHERE id IN ${IN_LIST}`, listArg(ids))).map((u) => [u.id, u]) : []);
     // a save takes off only who the team lead takes off: someone already on it stays while switched off for a while; new people must be active
-    const team = ids.filter((x) => rows.has(x) && (rows.get(x).active || prevSet.has(x)));
-    const auto = payload.auto_allocate == null ? (old && old.auto_allocate == null ? 1 : old && old.auto_allocate ? 1 : 0) : payload.auto_allocate === false ? 0 : 1;
-    await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ?`, JSON.stringify(team), auto, ex.id);
+    team = ids.filter((x) => rows.has(x) && (rows.get(x).active || prevSet.has(x)));
+    auto = payload.auto_allocate == null ? (old && old.auto_allocate == null ? 1 : old && old.auto_allocate ? 1 : 0) : payload.auto_allocate === false ? 0 : 1;
+    const w = await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ? AND COALESCE(team_json, '[]') = ?`, JSON.stringify(team), auto, ex.id, (old && old.team_json) || "[]");
+    if (changesOf(w)) break;
+    if (attempt >= 4) throw bad("Someone else changed this list at the same moment. Open it again and repeat your change.");
+    }
     if (!payload.location_id) {
       // who a team lead takes off stays off: the hourly copy from Shastra does not put them back until a team lead adds them again.
       // (Taken off on an older page, without base, they may come back: its whole list can be older than the hourly copy's additions.)
-      const cn = await one(env, "SELECT team_off_json FROM clients WHERE id = ?", ex.id);
-      const off = new Set(jsonList(cn && cn.team_off_json).filter((x) => !team.includes(x)));
-      if (delta) prev.filter((x) => !team.includes(x)).forEach((x) => off.add(x));
-      const next = JSON.stringify([...off].slice(-500));
-      if (next !== ((cn && cn.team_off_json) || "[]")) await run(env, "UPDATE clients SET team_off_json = ? WHERE id = ?", next, ex.id);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const cn = await one(env, "SELECT team_off_json FROM clients WHERE id = ?", ex.id), cur = (cn && cn.team_off_json) || "[]";
+        const off = new Set(jsonList(cur).filter((x) => !team.includes(x)));
+        if (delta) prev.filter((x) => !team.includes(x)).forEach((x) => off.add(x));
+        const next = JSON.stringify([...off].slice(-500));
+        if (next === cur || changesOf(await run(env, "UPDATE clients SET team_off_json = ? WHERE id = ? AND COALESCE(team_off_json, '[]') = ?", next, ex.id, cur))) break;
+      }
     }
     const was = parseTeam(old && old.team_json), add = team.filter((x) => !was.includes(x)), gone = was.filter((x) => !team.includes(x));
     const nm = await namesOf(env, [...add, ...gone]);
