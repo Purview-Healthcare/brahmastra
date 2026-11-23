@@ -1,10 +1,10 @@
 /* Suite 64: a biller a team lead adds to a client by hand (their Purview Shastra project is another client) stays on it through
    the hourly roster copy, so the claims given to them stay on their own My day; taken off by hand, they leave. The owner's case: the
    NAEC billers added by hand lost sight of their 44 claims an hour later while Live status still counted them. (Origin: suite 54.)
-   The owner's rule since: whoever a team lead puts on a client stays on it until a team lead takes them off, whatever Purview
-   Shastra says about them later (another department, switched off for a while, moved to another project), and also when the
-   roster takes over an account made by hand or a Shastra project is matched to a client that had none. Only the people Shastra
-   brought in come and go with Shastra.
+   The owner's rule since: whoever a team lead puts on a client from outside its Shastra projects stays on it until a team lead
+   takes them off, whatever Purview Shastra says about them later (another department, switched off for a while, moved to another
+   project), and also when the roster takes over an account made by hand or a Shastra project is matched to a client that had
+   none. The people of the client's own Shastra projects come and go with Shastra, even when a team lead re-adds them (R4-C).
    CW-01: someone on a location's own team who no longer works the client (Purview Shastra moved them, a share was taken back or
    made view only) is never planned for the location's claims: the allocation hands every claim to the people who do, and the
    result on screen is what was given. A stand-in for Purview Shastra's roster; made-up people and data only. */
@@ -106,13 +106,15 @@ S("Whatever Shastra says about him later, a biller a team lead adds stays until 
   ok("back on in Shastra: on Sunrise's billers and on the day's team for the next allocation", (await SUNTEAM()).includes(U("Dev Agent"))
     && (await TI("team.today", { client_id: sun.id })).members.some((m) => m.name === "Dev Agent"));
 }
-S("Someone Shastra had on the client whom a team lead adds by hand stays when Shastra moves them");
+S("Someone of the client's own Shastra project follows Shastra, even when a team lead re-adds them (R4-C)");
 {
   await sql("UPDATE clients SET team_json = ? WHERE id = ?", JSON.stringify((await SUNTEAM()).filter((x) => x !== U("Bela Agent"))), sun.id);   // not copied over yet
   await TI("clients.saveTeam", { client_id: sun.id, team: [...await SUNTEAM(), U("Bela Agent")] });
   feed("Bela Agent").project = LAKE; await A("roster.syncShastra");
-  ok("Bela, added by Tina, stays on Sunrise when Shastra moves her to Lakeview", (await SUNTEAM()).includes(U("Bela Agent")), await SUNTEAM());
-  ok("...and still sees her 3 Sunrise claims", (await ready("Bela Agent")) === 3, await ready("Bela Agent"));
+  ok("Bela (Sunrise in Shastra when Tina re-added her) leaves Sunrise when Shastra moves her to Lakeview", !(await SUNTEAM()).includes(U("Bela Agent")), await SUNTEAM());
+  await TI("clients.saveTeam", { client_id: sun.id, team: [...await SUNTEAM(), U("Bela Agent")] });
+  await A("roster.syncShastra");
+  ok("added again by Tina now that Shastra has her on Lakeview, she stays on Sunrise", (await SUNTEAM()).includes(U("Bela Agent")), await SUNTEAM());
 }
 S("An account made by hand and put on the client stays when the roster takes it over");
 {

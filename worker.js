@@ -3922,17 +3922,13 @@ async function syncTeams(env) {
   const roster = new Set(users.filter((u) => u.source === "roster").map((u) => u.id)), known = new Set(users.map((u) => u.id));
   for (const c of await all(env, "SELECT id, team_json, roster_names_json, team_hand_json FROM clients")) {
     const names = new Set(jsonList(c.roster_names_json).map(projKey));
-    // everyone a team lead put on the client (team_hand_json, from clients.saveTeam) stays on it every day until a team lead takes
-    // them off, whatever Shastra says about them (another project or department, switched off for a while), so the claims given to
-    // them stay on their own list: the hourly copy adds and takes off only the people Shastra brought in. Someone a team lead put on
-    // it and something else took off comes back (an account removed for good does not).
+    // everyone a team lead put on the client from outside its Shastra projects (team_hand_json, from clients.saveTeam) stays on it
+    // every day until a team lead takes them off, whatever Shastra says about them later (another project or department, switched
+    // off for a while), so the claims given to them stay on their own list: the hourly copy adds and takes off only the people of
+    // the client's Shastra projects. Someone a team lead put on it and something else took off comes back (an account removed for
+    // good does not).
+    if (!names.size) continue;
     const hand = jsonList(c.team_hand_json).filter((id) => known.has(id)), handSet = new Set(hand);
-    if (!names.size) {
-      // a client with no Shastra project has only people a team lead put on it: noted as such, so they stay once a project is matched to it
-      const more = parseTeam(c.team_json).filter((id) => known.has(id) && !handSet.has(id));
-      if (more.length) await run(env, "UPDATE clients SET team_hand_json = ? WHERE id = ?", JSON.stringify([...hand, ...more]), c.id);
-      continue;
-    }
     const keep = [...parseTeam(c.team_json).filter((id) => !roster.has(id) || handSet.has(id)), ...hand];
     const add = users.filter((u) => u.source === "roster" && u.role === "user" && u.active && isAR(u) && jsonList(u.projects_json).some((p) => names.has(projKey(p.name)))).map((u) => u.id);
     const team = [...new Set([...keep, ...add])].slice(0, 100);
@@ -3944,6 +3940,13 @@ async function rosterProjectNames(env) {
   for (const u of await all(env, "SELECT projects_json FROM users WHERE source = 'roster' AND active = 1")) for (const p of jsonList(u.projects_json)) if (!m.has(projKey(p.name))) m.set(projKey(p.name), p.name);
   return [...m.values()].sort((a, b) => a.localeCompare(b));
 }
+/* A client with no Shastra project has only people a team lead put on it: when a project is matched to it, they are noted as such
+   (team_hand_json), so they stay on it through the hourly roster copy (syncTeams) until a team lead takes them off. */
+async function noteHandTeam(env, clientId) {
+  const c = await one(env, "SELECT team_json, team_hand_json FROM clients WHERE id = ?", clientId);
+  const hand = jsonList(c && c.team_hand_json), more = parseTeam(c && c.team_json).filter((id) => !hand.includes(id));
+  if (more.length) await run(env, "UPDATE clients SET team_hand_json = ? WHERE id = ?", JSON.stringify([...hand, ...more]), clientId);
+}
 /* A roster project whose name or code matches exactly one client (ignoring case, spaces and punctuation) is matched silently. The rest wait for a team lead. */
 async function autoMapProjects(env) {
   const clients = await all(env, "SELECT id, name, code, roster_names_json FROM clients");
@@ -3953,6 +3956,7 @@ async function autoMapProjects(env) {
     const hits = clients.filter((c) => projKey(c.name) === k || (c.code && projKey(c.code) === k));
     if (hits.length !== 1) continue;
     const c = hits[0]; const list = [...jsonList(c.roster_names_json), name];
+    if (list.length === 1) await noteHandTeam(env, c.id);
     c.roster_names_json = JSON.stringify(list); mapped.add(k);
     await run(env, "UPDATE clients SET roster_names_json = ? WHERE id = ?", c.roster_names_json, c.id);
   }
@@ -7402,13 +7406,13 @@ const OPS = {
     const auto = payload.auto_allocate == null ? (old && old.auto_allocate == null ? 1 : old && old.auto_allocate ? 1 : 0) : payload.auto_allocate === false ? 0 : 1;
     await run(env, `UPDATE ${table} SET team_json = ?, auto_allocate = ? WHERE id = ?`, JSON.stringify(team), auto, ex.id);
     if (!payload.location_id) {
-      // who a team lead puts on the client stays on it until a team lead takes them off (the hourly roster copy, syncTeams, never
-      // does): everyone added now, everyone added before (team_hand_json) and anyone Shastra does not list on the client's projects,
-      // whatever their account (one made by hand that the roster takes over later stays too). Only the people Shastra brought in, and
-      // nobody put them on by hand, come and go with Shastra.
+      // who a team lead puts on the client from outside its Shastra projects stays on it until a team lead takes them off (the
+      // hourly roster copy, syncTeams, never does): anyone Shastra does not list on the client's projects, whatever their account
+      // (one made by hand that the roster takes over later stays too), and everyone noted so before (team_hand_json), even once
+      // Shastra lists them. The people of the client's own Shastra projects come and go with Shastra (R4-C).
       const cn = await one(env, "SELECT roster_names_json, team_hand_json FROM clients WHERE id = ?", ex.id), names = new Set(jsonList(cn && cn.roster_names_json).map(projKey));
       const before = new Set(jsonList(cn && cn.team_hand_json));
-      const hand = team.filter((x) => before.has(x) || !prev.has(x) || !jsonList(rows.get(x).projects_json).some((p) => names.has(projKey(p && p.name))));
+      const hand = team.filter((x) => before.has(x) || !jsonList(rows.get(x).projects_json).some((p) => names.has(projKey(p && p.name))));
       await run(env, "UPDATE clients SET team_hand_json = ? WHERE id = ?", JSON.stringify(hand), ex.id);
     }
     const was = parseTeam(old && old.team_json), add = team.filter((x) => !was.includes(x)), gone = was.filter((x) => !team.includes(x));
@@ -10209,6 +10213,7 @@ const OPS = {
       if (from) editableOr(user, from.id);
     }
     let changed = !!payload.create;
+    if (!jsonList(c.roster_names_json).length) await noteHandTeam(env, c.id);
     // who holds claims of the client the project leaves: once it is matched elsewhere, those who no longer work it give them back (R4-C)
     const holders = from ? (await all(env, "SELECT DISTINCT assigned_to FROM claims WHERE client_id = ? AND assigned_to IS NOT NULL AND state IN ('assigned','in_progress')", from.id)).map((r) => r.assigned_to) : [];
     for (const o of others) {

@@ -1002,14 +1002,16 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
   the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
   so every claim goes to the people who do.
-- **Billers a team lead adds stay until a team lead takes them off.** A client's billers are its people from Purview
-  Shastra (refreshed every hour) and everyone a team lead adds on the client card or Locations. Whoever a team lead adds
-  stays on the client every day (kept in `team_hand_json`) until a team lead takes them off, so the claims given to them
-  stay on their own My day. Nothing else takes them off: not the hourly refresh, whatever Shastra says about them later
-  (another project or department, switched off for a while), not the roster taking over an account made by hand, not a
+- **Billers a team lead adds stay until a team lead takes them off.** A client's billers are the people of its Purview
+  Shastra projects (refreshed every hour) and everyone a team lead adds on the client card or Locations. Whoever a team
+  lead adds from outside the client's Shastra projects stays on it every day (kept in `team_hand_json`) until a team lead
+  takes them off, so the claims given to them stay on their own My day. Nothing else takes them off: not the hourly
+  refresh, whatever Shastra says about them later (another project or department, switched off for a while; once
+  noted, also after Shastra lists them on the client), not the roster taking over an account made by hand, not a
   Shastra project matched to the client or moved away from it, and not a team lead saving the list for someone else.
-  Only the people Shastra itself brought in come and go with Shastra. Before, the hourly refresh took the added people
-  off and their claims were hidden from them while Live status still counted them.
+  The people of the client's own Shastra projects come and go with Shastra, even when a team lead re-adds them (R4-C).
+  Before, the hourly refresh took the added people off and their claims were hidden from them while Live status still
+  counted them.
 - **Server errors are kept.** The server keeps no logs of its own, so an unexpected error (the page says "Server error.")
   is written to the audit trail as "Server error (send this line to support)": the action that failed and the error text,
   never the request's data, at most one a minute for each action. Manage › Audit trail › Server errors lists them. A fresh
