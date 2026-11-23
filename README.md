@@ -984,7 +984,7 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
 - Each roster project is matched to a client (same name or code automatically;
   otherwise a team lead is asked once; a project that is a new client opens the
   Add client setup with its name, so it gets its whole profile). Active AR agents
-  on a project become that client's billers. A team lead matches their project
+  on a project become that client's billers (and stay on it until a team lead takes them off, see below). A team lead matches their project
   only to a client of their own span: one they are responsible for on its
   profile, one they added, or one another of their projects is already matched
   to (or a new client). Matching it to any other client is the admin's call
@@ -1002,16 +1002,17 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
   the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
   so every claim goes to the people who do.
-- **Billers a team lead adds stay until a team lead takes them off.** A client's billers are the people of its Purview
-  Shastra projects (refreshed every hour) and everyone a team lead adds on the client card or Locations. Whoever a team
-  lead adds from outside the client's Shastra projects stays on it every day (kept in `team_hand_json`) until a team lead
-  takes them off, so the claims given to them stay on their own My day. Nothing else takes them off: not the hourly
-  refresh, whatever Shastra says about them later (another project or department, switched off for a while; once
-  noted, also after Shastra lists them on the client), not the roster taking over an account made by hand, not a
-  Shastra project matched to the client or moved away from it, and not a team lead saving the list for someone else.
-  The people of the client's own Shastra projects come and go with Shastra, even when a team lead re-adds them (R4-C).
-  Before, the hourly refresh took the added people off and their claims were hidden from them while Live status still
-  counted them.
+- **Only a team lead takes anyone off a client.** A client's billers are everyone on its list: the people of its Purview
+  Shastra projects, added by themselves every hour, and everyone a team lead adds on the client card or Locations. Once
+  someone is on it, nothing automatic takes them off or changes it; only a team lead who may change that client does, by
+  hand (the × next to their name). Not the hourly refresh, whatever Shastra says about them later (another project or
+  department, switched off for a while; switched back on, they are in the allocation again), not the roster taking over
+  an account made by hand, and not a Shastra project matched to the client or moved off it: someone Shastra moves to
+  another project is on both clients until the old client's team lead takes them off. Someone a team lead takes off
+  stays off (kept in `team_off_json`): the hourly refresh does not put them back until a team lead adds them again. The
+  page saves only the change made on screen (the list it showed and the list wanted), so an older screen never takes off
+  someone another team lead or the hourly refresh put on meanwhile. Before 2.115.0, the hourly refresh took the added
+  people off and their claims were hidden from them while Live status still counted them.
 - **Server errors are kept.** The server keeps no logs of its own, so an unexpected error (the page says "Server error.")
   is written to the audit trail as "Server error (send this line to support)": the action that failed and the error text,
   never the request's data, at most one a minute for each action. Manage › Audit trail › Server errors lists them. A fresh

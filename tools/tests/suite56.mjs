@@ -129,17 +129,19 @@ await MONA("clients.saveResponsibility", { client_id: lake.id, dept: "ar", mode:
 ok("R4-C: AR responsibility moved to Dev Agent: Arun's Lakeview claims go back to the pool", (await onList("Arun Agent", lake.id)).length === 0, await onList("Arun Agent", lake.id));
 ok("R4-C: Arun's bell says so", (await noticeOf("Arun Agent", lake.id)).length === 1);
 ok("R4-C: his Sunrise claims stay on his list", (await onList("Arun Agent", sun.id)).length === arunHeld);
-// 2. a roster project re-mapped to another client (Sunrise keeps another roster project, so its team follows the roster)
+// 2. a roster project re-mapped to another client: since 2.116.0 (the owner's rule) nothing automatic takes anyone off a client, so the
+//    project's people stay on the client's team (only its team lead takes them off, by hand) and keep its claims
 await sql("UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify([SUN, "Sunrise North"]), sun.id);
 await A("projects.map", { name: SUN, client_id: lake.id });
-ok("R4-C: re-mapping the roster project Sunrise Eye Care to Lakeview gives Arun's Sunrise claims back to the pool", (await onList("Arun Agent", sun.id)).length === 0, await onList("Arun Agent", sun.id));
-ok("R4-C: Arun's bell says so", (await noticeOf("Arun Agent", sun.id)).length === 1);
+ok("R4-C: re-mapping the roster project Sunrise Eye Care to Lakeview leaves Arun on Sunrise's team with his Sunrise claims (only a team lead takes him off)",
+  (await onList("Arun Agent", sun.id)).length === arunHeld && JSON.parse(await sunTeam()).includes(U("Arun Agent")), [(await onList("Arun Agent", sun.id)).length, arunHeld]);
+ok("R4-C: ...so his bell has no notice of losing them", (await noticeOf("Arun Agent", sun.id)).length === 0);
 await A("projects.map", { name: SUN, client_id: sun.id });
 await sql("UPDATE clients SET roster_names_json = ? WHERE id = ?", JSON.stringify([SUN]), sun.id);
 const reIds = await poolOf(2, sun.id); await give(reIds, "Arun Agent", TI, sun.id);
 await A("projects.map", { name: SUN, client_id: lake.id });
 const sunAfter = JSON.parse((await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json);
-ok("R4-C: Sunrise's only roster project re-mapped: the project's billers leave its team and give its claims back", (await onList("Arun Agent", sun.id)).length === 0 && !sunAfter.includes(U("Arun Agent")), [await onList("Arun Agent", sun.id), sunAfter.length]);
+ok("R4-C: Sunrise's only roster project re-mapped: the project's billers stay on its team with its claims", (await onList("Arun Agent", sun.id)).length === arunHeld + 2 && sunAfter.includes(U("Arun Agent")), [(await onList("Arun Agent", sun.id)).length, arunHeld, sunAfter.length]);
 await A("projects.map", { name: SUN, client_id: sun.id });
 ok("R4-C: matched back, the team is the project's again", JSON.parse((await q1("SELECT team_json FROM clients WHERE id = ?", sun.id)).team_json).includes(U("Arun Agent")));
 
