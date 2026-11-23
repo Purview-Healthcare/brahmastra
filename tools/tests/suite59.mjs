@@ -216,6 +216,25 @@ S("Every planned claim reaches a biller's own list (a team lead added to the tea
   await TI("clients.saveTeam", { location_id: downtown.id, team: THREE.map(U) });
 }
 
+S("The team lead's own number: Claims to assign a day (Team)");
+{
+  await sql("UPDATE claims SET state = 'excluded' WHERE client_id = ? AND state = 'open'", sun.id);
+  await newDay();
+  const arun = (await TI("users.list")).users.find((u) => u.name === "Arun Agent");
+  let r = await T(() => TI("users.save", { ...arun, assign_per_day: 12 }));
+  ok("the team lead sets Arun's claims to assign a day: 12", r.ok && (await q1("SELECT assign_per_day AS n FROM users WHERE id = ?", U("Arun Agent"))).n === 12, r);
+  const d = await day();
+  ok("the day's team uses it: Arun 12 (the team lead's), the others their target and 10 more (35)", d["Arun Agent"].cap === 12 && d["Arun Agent"].cap_own === true && d["Bela Agent"].cap === 35 && !d["Bela Agent"].cap_own, THREE.map((n) => [d[n].cap, d[n].cap_own]));
+  const a = await load(made("OW", 90));
+  ok("90 claims: Arun 12, Bela and Cara 35 each (82 given, 8 stay)", JSON.stringify(await per("OW")) === "[12,35,35]" && a.applied === 82, [await per("OW"), a.applied]);
+  r = await T(() => TI("users.save", { ...arun, assign_per_day: 600 }));
+  ok("a number over 500 is refused in plain words", !r.ok && /Claims to assign a day must be a whole number from 1 to 500/.test(r.e), r);
+  r = await T(() => TI("users.save", { ...arun, assign_per_day: "" }));
+  ok("left blank: back to the default (the target and 10 more)", r.ok && (await q1("SELECT assign_per_day AS n FROM users WHERE id = ?", U("Arun Agent"))).n === null && (await day())["Arun Agent"].cap === 35, r);
+  r = await T(() => TI("users.save", { ...arun, capacity: 25 }));
+  ok("saving the profile without the field keeps it as it is (still blank)", r.ok && (await q1("SELECT assign_per_day AS n FROM users WHERE id = ?", U("Arun Agent"))).n === null, r);
+}
+
 S("On the page");
 {
   ok("what someone can take today: the day's team's number (room), 0 when they have had their limit", app.roomOf({ room: 0, cap: 35 }) === 0 && app.roomOf({ room: 12, cap: 35 }) === 12);

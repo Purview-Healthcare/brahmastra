@@ -988,7 +988,8 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
 - Who gets a client's claims is its people on the client card (AR billers on this client; a location's own team
   when it has one), minus anyone marked **Out today** on Live status. Each person can be given their daily target
   (the client's AR follow-up target on its profile, "25 a day", for each biller; for a client without one, the
-  person's Claims per day on Team) and 10 more in a day, less what they were given that day already, on any client: a daily
+  person's Claims per day on Team) and 10 more in a day, or exactly the number a team lead set for them on Team
+  (Claims to assign a day; blank uses the rule before), less what they were given that day already, on any client: a daily
   target of 25 gets 35, and a second upload the same day tops people up to that instead of giving them a whole day's
   claims again (the day is the person's working day, as My day counts it). The claims are split evenly between them,
   never more than that (what one cannot take is shared by the others), so everyone gets the same number, one more for

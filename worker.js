@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.110.1";
+const VERSION = "2.111.0";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -282,7 +282,7 @@ const EXTRA_COLUMNS = {
     ["source", "TEXT NOT NULL DEFAULT 'manual'"], ["emp_id", "TEXT NOT NULL DEFAULT ''"], ["position", "TEXT NOT NULL DEFAULT ''"], ["roster_kind", "TEXT NOT NULL DEFAULT ''"],
     ["department", "TEXT NOT NULL DEFAULT ''"], ["departments_also", "TEXT NOT NULL DEFAULT ''"], ["roster_status", "TEXT NOT NULL DEFAULT ''"], ["exit_date", "TEXT NOT NULL DEFAULT ''"],
     ["reports_to", "TEXT"], ["reports_to_name", "TEXT NOT NULL DEFAULT ''"], ["projects_json", "TEXT NOT NULL DEFAULT '[]'"], ["scope_projects_json", "TEXT NOT NULL DEFAULT '[]'"],
-    ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"],
+    ["access_all", "INTEGER NOT NULL DEFAULT 0"], ["email_missing", "INTEGER NOT NULL DEFAULT 0"], ["shift", "TEXT NOT NULL DEFAULT ''"], ["city", "TEXT NOT NULL DEFAULT ''"], ["assign_per_day", "INTEGER"],
     // Where the email came from: 0 Purview Shastra (or an account made by hand), 1 typed in Brahmastra by the person or a team lead
     // where Shastra had none, 2 set by the admin, 3 typed in Brahmastra and then proved: the person signed in with a code emailed to
     // it. A typed one (1) signs the person in here but never picks their Drishti account; a proved one (3) does.
@@ -2161,7 +2161,7 @@ function commentOk(t) {
 const jsonList = (s) => { try { const a = JSON.parse(s || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
 const jsonObj = (s) => { try { const o = JSON.parse(s || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch { return {}; } };
 /* An admin is a team lead with every right, so the screens treat role "admin" as "supervisor" plus is_admin. */
-const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_name: u.first_name || "", last_name: u.last_name || "", designation: u.designation || "", role: u.role === "admin" ? "supervisor" : u.role, is_admin: u.role === "admin", active: !!u.active, capacity: u.capacity,
+const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, first_name: u.first_name || "", last_name: u.last_name || "", designation: u.designation || "", role: u.role === "admin" ? "supervisor" : u.role, is_admin: u.role === "admin", active: !!u.active, capacity: u.capacity, assign_per_day: u.assign_per_day == null ? null : u.assign_per_day,
   must_change: !!u.must_change, has_password: !!u.pass_hash, via: u.via || undefined, created_at: u.created_at, last_login: u.last_login,
   source: u.source || "manual", emp_id: u.emp_id || "", position: u.position || "", roster_kind: u.roster_kind || "", department: u.department || "", departments_also: u.departments_also || "",
   roster_status: u.roster_status || "", exit_date: u.exit_date || "", reports_to: u.reports_to || null, reports_to_name: u.reports_to_name || "", projects: jsonList(u.projects_json),
@@ -5168,6 +5168,11 @@ const OPS = {
     // Claims per day: a whole number from 1 to 500, refused otherwise (H-11); when it is not sent it stays as it is (35 for someone new)
     const capacityOr = (keep) => (payload.capacity == null ? keep : wholeIn(payload.capacity, 1, 500, "Claims per day must be a whole number from 1 to 500."));
     let capacity = null;   // set below: the checked number, or the person's own when it is not sent
+    let assignPerDay = null;   // set below for someone already here (their own when it is not sent)
+    // Claims to assign a day (the team lead's number for allocation): blank for the default (the client's AR follow-up target,
+    // else the daily target, and 10 more); otherwise a whole number from 1 to 500. Not sent: it stays as it is.
+    const assignOr = (keep) => (payload.assign_per_day === undefined ? keep : payload.assign_per_day === null || String(payload.assign_per_day).trim() === "" ? null
+      : wholeIn(payload.assign_per_day, 1, 500, "Claims to assign a day must be a whole number from 1 to 500, or left blank."));
     let active = payload.active === false ? 0 : 1;
     // People come from Purview Shastra; only the admin adds someone by hand.
     if (!payload.id && !user.is_admin) throw denied("People come from Purview Shastra. Use Sync from Purview Shastra on the Team tab, or ask the admin.");
@@ -5183,6 +5188,7 @@ const OPS = {
       name = fullName(first, last, sent("name") ? str(payload.name, 120).trim() : ex.name);
       if (!sent("designation")) designation = ex.designation || "";
       capacity = capacityOr(ex.capacity);   // not sent: their own; sent: 1 to 500 or refused (H-11)
+      assignPerDay = assignOr(ex.assign_per_day == null ? null : ex.assign_per_day);
       if (!sent("active")) active = ex.active ? 1 : 0;
       if (!name) throw bad("Enter the person's name.");
       if (!(await inSpan(env, user, ex.id))) throw notYours();
@@ -5228,6 +5234,7 @@ const OPS = {
         ...(projects ? [env.DB.prepare("UPDATE users SET projects_json = ? WHERE id = ?").bind(JSON.stringify(projects), ex.id)] : []),
         ...(reportsTo !== undefined ? [env.DB.prepare("UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?").bind(reportsTo, boss ? boss.name : "", ex.id)] : []),
         env.DB.prepare("UPDATE users SET name = ?, first_name = ?, last_name = ?, designation = ?, role = ?, capacity = ?, active = ? WHERE id = ?").bind(name, first, last, designation, role, capacity, active, ex.id),
+        env.DB.prepare("UPDATE users SET assign_per_day = ? WHERE id = ?").bind(assignPerDay, ex.id),
         ...(!active ? [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(ex.id)] : []),
       ]);
       // Switched off here as in a roster sync: their claims go back to the pool and their open hand-offs to the backup.
@@ -5249,6 +5256,7 @@ const OPS = {
     const hash = isHash(payload.passHash) ? await makeHash(env, salt, payload.passHash) : "";
     await run(env, "INSERT INTO users (id, email, name, first_name, last_name, designation, role, pass_salt, pass_hash, must_change, active, capacity, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
       id, email, name, first, last, designation, role, salt, hash, hash ? 1 : 0, active, capacity, now);
+    { const a = assignOr(null); if (a != null) await run(env, "UPDATE users SET assign_per_day = ? WHERE id = ?", a, id); }
     if (projects) await run(env, "UPDATE users SET projects_json = ? WHERE id = ?", JSON.stringify(projects), id);
     if (reportsTo) { const r = await one(env, "SELECT name FROM users WHERE id = ?", reportsTo); await run(env, "UPDATE users SET reports_to = ?, reports_to_name = ? WHERE id = ?", reportsTo, r.name, id); }
     if (projects || reportsTo) { await recomputeScopes(env); await syncTeams(env); }
@@ -10205,9 +10213,11 @@ const OPS = {
     // the daily target is the person's own (Team › Claims per day), the one Team status counts; numbers once kept per client
     // (caps_json, no longer set anywhere on the page) are not used, so the limit is always the one the team lead sees
     const members = users.map((u) => { const p = jsonList(u.projects_json).find((x) => names.has(projKey(x.name)));
-      const target = arTarget > 0 ? arTarget : Math.max(1, Math.round(Number(u.capacity) || 35)), cap = target + ALLOC_BUFFER, g = given.get(u.id) || 0;
+      // the team lead's own number for this person (Team › Claims to assign a day) wins; otherwise the target and 10 more
+      const target = arTarget > 0 ? arTarget : Math.max(1, Math.round(Number(u.capacity) || 35)), own = Number(u.assign_per_day) > 0 ? Math.round(Number(u.assign_per_day)) : 0;
+      const cap = own || target + ALLOC_BUFFER, g = given.get(u.id) || 0;
       return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
-        target, buffer: ALLOC_BUFFER, cap, given_today: g, room: Math.max(0, cap - g), on: on ? on.includes(u.id) : true }; });
+        target, buffer: ALLOC_BUFFER, cap, cap_own: !!own, given_today: g, room: Math.max(0, cap - g), on: on ? on.includes(u.id) : true }; });
     // on_ids: everyone ticked for the day (Allocate can tick people outside the project team too); caps: numbers set per person.
     const out = new Set(ids.length ? (await all(env, `SELECT user_id FROM attendance WHERE day = ? AND status = 'out' AND user_id IN ${IN_LIST}`, day, listArg(ids))).map((r) => r.user_id) : []);
     members.forEach((m) => { m.out = out.has(m.id); });
