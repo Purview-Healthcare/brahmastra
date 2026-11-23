@@ -314,6 +314,8 @@ entries before the shift time too, as Team status and My day do (a night shift's
   that client's team who are logged in to Shastra and not marked out: the same number each (the extra one to the
   lightest desk), highest priority first. Claims they already started stay with them. They are marked Out today
   (*In after all* gives the day back). **Rebalance**, for someone marked **Out today**, follows the same equal rule.
+  A claim of a location with its own team (Locations) goes to the people of that team who are in, as the allocation
+  does; to the client's team only when none of them is in.
   Each move is in the audit trail and on the claim's history.
 - **New claims notice**: whenever claims are given to a biller (Allocate, reassigning, Rebalance, Reallocate), they
   see "N new claims were allocated to you" at the top of their screen with who gave them and why, in the bell and,
@@ -321,6 +323,7 @@ entries before the shift time too, as Team status and My day do (a night shift's
 - **Out today** marks someone absent with a reason (**Half day** counts 4 hours of floor time on Team status). The mark,
   and a dismissed or snoozed not-logged-in alert, hold for the person's working day: a night shift's is the day it began,
   until it is over, so they are not lost at midnight and the alert does not come back at 05:00 for the same missed shift.
+  The allocation reads the mark the same way: a night-shift biller marked out at 03:00 gets no claims.
 - The **coaching card** (entries a day over 30 days against target, skips, carried over, escalations, hand-offs sent
   back, average note length, days out, the statuses they enter most, and **1:1 notes** that team leads and up see and
   the biller never does) opens from **Search** (Ctrl+K) on a biller's name. QA scores stay in Sasha's Third Eye.
@@ -993,7 +996,8 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   when it has one), minus anyone marked **Out today** on Live status. Each person can be given their daily target
   (the client's AR follow-up target on its profile, "25 a day", for each biller; for a client without one, the
   person's Claims per day on Team) and 10 more in a day, or exactly the number a team lead set for them on Team
-  (Claims to assign a day; blank uses the rule before), less what they were given that day already, on any client: a daily
+  (Claims to assign a day; blank uses the rule before), less what they were given that day already (still on their list,
+  or worked by them; one a later file closed or excluded before they touched it does not count), on any client: a daily
   target of 25 gets 35, and a second upload the same day tops people up to that instead of giving them a whole day's
   claims again (the day is the person's working day, as My day counts it). The claims are split evenly between them,
   never more than that (what one cannot take is shared by the others), so everyone gets the same number, one more for
@@ -1384,7 +1388,8 @@ can move them afterwards on Allocate or Claims.
 - **Fresh inventory**: claims never worked. New claims are added; claims already
   on file are refreshed (balance, status, payer...). Rows whose status reads
   paid/closed, or whose balance is zero, close the claim; credit balances and
-  unbilled rows are excluded from work.
+  unbilled rows are excluded from work. A claim with several lines takes its status from the lines that still owe money:
+  a paid first line does not close a claim whose other line still owes $250.
 - **Previously worked inventory**: claims the team or the client already
   touched. Map the **Date worked** and **Comments** columns; each claim gets a
   follow-up date (date worked + the client's follow-up days, or the file's own

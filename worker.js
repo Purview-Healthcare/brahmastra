@@ -25,7 +25,7 @@
              Authorization: Bearer <token> after auth.login.
    ===================================================================== */
 
-const VERSION = "2.116.1";
+const VERSION = "2.116.2";
 // A session outlives 24 hours without activity: it lasts 25 hours and is pushed back on use once less than 24 are left.
 const SESSION_MS = 25 * 60 * 60 * 1000, SESSION_KEEP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PEPPER = "brahmastra-change-this-pepper";
@@ -2696,7 +2696,11 @@ async function shareEqually(env, user, src, o) {
   const stateOf = (u) => liveState(live.byUser.get(u.id), u, now).state;
   const isIn = (u) => !isOut(u) && (live.state !== "ok" || LIVE_IN.has(stateOf(u)) || stateOf(u) === "none");
   const why = (u) => isOut(u) ? "out today" : ({ leave: "on leave", missing: "not logged in", notin: "not in yet", absent: "absent", out: "logged out", offclock: "not on the clock" })[stateOf(u)] || "not in";
-  const claims = await all(env, `SELECT id, client_id, priority, tier FROM claims WHERE assigned_to = ? AND state = 'assigned'${editScopeSql(user, "client_id")} ORDER BY priority DESC`, src.id, ...editScopeArgs(user));
+  const claims = await all(env, `SELECT id, client_id, location_id, priority, tier FROM claims WHERE assigned_to = ? AND state = 'assigned'${editScopeSql(user, "client_id")} ORDER BY priority DESC`, src.id, ...editScopeArgs(user));
+  // a location with its own team (Locations) shares its claims to the people of that team who are in, as the allocation does;
+  // the client's team when none of them is in (QA2-04)
+  const locIds = [...new Set(claims.map((c) => c.location_id).filter(Boolean))];
+  const locTeam = new Map((locIds.length ? await all(env, `SELECT id, team_json FROM locations WHERE id IN ${IN_LIST}`, listArg(locIds)) : []).map((l) => [l.id, new Set(parseTeam(l.team_json))]));
   const ids = [...new Set(claims.map((c) => c.client_id))];
   const cls = ids.length ? await all(env, `SELECT id, name, team_json FROM clients WHERE id IN ${IN_LIST}`, listArg(ids)) : [];
   const load = new Map((await all(env, "SELECT assigned_to, COUNT(*) AS n FROM claims WHERE state IN ('assigned','in_progress') AND assigned_to IS NOT NULL GROUP BY assigned_to")).map((x) => [x.assigned_to, x.n]));
@@ -2710,7 +2714,8 @@ async function shareEqually(env, user, src, o) {
     // each claim to whoever has been given the fewest so far (across every client), then the lightest desk
     const gn = (u) => (given.get(u.id) || {}).count || 0;
     for (const x of mine) {
-      const u = cands.reduce((m, v) => (gn(v) - gn(m) || (load.get(v.id) || 0) - (load.get(m.id) || 0) || v.name.localeCompare(m.name)) < 0 ? v : m);
+      const lt = x.location_id && locTeam.get(x.location_id), near = lt && lt.size ? cands.filter((v) => lt.has(v.id)) : [];
+      const u = (near.length ? near : cands).reduce((m, v) => (gn(v) - gn(m) || (load.get(v.id) || 0) - (load.get(m.id) || 0) || v.name.localeCompare(m.name)) < 0 ? v : m);
       moves.push({ claim: x.id, to: u }); given.set(u.id, { id: u.id, name: u.name, count: gn(u) + 1 });
     }
     perClient.push({ id: c.id, name: c.name, n: mine.length, left: 0 });
@@ -10255,7 +10260,10 @@ const OPS = {
     const names = new Set(jsonList(c.roster_names_json).map(projKey));
     // what each was given today: claims on them since their own working day began (a night shift's day is the one it began)
     const now = Date.now(), fromOf = new Map(users.map((u) => [u.id, workDayOf(u.shift, now, istISO(now)).from])), given = new Map();
-    if (users.length) for (const r of await all(env, `SELECT assigned_to, assigned_at FROM claims WHERE assigned_to IN ${IN_LIST} AND assigned_at >= ?`, listArg(users.map((u) => u.id)), Math.min(...fromOf.values())))
+    // (only claims still on their list or worked by them since: one a later file closed, zeroed or excluded before they touched
+    // it no longer uses up their day, QA2-03)
+    if (users.length) for (const r of await all(env, `SELECT assigned_to, assigned_at FROM claims WHERE assigned_to IN ${IN_LIST} AND assigned_at >= ?
+        AND (state IN ('assigned','in_progress') OR COALESCE(completed_at, 0) >= assigned_at)`, listArg(users.map((u) => u.id)), Math.min(...fromOf.values())))
       if (r.assigned_at >= fromOf.get(r.assigned_to)) given.set(r.assigned_to, (given.get(r.assigned_to) || 0) + 1);
     // the daily target is the person's own (Team › Claims per day), the one Team status counts; numbers once kept per client
     // (caps_json, no longer set anywhere on the page) are not used, so the limit is always the one the team lead sees
@@ -10266,8 +10274,11 @@ const OPS = {
       return { id: u.id, name: u.name, designation: u.designation || "", status: u.roster_status || "", exit_date: u.exit_date || "", share: p ? p.share : null, primary: !!(p && p.share == null),
         target, buffer: ALLOC_BUFFER, cap, cap_own: !!own, given_today: g, room: Math.max(0, cap - g), on: on ? on.includes(u.id) : true }; });
     // on_ids: everyone ticked for the day (Allocate can tick people outside the project team too); caps: numbers set per person.
-    const out = new Set(ids.length ? (await all(env, `SELECT user_id FROM attendance WHERE day = ? AND status = 'out' AND user_id IN ${IN_LIST}`, day, listArg(ids))).map((r) => r.user_id) : []);
-    members.forEach((m) => { m.out = out.has(m.id); });
+    // out today: marked for their own working day, as team.setOut keeps it (a night shift after midnight is still the day it
+    // began): looked up under the page's calendar day only, someone marked out at 03:00 was still given a full share (QA2-01)
+    const outK = new Set(ids.length ? (await all(env, `SELECT user_id, day FROM attendance WHERE day IN (?, ?) AND status = 'out' AND user_id IN ${IN_LIST}`, addDays(day, -1), day, listArg(ids))).map((r) => r.user_id + "|" + r.day) : []);
+    const shiftOf = new Map(users.map((u) => [u.id, u.shift]));
+    members.forEach((m) => { m.out = outK.has(m.id + "|" + workDayOf(shiftOf.get(m.id), now, day).day); });
     return { client: { id: c.id, name: c.name }, day, members, on_ids: on, caps, saved: saved ? { at: saved.at, by_name: saved.by_name || "" } : null };
   },
   "team.saveToday": async ({ env, user, payload }) => {
