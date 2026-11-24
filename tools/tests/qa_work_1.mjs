@@ -134,19 +134,20 @@ await part("W3: the follow-up date and the bucket", async () => {
   const ids = await fresh("Arun Agent", 8);
   const fu = async (i, saag, extra = {}) => { const r = await openAndSave(AR, ids[i], saag, NOTE(), extra); return r.ok ? r.r : r; };
   let r = await fu(0, SAAG.fu);
-  ok("a Payer entry follows up in 30 days (Dec 10, a Thursday)", r.follow_up_on === "2026-12-10" && (await claim(ids[0])).follow_up_on === "2026-12-10", r);
+  // The owner's rule (2.117.0): every entry follows up 15 days after the date worked, whatever the client or status.
+  ok("a Payer entry follows up 15 days after the date worked (Nov 25, a Wednesday)", r.follow_up_on === "2026-11-25" && (await claim(ids[0])).follow_up_on === "2026-11-25", r);
   r = await fu(1, { status: "Claim Denied", sub_status: "Auth required", action: "Need to Appeal", bucket: "Client", effective: "Pending-Client Assistance" }, { follow_up_on: "" });
   // need an attachment for appeals
   ok("an appeal entry without its letter is refused", !r.state, r);
   await call(AR, "attachments.add", { claim_id: ids[1], name: "letter.pdf", type: "application/pdf", data: PDF });
   r = await fu(1, { status: "Claim Denied", sub_status: "Auth required", action: "Need to Appeal", bucket: "Client", effective: "Pending-Client Assistance" });
-  ok("a Client Assistance entry follows up in 14 days (Nov 24)", r.follow_up_on === "2026-11-24", r);
+  ok("a Client Assistance entry also follows up 15 days after the date worked (Nov 25)", r.follow_up_on === "2026-11-25", r);
   r = await fu(2, { status: "Claim In Process", sub_status: "Need to allow some time", action: "Wait", bucket: "Purview", effective: "Pending-Purview internal review" });
-  ok("a Purview internal review follows up in 7 days (Nov 17)", r.follow_up_on === "2026-11-17", r);
+  ok("a Purview internal review also follows up 15 days after the date worked (Nov 25)", r.follow_up_on === "2026-11-25", r);
   r = await fu(3, SAAG.fu, { follow_up_on: "2026-11-14" });
   ok("a follow-up date picked on a Saturday moves to Monday Nov 16", r.follow_up_on === "2026-11-16", r);
   r = await fu(4, SAAG.fu, { follow_up_on: "2026-11-01" });
-  ok("a follow-up date in the past is replaced by the usual days from today (never overdue at once)", r.follow_up_on === "2026-12-10", r);
+  ok("a follow-up date in the past is replaced by the usual 15 days from today (never overdue at once)", r.follow_up_on === "2026-11-25", r);
   r = await fu(5, SAAG.fu, { follow_up_on: "2026-11-10" });
   ok("a follow-up date of today is kept", r.follow_up_on === "2026-11-10", r);
   r = await fu(6, { status: "Claim Paid", sub_status: "Paid", action: "Close", bucket: "Closed", effective: "Processing-Closed" });

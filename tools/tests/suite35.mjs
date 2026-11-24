@@ -287,15 +287,15 @@ S("A-07: previously worked claims wait for their follow-up date");
     ["9807003", "Test Patient Three", "Aetna", "08/11/2026", "500.00", "Pending", "", ""]], { kind: "worked" });
   const st = async () => Object.fromEntries((await claimsOf(cl)).map((c) => [c.claim_no, c.state + " " + c.follow_up_on + " " + (c.assigned_to ? "on a list" : "no list")]));
   let now = await st();
-  ok("A-07: worked 11/05 (follow-up 12/05) is stored as worked and waiting; one whose follow-up has come, or with no date worked, is open", now["9807001"] === "completed 2026-12-05 no list" && now["9807002"] === "open 2026-10-01 no list" && now["9807003"] === "open  no list" && up.r.inserted === 3, [now, up.r]);
+  ok("A-07: worked 11/05 (follow-up 11/20, 15 days later) is stored as worked and waiting; one whose follow-up has come, or with no date worked, is open", now["9807001"] === "completed 2026-11-20 no list" && now["9807002"] === "open 2026-09-16 no list" && now["9807003"] === "open  no list" && up.r.inserted === 3, [now, up.r]);
   const pool = async (today) => (await A("claims.eligible", { client_id: cl.id, today })).claims.map((c) => c.claim_no).sort().join();
   const inv = await A("inventory.status", { client_id: cl.id, today: TODAY });
   ok("A-07: it is not in the pool today and is not counted as unassigned (Inventory status: 2 unassigned, 1 follow-up later)", (await pool(TODAY)) === "9807002,9807003" && inv.stages.open.n === 2 && inv.stages.later.n === 1, [await pool(TODAY), inv.stages.open.n, inv.stages.later.n]);
   const al = await app.autoAllocate({ ctx: null, client: { id: cl.id }, loc: { id: cl.loc } });
   now = await st();
-  ok("A-07: the allocation after loading hands out the two open claims and leaves the waiting one", al.applied === 2 && now["9807001"] === "completed 2026-12-05 no list" && /^assigned .* on a list$/.test(now["9807002"]), [al.applied, now]);
-  ok("A-07: on its follow-up date it is back in the pool, and can be allocated", (await pool("2026-12-04")) === "" && (await pool("2026-12-05")) === "9807001"
-    && (await A("alloc.apply", { client_id: cl.id, today: "2026-12-05", assignments: [{ id: (await q1("SELECT id FROM claims WHERE client_id = ? AND claim_no = '9807001'", cl.id)).id, user_id: billers[0].id, priority: 10 }] })).applied === 1, [await pool("2026-12-04"), await pool("2026-12-05")]);
+  ok("A-07: the allocation after loading hands out the two open claims and leaves the waiting one", al.applied === 2 && now["9807001"] === "completed 2026-11-20 no list" && /^assigned .* on a list$/.test(now["9807002"]), [al.applied, now]);
+  ok("A-07: on its follow-up date it is back in the pool, and can be allocated", (await pool("2026-11-19")) === "" && (await pool("2026-11-20")) === "9807001"
+    && (await A("alloc.apply", { client_id: cl.id, today: "2026-11-20", assignments: [{ id: (await q1("SELECT id FROM claims WHERE client_id = ? AND claim_no = '9807001'", cl.id)).id, user_id: billers[0].id, priority: 10 }] })).applied === 1, [await pool("2026-11-19"), await pool("2026-11-20")]);
   // a claim already on file: an unassigned one leaves the pool when a worked file gives it a later follow-up, one on a list stays there
   const c2 = await mkClient("Made-up Clinic S35 A07 b");
   await A("clients.saveTeam", { client_id: c2.id, team: [billers[0].id] });

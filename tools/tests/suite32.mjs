@@ -148,8 +148,8 @@ ok("the suggested follow-up is a working day", tips.follow_up && ![0, 6].include
 S("Follow-ups land on working days");
 await sql("UPDATE claims SET state = 'assigned', assigned_to = ?, follow_up_on = '', first_up = 0 WHERE id = ?", arun, ids[15]);
 await AR("queue.open", { id: ids[15] });
-const fu = await AR("queue.complete", { id: ids[15], desk: true, saag: { status: "Claim In Process", sub_status: "Processing", action: "INFORM", effective: "Pending-Collectible Insurance", bucket: "Payer" }, note: nt, today: "2026-11-12" });
-ok("30 days from Thursday 12 Nov is Saturday 12 Dec: the follow-up is Monday 14 Dec", fu.follow_up_on === "2026-12-14", fu.follow_up_on);
+const fu = await AR("queue.complete", { id: ids[15], desk: true, saag: { status: "Claim In Process", sub_status: "Processing", action: "INFORM", effective: "Pending-Collectible Insurance", bucket: "Payer" }, note: nt, today: "2026-11-13" });
+ok("15 days from Friday 13 Nov is Saturday 28 Nov: the follow-up is Monday 30 Nov", fu.follow_up_on === "2026-11-30", fu.follow_up_on);
 
 S("A third return to AR counts once");
 const sid = ids[16];

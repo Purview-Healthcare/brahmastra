@@ -108,8 +108,10 @@ for (const v of [999, 0, "", 2.5]) {
 }
 r = await saveC(undefined);
 ok("H-11 (same mistake): a client save without the follow-up keeps it (it used to become 30)", r.ok && (await fuOf()) === 21, [r, await fuOf()]);
-ok("H-11 (same mistake): the client profile form says 1 to 365 and lists a wrong follow-up under Still needed",
-  /wholeIn\(f\.follow_up_days, 1, 365\)/.test(fnSrc("profileMissing")) && /"1 to 365"/.test(fnSrc("ClientProfileForm")));
+// The owner's rule (2.117.0): every claim's follow-up is due 15 days after the date worked, for every client, so the
+// client profile form shows that rule as text and no longer asks for (or checks) a follow-up number.
+ok("H-11 (same mistake): the client profile form shows the fixed rule (due 15 days after the date worked) and does not ask for a follow-up",
+  /Due 15 days after the date worked/.test(fnSrc("ClientProfileForm")) && !/follow_up/.test(fnSrc("profileMissing")));
 
 S("The Feedback tab: readable in every theme (H-03)");
 const fb = rule(".fb-tab");

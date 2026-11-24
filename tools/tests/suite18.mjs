@@ -65,7 +65,8 @@ const clients = (await A("clients.list")).clients; const sunrise = clients.find(
 await A("clients.saveTeam", { client_id: sunrise.id, team: ["Arun Agent", "Cara Agent", "Gita Agent", "Dev Agent", "Kim Agent"].map((n) => U(n).id) });
 const open = (await A("claims.list", { client_id: sunrise.id, state: "open", page_size: 100 })).rows;
 await TI("alloc.reassign", { ids: open.slice(0, 6).map((c) => c.id), user_id: U("Arun Agent").id });
-await sql("UPDATE claims SET tier = 'High' WHERE id IN (?, ?)", open[0].id, open[1].id);
+// the two high priority claims, clearly the first two of the six (equal scores in the demo data left their order to chance)
+await sql("UPDATE claims SET tier = 'High', priority = CASE WHEN id = ? THEN 999 ELSE 998 END WHERE id IN (?, ?)", open[0].id, open[0].id, open[1].id);
 let r, h;
 const row = (hh, n) => hh.rows.find((x) => x.name === n);
 

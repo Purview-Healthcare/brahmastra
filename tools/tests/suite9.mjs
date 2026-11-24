@@ -42,7 +42,9 @@ S("Search");
 let r = await T(async () => TI("search.global", { q: mineC.claim_no }));
 ok("a team lead finds a claim by its number, exact match first", r.ok && r.r.claims[0] && r.r.claims[0].id === mineC.id, r.r || r);
 ok("results carry what the palette shows", r.ok && ["claim_no", "patient", "client_name", "payer", "balance", "state"].every((k) => k in r.r.claims[0]) && !("assigned_to" in r.r.claims[0]), r.ok && Object.keys(r.r.claims[0]));
-r = await TI("search.global", { q: mineC.patient.split(",")[0] });
+// the patient's full name: a surname alone ("Moore") can match more claims than the 8 the palette shows, in an order that
+// depends on the demo data's follow-up dates
+r = await TI("search.global", { q: mineC.patient });
 ok("and by patient name", r.claims.some((c) => c.id === mineC.id), r.claims.map((c) => c.patient));
 r = await TI("search.global", { q: lakeClaim.claim_no });
 ok("but not another team's client", !r.claims.some((c) => c.id === lakeClaim.id), r.claims.map((c) => c.client_name));

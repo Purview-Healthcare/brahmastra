@@ -8114,7 +8114,7 @@ const AUDIT_LABEL = { "access.share": "Shared a client", "access.remove": "Took 
   "stack.extraEdit": "Edited extra production by hand", "stack.extraRemove": "Removed an extra production file", "attention.review": "Reviewed a claim and gave it to a biller",
   "client.folders": "Made a client's OneDrive folders", "client.location": "Changed a location", "client.team": "Changed a client's billers", "escalation.reason": "Gave why an escalation is still open",
   "roster.sync": "Synced the roster", "task.create": "Gave a team task", "task.close": "Closed a team task", "team.alert": "Dismissed a not logged in alert", "team.note": "Changed a Team status note",
-  "team.rebalance": "Shared out a person's claims", "alloc.resplit": "Set each person's claims by hand (short inventory)", "server.error": "Server error (send this line to support)",
+  "team.rebalance": "Shared out a person's claims", "alloc.resplit": "Set each person's claims by hand (short inventory)", "alloc.urgent": "Gave claims as urgent", "server.error": "Server error (send this line to support)",
   "template.add": "Added a note template", "template.edit": "Edited a note template", "template.remove": "Removed a note template", "template.restore": "Restored a note template" };
 function AuditView({ ctx }) {
   const [f, setF] = useState({ client_id: "", action: "" });
