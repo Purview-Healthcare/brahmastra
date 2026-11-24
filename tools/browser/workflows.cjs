@@ -896,10 +896,16 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("the urgent list has the three claims", /The urgent list · 3 claims/i.test(txt) || /urgent list · 3 claims/i.test(txt), txt.slice(0, 600));
     const allocate = box.locator('button:has-text("Allocate 3 claims as urgent")');
     ok("Allocate stays off until the numbers are typed", await allocate.isDisabled());
+    // Arun was marked out today on Live status (an earlier step): with nobody ticked, Split evenly leaves him out
+    const num = async (who) => box.locator(`input[aria-label="How many for ${who}"]`).inputValue();
+    const arunRow = box.locator('tr:has(input[aria-label="How many for Arun Agent"])');
     await box.locator('button:has-text("Split evenly")').click(); await t(500);
-    const arunN = await box.locator('input[aria-label="How many for Arun Agent"]').inputValue(), caraN = await box.locator('input[aria-label="How many for Cara Agent"]').inputValue();
-    ok("Split evenly fills each biller's number (2 and 1)", [arunN, caraN].sort().join() === "1,2", [arunN, caraN]);
-    const first = arunN === "2" ? "Arun Agent" : "Cara Agent";
+    ok("Split evenly with nobody ticked leaves out a biller who is out today (Arun): Cara gets all 3", /out today/.test(await arunRow.innerText()) && (await num("Arun Agent")) === "" && (await num("Cara Agent")) === "3",
+      [await arunRow.innerText(), await num("Arun Agent"), await num("Cara Agent")]);
+    await box.locator('input[aria-label="Give to Arun Agent"]').check(); await t(200);
+    await box.locator('button:has-text("Split evenly")').click(); await t(500);
+    ok("ticked on purpose, Arun is included: Split evenly fills 2 and 1", (await num("Arun Agent")) === "2" && (await num("Cara Agent")) === "1", [await num("Arun Agent"), await num("Cara Agent")]);
+    const first = "Arun Agent";
     await box.locator(`input[aria-label="How many for ${first}"]`).fill("1"); await t(300);
     ok("a number that does not add up says how many are left, and Allocate stays off", /1 more to give/.test(await box.innerText()) && await allocate.isDisabled());
     await box.locator(`input[aria-label="How many for ${first}"]`).fill("2"); await t(300);
