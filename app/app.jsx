@@ -4761,53 +4761,202 @@ function ClaimsView({ ctx, params, me, initialTab }) {
 /* Urgent allocation (the owner's rule): claims of one client, ticked on the Claims page (ids) or pasted as claim numbers, given
    to one biller or split evenly across the billers picked. They go to the top of each list with a red Urgent tag and a bell
    notice, on top of the day's target + 10 (alloc.urgent). */
-function UrgentModal({ ctx, clientId: fixed, ids: ticked, onClose, onDone }) {
-  const [clientId, setClientId] = useState(fixed || "");
-  const [text, setText] = useState("");
-  const [found, setFound] = useState(null);
-  const [mode, setMode] = useState("one");
-  const [one, setOne] = useState("");
-  const [off, setOff] = useState(new Set());
+/* Urgent allocation (the owner's rule): the team lead finds the urgent claims of one client (a search by name, account, claim
+   number, payer or date of service; a file in the inventory layout; pasted claim numbers; or the claims ticked on the Claims page)
+   and types how many each biller gets (or presses Split evenly); alloc.urgent gives them: top of each one's list, a red Urgent tag
+   and a bell notice, on top of the day's target + 10. The claims are given down the list, the first biller's number first, and
+   the list shows who gets each one before anything is given. */
+const URGENT_OK = new Set(["open", "assigned", "in_progress", "completed"]);
+const urgentRow = (r) => ({ id: r.id, claim_no: r.claim_no, account_no: r.account_no, patient: r.patient, dos: r.dos, payer: r.payer, balance: r.balance, state: r.state,
+  assigned_name: r.assigned_name || "", workable: URGENT_OK.has(r.state), why: URGENT_OK.has(r.state) ? "" : r.state === "in_process" ? "with a desk" : r.state });
+const urgentWhat = (c) => c.claim_no || [c.account_no && "account " + c.account_no, c.patient, c.dos && fmtDate(c.dos)].filter(Boolean).join(" · ");
+const cannotLine = (rows) => (rows.length ? <div className="muted">Cannot be given now: {rows.slice(0, 20).map((c) => (c.claim_no || c.patient) + " (" + c.why + ")").join(", ")}{rows.length > 20 ? ` and ${rows.length - 20} more` : ""}</div> : null);
+function UrgentSearch({ clientId, have, onAdd }) {
+  const [q, setQ] = useState(""), [dos, setDos] = useState(""), [res, setRes] = useState(null), [tick, setTick] = useState(new Set()), [busy, setBusy] = useState(false);
+  useEffect(() => { setRes(null); setTick(new Set()); }, [clientId]);
+  const run = async () => {
+    if (!q.trim() && !dos) return;
+    setBusy(true);
+    try { setRes(await rpc("claims.list", { client_id: clientId, q: q.trim() || undefined, dos: dos || undefined, page_size: 50 })); setTick(new Set()); } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  const rows = ((res && res.rows) || []).map(urgentRow), free = rows.filter((r) => r.workable && !have.has(r.id));
+  const flip = (id) => setTick((t) => { const n = new Set(t); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <div className="row wrap" style={{ gap: 8 }}>
+        <input className="input" style={{ flex: "1 1 280px" }} placeholder="Patient name, account #, claim # or payer" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") run(); }} />
+        <span className="row small muted" style={{ gap: 6 }}>Date of service <input className="input" type="date" value={dos} onChange={(e) => setDos(e.target.value)} /></span>
+        <button className="btn sm" disabled={busy || (!q.trim() && !dos)} onClick={run}>{busy ? "Searching…" : "Search"}</button>
+      </div>
+      {res && (!rows.length ? <div className="small muted">No claim of this client matches.</div> : <>
+        <div className="table-wrap" style={{ maxHeight: 260 }}><table className="t urg-t"><thead><tr>
+          <th><input type="checkbox" aria-label="Tick all" disabled={!free.length} checked={free.length > 0 && free.every((r) => tick.has(r.id))} onChange={(e) => setTick(e.target.checked ? new Set(free.map((r) => r.id)) : new Set())} /></th>
+          <th>Claim #</th><th>Patient</th><th>DOS</th><th>Payer</th><th className="r">Balance</th><th>Now</th></tr></thead>
+          <tbody>{rows.map((r) => { const off = !r.workable || have.has(r.id); return (
+            <tr key={r.id} className={off ? "muted" : ""} onClick={() => { if (!off) flip(r.id); }} style={off ? undefined : { cursor: "pointer" }}>
+              <td>{have.has(r.id) ? "✓" : r.workable ? <input type="checkbox" checked={tick.has(r.id)} onChange={() => flip(r.id)} onClick={(e) => e.stopPropagation()} /> : null}</td>
+              <td>{r.claim_no || "–"}</td><td>{r.patient}</td><td>{fmtDate(r.dos)}</td><td>{r.payer}</td><td className="r">{fmtMoney(r.balance)}</td>
+              <td>{have.has(r.id) ? "on the urgent list" : !r.workable ? "cannot be given (" + r.why + ")" : r.assigned_name || "in the pool"}</td></tr>); })}</tbody></table></div>
+        <div className="row between">
+          <span className="small muted">{res.total > rows.length ? `The first ${rows.length} of ${fmtInt(res.total)}: type more of the name, or add the date of service.` : plural(rows.length, "claim") + " found"}</span>
+          <button className="btn sm primary" disabled={!tick.size} onClick={() => { onAdd(rows.filter((r) => tick.has(r.id))); setTick(new Set()); }}>Add {plural(tick.size, "claim")} to the urgent list</button>
+        </div>
+      </>)}
+    </div>
+  );
+}
+/* The claims of a file uploaded in the urgent allocation box, read the way an inventory file is: the sheet and the row of column
+   names Brahmastra recognises best, the same column names, and the date of service read in one day / month order for the whole
+   column. Each claim once (a claim on several lines, one per CPT, is one), with what finds it: the claim number, the account
+   number, or the patient name and the date of service. A total line at the bottom is not a claim. */
+function urgentFileClaims(buffer, fileName) {
+  const sheets = readWorkbook(buffer, fileName);
+  if (!sheets.length) throw new Error("This file is empty.");
+  const t = tableFromSheet(sheets[bestInventorySheet(sheets)].rows), mapping = autoMap(t.headers);
+  if (!mapping.claim_no && !mapping.account_no && !(mapping.patient && mapping.dos)) throw new Error("Brahmastra could not find a claim number column, an account number column, or the patient name with the date of service in this file.");
+  const get = (r, f) => (mapping[f] ? r[mapping[f]] : ""), txt = (v) => (v == null ? "" : String(v).trim());
+  const dosOf = dateReader(mapping.dos ? t.rows.map((r) => r[mapping.dos]) : []);
+  const seen = new Set(), out = [];
+  for (const r of t.rows) {
+    const c = { claim_no: txt(get(r, "claim_no")), account_no: txt(get(r, "account_no")), patient: txt(get(r, "patient")), dos: dosOf(get(r, "dos")) || "" };
+    if (/^(grand |sub ?)?totals?\b/i.test(c.claim_no || c.patient || c.account_no)) continue;
+    if (!c.claim_no && !c.account_no && !(c.patient && c.dos)) continue;
+    const k = [c.claim_no, c.account_no, c.patient, c.dos].map((x) => x.toLowerCase()).join("|");
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(c);
+  }
+  if (!out.length) throw new Error("No claims were found in this file.");
+  if (out.length > 2000) throw new Error("Up to 2,000 claims at a time: split the file.");
+  return out;
+}
+function UrgentFile({ clientId, have, onAdd }) {
+  const [res, setRes] = useState(null), [busy, setBusy] = useState(false);
+  useEffect(() => { setRes(null); }, [clientId]);
+  const read = async (file) => {
+    if (!file) return;
+    setBusy(true); setRes(null);
+    try {
+      const claims = urgentFileClaims(await file.arrayBuffer(), file.name);
+      const r = await rpc("alloc.lookup", { client_id: clientId, rows: claims });
+      const byId = new Map(r.rows.map((x) => [x.id, x]));
+      const rows = [...new Set(r.file.found.flat())].map((id) => byId.get(id)).filter(Boolean);
+      const fresh = rows.filter((x) => x.workable && !have.has(x.id));
+      onAdd(fresh);
+      setRes({ name: file.name, n: claims.length, found: claims.length - r.file.missing.length, added: fresh.length, missing: r.file.missing.map((i) => claims[i]),
+        cannot: rows.filter((x) => !x.workable), twice: r.file.found.filter((f) => f.length > 1).length });
+    } catch (e) { setRes({ error: e.message }); }
+    setBusy(false);
+  };
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <div className="small muted">A CSV or Excel file in the inventory layout. Each row is found by its claim number; without one, by the account number, or by the patient name and the date of service.</div>
+      <div className="row"><label className={"btn sm" + (busy ? " disabled" : "")}>{busy ? "Reading…" : "Choose a file"}<input type="file" accept=".csv,.xlsx,.xls,.txt" hidden disabled={busy} onChange={(e) => { read(e.target.files[0]); e.target.value = ""; }} /></label></div>
+      {res && res.error && <div className="small red-ink">{res.error}</div>}
+      {res && !res.error && <div className="small stack" style={{ gap: 4 }}>
+        <div><b>{res.name}</b>: {plural(res.n, "claim")} in the file, {fmtInt(res.found)} found · <b>{plural(res.added, "claim")} added</b> to the urgent list.</div>
+        {res.twice ? <div>{plural(res.twice, "row")} found more than one claim (the same patient and date): check the list below.</div> : null}
+        {cannotLine(res.cannot)}
+        {res.missing.length ? <div className="red-ink">Not found ({fmtInt(res.missing.length)}): {res.missing.slice(0, 20).map(urgentWhat).join("; ")}{res.missing.length > 20 ? ` and ${res.missing.length - 20} more` : ""}</div> : null}
+      </div>}
+    </div>
+  );
+}
+function UrgentPaste({ clientId, have, onAdd }) {
+  const [text, setText] = useState(""), [res, setRes] = useState(null), [busy, setBusy] = useState(false);
+  useEffect(() => { setRes(null); }, [clientId]);
+  const find = async () => {
+    setBusy(true);
+    try {
+      const r = await rpc("alloc.lookup", { client_id: clientId, claim_nos: text.split(/[\s,;]+/).filter(Boolean) });
+      const fresh = r.rows.filter((x) => x.workable && !have.has(x.id));
+      onAdd(fresh); setRes({ added: fresh.length, not_found: r.not_found, cannot: r.rows.filter((x) => !x.workable) }); setText("");
+    } catch (e) { toast(e.message, "err"); }
+    setBusy(false);
+  };
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <textarea className="textarea" style={{ minHeight: 80 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={"Claim numbers, one per line, or separated by commas or spaces"} />
+      <div className="row"><button className="btn sm" disabled={busy || !text.trim()} onClick={find}>{busy ? "Finding…" : "Find and add"}</button>
+        {res && <span className="small"><b>{plural(res.added, "claim")} added</b>{res.not_found.length ? <> · <span className="red-ink">not found: {res.not_found.join(", ")}</span></> : null}</span>}</div>
+      {res && <div className="small">{cannotLine(res.cannot)}</div>}
+    </div>
+  );
+}
+function UrgentModal({ ctx, clientId: fixed, defaultClient, ids: ticked, onClose, onDone }) {
+  const clientOk = (id) => ctx.clients.some((c) => c.id === id && c.active && c.can_edit !== false);
+  const [clientId, setClientId] = useState(fixed || (defaultClient && clientOk(defaultClient) ? defaultClient : ""));
+  const [how, setHow] = useState("search");
+  const [list, setList] = useState([]);
+  const [on, setOn] = useState(new Set());
+  const [counts, setCounts] = useState({});
   const [busy, setBusy] = useState(false);
   const team = useRpc("team.today", { client_id: clientId }, [clientId], !!clientId);
   const members = (team.data && team.data.members) || [];
-  const ids = ticked && ticked.length ? ticked : ((found && found.rows) || []).filter((r) => r.workable).map((r) => r.id);
-  const who = mode === "one" ? (one ? [one] : []) : members.filter((m) => !off.has(m.id)).map((m) => m.id);
-  const shareOf = (i) => Math.floor(ids.length / who.length) + (i < ids.length % who.length ? 1 : 0);
-  const find = async () => {
-    setBusy(true);
-    try { setFound(await rpc("alloc.lookup", { client_id: clientId, claim_nos: text.split(/[\s,;]+/).filter(Boolean) })); } catch (e) { toast(e.message, "err"); }
-    setBusy(false);
+  const have = useMemo(() => new Set(list.map((x) => x.id)), [list]);
+  const add = (rows) => setList((l) => { const h = new Set(l.map((x) => x.id)); return [...l, ...rows.filter((r) => r.workable && !h.has(r.id))]; });
+  useEffect(() => { if (fixed && ticked && ticked.length) rpc("alloc.lookup", { client_id: fixed, ids: ticked }).then((r) => add(r.rows)).catch((e) => toast(e.message, "err")); }, []);
+  const pickClient = (v) => { setClientId(v); setList([]); setOn(new Set()); setCounts({}); };
+  const numOf = (id) => { const v = String(counts[id] == null ? "" : counts[id]).trim(); return v === "" ? 0 : /^\d+$/.test(v) ? Number(v) : NaN; };
+  const chosen = members.filter((m) => on.has(m.id));
+  const wrong = chosen.some((m) => isNaN(numOf(m.id)));
+  const total = chosen.reduce((t, m) => t + (numOf(m.id) || 0), 0), left = list.length - total;
+  const split = chosen.filter((m) => numOf(m.id) > 0).map((m) => ({ user_id: m.id, count: numOf(m.id) }));
+  const deal = split.flatMap((x) => Array(x.count).fill(x.user_id)), nameOf = new Map(members.map((m) => [m.id, m.name]));
+  const ready = list.length > 0 && !wrong && left === 0 && split.length > 0;
+  const status = !list.length ? "" : wrong ? "Type whole numbers" : !total ? "Tick the billers and type how many each gets" : left > 0 ? `${fmtInt(left)} more to give` : left < 0 ? `${fmtInt(-left)} too many: take some off` : `All ${fmtInt(list.length)} given out`;
+  const setCount = (id, v) => { setCounts((c) => ({ ...c, [id]: v })); if (/^\d+$/.test(String(v).trim()) && Number(v) > 0) setOn((o) => new Set(o).add(id)); };
+  const flip = (id) => { const was = on.has(id); setOn((o) => { const n = new Set(o); if (was) n.delete(id); else n.add(id); return n; }); if (was) setCounts((c) => { const x = { ...c }; delete x[id]; return x; }); };
+  const even = () => {
+    let who = chosen;
+    if (!who.length) who = members.filter((m) => !m.out);
+    if (!who.length) who = members;
+    const n = list.length, k = who.length, c = {};
+    who.forEach((m, i) => { c[m.id] = String(Math.floor(n / k) + (i < n % k ? 1 : 0)); });
+    setCounts(c); setOn(new Set(who.map((m) => m.id)));
   };
   const go = async () => {
     setBusy(true);
     try {
-      const r = await rpc("alloc.urgent", { client_id: clientId, ids, user_ids: who });
+      const r = await rpc("alloc.urgent", { client_id: clientId, ids: list.map((x) => x.id), split });
       toast("Urgent: " + r.per.map((x) => x.name + " " + x.count).join(", ") + (r.left_out ? ` · ${r.left_out} not given (closed, excluded or with a desk)` : ""));
       onDone && onDone(r);
     } catch (e) { toast(e.message, "err"); }
     setBusy(false);
   };
-  const cannot = ((found && found.rows) || []).filter((r) => !r.workable);
+  const amount = list.reduce((t, c) => t + (Number(c.balance) || 0), 0);
   return (
-    <Modal title="Urgent allocation" sub="They go to the top of the biller's list with a red Urgent tag and a bell notice, on top of the day's target + 10." onClose={onClose}
-      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={go} disabled={busy || !ids.length || !who.length}>{busy ? "Giving…" : "Allocate " + plural(ids.length, "claim") + " as urgent"}</button></>}>
+    <Modal wide title="Urgent allocation" sub="Find the claims, then say who gets how many. They go to the top of each biller's list with a red Urgent tag and a bell notice, on top of the day's target + 10." onClose={onClose} unsaved={list.length > 0 && !busy}
+      footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={go} disabled={busy || !ready}>{busy ? "Giving…" : "Allocate " + plural(list.length, "claim") + " as urgent"}</button></>}>
       <div className="stack">
-        {!fixed && <Field label="Client"><Combo value={clientId} onChange={(v) => { setClientId(v); setFound(null); setOne(""); setOff(new Set()); }} placeholder="Pick the client…"
+        {!fixed && <Field label="Client"><Combo value={clientId} onChange={pickClient} placeholder="Pick the client…"
           options={ctx.clients.filter((c) => c.active && c.can_edit !== false).map((c) => ({ id: c.id, label: c.name }))} /></Field>}
-        {ticked && ticked.length ? <div className="small"><b>{plural(ticked.length, "claim")}</b> ticked on the Claims page.</div> : <>
-          <Field label="Claim numbers" hint="Paste them as they are: one per line, or separated by commas or spaces."><textarea className="textarea" style={{ minHeight: 90 }} value={text}
-            onChange={(e) => { setText(e.target.value); setFound(null); }} placeholder={"ACL-1001\nACL-1002"} disabled={!clientId} /></Field>
-          <div className="row"><button className="btn sm" disabled={busy || !clientId || !text.trim()} onClick={find}>Find these claims</button>
-            {found && <span className="small"><b>{plural(ids.length, "claim")}</b> found to give{found.not_found.length ? <> · <span className="red-ink">not found: {found.not_found.join(", ")}</span></> : null}
-              {cannot.length ? <> · <span className="muted">cannot be given now: {cannot.map((r) => r.claim_no + " (" + r.why + ")").join(", ")}</span></> : null}</span>}</div></>}
-        {clientId && <Field label="Give them to">
-          <div className="seg2" style={{ marginBottom: 8 }}>{[["one", "One biller"], ["split", "Split evenly"]].map(([k, l]) => <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</div>
-          {team.loading ? <Spinner label="Loading the client's billers…" /> : !members.length ? <div className="small red-ink">No biller can be given this client's claims yet.</div>
-            : mode === "one" ? <Combo value={one} onChange={setOne} placeholder="Pick the biller…" options={members.map((m) => ({ id: m.id, label: m.name, sub: m.designation || undefined }))} />
-            : <div className="stack" style={{ gap: 4 }}>{members.map((m) => { const k = who.indexOf(m.id); return <label key={m.id} className="check small"><input type="checkbox" checked={!off.has(m.id)}
-                onChange={() => setOff((o) => { const n = new Set(o); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; })} /> {m.name}{k >= 0 && ids.length ? <span className="muted"> · {plural(shareOf(k), "claim")}</span> : null}</label>; })}</div>}
-        </Field>}
+        {clientId && <>
+          <Field label="1 · Find the urgent claims">
+            <div className="seg2" style={{ marginBottom: 8 }}>{[["search", "Search"], ["file", "Upload a file"], ["paste", "Paste claim numbers"]].map(([k, l]) => <button key={k} className={how === k ? "on" : ""} onClick={() => setHow(k)}>{l}</button>)}</div>
+            {how === "search" ? <UrgentSearch clientId={clientId} have={have} onAdd={add} /> : how === "file" ? <UrgentFile clientId={clientId} have={have} onAdd={add} /> : <UrgentPaste clientId={clientId} have={have} onAdd={add} />}
+          </Field>
+          <Field label={"2 · The urgent list" + (list.length ? ` · ${plural(list.length, "claim")} · ${fmtMoney(amount)}` : "")}>
+            {!list.length ? <div className="small muted">{ticked && ticked.length ? "Loading the ticked claims…" : "Nothing yet: find claims above and add them."}</div> : <>
+              <div className="table-wrap" style={{ maxHeight: 260 }}><table className="t urg-t urg-list"><thead><tr><th>#</th><th>Claim #</th><th>Patient</th><th>DOS</th><th>Payer</th><th className="r">Balance</th><th>On whose list now</th><th>Goes to</th><th /></tr></thead>
+                <tbody>{list.map((c, i) => <tr key={c.id}><td className="muted">{i + 1}</td><td>{c.claim_no || "–"}</td><td>{c.patient}</td><td>{fmtDate(c.dos)}</td><td>{c.payer}</td><td className="r">{fmtMoney(c.balance)}</td>
+                  <td>{c.assigned_name || <span className="muted">the pool</span>}</td><td>{deal[i] ? <b>{nameOf.get(deal[i])}</b> : <span className="muted">–</span>}</td>
+                  <td><button className="btn sm ghost" title="Take it off the urgent list" aria-label="Take it off the urgent list" onClick={() => setList((l) => l.filter((x) => x.id !== c.id))}>×</button></td></tr>)}</tbody></table></div>
+              <div className="row"><button className="btn sm ghost" onClick={() => setList([])}>Empty the list</button></div></>}
+          </Field>
+          <Field label="3 · Who gets how many" hint="Tick the billers and type how many each gets, or press Split evenly. The claims are given down the list: the first biller's number first.">
+            {team.loading ? <Spinner label="Loading the client's billers…" /> : !members.length ? <div className="small red-ink">No biller can be given this client's claims yet.</div> : <>
+              <div className="row" style={{ gap: 8, marginBottom: 6 }}><button className="btn sm" disabled={!list.length} onClick={even}>Split evenly</button>
+                <button className="btn sm ghost" disabled={!on.size} onClick={() => { setOn(new Set()); setCounts({}); }}>Clear</button>
+                {status && <span className={"small" + (ready ? "" : total ? " red-ink" : " muted")} style={ready ? { color: "var(--tealink)" } : undefined}><b>{status}</b></span>}</div>
+              <div className="table-wrap" style={{ maxHeight: 280 }}><table className="t"><tbody>{members.map((m) => <tr key={m.id}>
+                <td style={{ width: 30 }}><input type="checkbox" aria-label={"Give to " + m.name} checked={on.has(m.id)} onChange={() => flip(m.id)} /></td>
+                <td><b>{m.name}</b>{m.designation ? <span className="muted"> · {m.designation}</span> : null}{m.out ? <span className="red-ink"> · out today</span> : null}</td>
+                <td className="muted small">today {fmtInt(m.given_today)} of {fmtInt(m.cap)}</td>
+                <td style={{ width: 96 }}><input className="input sm" inputMode="numeric" aria-label={"How many for " + m.name} style={{ width: 76 }} value={counts[m.id] == null ? "" : counts[m.id]} placeholder="0" onChange={(e) => setCount(m.id, e.target.value)} /></td>
+              </tr>)}</tbody></table></div></>}
+          </Field>
+        </>}
       </div>
     </Modal>
   );
@@ -7165,7 +7314,7 @@ function AllocateView({ ctx, params, go, embedded }) {
   const sel = filtered;
   return (
     <div className="stack">
-      {urgentOpen && <UrgentModal ctx={ctx} onClose={() => setUrgentOpen(false)} onDone={() => { setUrgentOpen(false); if (clientId) loadPool(); }} />}
+      {urgentOpen && <UrgentModal ctx={ctx} defaultClient={clientId} onClose={() => setUrgentOpen(false)} onDone={() => { setUrgentOpen(false); if (clientId) loadPool(); }} />}
       {embedded ? <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}><button className="btn danger" onClick={() => setUrgentOpen(true)}>Urgent allocation</button><AllocationLogicButton /></div> : <div className="row between top"><div><h1>Allocate claims</h1><div className="sub">Build the day's work order from the inventory and hand it out. Highest priority first; batches by patient and payer so one call covers several claims.</div></div><div className="row" style={{ gap: 8 }}><button className="btn danger" onClick={() => setUrgentOpen(true)}>Urgent allocation</button><AllocationLogicButton /></div></div>}
       <div className="card">
         <div className="grid g3"><ClientPicker ctx={ctx} clientId={clientId} setClientId={setClientId} locId={locId} setLocId={setLocId} /><div className="field"><span>Pool</span><div style={{ paddingTop: 6 }}>{loading ? <Spinner label="Loading claims…" /> : pool ? <span><b>{fmtInt(pool.length)}</b> eligible claims · {fmtMoney(sum(pool, (c) => c.balance))} <span className="muted">(unassigned, plus worked claims whose follow-up is due)</span></span> : <span className="muted">Pick a client to load its pool.</span>}</div></div></div>

@@ -1018,12 +1018,23 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   holiday. The work form says so ("Due 09 Dec: date worked + 15 days"); a biller picks another date only when the payer
   gave one. A worked file's claim with a date worked and no follow-up date gets the same. (Before, it was 30, 14 or 7
   days by status, or the client's own default; the client profile no longer has that setting.)
-- **Urgent allocation.** A team lead gives claims of one client as urgent: ticked on the Claims page (Urgent...) or claim
-  numbers pasted on Allocate (Urgent allocation; numbers it does not have, and claims closed, excluded or with a desk,
-  are listed). They go all to one biller or are split evenly, most important first, across the billers picked. Each
+- **Urgent allocation.** A team lead gives claims of one client as urgent, from Allocate (Urgent allocation) or the
+  Claims page (tick claims, Urgent...). The box finds the claims three ways, often without a claim number:
+  - **Search**: patient name, account #, claim # or payer, and the date of service; tick the claims and add them.
+  - **Upload a file**: a CSV or Excel file in the inventory layout, read the way an inventory file is. Each claim in it is
+    found by its claim number; without one (or one not on file), by its account number (with the same date of service
+    when the file has one); else by the patient name and the date of service (the name's words in any order; a middle
+    initial, or a word only one side has, is fine). A row can find two claims (the same patient seen twice that day).
+    The rows it cannot find are listed, and nothing in the inventory changes.
+  - **Paste claim numbers**, as before.
+  Claims closed, excluded or with a desk are listed as not given. The urgent list shows every claim found, with an x to
+  take one off. Then **who gets how many**: the team lead ticks billers and types each one's number (today's count and
+  limit shown next to each name), or presses Split evenly. Allocate is on only when the numbers add up to the list; the
+  claims are given down the list, the first biller's number first, and the list shows who gets each one beforehand. Each
   goes to the top of the biller's list with a red Urgent tag, whatever its follow-up date, Work the next claim opens it
-  first, the Ready to work card says how many, and the biller gets a bell line. Urgent claims come on top of the day's
-  target + 10 (they are not counted in it). Worked, a claim is no longer urgent; its history says it was given as urgent.
+  first, the Ready to work card says how many, and the biller gets a bell line (how many, no claim or patient details).
+  Urgent claims come on top of the day's target + 10 (they are not counted in it). Worked, a claim is no longer urgent;
+  its history says it was given as urgent.
 - **Claims page** opens with every state (Any state); a link from a dashboard figure still opens with its own filter.
 - **Only a team lead takes anyone off a client.** A client's billers are everyone on its list: the people of its Purview
   Shastra projects, added by themselves every hour, and everyone a team lead adds on the client card or Locations. Once

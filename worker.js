@@ -2170,6 +2170,11 @@ const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n :
 const wholeIn = (v, lo, hi, msg) => { const s = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : ""; if (!/^\d+$/.test(s) || Number(s) < lo || Number(s) > hi) throw bad(msg); return Number(s); };
 const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 // A real calendar date only: "2026-02-30" or "2026-13-01" would roll over in Date and give NULL in julianday().
+/* A person's name as its words (lower case, letters and digits; one-letter words such as a middle initial left out), and whether
+   two names are the same person's: every word of the shorter name is in the longer one (Testpatient, A1 = A1 Testpatient;
+   Smith, John A = John Smith). Used with the date of service, so a common surname alone does not find another patient's claim. */
+const nameWords = (v) => [...new Set(String(v || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1))];
+const sameName = (a, b) => { if (!a.length || !b.length) return false; const [s1, l1] = a.length <= b.length ? [a, b] : [b, a]; const L = new Set(l1); return s1.every((w) => L.has(w)); };
 const isoDate = (v) => { const s = String(v || ""); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ""; const t = Date.parse(s + "T00:00:00Z"); return isFinite(t) && new Date(t).toISOString().slice(0, 10) === s ? s : ""; };
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function addDays(iso, n) {
@@ -8066,6 +8071,8 @@ const OPS = {
     // stage: exactly one of Inventory status's stages, so a stage button opens the claims it counts
     if (payload.stage && INV_STAGE_SQL[payload.stage]) { where.push(INV_STAGE_SQL[payload.stage]); const t = isoDate(payload.today) || isoToday(); params.push(...(payload.stage === "overdue" || payload.stage === "due" ? [t] : payload.stage === "later" ? [t, t] : [])); }
     if (payload.q) { const q = likeAny(str(payload.q, 80).trim()); where.push("(c.claim_no LIKE ? OR c.patient LIKE ? OR c.account_no LIKE ? OR c.payer LIKE ?)"); params.push(q, q, q, q); }
+    // one date of service (the urgent allocation box's search, when the claim number is not known)
+    if (payload.dos && isoDate(payload.dos)) { where.push("substr(c.dos, 1, 10) = ?"); params.push(isoDate(payload.dos)); }
     const SORTS = { priority: "c.priority", balance: "c.balance", age_days: "(CASE WHEN c.dos GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN julianday('now') - julianday(substr(c.dos, 1, 10)) ELSE c.age_days END)", patient: "c.patient", payer: "c.payer", dos: "c.dos", updated_at: "c.updated_at", state: "c.state", assigned: "u.name", follow_up_on: "c.follow_up_on",
       claim_no: "c.claim_no", tier: "c.tier", status_class: "c.status_class", inventory_kind: "c.inventory_kind", provider: "c.provider", cpt: "c.cpt" };
     const sort = SORTS[payload.sort] || "c.priority";
@@ -8382,9 +8389,11 @@ const OPS = {
     if (changed && u.id !== user.id) await noticeAlloc(env, [[u.id, changed]], (n) => `${n} new claim${n === 1 ? " was" : "s were"} allocated to you by ${user.name || "your team lead"}.`);
     return { changed };
   },
-  /* Urgent allocation (the owner's rule): a team lead picks claims of one client (ticked on the Claims page, or claim numbers
-     pasted and found with alloc.lookup) and gives them all to one biller, or splits them evenly in priority order across the
-     billers they pick. They go to the top of each one's list with an Urgent tag (URGENT) and a bell notice, whatever their
+  /* Urgent allocation (the owner's rule): a team lead picks claims of one client (found in the urgent allocation box by a search,
+     an uploaded file in the inventory layout or pasted claim numbers, or ticked on the Claims page; alloc.lookup) and gives them.
+     split: [{ user_id, count }] says how many each biller gets; the claims are dealt in the order of ids (the box's list, top
+     first), the first biller's count first. The older form, user_ids, gives them all to one biller or splits them evenly in
+     priority order. They go to the top of each one's list with an Urgent tag (URGENT) and a bell notice, whatever their
      follow-up date, and come on top of the day's target + 10 (team.today does not count them). A claim already on that person's
      list stays as it is there (counted as before) and is marked urgent too. Closed, excluded and desk claims are left out. */
   "alloc.urgent": async ({ env, user, payload }) => {
@@ -8393,9 +8402,19 @@ const OPS = {
     if (!cl) throw bad("Pick the client of the urgent claims.");
     editableOr(user, cid);
     const ids = [...new Set((Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 2000);
-    const to = [...new Set((Array.isArray(payload.user_ids) ? payload.user_ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
     if (!ids.length) throw bad("Pick the urgent claims.");
+    let to, share = null;
+    if (Array.isArray(payload.split)) {
+      const split = payload.split.map((x) => ({ id: str(x && x.user_id, 60), n: Number(x && x.count) })).filter((x) => x.id);
+      if (split.some((x) => !Number.isInteger(x.n) || x.n < 0 || x.n > 2000)) throw bad("Type how many claims each biller gets as a whole number.");
+      if (new Set(split.map((x) => x.id)).size !== split.length) throw bad("Each biller can be listed once.");
+      const total = split.reduce((t, x) => t + x.n, 0);
+      if (total !== ids.length) throw bad(`The numbers add up to ${total}, but ${ids.length} claim${ids.length === 1 ? " is" : "s are"} picked: make them the same.`);
+      share = split.filter((x) => x.n > 0);
+      to = share.map((x) => x.id);
+    } else to = [...new Set((Array.isArray(payload.user_ids) ? payload.user_ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 100);
     if (!to.length) throw bad("Pick who gets the urgent claims.");
+    if (to.length > 100) throw bad("Pick at most 100 billers.");
     const people = [];
     for (const uid of to) {
       const u = await billerFor(env, uid, cid);
@@ -8405,9 +8424,17 @@ const OPS = {
     const rows = await all(env, `SELECT c.id, u.name AS prev FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.id IN ${IN_LIST} AND c.client_id = ? AND c.state IN ${WORKABLE}
       ORDER BY c.priority DESC, c.balance DESC, c.id`, listArg(ids), cid);
     if (!rows.length) throw bad("None of these claims can be given now: they are closed, excluded or with a desk.");
+    // with counts: the box's order, and each biller's count in turn (a claim that could not be given leaves the last ones short)
+    let whoOf;
+    if (share) {
+      const pos = new Map(ids.map((id, i) => [id, i]));
+      rows.sort((x, y) => pos.get(x.id) - pos.get(y.id));
+      const deal = share.flatMap((x, k) => Array(x.n).fill(k));
+      whoOf = (i) => people[deal[i]];
+    } else whoOf = (i) => people[i % people.length];
     const now = Date.now(), stmts = [], count = new Map();
     rows.forEach((r, i) => {
-      const u = people[i % people.length];
+      const u = whoOf(i);
       count.set(u.id, (count.get(u.id) || 0) + 1);
       stmts.push(env.DB.prepare(`UPDATE claims SET assigned_at = CASE WHEN assigned_to = ? AND state IN ('assigned','in_progress') THEN assigned_at ELSE ? END,
           started_at = CASE WHEN assigned_to = ? AND state = 'in_progress' THEN started_at ELSE NULL END,
@@ -8424,22 +8451,59 @@ const OPS = {
     await audit(env, user, "alloc.urgent", cid, "Urgent: " + per.map((x) => x.name + " " + x.count).join(", ") + (left ? `; ${left} not given (closed, excluded or with a desk)` : ""));
     return { given: rows.length, per, left_out: left };
   },
-  /* Urgent allocation by pasted claim numbers: this client's claims with those numbers (any letter case), whether each can be
-     given now, and the numbers it does not have. */
+  /* The urgent allocation box finds this client's claims three ways. claim_nos: pasted claim numbers (any letter case), with the
+     numbers it does not have (not_found). ids: claims ticked on the Claims page. rows: the claims of an uploaded file in the
+     inventory layout ({ claim_no, account_no, patient, dos }), each found by its claim number; else by its account number (with
+     the same date of service when the row has one); else by the patient's name and the date of service (the name's words in any
+     order; a middle initial, or a word only one side has, is allowed). A row can find more than one claim (the same patient
+     seen twice that day): file.found lists the claims each row found, file.missing the rows it could not find. Every claim says
+     whether it can be given now (workable) and, if not, why. */
   "alloc.lookup": async ({ env, user, payload }) => {
     const cid = str(payload.client_id, 60);
     if (!cid) throw bad("Pick the client.");
     editableOr(user, cid);
+    const pick = (where, ...args) => all(env, `SELECT c.id, c.claim_no, c.account_no, c.patient, c.dos, c.payer, c.balance, c.state, u.name AS assigned_name
+      FROM claims c LEFT JOIN users u ON u.id = c.assigned_to WHERE c.client_id = ? AND ${where} ORDER BY c.priority DESC LIMIT 4000`, cid, ...args);
+    const got = new Map(), keep = (rs) => { rs.forEach((r) => got.set(r.id, r)); return rs; };
+    const lower = (v, n) => str(v, n).trim().toLowerCase();
+    const res = { not_found: [] };
     const nos = [...new Set((Array.isArray(payload.claim_nos) ? payload.claim_nos : []).map((x) => str(x, 60).trim()).filter(Boolean))].slice(0, 2000);
-    if (!nos.length) return { rows: [], not_found: [] };
-    const rows = await all(env, `SELECT c.id, c.claim_no, c.payer, c.balance, c.state, u.name AS assigned_name FROM claims c LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE c.client_id = ? AND lower(c.claim_no) IN ${IN_LIST} ORDER BY c.priority DESC LIMIT 4000`, cid, listArg(nos.map((x) => x.toLowerCase())));
-    const has = new Set(rows.map((r) => String(r.claim_no).toLowerCase())), can = new Set(["open", "assigned", "in_progress", "completed"]);
-    return {
-      rows: rows.map((r) => ({ id: r.id, claim_no: r.claim_no, payer: r.payer, balance: r.balance, state: r.state, assigned_name: r.assigned_name || "", workable: can.has(r.state),
-        why: can.has(r.state) ? "" : r.state === "in_process" ? "with a desk" : r.state })),
-      not_found: nos.filter((x) => !has.has(x.toLowerCase())),
-    };
+    if (nos.length) {
+      const has = new Set(keep(await pick(`lower(c.claim_no) IN ${IN_LIST}`, listArg(nos.map((x) => x.toLowerCase())))).map((r) => String(r.claim_no).toLowerCase()));
+      res.not_found = nos.filter((x) => !has.has(x.toLowerCase()));
+    }
+    const ids = [...new Set((Array.isArray(payload.ids) ? payload.ids : []).map((x) => str(x, 60)).filter(Boolean))].slice(0, 2000);
+    if (ids.length) keep(await pick(`c.id IN ${IN_LIST}`, listArg(ids)));
+    if (Array.isArray(payload.rows)) {
+      if (payload.rows.length > 2000) throw bad("Up to 2,000 claims at a time: split the file.");
+      const want = payload.rows.map((x) => ({ n: lower(x && x.claim_no, 60), a: lower(x && x.account_no, 60), p: nameWords(x && x.patient), d: isoDate(x && x.dos) }));
+      const found = want.map(() => []);
+      const byKey = (rs, key) => { const m = new Map(); rs.forEach((r) => { const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }); return m; };
+      const ns = [...new Set(want.map((w) => w.n).filter(Boolean))];
+      if (ns.length) {
+        const m = byKey(keep(await pick(`lower(c.claim_no) IN ${IN_LIST}`, listArg(ns))), (r) => String(r.claim_no).toLowerCase());
+        want.forEach((w, i) => { if (w.n && m.has(w.n)) found[i] = m.get(w.n).map((r) => r.id); });
+      }
+      const as = [...new Set(want.filter((w, i) => !found[i].length && w.a).map((w) => w.a))];
+      if (as.length) {
+        const m = byKey(await pick(`lower(c.account_no) IN ${IN_LIST}`, listArg(as)), (r) => String(r.account_no).toLowerCase());
+        want.forEach((w, i) => { if (found[i].length || !w.a) return; const hit = (m.get(w.a) || []).filter((r) => !w.d || String(r.dos).slice(0, 10) === w.d); if (hit.length) found[i] = keep(hit).map((r) => r.id); });
+      }
+      const ds = [...new Set(want.filter((w, i) => !found[i].length && w.p.length && w.d).map((w) => w.d))];
+      if (ds.length) {
+        // only the id, name and date first (a busy day of a big client), then the claims whose name fits
+        const m = byKey(await all(env, `SELECT id, patient, substr(dos, 1, 10) AS d FROM claims WHERE client_id = ? AND substr(dos, 1, 10) IN ${IN_LIST} LIMIT 20000`, cid, listArg(ds)), (r) => r.d);
+        const fit = want.map((w, i) => (found[i].length || !w.p.length || !w.d ? [] : (m.get(w.d) || []).filter((r) => sameName(w.p, nameWords(r.patient))).map((r) => r.id)));
+        const more = [...new Set(fit.flat())];
+        if (more.length) keep(await pick(`c.id IN ${IN_LIST}`, listArg(more)));
+        fit.forEach((f, i) => { if (f.length) found[i] = f.filter((id) => got.has(id)); });
+      }
+      res.file = { found, missing: found.map((f, i) => (f.length ? -1 : i)).filter((i) => i >= 0) };
+    }
+    const can = new Set(["open", "assigned", "in_progress", "completed"]);
+    res.rows = [...got.values()].map((r) => ({ id: r.id, claim_no: r.claim_no, account_no: r.account_no, patient: r.patient, dos: r.dos, payer: r.payer, balance: r.balance, state: r.state,
+      assigned_name: r.assigned_name || "", workable: can.has(r.state), why: can.has(r.state) ? "" : r.state === "in_process" ? "with a desk" : r.state }));
+    return res;
   },
   "alloc.unassign": async ({ env, user, payload }) => {
     const now = Date.now();

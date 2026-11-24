@@ -873,6 +873,44 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     } finally { await projects(["Lakeview Dental Group"]); }
   });
 
+  S("Urgent allocation: search, a file, and how many each biller gets");
+  await step("urgent", async () => {
+    await as("tina"); await open("#/allocate"); await t(800);
+    await pick(p.locator(".main"), "Sunrise"); await t(1500);
+    const pool = (await rpc("claims.list", { client_id: tok.sun, state: "workable", page_size: 20 })).rows.filter((c) => c.claim_no && c.patient);
+    const [c0, c1, c2] = pool;
+    await p.locator('.main button:has-text("Urgent allocation")').first().click(); await t(1200);
+    const box = p.locator('.overlay .modal:has-text("Urgent allocation")').first();
+    ok("the box opens on the client picked on Allocate, with three ways to find the claims", /Sunrise/.test(await box.innerText()) && (await box.locator('.seg2 button:has-text("Search")').count()) === 1
+      && (await box.locator('.seg2 button:has-text("Upload a file")').count()) === 1 && (await box.locator('.seg2 button:has-text("Paste claim numbers")').count()) === 1, (await box.innerText()).slice(0, 300));
+    await box.locator('input[placeholder^="Patient name"]').fill(c0.patient); await p.keyboard.press("Enter"); await t(1800);
+    const hit = box.locator(`tr:has-text("${c0.claim_no}")`).first();
+    ok("searching by the patient's name lists their claim", (await hit.count()) === 1, (await box.innerText()).slice(0, 400));
+    await hit.click(); await t(300);
+    await box.locator('button:has-text("to the urgent list")').first().click(); await t(800);
+    await box.locator('.seg2 button:has-text("Upload a file")').click(); await t(500);
+    await box.locator('input[type="file"]').setInputFiles({ name: "urgent.csv", mimeType: "text/csv", buffer: Buffer.from(`Claim #,Patient Name\n${c1.claim_no},Testpatient One\n${c2.claim_no},Testpatient Two\nNOPE-9999,Testpatient Three\n`) });
+    await t(2500);
+    const txt = await box.innerText();
+    ok("a file in the inventory layout adds its claims and lists the one it could not find", /3 claims in the file, 2 found/.test(txt) && /2 claims added/.test(txt) && /Not found \(1\): NOPE-9999/.test(txt), txt.slice(0, 600));
+    ok("the urgent list has the three claims", /The urgent list · 3 claims/i.test(txt) || /urgent list · 3 claims/i.test(txt), txt.slice(0, 600));
+    const allocate = box.locator('button:has-text("Allocate 3 claims as urgent")');
+    ok("Allocate stays off until the numbers are typed", await allocate.isDisabled());
+    await box.locator('button:has-text("Split evenly")').click(); await t(500);
+    const arunN = await box.locator('input[aria-label="How many for Arun Agent"]').inputValue(), caraN = await box.locator('input[aria-label="How many for Cara Agent"]').inputValue();
+    ok("Split evenly fills each biller's number (2 and 1)", [arunN, caraN].sort().join() === "1,2", [arunN, caraN]);
+    const first = arunN === "2" ? "Arun Agent" : "Cara Agent";
+    await box.locator(`input[aria-label="How many for ${first}"]`).fill("1"); await t(300);
+    ok("a number that does not add up says how many are left, and Allocate stays off", /1 more to give/.test(await box.innerText()) && await allocate.isDisabled());
+    await box.locator(`input[aria-label="How many for ${first}"]`).fill("2"); await t(300);
+    ok("when they add up: All 3 given out, each claim shows who gets it, and Allocate is on", /All 3 given out/.test(await box.innerText()) && (await box.locator(`.urg-list td b:has-text("${first}")`).count()) === 2 && !(await allocate.isDisabled()));
+    await allocate.click(); await t(2500);
+    const got = await p.evaluate(async (ids) => { const db = (await getLocalBackend()).env.DB;
+      return (await db.prepare(`SELECT c.id, u.name AS who, c.urgent_by_name AS by FROM claims c JOIN users u ON u.id = c.urgent_to WHERE c.id IN (${ids.map(() => "?").join(",")}) AND c.assigned_to = c.urgent_to`).bind(...ids).all()).results; }, [c0.id, c1.id, c2.id]);
+    const n = (w) => got.filter((g) => g.who === w).length;
+    ok("the three claims are urgent on the billers' lists: 2 for the first, 1 for the other, given by Tina", got.length === 3 && n(first) === 2 && got.every((g) => g.by === "Tina Lead"), got);
+  });
+
   ok("no script errors on any page", !errs.length, errs);
   await b.close(); srv.close();
   const failed = results.filter((x) => !x.pass);
