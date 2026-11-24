@@ -4891,7 +4891,9 @@ function UrgentModal({ ctx, clientId: fixed, defaultClient, ids: ticked, onClose
   const [on, setOn] = useState(new Set());
   const [counts, setCounts] = useState({});
   const [busy, setBusy] = useState(false);
-  const team = useRpc("team.today", { client_id: clientId }, [clientId], !!clientId);
+  // the team of India's working day, as Allocate asks for it (without day the server would take the UTC date, a day behind
+  // between midnight and 05:30 in India, so someone marked out today would still look in)
+  const team = useRpc("team.today", { client_id: clientId, day: todayISO() }, [clientId], !!clientId);
   const members = (team.data && team.data.members) || [];
   const have = useMemo(() => new Set(list.map((x) => x.id)), [list]);
   const add = (rows) => setList((l) => { const h = new Set(l.map((x) => x.id)); return [...l, ...rows.filter((r) => r.workable && !h.has(r.id))]; });

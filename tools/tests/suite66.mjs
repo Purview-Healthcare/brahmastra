@@ -179,6 +179,18 @@ const now3 = await owner(r3);
 ok("the closed one is left out and said so; the rest go down the list in order (Arun's 2 first, so Bela gets none)", x.ok && x.r.given === 2 && x.r.left_out === 1 && now3[r3[1]] === "Arun Agent" && now3[r3[2]] === "Arun Agent" && !now3[r3[0]]
   && JSON.stringify(x.r.per.map((y) => [y.name, y.count])) === JSON.stringify([["Arun Agent", 2]]), [x, now3]);
 
+S("Out today, at any hour (the box shows who is out today)");
+const fs = await import("fs");
+const SRC = fs.readFileSync(new URL("../../app/app.jsx", import.meta.url), "utf8");
+ok("the box asks for the team of India's working day, as Allocate does (not the server's UTC date)", /useRpc\("team\.today", \{ client_id: clientId, day: todayISO\(\) \}/.test(SRC));
+const istDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+await TI("team.setOut", { user_id: U("Bela Agent"), reason: "Not in today" });
+let tt = await TI("team.today", { client_id: sun.id, day: istDay });
+ok("someone the team lead marks out today shows as out today, whatever the hour in India", tt.members.some((m) => m.id === U("Bela Agent") && m.out), tt.members.map((m) => [m.name, m.out]));
+await TI("team.setOut", { user_id: U("Bela Agent"), out: false });
+tt = await TI("team.today", { client_id: sun.id, day: istDay });
+ok("and back in when the mark is taken off", tt.members.some((m) => m.id === U("Bela Agent") && !m.out), tt.members.map((m) => [m.name, m.out]));
+
 S("The older way (one biller, or split evenly) still works for a page not yet refreshed");
 const o2 = [await make({}), await make({})];
 x = await T(() => TI("alloc.urgent", { client_id: sun.id, ids: o2, user_ids: [U("Bela Agent")] }));
