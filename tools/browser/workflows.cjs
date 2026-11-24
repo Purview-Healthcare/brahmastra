@@ -875,7 +875,10 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
 
   S("Urgent allocation: search, a file, and how many each biller gets");
   await step("urgent", async () => {
-    await as("tina"); await open("#/allocate"); await t(800);
+    await as("tina");
+    // Arun out today, marked here (the Live status step marks him out too, but its day may have ended since then)
+    await rpc("team.setOut", { user_id: tok.arunId, reason: "Not in today" });
+    await open("#/allocate"); await t(800);
     await pick(p.locator(".main"), "Sunrise"); await t(1500);
     const pool = (await rpc("claims.list", { client_id: tok.sun, state: "workable", page_size: 20 })).rows.filter((c) => c.claim_no && c.patient);
     const [c0, c1, c2] = pool;
@@ -896,7 +899,7 @@ const FEED = [P({ emp_id: "V1", name: "Sasha Vice", position: "Vice President", 
     ok("the urgent list has the three claims", /The urgent list · 3 claims/i.test(txt) || /urgent list · 3 claims/i.test(txt), txt.slice(0, 600));
     const allocate = box.locator('button:has-text("Allocate 3 claims as urgent")');
     ok("Allocate stays off until the numbers are typed", await allocate.isDisabled());
-    // Arun was marked out today on Live status (an earlier step): with nobody ticked, Split evenly leaves him out
+    // Arun is out today (marked before the box opened): with nobody ticked, Split evenly leaves him out
     const num = async (who) => box.locator(`input[aria-label="How many for ${who}"]`).inputValue();
     const arunRow = box.locator('tr:has(input[aria-label="How many for Arun Agent"])');
     await box.locator('button:has-text("Split evenly")').click(); await t(500);

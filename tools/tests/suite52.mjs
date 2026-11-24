@@ -261,7 +261,9 @@ S("W-07: assigning a claim to the biller who already has it changes nothing");
 S("W-12, X-07, V-04: someone who no longer works a client gives its claims back to the pool, and cannot open or work them");
 {
   const onList = async (who, cid = sun.id) => (await q1("SELECT COUNT(*) AS n FROM claims WHERE assigned_to = ? AND client_id = ? AND state IN ('assigned','in_progress')", U(who), cid)).n;
-  const bellOf = async (who) => ((await q1("SELECT text FROM user_notices WHERE user_id = ? ORDER BY at DESC LIMIT 1", U(who))) || {}).text || "";
+  // the latest bell line; two written in the same millisecond (taken off the client, then the claims it gave back) by the
+  // order they were written, so the check never depends on a tie
+  const bellOf = async (who) => ((await q1("SELECT text FROM user_notices WHERE user_id = ? ORDER BY at DESC, rowid DESC LIMIT 1", U(who))) || {}).text || "";
   // W-12: Dev (Lakeview) gets Sunrise to edit, is given 3 Sunrise claims; the share becomes view only
   await TI("clients.accessSave", { client_id: sun.id, user_id: U("Dev Agent"), level: "edit" });
   const p1 = await poolOf(3); await give(p1, "Dev Agent");
