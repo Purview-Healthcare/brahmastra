@@ -230,7 +230,7 @@ does not count).
 
 | Page | From |
 |---|---|
-| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, Future DOS for a date of service typed in the future, and Unknown age for a claim with no date of service or age), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting, Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
+| Inventory | the claims open in AR at the end of the period against the end of the period before (aging from the date of service: 0-30 ... 181-360 and 360 plus, Future DOS for a date of service typed in the future, and Unknown age for a claim with no date of service or age), and where the claims open at the period before went: AR close (closed by AR), AR close · sent to Posting (the entry's hand-off, whatever the milliseconds between it and the entry), Posting close (posted and closed), Pending Submission, Submission close · AR follow-up (a submitted claim comes back to AR for its follow-up), Excluded |
 | AR production, Denials, RCA | billers' work entries in the period (SAAG status, sub-status, action and bucket); a claim with no entry is *Not worked yet*; a claim worked twice counts once, at its latest entry, in the KPIs, the charts and the filters (a filter picks claims by their latest entry, so a clicked bar matches the KPIs; the line under Claims worked gives the work entries); Denials and RCA count, of the same claims AR production shows with the same filters, those with a denied entry in the period, each by its latest denial (a denial reason picked on the page picks by that denial's reason), and the denial rate is of AR production's claims worked; rejections read from the AR entries count the same way |
 | Submission, Rejections, Payment posting | the Submission, Rejections and Payment posting desks (posted amounts and check details from the posting proof); the rejection rate is of the claims submitted in the period (of the claims worked for a client with no Submission records), and a period with no submission has no rate |
 | Client assistance | requests sent to the client, with their reason and whether they were answered; a request counts in every period it was waiting, however long ago it was sent |
@@ -280,6 +280,9 @@ location) and **team lead** (assistant managers, managers and the VP; a team lea
 worked today against the target, closed today and **left over** (allocated before this shift and not worked) split
 into **high priority** (the High tier) and other. Worked and closed today count the whole day from midnight IST,
 entries before the shift time too, as Team status and My day do (a night shift's count to the day it began).
+The floor's day is each person's own working day too: at 02:40 on a Saturday a Friday night shift still under way is
+Friday, so the cards give its target and do not say weekend; on Monday at 01:00 a Sunday night shift has no target while the
+day shift's Monday does. Left over counts an urgent claim whatever its follow-up date, as My day's ready to work does.
 Closed (here, on Team status and in the claims activity) counts a claim on the day it was closed, as Inventory status
 does, and a biller's closed only the claims their own entry closed, never one a team lead closed later; a claim Posting
 closes after the biller's Need to Post entry is that biller's close, on the day of the entry.
@@ -345,7 +348,8 @@ closes after the biller's Need to Post entry is that biller's close, on the day 
 above) and **Stack report** (each person's month in points and a Stack from 5 to 0, below). Team status and Inventory status share the filters client, **team lead** (managers and up) and the dates:
 **Today, This week, This month, Custom**. Every page takes today, its weeks and months and the latest date it allows
 from India's clock (IST), whatever the computer's own time zone, and shows times (notes, history, last entry, the
-downloads) in India's time too.
+downloads) in India's time too. The server does the same when a request carries no day: it takes India's date, never the
+UTC one (which is a day behind from 00:00 to 05:30 India time).
 
 **Team status** is Sasha's Third Eye's Team Status, built from Brahmastra's own entries and the Purview Shastra
 roster, grouped by team lead (no Emp ID):
@@ -357,7 +361,9 @@ roster, grouped by team lead (no Emp ID):
   half, other days out count nothing; Purview Shastra's attendance decides half days, leave, week offs and a day worked
   on a Saturday, Sunday or holiday: marked Present or Overtime there, it gets the day's target and 8 hours of floor
   time like any working day; Brahmastra's Out today marks fill in the days Shastra has no record of). It counts the days already finished (up to yesterday), so a day still under
-  way does not count against anyone; with only today picked, it is today's. A night shift (one that crosses midnight)
+  way does not count against anyone; with only today picked, it is today's. **Today** is each person's own working day
+  now: at 02:50 a night biller's Today is the shift that began the evening before (worked, closed and target), as My day and
+  Live status show it; dates picked (or This week, This month) are calendar days. A night shift (one that crosses midnight)
   counts to the day it began, its hours and entries, until an hour and a half after it ends (05:00 IST at the earliest),
   so that day is not finished while the shift is still running. Production people under 90% are
   **below the mark**; Training and OJT are **in ramp-up** and not judged against it. Claims worked, **team task
@@ -832,7 +838,9 @@ whoever submitted (the Completed box and its message give that client's number o
 
 **Assigning within the desk.** The lead or backup of a hand-off can give it to a person of the same desk (Payment
 posting; Submission for submissions, rejections and rechecks) who works that client. The list offers only those
-people, and the server refuses anyone else, since the person given a hand-off can open its claim and close it.
+people, and the server refuses anyone else, since the person given a hand-off can open its claim and close it. Two people
+giving the same hand-off at once, or from a list read before someone else took it, are not both told yes: the second is told
+who was just given it.
 
 **Filters.** Every lead and team member on Payment posting and Submission can narrow the list to one **client**
 and to the dates the claims were **sent to the desk** (All time, Today, This week, This month, Custom). The sent
@@ -1010,13 +1018,17 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   never more than that (what one cannot take is shared by the others), so everyone gets the same number, one more for
   some when it does not divide; claims of one patient or payer are kept together inside each share. More claims than
   the team can take: each gets their limit and the rest stays in the pool. Automatic allocation after an upload and
-  the Allocate screen both use that; there is no daily ticking. Someone on a location's own team who no longer works
+  the Allocate screen both use that; there is no daily ticking. The server keeps to the limit as well: an Allocate screen
+  opened before another team lead allocated (or two pressed at the same moment) gives each person only what they can still
+  take, and says who is at today's limit and how many claims stay in the pool (the team lead's own numbers typed in the
+  "Today's inventory is less" pop-up are given as typed; urgent allocation comes on top). Someone on a location's own team who no longer works
   the client (Shastra moved them to another client, or a share of it was taken back or made view only) is left out,
   so every claim goes to the people who do.
 - **Follow-up: 15 days after the date worked.** Every claim's follow-up is due 15 days after the date it was worked
   (DOW + 15), for every client and every SAAG status, moved to the next working day when it falls on a weekend or
   holiday. The work form says so ("Due 09 Dec: date worked + 15 days"); a biller picks another date only when the payer
-  gave one. A worked file's claim with a date worked and no follow-up date gets the same. (Before, it was 30, 14 or 7
+  gave one. A worked file's claim with a date worked and no follow-up date gets the same. An edited entry's follow-up
+  moves to a working day the same way, and a date over a year ahead is refused, as when saving. (Before, it was 30, 14 or 7
   days by status, or the client's own default; the client profile no longer has that setting.)
 - **Urgent allocation.** A team lead gives claims of one client as urgent, from Allocate (Urgent allocation) or the
   Claims page (tick claims, Urgent...). The box finds the claims three ways, often without a claim number:
@@ -1033,7 +1045,8 @@ tasks; the recheck after a submission is the same claim again, so it is not a se
   claims are given down the list, the first biller's number first, and the list shows who gets each one beforehand. Each
   goes to the top of the biller's list with a red Urgent tag, whatever its follow-up date, Work the next claim opens it
   first, the Ready to work card says how many, and the biller gets a bell line (how many, no claim or patient details).
-  Urgent claims come on top of the day's target + 10 (they are not counted in it). Worked, a claim is no longer urgent;
+  Urgent claims come on top of the day's target + 10 (they are not counted in it); one given again to the same biller (a
+  double click, a second team lead) keeps its first urgent time and is still not counted. Worked, a claim is no longer urgent;
   its history says it was given as urgent.
 - **Claims page** opens with every state (Any state); a link from a dashboard figure still opens with its own filter.
 - **Only a team lead takes anyone off a client.** A client's billers are everyone on its list: the people of its Purview
@@ -1450,7 +1463,10 @@ Patient DOB no patient name, Next Visit Date no date of service and Paid Amount 
 without one, by patient + date of service + payer + provider. A claim that came without a claim number gets a
 BR-... number from Brahmastra; when a later file carries its real number it is found by patient + date of service
 (and payer, when both files have one), refreshed, and takes the real number. Two different claim numbers are always
-two claims. Several service
+two claims: the same number written differently (spaces, letter case, dashes, leading zeros, "CLM-12345" and "12345") is one
+claim, but numbers whose letters differ (MAP-7300001 and MPB-7300001, two locations' prefixes) are two. A row with neither a
+claim number nor a patient is skipped, never stored as an empty claim. A file with the patient's name in two columns (Last
+Name and First Name) gives the patient as "Last, First", in an inventory file and in the urgent box's file alike. Several service
 lines of one claim are rolled up into one claim with the lines kept
 underneath. A file that has a Location column can be split across the client's
 locations automatically: a name the client does not have yet becomes a new location (the result says so).
@@ -1534,7 +1550,8 @@ provider, CPT, amount, SAAG status, bucket and state. Rows are coloured:
 - **white**: not worked yet.
 
 **Work the next claim** opens the highest-priority claim; clicking any row opens
-that claim instead. Only one claim is open per biller at a time. A claim opened and left without a save (another claim
+that claim instead. Only one claim is open per biller at a time (Next pressed in two tabs at once opens the same claim in
+both). A % or _ typed in a search box is that character, not a wildcard. A claim opened and left without a save (another claim
 opened, Back to My day, Next) goes back exactly as it was: Worked stays Worked, a claim on the list stays on the list.
 
 ### The claim profile

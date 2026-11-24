@@ -95,6 +95,9 @@ for (const [dept, lead, backup] of [["posting", "Pia Poster", "Otto Poster"], ["
   const r = await T(() => A("clients.saveResponsibility", { client_id: sun.id, dept, mode: "person", lead: U(lead).id, backup: backup ? U(backup).id : null })); if (!r.ok) console.log("responsibility", dept, r.e);
 }
 const AR = await firstIn("Arun Agent"), BE = await firstIn("Bela Agent"), CY = await firstIn("Cyra Agent"), TI = await firstIn("Tina Lead");
+// every section replays the same few days and gives the billers claims each time: a team lead's own number for each (Claims to
+// assign a day) keeps the server's day limit (2.119.0) out of these desk checks
+await sql("UPDATE users SET assign_per_day = 500 WHERE id IN (?, ?, ?)", U("Arun Agent").id, U("Bela Agent").id, U("Cyra Agent").id);
 const PI = await firstIn("Pia Poster"), OT = await firstIn("Otto Poster"), QU = await firstIn("Quin Submit"), RX = await firstIn("Rex Reject"), LX = await firstIn("Lex Lakepost");
 let LLtok = null; const LL0 = () => LLtok;
 const SAAG = {
